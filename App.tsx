@@ -24,7 +24,7 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import './index.css';
+
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
 // This resolves the "Subsequent property declarations must have the same type" error by
