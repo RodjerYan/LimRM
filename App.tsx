@@ -15,7 +15,7 @@ description: >
 */
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
+import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
 import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
@@ -151,7 +151,7 @@ const CITY_TO_REGION_MAP: Record<string, string> = {
     'орел': 'Орловская область',
     'ливны': 'Орловская область',
     'мценск': 'Орловская область',
-    'пенза': 'Пензая область',
+    'пенза': 'Пензенская область',
     'псков': 'Псковская область',
     'ростов-на-дону': 'Ростовская область',
     'таганрог': 'Ростовская область',
@@ -203,7 +203,7 @@ const CITY_TO_REGION_MAP: Record<string, string> = {
 
 
 // --- START File Parser (runs on main thread) ---
-const parseFileAndExtractData = (file: File): Promise<{ processedData: any[], uniqueLocations: Set<string>, existingClientsByRegion: Record<string, string[]> }> => {
+const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRow[], uniqueLocations: Set<string>, existingClientsByRegion: Record<string, string[]> }> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -243,23 +243,25 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: any[], un
                     fact: findHeaderKey(fileHeaders, HEADER_ALIASES.fact),
                 };
 
-                if (!headerMap.rm || !headerMap.city || !headerMap.fact) {
-                    const missing = [
-                        !headerMap.rm && "'РМ'",
-                        !headerMap.city && "'Адрес ТТ LimKorm' или 'Город'",
-                        !headerMap.fact && "'Вес, кг' или 'Факт'"
-                    ].filter(Boolean).join(', ');
+                const requiredHeaders = { rm: "'РМ'", city: "'Адрес' или 'Город'", fact: "'Факт' или 'Вес, кг'" };
+                const missing = Object.entries(requiredHeaders)
+                    .filter(([key]) => !headerMap[key as keyof typeof headerMap])
+                    .map(([, value]) => value)
+                    .join(', ');
+
+                if (missing) {
                     throw new Error(`Не найдены обязательные столбцы: ${missing}.`);
                 }
 
                 const uniqueLocations = new Set<string>();
                 const existingClientsByRegion: Record<string, string[]> = {};
 
-                const processedData = (json as any[]).map((row) => {
+                const processedData = (json as any[]).map((row): RawDataRow | null => {
                     const rm = String(row[headerMap.rm!] || '').trim();
                     const brand = String(row[headerMap.brand!] || 'Не указан').trim();
                     const factValue = String(row[headerMap.fact!] || '0').replace(',', '.');
                     const fact = parseFloat(factValue) || 0;
+                    
                     const fullAddress = String(row[headerMap.city!] || '').trim();
                     
                     let location = '';
@@ -282,7 +284,6 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: any[], un
                     } else if (districtPart) {
                         mainLocationPart = districtPart.trim();
                     } else {
-                        // Fallback to the first or second significant part of the address
                         mainLocationPart = addressParts[1] || addressParts[0] || '';
                     }
                     mainLocationPart = mainLocationPart.trim();
@@ -291,13 +292,10 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: any[], un
                         location = regionFound;
                     } else {
                         const normalizedLocation = mainLocationPart.toLowerCase().replace('ё', 'е');
-                        // CRITICAL CHANGE: Only use the map. If a city/district is not in the map,
-                        // it will result in an empty location, and the row will be filtered out later.
-                        // This enforces the strict region-based aggregation.
                         location = CITY_TO_REGION_MAP[normalizedLocation] || '';
                     }
 
-                    if (location) {
+                    if (rm && location && brand) {
                         uniqueLocations.add(location);
                         if (!existingClientsByRegion[location]) {
                             existingClientsByRegion[location] = [];
@@ -305,9 +303,11 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: any[], un
                         if (fullAddress && !existingClientsByRegion[location].includes(fullAddress)) {
                             existingClientsByRegion[location].push(fullAddress);
                         }
+                         return { rm, brand, city: location, fact, fullAddress };
                     }
-                    return { rm, brand, city: location, fact, fullAddress };
-                }).filter(item => item.rm && item.city && item.brand);
+                    return null;
+
+                }).filter((item): item is RawDataRow => item !== null);
                 
                 if (processedData.length === 0) throw new Error("В файле не найдено корректных строк с данными, которые можно сопоставить с регионами. Проверьте адреса или содержимое столбцов.");
 
@@ -332,7 +332,9 @@ export default function App() {
         return <ApiKeyErrorDisplay />;
     }
     
-    const [aggregatedData, setAggregatedData] = useState<AggregatedDataRow[]>([]);
+    const [baseAggregatedData, setBaseAggregatedData] = useState<AggregatedDataRow[]>([]);
+    const [dataWithPlan, setDataWithPlan] = useState<AggregatedDataRow[]>([]);
+    const [rawParsedData, setRawParsedData] = useState<RawDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
@@ -371,6 +373,92 @@ export default function App() {
         }
     }, [searchTerm]);
 
+    // --- New Plan Calculation Effect ---
+    useEffect(() => {
+        if (baseAggregatedData.length === 0) {
+            setDataWithPlan([]);
+            return;
+        }
+
+        setLoadingState(prev => ({ ...prev, status: 'aggregating', text: 'Расчет новых планов...', progress: 98 }));
+
+        // --- PRE-COMPUTATION ---
+        const rmTotals = new Map<string, { fact: number; cities: Set<string> }>();
+        const brandTotals = new Map<string, { fact: number }>();
+        const rmBrandTotals = new Map<string, { fact: number }>();
+        const cityOkbTTs = new Map<string, number>();
+        let totalFactAll = 0;
+
+        baseAggregatedData.forEach(row => {
+            // Totals for Brand Share (RM)
+            const rmKey = row.rm;
+            const currentRMTotals = rmTotals.get(rmKey) || { fact: 0, cities: new Set() };
+            currentRMTotals.fact += row.fact;
+            currentRMTotals.cities.add(row.city);
+            rmTotals.set(rmKey, currentRMTotals);
+            
+            // Totals for Brand Share (Average)
+            const brandKey = row.brand;
+            const currentBrandTotals = brandTotals.get(brandKey) || { fact: 0 };
+            currentBrandTotals.fact += row.fact;
+            brandTotals.set(brandKey, currentBrandTotals);
+
+            // Totals for RM-Brand combination
+            const rmBrandKey = `${row.rm}|${row.brand}`;
+            const currentRMBrandTotals = rmBrandTotals.get(rmBrandKey) || { fact: 0 };
+            currentRMBrandTotals.fact += row.fact;
+            rmBrandTotals.set(rmBrandKey, currentRMBrandTotals);
+
+            // Total Fact
+            totalFactAll += row.fact;
+
+            // City OKB for coverage calculation
+            if (!cityOkbTTs.has(row.city)) {
+                cityOkbTTs.set(row.city, row.potentialTTs);
+            }
+        });
+        
+        // --- MAIN CALCULATION ---
+        const calculatedData = baseAggregatedData.map(row => {
+            const { fact, rm, brand, activeTT } = row;
+            
+            // Formula constants
+            const baseInc = 0.15;
+            const w2 = 0.7; // coverage
+            const w3 = 0.3; // brand potential
+
+            // 1. Coverage Factor
+            const rmTotal = rmTotals.get(rm);
+            const rmTotalOkbTT = rmTotal ? Array.from(rmTotal.cities).reduce((sum, city) => sum + (cityOkbTTs.get(city) || 0), 0) : 0;
+            const coverageFactor = rmTotalOkbTT > 0 ? w2 * (1 - activeTT / rmTotalOkbTT) : 0;
+
+            // 2. Brand Potential Factor
+            const brandTotalFact = brandTotals.get(brand)?.fact || 0;
+            const rmTotalFact = rmTotals.get(rm)?.fact || 0;
+            const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
+            
+            const brandShareAvg = totalFactAll > 0 ? brandTotalFact / totalFactAll : 0;
+            const brandShareRM = rmTotalFact > 0 ? rmBrandTotalFact / rmTotalFact : 0;
+            
+            let brandPotentialFactor = 0;
+            if (brandShareRM > 0) {
+                const shareRatio = Math.min(5, brandShareAvg / brandShareRM);
+                brandPotentialFactor = w3 * (shareRatio - 1);
+            } else if (brandShareAvg > 0) {
+                brandPotentialFactor = w3 * 4; // Capped equivalent of ratio = 5
+            }
+
+            // Final Calculation
+            const totalMultiplier = 1 + baseInc + coverageFactor + brandPotentialFactor;
+            const newPlan = Math.max(fact, fact * totalMultiplier); // Plan should not be less than current fact
+
+            return { ...row, newPlan };
+        });
+
+        setDataWithPlan(calculatedData);
+    }, [baseAggregatedData]);
+
+
     const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
         const id = Date.now();
         setNotifications(prev => [...prev, { id, message, type }]);
@@ -393,42 +481,59 @@ export default function App() {
     
     const handleFileSelect = async (file: File) => {
         cleanupWorker();
-        setAggregatedData([]);
+        setBaseAggregatedData([]);
+        setDataWithPlan([]);
+        setRawParsedData([]);
         setFilters({ rm: '', brand: [], city: [] });
         setSearchTerm('');
         
         try {
             setLoadingState({ status: 'reading', progress: 10, text: 'Чтение и разбор файла...', etr: '' });
-
-            // --- Step 1: Parse file on the main thread ---
             const { processedData, uniqueLocations, existingClientsByRegion } = await parseFileAndExtractData(file);
-            
+            setRawParsedData(processedData);
             setLoadingState(prev => ({ ...prev, progress: 25, text: 'Файл успешно разобран. Инициализация AI-аналитика...' }));
 
-            // --- Step 2: Hand off data to the worker for heavy processing ---
-            const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), {
-                type: 'module'
-            });
+            const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             workerRef.current = worker;
             
             worker.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
                 const { type, payload } = e.data;
-
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    setAggregatedData(payload);
+                    const aggregatedFromWorker = payload;
+                    
+                    // Calculate activeTT per RM from the raw parsed data
+                    const rmToAddresses = new Map<string, Set<string>>();
+                    processedData.forEach(row => {
+                        if (!rmToAddresses.has(row.rm)) {
+                            rmToAddresses.set(row.rm, new Set());
+                        }
+                        rmToAddresses.get(row.rm)!.add(row.fullAddress);
+                    });
+                    
+                    const rmToActiveTT = new Map<string, number>();
+                    rmToAddresses.forEach((addresses, rm) => {
+                        rmToActiveTT.set(rm, addresses.size);
+                    });
+
+                    // Augment the aggregated data with the calculated activeTT
+                    const augmentedData = aggregatedFromWorker.map((row: Omit<AggregatedDataRow, 'activeTT'>) => ({
+                        ...row,
+                        activeTT: rmToActiveTT.get(row.rm) || 0,
+                    }));
+                    
+                    setBaseAggregatedData(augmentedData); // This will trigger the calculation useEffect
                     setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-                    addNotification('Анализ рынка завершен!', 'success');
+                    addNotification('Анализ рынка и расчет планов завершен!', 'success');
                     setTimeout(() => {
                         setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
                     }, 3000);
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
-                    const errorMessage = payload;
-                    addNotification('Ошибка: ' + errorMessage, 'error');
-                    setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + errorMessage, etr: '' });
+                    addNotification('Ошибка: ' + payload, 'error');
+                    setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + payload, etr: '' });
                     cleanupWorker();
                 }
             };
@@ -443,7 +548,7 @@ export default function App() {
 
             worker.postMessage({ 
                 processedData, 
-                uniqueLocations: Array.from(uniqueLocations), // Sets can't be cloned, so convert to array
+                uniqueLocations: Array.from(uniqueLocations),
                 existingClientsByRegion,
                 baseUrl: window.location.origin 
             });
@@ -476,14 +581,14 @@ export default function App() {
     }, [sortConfig]);
 
     const filterOptions = useMemo(() => {
-        const rms = [...new Set(aggregatedData.map(d => d.rm))].sort();
-        const brands = [...new Set(aggregatedData.map(d => d.brand))].sort();
-        const cities = [...new Set(aggregatedData.map(d => d.city))].sort();
+        const rms = [...new Set(baseAggregatedData.map(d => d.rm))].sort();
+        const brands = [...new Set(baseAggregatedData.map(d => d.brand))].sort();
+        const cities = [...new Set(baseAggregatedData.map(d => d.city))].sort();
         return { rms, brands, cities };
-    }, [aggregatedData]);
+    }, [baseAggregatedData]);
 
     const filteredAndSortedData = useMemo(() => {
-        let processedData = aggregatedData.filter(item => 
+        let processedData = dataWithPlan.filter(item => 
             (!filters.rm || item.rm === filters.rm) &&
             (filters.brand.length === 0 || filters.brand.includes(item.brand)) &&
             (filters.city.length === 0 || filters.city.includes(item.city))
@@ -499,14 +604,15 @@ export default function App() {
                 formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
                 formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
                 formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
+                (item.newPlan && formatLargeNumber(item.newPlan).toLowerCase().includes(lowercasedTerm)) ||
                 item.growthRate.toFixed(2).includes(lowercasedTerm)
             );
         }
 
         if (sortConfig !== null) {
             processedData.sort((a, b) => {
-                const aVal = a[sortConfig.key];
-                const bVal = b[sortConfig.key];
+                const aVal = a[sortConfig.key] ?? -Infinity;
+                const bVal = b[sortConfig.key] ?? -Infinity;
                 if (aVal < bVal) {
                     return sortConfig.direction === 'ascending' ? -1 : 1;
                 }
@@ -518,7 +624,7 @@ export default function App() {
         }
         
         return processedData;
-    }, [aggregatedData, filters, searchTerm, sortConfig]);
+    }, [dataWithPlan, filters, searchTerm, sortConfig]);
 
     const metrics = useMemo(() => calculateMetrics(filteredAndSortedData), [filteredAndSortedData]);
 
@@ -558,7 +664,7 @@ export default function App() {
                         currentFilters={filters}
                         onFilterChange={handleFilterChange}
                         onReset={resetFilters}
-                        disabled={aggregatedData.length === 0}
+                        disabled={baseAggregatedData.length === 0}
                     />
                     <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
                 </div>

@@ -24,6 +24,7 @@ const TableHeader: React.FC<{
         { key: 'city', label: 'Регион', align: 'text-left' },
         { key: 'potentialTTs', label: 'ОКБ (шт)', align: 'text-center' },
         { key: 'fact', label: 'Факт (кг/ед)', align: 'text-right' },
+        { key: 'newPlan', label: 'Новый План (кг/ед)', align: 'text-right' },
         { key: 'potential', label: 'Потенциал (кг/ед)', align: 'text-right' },
         { key: 'growthPotential', label: 'Рост (кг/ед)', align: 'text-right' },
         { key: 'growthRate', label: 'Рост (%)', align: 'text-right' },
@@ -73,6 +74,7 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
             <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.city}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-300 font-mono">{item.potentialTTs}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.fact)}</td>
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-purple-400 font-bold text-right">{item.newPlan ? formatLargeNumber(item.newPlan) : '-'}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.potential)}</td>
             <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold ${item.growthPotential >= 0 ? 'text-green-400' : 'text-danger'} text-right`}>
                 {formatLargeNumber(item.growthPotential)}
@@ -99,6 +101,7 @@ const SkeletonRow: React.FC = () => (
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
+        <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/4 ml-auto"></div></td>
     </tr>
 );
@@ -114,8 +117,10 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             rm: 'РМ',
             brand: 'Бренд',
             city: 'Город',
+            activeTT: 'Активные ТТ (шт)',
             potentialTTs: 'Общая Клиентская База (ОКБ, шт.)',
             fact: 'Факт (кг/ед)',
+            newPlan: 'Новый План (кг/ед)',
             potential: 'Потенциал (кг/ед)',
             growthPotential: 'Потенциал Роста (кг/ед)',
             growthRate: 'Рост (%)',
@@ -125,8 +130,10 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             [headers.rm]: row.rm,
             [headers.brand]: row.brand,
             [headers.city]: row.city,
+            [headers.activeTT]: row.activeTT,
             [headers.potentialTTs]: row.potentialTTs,
             [headers.fact]: Number(row.fact.toFixed(2)),
+            [headers.newPlan]: row.newPlan ? Number(row.newPlan.toFixed(2)) : 0,
             [headers.potential]: Number(row.potential.toFixed(2)),
             [headers.growthPotential]: Number(row.growthPotential.toFixed(2)),
             [headers.growthRate]: `${row.growthRate.toFixed(2)}%`,
@@ -134,13 +141,12 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
 
         const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Анализ_Рынка');
+        XLSX.utils.book_append_sheet(wb, ws, 'Анализ_Рынка_План');
 
-        const columnWidths = [
-            { wch: 30 }, { wch: 25 }, { wch: 25 }, { wch: 35 },
-            { wch: 18 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
+        ws['!cols'] = [
+            { wch: 30 }, { wch: 25 }, { wch: 25 }, { wch: 18 }, { wch: 35 },
+            { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
         ];
-        ws['!cols'] = columnWidths;
 
         const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
         ws['!autofilter'] = { ref: XLSX.utils.encode_range({s: range.s, e: {r: range.s.r, c: range.e.c }}) };
@@ -164,7 +170,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             return Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />);
         }
         if (data.length === 0) {
-            return (<tr><td colSpan={8} className="p-6 text-center text-gray-400">Нет данных для отображения. Загрузите файл или измените фильтры/поиск.</td></tr>);
+            return (<tr><td colSpan={9} className="p-6 text-center text-gray-400">Нет данных для отображения. Загрузите файл или измените фильтры/поиск.</td></tr>);
         }
         return data.map((item, index) => <TableRow key={`${item.rm}-${item.brand}-${item.city}-${index}`} item={item} onRowClick={handleRowClick} />);
     };

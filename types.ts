@@ -34,6 +34,8 @@ export interface AggregatedDataRow {
     potentialTTs: number;
     potentialClients: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
+    activeTT: number;
+    newPlan?: number;
 }
 
 export interface LoadingState {
@@ -61,6 +63,7 @@ export interface Metrics {
     totalGrowthPotential: number;
     totalGrowthRate: number;
     avgPlanIncrease: number;
+    totalNewPlan: number;
 }
 
 export interface NotificationMessage {

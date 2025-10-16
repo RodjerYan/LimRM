@@ -15,11 +15,12 @@ export function calculateMetrics(data: AggregatedDataRow[]): Metrics {
     const totalPotential = data.reduce((sum, item) => sum + item.potential, 0);
     const totalGrowthPotential = totalPotential - totalFact;
     const totalGrowthRate = totalFact > 0 ? (totalGrowthPotential / totalFact) * 100 : 0;
+    const totalNewPlan = data.reduce((sum, item) => sum + (item.newPlan || 0), 0);
     const avgPlanIncrease = data.length > 0
         ? data.reduce((sum, item) => sum + item.growthRate, 0) / data.length
         : 0;
 
-    return { totalFact, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease };
+    return { totalFact, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease, totalNewPlan };
 }
 
 export function formatLargeNumber(num: number): string {

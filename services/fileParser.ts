@@ -8,11 +8,12 @@ const normalizeHeader = (header: string): string => {
 };
 
 // Define all possible aliases for our required headers
+// FIX: Added missing keys `planPrev` and `activeTT` to satisfy the `Record<keyof Omit<RawDataRow, 'fullAddress'>, string[]>` type.
 const HEADER_ALIASES: Record<keyof Omit<RawDataRow, 'fullAddress'>, string[]> = {
     rm: ['рм', 'региональный менеджер', 'rm', 'regional manager'],
-    brand: ['бренд', 'brand'],
-    city: ['город', 'city'],
-    fact: ['факт (кг/ед)', 'факт', 'fact', 'факт (кг)'],
+    brand: ['бренд', 'brand', 'торговая марка'],
+    city: ['город', 'city', 'адрес тт limkorm', 'адрес поставки', 'адрес'],
+    fact: ['вес, кг', 'факт (кг/ед)', 'факт', 'fact', 'факт (кг)'],
 };
 
 // This function finds the actual header name in the file (e.g., "Региональный менеджер")
@@ -45,20 +46,24 @@ export const parseFile = (file: File): Promise<RawDataRow[]> => {
                 fact: findHeaderKey(fileHeaders, HEADER_ALIASES.fact),
             };
 
-            const parsedData = json.map((row: any) => {
+            const parsedData = json.map((row: any): RawDataRow | null => {
                 const factValue = headerMap.fact ? String(row[headerMap.fact] || '0').replace(',', '.') : '0';
                 const fact = parseFloat(factValue);
                 const city = headerMap.city ? String(row[headerMap.city] || '').trim() : '';
                 const rm = headerMap.rm ? String(row[headerMap.rm] || '').trim() : '';
+                
+                if (!city || !rm || isNaN(fact)) {
+                    return null;
+                }
 
                 return {
                     rm,
                     brand: headerMap.brand ? String(row[headerMap.brand] || 'Не указан').trim() : 'Не указан',
-                    fullAddress: city, // Fallback to city if no full address
+                    fullAddress: city,
                     city,
-                    fact: isNaN(fact) ? 0 : fact,
+                    fact,
                 };
-            }).filter(row => row.city && row.rm && row.fact >= 0); // Filter out rows that don't have the essential data
+            }).filter((row): row is RawDataRow => row !== null && row.fact >= 0);
 
             if (parsedData.length === 0) {
                 // This error now means that the columns might exist, but all rows had empty or invalid values in them.
