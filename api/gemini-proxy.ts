@@ -20,6 +20,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
+    // NEW: Add a check for the key format to catch common mistakes.
+    if (!apiKey.startsWith('AIza')) {
+        res.status(500).json({ 
+            error: 'Invalid API Key Format on Server', 
+            details: 'The provided API_KEY on the server seems to be incorrect. It should start with "AIza". Please double-check that you have not swapped the values for API_KEY and VITE_GEMINI_API_KEY in your Vercel settings and then redeploy.' 
+        });
+        return;
+    }
+
     try {
         const ai = new GoogleGenAI({ apiKey });
         
