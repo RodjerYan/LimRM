@@ -386,7 +386,6 @@ export default function App() {
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
-        const cityTotalTTs = new Map<string, number>();
         const brandRowCounts = new Map<string, number>();
         let totalFactAll = 0;
 
@@ -402,36 +401,36 @@ export default function App() {
 
             totalFactAll += row.fact;
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
-
-            if (!cityTotalTTs.has(row.city)) {
-                cityTotalTTs.set(row.city, row.totalMarketTTs);
-            }
         });
         
         // --- MAIN CALCULATION ---
         const calculatedData = baseAggregatedData.map(row => {
-            const { fact, rm, brand, city, activeTT } = row;
+            const { fact, rm, brand, activeTT, totalMarketTTs } = row;
             
             if (fact === 0) {
                 const brandTotalFact = brandTotals.get(brand)?.fact || 0;
                 const brandCount = brandRowCounts.get(brand) || 1;
-                // Calculate average sales for this brand across all its occurrences
                 const brandAvgFact = brandTotalFact / brandCount;
-                // The new plan for a zero-fact entry is a fraction of the brand's average, with a floor value.
-                // This provides a reasonable starting target.
                 const newPlan = Math.max(50, brandAvgFact * 0.1); 
                 return { ...row, newPlan };
             }
 
             const baseInc = baseIncreasePercent / 100;
-            const w_coverage = 0.7;
-            const w_brand = 0.3;
+            const w_coverage = 0.6; // Weight for market coverage potential
+            const w_brand = 0.4;    // Weight for brand portfolio balancing
 
-            // 1. Coverage Factor (based on this city's total market potential)
-            const totalTTs = cityTotalTTs.get(city) || 0;
-            const coverageFactor = totalTTs > 0 ? w_coverage * Math.max(0, (1 - activeTT / totalTTs)) : 0;
+            // 1. Coverage Factor (robustly calculated)
+            // This factor provides growth based on untapped market potential.
+            // It's designed to be resilient to underestimates of market size from the AI.
+            // We assume the real market is AT LEAST 10% larger than currently served TPs.
+            const effectiveTotalMarket = Math.max(activeTT, totalMarketTTs) + Math.ceil(activeTT * 0.10);
+            const penetration = Math.min(1.0, activeTT / effectiveTotalMarket);
+            // Use a non-linear (sqrt) curve to give a stronger boost for less saturated markets.
+            // This ensures the factor is never zero unless penetration is 100%, which is now impossible by design.
+            const coverageFactor = w_coverage * Math.sqrt(1 - penetration);
 
-            // 2. Brand Potential Factor (based on RM's performance vs. average)
+
+            // 2. Brand Potential Factor (balancing RM's brand portfolio against company average)
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
@@ -441,10 +440,12 @@ export default function App() {
             
             let brandPotentialFactor = 0;
             if (brandShareRM > 0) {
-                const shareRatio = Math.min(5, brandShareAvg / brandShareRM); // Cap growth potential
-                brandPotentialFactor = w_brand * (shareRatio - 1);
+                // If RM sells less of this brand than the average, this ratio is > 1, giving a bonus.
+                const shareRatio = Math.min(3, brandShareAvg / brandShareRM); // Cap potential to avoid extreme values
+                brandPotentialFactor = w_brand * (shareRatio - 1); // Can be negative if RM over-performs
             } else if (brandShareAvg > 0) {
-                brandPotentialFactor = w_brand * 4; // Max potential if RM doesn't sell the brand at all
+                // Assign a high potential factor if the RM doesn't sell this successful brand at all.
+                brandPotentialFactor = w_brand * 2; 
             }
 
             const totalMultiplier = 1 + baseInc + coverageFactor + brandPotentialFactor;
