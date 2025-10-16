@@ -418,7 +418,7 @@ export default function App() {
             const baseInc = baseIncreasePercent / 100;
             
             // Define weights and caps for dynamic growth factors
-            const maxDynamicGrowth = 0.30; // Max additional growth is 30%
+            const maxDynamicGrowth = 0.15; // Max additional growth is 15%
             const w_coverage = 0.6; // 60% of dynamic growth comes from market coverage
             const w_brand = 0.4;    // 40% of dynamic growth comes from brand balancing
 
