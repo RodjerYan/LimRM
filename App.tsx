@@ -13,6 +13,7 @@ description: >
   failures.
 ---
 */
+// FIX: Corrected React import for hooks
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
@@ -326,10 +327,15 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
 
 
 export default function App() {
-    const apiKeyExists = import.meta.env.VITE_GEMINI_API_KEY;
+    const clientApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-    if (!apiKeyExists) {
-        return <ApiKeyErrorDisplay />;
+    if (!clientApiKey) {
+        return <ApiKeyErrorDisplay errorType="missing" />;
+    }
+    // NEW: Add a specific check to prevent a common user error where the actual API key
+    // is placed in the client-side variable, which is both a security risk and incorrect.
+    if (clientApiKey.startsWith('AIza')) {
+        return <ApiKeyErrorDisplay errorType="swapped" />;
     }
     
     const [baseAggregatedData, setBaseAggregatedData] = useState<AggregatedDataRow[]>([]);

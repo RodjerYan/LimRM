@@ -217,7 +217,9 @@ async function getMarketPotentialFromGemini(locationName: string) {
         };
     } catch (error) {
         console.error('Gemini request failed for ' + locationName + ':', error);
-        return { count: 0, clients: [], cityCenter: null, error: 'fetch_error' };
+        // FIX: Re-throw the error so the main worker handler can catch it and
+        // show a detailed, user-friendly message instead of silently failing.
+        throw error;
     }
 }
 
@@ -340,6 +342,14 @@ self.onmessage = async (e: MessageEvent<{
         self.postMessage({ type: 'result', payload: finalAggregatedData });
 
     } catch (error) {
-        self.postMessage({ type: 'error', payload: error instanceof Error ? error.message : "Произошла неизвестная ошибка в фоновом обработчике." });
+        let errorMessage = "Произошла неизвестная ошибка в фоновом обработчике.";
+        if (error instanceof Error) {
+            if (error.message.toLowerCase().includes('api request failed') || error.message.toLowerCase().includes('failed to fetch')) {
+                errorMessage = "Не удалось подключиться к серверу аналитики. Это может быть связано с тем, что изменения в настройках (например, API ключ) еще не применились. Пожалуйста, попробуйте **перезапустить развертывание (Redeploy)** вашего проекта в Vercel и убедитесь, что ваш API ключ действителен в Google AI Studio.";
+            } else {
+                errorMessage = error.message;
+            }
+        }
+        self.postMessage({ type: 'error', payload: errorMessage });
     }
 };

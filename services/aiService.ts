@@ -113,7 +113,17 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
 
     } catch (error) {
         console.error("Gemini fetch stream error:", error);
-        let errorMessage = `### Ошибка сети\n\nНе удалось подключиться к прокси-серверу (\`${proxyUrl}\`). Проверьте сетевое подключение и убедитесь, что проект на Vercel развернут успешно.`;
+        let errorMessage = `### 🚨 Ошибка сети\n\nНе удалось подключиться к серверу аналитики (\`${proxyUrl}\`).\n\n` +
+                           `Это критическая ошибка, которая обычно вызвана одной из двух причин:\n\n` +
+                           `**1. Изменения не вступили в силу.**\n` +
+                           `Если вы только что добавили или изменили переменные окружения (например, \`API_KEY\`) в настройках Vercel, вам **необходимо перезапустить развертывание (Redeploy)**.\n` +
+                           `*Перейдите в ваш проект на Vercel → Deployments → выберите последнее развертывание и нажмите "Redeploy".*\n\n` +
+                           `**2. Проблема с ключом API на стороне Google.**\n` +
+                           `Даже если ключ скопирован верно, он может быть неактивен. Проверьте в [Google AI Studio](https://aistudio.google.com/app/apikey) или [Google Cloud Console](https://console.cloud.google.com/): \n` +
+                           `*   Что ключ API **активен (enabled)**.\n` +
+                           `*   Что для проекта **включен биллинг (billing)**, если это требуется.\n\n` +
+                           `Пожалуйста, проверьте эти два пункта. После перезапуска развертывания проблема должна исчезнуть.`;
+
         if (error instanceof Error && !error.message.toLowerCase().includes('failed to fetch')) {
              errorMessage = `### Внутренняя ошибка\n\nПроизошла ошибка при обработке запроса: ${error.message}`;
         }
