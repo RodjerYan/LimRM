@@ -1,3 +1,4 @@
+
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -81,7 +82,7 @@ const CITY_TO_REGION_MAP: Record<string, string> = {
     'абакан': 'Республика Хакасия',
     'грозный': 'Чеченская Республика',
     'чебоксары': 'Чувашская Республика',
-    'новочебоксарск': 'Чувашская Республика',
+    'новочебоксары': 'Чувашская Республика',
 
     // Krais
     'барнаул': 'Алтайский край',
@@ -531,16 +532,20 @@ export default function App() {
                  cleanupWorker();
             };
             
-            const proxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
-            if (!proxyUrl) {
+            const relativeProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
+            if (!relativeProxyUrl) {
                 throw new Error("URL прокси-сервера Gemini не настроен. Проверьте переменную VITE_GEMINI_PROXY_URL.");
             }
+
+            // Construct the absolute URL using the window's origin.
+            // This ensures the worker can find the API endpoint regardless of its own origin.
+            const absoluteProxyUrl = new URL(relativeProxyUrl, window.location.origin).href;
 
             worker.postMessage({ 
                 processedData, 
                 uniqueLocations: Array.from(uniqueLocations),
                 existingClientsByRegion,
-                proxyUrl
+                proxyUrl: absoluteProxyUrl
             });
 
         } catch(error) {
