@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/gemini-proxy.ts": {
+      "maxDuration": 45
+    }
+  },
   "rewrites": [
     {
       "source": "/api/gemini-proxy",
