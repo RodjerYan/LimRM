@@ -69,6 +69,9 @@ const TableHeader: React.FC<{
 };
 
 const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: AggregatedDataRow) => void }> = ({ item, onRowClick }) => {
+    const newPlanGrowthKg = item.newPlan && item.fact ? item.newPlan - item.fact : 0;
+    const newPlanGrowthPercent = item.newPlan && item.fact > 0 ? (newPlanGrowthKg / item.fact) * 100 : 0;
+
     return (
         <tr onClick={() => onRowClick(item)} className="hover:bg-gray-700/50 transition duration-150 cursor-pointer border-l-2 border-transparent hover:border-accent">
             <td className="px-4 py-3 text-sm font-medium text-white text-left">{item.rm}</td>
@@ -82,21 +85,21 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
                         <span>{formatLargeNumber(item.newPlan)}</span>
                         {item.fact > 0 && item.newPlan > item.fact && (
                             <span className="text-xs text-purple-300/70 font-normal mt-0.5">
-                                (+{((item.newPlan - item.fact) / item.fact * 100).toFixed(1)}%)
+                                (+{newPlanGrowthPercent.toFixed(1)}%)
                             </span>
                         )}
                     </div>
                 ) : '-'}
             </td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.potential)}</td>
-            <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold ${item.growthPotential >= 0 ? 'text-green-400' : 'text-danger'} text-right`}>
-                {formatLargeNumber(item.growthPotential)}
+            <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold ${newPlanGrowthKg >= 0 ? 'text-green-400' : 'text-danger'} text-right`}>
+                {formatLargeNumber(newPlanGrowthKg)}
             </td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-yellow-400 font-semibold text-right">
                  <div className="group relative inline-block">
-                  {item.growthRate.toFixed(2)}%
+                  {newPlanGrowthPercent.toFixed(2)}%
                   <div className="absolute bottom-full mb-2 w-64 p-2 text-xs bg-gray-900 text-white rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-10 left-1/2 -translate-x-1/2">
-                    Рост рассчитан на основе текущего факта, потенциала города ({item.potentialTTs} ТТ) и фактора насыщения рынка.
+                    Рост нового плана по отношению к факту.
                     <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-900"></div>
                   </div>
                 </div>

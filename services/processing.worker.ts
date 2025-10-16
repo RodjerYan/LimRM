@@ -19,6 +19,7 @@ interface ProcessedDataRow {
     growthPotential?: number;
     growthRate?: number;
     potentialTTs?: number; // This will be the count of NEW clients (OKB)
+    totalMarketTTs?: number;
     potentialClients?: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
     activeTT?: number; // Added for aggregation
@@ -80,7 +81,8 @@ function aggregateData(data: ProcessedDataRow[]) {
     data.forEach(item => {
         if (item.city && !seenSettlements.has(item.city)) {
             cityPotentialMap.set(item.city, { 
-                potentialTTs: item.potentialTTs || 0, 
+                potentialTTs: item.potentialTTs || 0,
+                totalMarketTTs: item.totalMarketTTs || 0, 
                 potentialClients: item.potentialClients || [], 
                 cityCenter: item.cityCenter 
             });
@@ -91,7 +93,7 @@ function aggregateData(data: ProcessedDataRow[]) {
     data.forEach(item => {
         const key = `${item.rm}|${item.brand}|${item.city}`;
         if (!aggregationMap.has(key)) {
-            const potentials = cityPotentialMap.get(item.city) || { potentialTTs: 0, potentialClients: [], cityCenter: null };
+            const potentials = cityPotentialMap.get(item.city) || { potentialTTs: 0, totalMarketTTs: 0, potentialClients: [], cityCenter: null };
             aggregationMap.set(key, {
                 rm: item.rm,
                 brand: item.brand,
@@ -102,6 +104,7 @@ function aggregateData(data: ProcessedDataRow[]) {
                 growthRateSum: 0,
                 count: 0,
                 potentialTTs: potentials.potentialTTs,
+                totalMarketTTs: potentials.totalMarketTTs,
                 potentialClients: potentials.potentialClients,
                 cityCenter: potentials.cityCenter,
                 addresses: new Set<string>(),
@@ -132,6 +135,7 @@ function aggregateData(data: ProcessedDataRow[]) {
             potential: item.potential,
             growthPotential: item.growthPotential,
             potentialTTs: item.potentialTTs,
+            totalMarketTTs: item.totalMarketTTs,
             potentialClients: uniqueClients,
             cityCenter: item.cityCenter,
             growthRate: item.count > 0 ? (item.growthRateSum / item.count) : 0,
@@ -292,12 +296,13 @@ const calculateRealisticPotential = async (
                 potential, 
                 growthPotential: potential - item.fact, 
                 growthRate: growthRate * 100, 
-                potentialTTs: regionPotential.okb, 
+                potentialTTs: regionPotential.okb,
+                totalMarketTTs: totalMarketTTs, 
                 potentialClients: regionPotential.clients, 
                 cityCenter: regionPotential.cityCenter 
             });
         } else {
-            dataWithPotential.push({ ...item, potential: item.fact, growthPotential: 0, growthRate: 0, potentialTTs: 0, potentialClients: [], cityCenter: null });
+            dataWithPotential.push({ ...item, potential: item.fact, growthPotential: 0, growthRate: 0, potentialTTs: 0, totalMarketTTs: 0, potentialClients: [], cityCenter: null });
         }
     }
     

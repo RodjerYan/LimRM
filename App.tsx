@@ -386,7 +386,7 @@ export default function App() {
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
-        const cityOkbTTs = new Map<string, number>();
+        const cityTotalTTs = new Map<string, number>();
         const brandRowCounts = new Map<string, number>();
         let totalFactAll = 0;
 
@@ -403,8 +403,8 @@ export default function App() {
             totalFactAll += row.fact;
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
 
-            if (!cityOkbTTs.has(row.city)) {
-                cityOkbTTs.set(row.city, row.potentialTTs);
+            if (!cityTotalTTs.has(row.city)) {
+                cityTotalTTs.set(row.city, row.totalMarketTTs);
             }
         });
         
@@ -427,9 +427,9 @@ export default function App() {
             const w_coverage = 0.7;
             const w_brand = 0.3;
 
-            // 1. Coverage Factor (based on this city's potential)
-            const cityOkb = cityOkbTTs.get(city) || 0;
-            const coverageFactor = cityOkb > 0 ? w_coverage * Math.max(0, (1 - activeTT / cityOkb)) : 0;
+            // 1. Coverage Factor (based on this city's total market potential)
+            const totalTTs = cityTotalTTs.get(city) || 0;
+            const coverageFactor = totalTTs > 0 ? w_coverage * Math.max(0, (1 - activeTT / totalTTs)) : 0;
 
             // 2. Brand Potential Factor (based on RM's performance vs. average)
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
@@ -589,8 +589,19 @@ export default function App() {
 
         if (sortConfig !== null) {
             processedData.sort((a, b) => {
-                const aVal = a[sortConfig.key] ?? -Infinity;
-                const bVal = b[sortConfig.key] ?? -Infinity;
+                let aVal, bVal;
+
+                if (sortConfig.key === 'growthPotential') {
+                    aVal = (a.newPlan || a.fact) - a.fact;
+                    bVal = (b.newPlan || b.fact) - b.fact;
+                } else if (sortConfig.key === 'growthRate') {
+                    aVal = a.fact > 0 ? ((a.newPlan || a.fact) - a.fact) / a.fact : 0;
+                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - b.fact) / b.fact : 0;
+                } else {
+                    aVal = a[sortConfig.key] ?? -Infinity;
+                    bVal = b[sortConfig.key] ?? -Infinity;
+                }
+
                 if (aVal < bVal) {
                     return sortConfig.direction === 'ascending' ? -1 : 1;
                 }

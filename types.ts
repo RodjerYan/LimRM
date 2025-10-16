@@ -32,6 +32,7 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthRate: number;
     potentialTTs: number;
+    totalMarketTTs: number;
     potentialClients: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
     activeTT: number;
