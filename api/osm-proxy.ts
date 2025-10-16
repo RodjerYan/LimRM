@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Allow CORS for worker and local dev
+    // Разрешаем CORS для воркера и локальной разработки
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -13,28 +13,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method !== 'POST') {
-        res.status(405).json({ error: 'Method Not Allowed' });
+        res.status(405).json({ error: 'Метод не разрешен' });
         return;
     }
 
     const { contents, config } = req.body;
 
     if (!contents) {
-        res.status(400).json({ error: 'Payload must contain "contents"' });
+        res.status(400).json({ error: 'Тело запроса должно содержать поле "contents"' });
         return;
     }
 
     const apiKey = process.env.API_KEY;
     if (!apiKey) {
-        res.status(500).json({ error: 'API key is not configured', details: 'The `API_KEY` environment variable is not set on the server.' });
+        res.status(500).json({ error: 'Ключ API не настроен', details: 'Переменная окружения `API_KEY` не установлена на сервере.' });
         return;
     }
 
-    // Add the better key validation from the other proxy file
     if (!apiKey.startsWith('AIza')) {
         res.status(500).json({ 
-            error: 'Invalid API Key Format on Server', 
-            details: 'The provided API_KEY on the server seems to be incorrect. It should start with "AIza". Please double-check that you have not swapped the values for API_KEY and VITE_GEMINI_API_KEY in your Vercel settings and then redeploy.' 
+            error: 'Неверный формат ключа API на сервере', 
+            details: 'Предоставленный API_KEY на сервере выглядит некорректным. Он должен начинаться с "AIza". Пожалуйста, перепроверьте, что вы не перепутали значения API_KEY и VITE_GEMINI_API_KEY в настройках Vercel, а затем перезапустите развертывание.' 
         });
         return;
     }
@@ -42,7 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const ai = new GoogleGenAI({ apiKey });
         
-        // Non-streaming JSON request (for worker)
+        // Непотоковый JSON-запрос (для воркера)
         if (config?.responseMimeType === 'application/json') {
             const response = await ai.models.generateContent({
                 model: "gemini-2.5-flash",
@@ -52,10 +51,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             const jsonText = response.text?.trim();
             if (!jsonText) {
-                console.error('Gemini API returned a response with no text content. This might be due to safety filters.');
+                console.error('Gemini API вернул ответ без текстового содержимого. Возможно, из-за фильтров безопасности.');
                 res.status(500).json({ 
-                    error: 'Received an empty text response from Gemini', 
-                    details: 'This can happen if the model\'s response was blocked by safety filters or if it failed to generate content.'
+                    error: 'Получен пустой текстовый ответ от Gemini', 
+                    details: 'Это может произойти, если ответ модели был заблокирован фильтрами безопасности или если не удалось сгенерировать контент.'
                 });
                 return;
             }
@@ -64,14 +63,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const jsonData = JSON.parse(jsonText);
                 res.status(200).json(jsonData);
             } catch (parseError: any) {
-                 console.error('Gemini JSON response parsing error:', parseError);
-                 console.error('Raw Gemini response text:', jsonText);
-                 res.status(500).json({ error: 'Failed to parse JSON response from Gemini', details: parseError.message, raw: jsonText });
+                 console.error('Ошибка разбора JSON-ответа от Gemini:', parseError);
+                 console.error('Необработанный текстовый ответ от Gemini:', jsonText);
+                 res.status(500).json({ error: 'Не удалось разобрать JSON-ответ от Gemini', details: parseError.message, raw: jsonText });
             }
             return;
         }
 
-        // Default to streaming text request (for AI Analyst)
+        // Потоковый текстовый запрос по умолчанию (для AI-Аналитика)
         const responseStream = await ai.models.generateContentStream({
             model: "gemini-2.5-flash",
             contents: contents,
@@ -88,9 +87,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.end();
 
     } catch (error: any) {
-        console.error('Gemini API Error:', error);
+        console.error('Ошибка Gemini API:', error);
         if (!res.headersSent) {
-             res.status(500).json({ error: 'Failed to fetch from Gemini API', details: error.message });
+             res.status(500).json({ error: 'Ошибка при запросе к Gemini API', details: error.message });
         } else {
              res.end();
         }

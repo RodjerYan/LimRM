@@ -48,7 +48,7 @@ const MissingKeyInstructions = () => (
                     Обязательно: Настройка прокси
                 </p>
                 <p className="text-slate-400">
-                    Для безопасного использования API **необходимо** настроить прокси-сервер (он уже есть в коде). Убедитесь, что переменная <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_GEMINI_PROXY_URL</code> установлена в значение <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">/api/gemini-proxy</code>.
+                    Для безопасного использования API **необходимо** настроить прокси-сервер (он уже есть в коде). Убедитесь, что переменная <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_GEMINI_PROXY_URL</code> установлена в значение <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">/api/osm-proxy</code>.
                 </p>
             </div>
         </div>
