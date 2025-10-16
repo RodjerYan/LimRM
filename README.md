@@ -43,7 +43,7 @@
       VITE_GEMINI_API_KEY="key_is_set_on_server"
 
       # URL для прокси-запросов к Gemini API
-      VITE_GEMINI_PROXY_URL="/api/osm-proxy"
+      VITE_GEMINI_PROXY_URL="/api/gemini-proxy"
       ```
 
 4.  **Запустите приложение:**
@@ -72,8 +72,8 @@
 
     **3. `VITE_GEMINI_PROXY_URL` (Путь к прокси-серверу)**
     - **Имя:** `VITE_GEMINI_PROXY_URL`
-    - **Значение:** `/api/osm-proxy`
-    - **Описание:** Путь к новому прокси-серверу, который будет обрабатывать запросы к Gemini.
+    - **Значение:** `/api/gemini-proxy`
+    - **Описание:** Путь к прокси-серверу, который будет обрабатывать запросы к Gemini.
 
     - Убедитесь, что все переменные доступны для всех окружений (Production, Preview, Development).
 
@@ -83,7 +83,7 @@
 ## ⚙️ Структура проекта
 
 -   `/api` - Serverless функции для Vercel.
-    -   `osm-proxy.ts` - Безопасный прокси для запросов к Google Gemini API, который скрывает ваш API ключ.
+    -   `gemini-proxy.ts` - Безопасный прокси для запросов к Google Gemini API, который скрывает ваш API ключ.
 -   `/components` - Переиспользуемые React компоненты.
 -   `/services` - Логика для работы с API, парсинга файлов и обработки данных (включая Web Worker).
 -   `vite.config.ts` - Конфигурация сборщика Vite.
