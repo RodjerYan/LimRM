@@ -1,4 +1,5 @@
 
+
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -532,20 +533,14 @@ export default function App() {
                  cleanupWorker();
             };
             
-            const relativeProxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
-            if (!relativeProxyUrl) {
-                throw new Error("URL прокси-сервера Gemini не настроен. Проверьте переменную VITE_GEMINI_PROXY_URL.");
-            }
-
-            // Construct the absolute URL using the window's origin.
-            // This ensures the worker can find the API endpoint regardless of its own origin.
-            const absoluteProxyUrl = new URL(relativeProxyUrl, window.location.origin).href;
+            // The worker now uses a dedicated OSM proxy, not the Gemini proxy.
+            const osmProxyUrl = new URL('/api/osm-proxy', window.location.origin).href;
 
             worker.postMessage({ 
                 processedData, 
                 uniqueLocations: Array.from(uniqueLocations),
                 existingClientsByRegion,
-                proxyUrl: absoluteProxyUrl
+                proxyUrl: osmProxyUrl
             });
 
         } catch(error) {

@@ -1,6 +1,32 @@
 import { GoogleGenAI } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// --- Key Rotation ---
+const getApiKeys = (): string[] => {
+    const keys: string[] = [];
+    // Check for the primary API_KEY first
+    if (process.env.API_KEY) {
+        keys.push(process.env.API_KEY);
+    }
+    // Check for numbered keys like API_KEY_2, API_KEY_3, etc.
+    let i = 2;
+    while (process.env[`API_KEY_${i}`]) {
+        keys.push(process.env[`API_KEY_${i}`]!);
+        i++;
+    }
+    return keys;
+};
+
+let keyIndex = 0;
+const getNextApiKey = (keys: string[]): string | undefined => {
+    if (keys.length === 0) return undefined;
+    const key = keys[keyIndex];
+    keyIndex = (keyIndex + 1) % keys.length; // Use round-robin to cycle through keys
+    return key;
+};
+// --- End Key Rotation ---
+
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Разрешаем CORS для воркера и локальной разработки
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,16 +50,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    const apiKey = process.env.API_KEY;
+    const apiKeys = getApiKeys();
+    if (apiKeys.length === 0) {
+        res.status(500).json({ error: 'Ключи API не настроены', details: 'Ни одна из переменных окружения `API_KEY`, `API_KEY_2`,... не установлена на сервере.' });
+        return;
+    }
+
+    const apiKey = getNextApiKey(apiKeys);
+
     if (!apiKey) {
-        res.status(500).json({ error: 'Ключ API не настроен', details: 'Переменная окружения `API_KEY` не установлена на сервере.' });
+        res.status(500).json({ error: 'Не удалось получить ключ API из пула' });
         return;
     }
 
     if (!apiKey.startsWith('AIza')) {
         res.status(500).json({ 
             error: 'Неверный формат ключа API на сервере', 
-            details: 'Предоставленный API_KEY на сервере выглядит некорректным. Он должен начинаться с "AIza". Пожалуйста, перепроверьте, что вы не перепутали значения API_KEY и VITE_GEMINI_API_KEY в настройках Vercel, а затем перезапустите развертывание.' 
+            details: 'Один из предоставленных ключей API (API_KEY, API_KEY_2, ...) выглядит некорректным. Он должен начинаться с "AIza". Пожалуйста, проверьте ключи в настройках Vercel.'
         });
         return;
     }

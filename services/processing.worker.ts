@@ -67,9 +67,6 @@ function calculateRealisticGrowthRate(fact: number, potentialTTs: number) {
     else if (potentialTTs <= 100) cityMultiplier = 1.6;
     else cityMultiplier = 2.0;
     growthRate *= cityMultiplier;
-    // Удален случайный коэффициент для обеспечения стабильности расчетов
-    // const randomVariation = 0.8 + (Math.random() * 0.4);
-    // growthRate *= randomVariation;
     return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
 }
 
@@ -145,128 +142,88 @@ function aggregateData(data: ProcessedDataRow[]) {
 }
 // --- END dataUtils ---
 
-// --- START geminiService ---
+
+// --- START osmService ---
 let proxyUrl = ''; // Will be set by the main thread
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
     return addr.toLowerCase()
         .replace(/[\s.,-/\\()]/g, '')
-        .replace(/^(ул|улица|пр|проспект|пер|переулок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
+        .replace(/^(ул|улица|пр|проспект|пер|перелок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
 };
 
-async function getMarketPotentialFromGemini(locationName: string, onRateLimit: (delay: number) => void) {
-    const MAX_RETRIES = 5;
-    let attempt = 0;
+async function getMarketPotentialFromOSM(locationName: string) {
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    const allClients = new Map<string, PotentialClient>();
+    let cityCenter: { lat: number, lon: number } | null = null;
+    const MAX_RETRIES = 3;
 
-    const prompt = `
-        You are a market research expert for the Russian market. Your task is to identify potential business clients for Limkorm, a pet food company.
-        For the entire region (oblast, krai, republic) of "${locationName}", Russia, please provide a comprehensive list of potential clients. This includes veterinary clinics, pet stores, and pharmacies that might sell pet supplies across all cities and towns within this region.
-        The response MUST be a single, valid JSON object that adheres to the provided schema. Do not include any text, notes, or markdown formatting outside of the JSON object.
-        Based on your knowledge and available data, provide the following:
-        1. A list of potential clients (\`potentialClients\`) from the entire region. For each client, provide:
-            - \`name\`: The name of the business.
-            - \`address\`: The full address of the business, including the city/town.
-            - \`type\`: The type of business (e.g., "Зоомагазин", "Ветклиника", "Ветаптека").
-            - \`lat\`: The geographical latitude.
-            - \`lon\`: The geographical longitude.
-        2. The total count of all potential clients you found (\`potentialTTs\`). This should be the length of the \`potentialClients\` array.
-        3. The central coordinates of the main administrative city of the region "${locationName}" (\`cityCenter\`).
-    `;
-    const schema = {
-        type: 'OBJECT',
-        properties: {
-            potentialTTs: { type: 'INTEGER', description: 'Общее количество найденных потенциальных торговых точек.' },
-            cityCenter: {
-                type: 'OBJECT',
-                description: 'Центральные географические координаты города.',
-                properties: { lat: { type: 'NUMBER' }, lon: { type: 'NUMBER' } },
-                required: ['lat', 'lon']
-            },
-            potentialClients: {
-                type: 'ARRAY',
-                items: {
-                    type: 'OBJECT',
-                    properties: {
-                        name: { type: 'STRING' }, address: { type: 'STRING' }, type: { type: 'STRING' },
-                        lat: { type: 'NUMBER' }, lon: { type: 'NUMBER' }
-                    },
-                    required: ['name', 'address', 'type', 'lat', 'lon']
+    const queryNominatim = async (term: string) => {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const searchParams = new URLSearchParams({
+                    q: `${term} в ${locationName}`,
+                });
+                const response = await fetch(`${proxyUrl}?${searchParams.toString()}`);
+                
+                if (!response.ok) {
+                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
+                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                        continue;
+                    }
+                    throw new Error(`OSM Proxy failed for "${term}" with status ${response.status}`);
                 }
+                return await response.json();
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1) {
+                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
             }
-        },
-        required: ['potentialTTs', 'cityCenter', 'potentialClients']
+        }
+        return [];
     };
 
-    while (attempt < MAX_RETRIES) {
+    for (const term of searchTerms) {
         try {
-            const response = await fetch(proxyUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: prompt,
-                    config: { responseMimeType: "application/json", responseSchema: schema }
-                })
-            });
+            const results = await queryNominatim(term);
+            for (const result of results) {
+                const key = result.osm_type + result.osm_id;
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                        lat: parseFloat(result.lat),
+                        lon: parseFloat(result.lon)
+                    });
 
-            if (response.ok) {
-                const data = await response.json();
-                return {
-                    count: data.potentialTTs || 0,
-                    clients: data.potentialClients || [],
-                    cityCenter: data.cityCenter || null,
-                };
-            }
-            
-            attempt++;
-            let delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000; // Default exponential backoff
-
-            if (response.status === 429) {
-                try {
-                    const errorJson = await response.json();
-                    const retryInfo = errorJson?.error?.details?.find((d: any) => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
-                    if (retryInfo && retryInfo.retryDelay) {
-                        const seconds = parseInt(retryInfo.retryDelay.replace('s', ''), 10);
-                        if (!isNaN(seconds)) {
-                            delayMs = (seconds * 1000) + (Math.random() * 500); // Use server-suggested delay + jitter
-                        }
+                    if (!cityCenter && result.importance > 0.4) {
+                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
                     }
-                } catch (e) { /* Ignore parsing errors, use default backoff */ }
-
-                if (attempt >= MAX_RETRIES) {
-                    throw new Error(`Превышен лимит API. Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
                 }
-                onRateLimit(delayMs);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-                continue;
             }
-            
-            // For other server errors (5xx), also retry
-            if (response.status >= 500) {
-                 if (attempt >= MAX_RETRIES) {
-                    throw new Error(`Сервер вернул ошибку ${response.status}. Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
-                 }
-                 console.warn(`Server error ${response.status} for ${locationName}. Retrying in ${delayMs / 1000}s...`);
-                 await new Promise(resolve => setTimeout(resolve, delayMs));
-                 continue;
-            }
-
-            // For other client errors (4xx), fail immediately
-            const errorText = await response.text();
-            throw new Error(`API request failed for ${locationName}: ${errorText}`);
-
         } catch (error) {
-            console.error(`Gemini request failed for ${locationName} (attempt ${attempt}):`, error);
-            if (attempt >= MAX_RETRIES) {
-                throw error; // Rethrow after final attempt
-            }
-             // Backoff for network errors
-            const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
-            await new Promise(resolve => setTimeout(resolve, delayMs));
+            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
         }
     }
-    throw new Error(`Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
+    
+    if (!cityCenter && allClients.size > 0) {
+        const firstClient = allClients.values().next().value;
+        if (firstClient?.lat && firstClient?.lon) {
+            cityCenter = { lat: firstClient.lat, lon: firstClient.lon };
+        }
+    }
+    
+    return {
+        count: allClients.size,
+        clients: Array.from(allClients.values()),
+        cityCenter: cityCenter
+    };
 }
+
 
 function createRequestQueue(concurrency: number) {
     const queue: any[] = []; let activeRequests = 0;
@@ -284,7 +241,7 @@ function createRequestQueue(concurrency: number) {
         });
     };
 }
-// --- END geminiService ---
+// --- END osmService ---
 
 const calculateRealisticPotential = async (
     initialData: ProcessedDataRow[], 
@@ -297,9 +254,9 @@ const calculateRealisticPotential = async (
     let processedCount = 0;
     const startTime = Date.now();
     
-    onProgress(30, 'Этап 1: Запрос данных у AI-аналитика...', NaN);
+    onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
 
-    const enqueue = createRequestQueue(2); // Reduced concurrency
+    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();
@@ -308,18 +265,8 @@ const calculateRealisticPotential = async (
         normalizedExistingClients.set(region, normalizedSet);
     }
 
-    const onRateLimit = (delayMs: number) => {
-        const currentProgress = 30 + (processedCount / totalLocations) * 65;
-        const etr = calculateEtr(startTime, processedCount, totalLocations);
-        onProgress(
-            currentProgress, 
-            `Лимит API. Пауза ${Math.round(delayMs / 1000)}с... (${processedCount}/${totalLocations})`, 
-            etr + (delayMs / 1000)
-        );
-    };
-
     const promises = locationArray.map(locationName => enqueue(async () => {
-        const totalPotential = await getMarketPotentialFromGemini(locationName, onRateLimit);
+        const totalPotential = await getMarketPotentialFromOSM(locationName);
         
         const existingAddressesSet = normalizedExistingClients.get(locationName) || new Set();
 
@@ -403,16 +350,8 @@ self.onmessage = async (e: MessageEvent<{
             
             if (lowerCaseMessage.includes('failed to fetch')) {
                 errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
-            } else if (lowerCaseMessage.includes('api request failed')) {
-                const serverResponse = error.message.substring(error.message.indexOf(':') + 1).trim();
-                let finalDetail = serverResponse;
-                try {
-                    const errorJson = JSON.parse(serverResponse);
-                    finalDetail = errorJson.details || errorJson.error || serverResponse;
-                } catch(e) {
-                    // Not JSON, just show the raw text
-                }
-                errorMessage = `Ошибка от сервера аналитики: ${finalDetail}`;
+            } else if (lowerCaseMessage.includes('api request failed') || lowerCaseMessage.includes('osm proxy failed')) {
+                errorMessage = `Ошибка от сервера OSM: ${error.message}`;
             } else {
                 errorMessage = error.message;
             }
