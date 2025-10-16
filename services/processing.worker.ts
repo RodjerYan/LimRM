@@ -343,8 +343,20 @@ self.onmessage = async (e: MessageEvent<{
     } catch (error) {
         let errorMessage = "Произошла неизвестная ошибка в фоновом обработчике.";
         if (error instanceof Error) {
-            if (error.message.toLowerCase().includes('api request failed') || error.message.toLowerCase().includes('failed to fetch')) {
-                errorMessage = "Не удалось подключиться к серверу аналитики. Это может быть связано с тем, что изменения в настройках (например, API ключ) еще не применились. Пожалуйста, попробуйте **перезапустить развертывание (Redeploy)** вашего проекта в Vercel и убедитесь, что ваш API ключ действителен в Google AI Studio.";
+            const lowerCaseMessage = error.message.toLowerCase();
+            
+            if (lowerCaseMessage.includes('failed to fetch')) {
+                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
+            } else if (lowerCaseMessage.includes('api request failed')) {
+                const serverResponse = error.message.substring(error.message.indexOf(':') + 1).trim();
+                let finalDetail = serverResponse;
+                try {
+                    const errorJson = JSON.parse(serverResponse);
+                    finalDetail = errorJson.details || errorJson.error || serverResponse;
+                } catch(e) {
+                    // Not JSON, just show the raw text
+                }
+                errorMessage = `Ошибка от сервера аналитики: ${finalDetail}`;
             } else {
                 errorMessage = error.message;
             }
