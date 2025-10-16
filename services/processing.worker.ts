@@ -21,6 +21,7 @@ interface ProcessedDataRow {
     potentialTTs?: number; // This will be the count of NEW clients (OKB)
     potentialClients?: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
+    activeTT?: number; // Added for aggregation
 }
 
 // --- START timeUtils ---
@@ -103,6 +104,7 @@ function aggregateData(data: ProcessedDataRow[]) {
                 potentialTTs: potentials.potentialTTs,
                 potentialClients: potentials.potentialClients,
                 cityCenter: potentials.cityCenter,
+                addresses: new Set<string>(),
             });
         }
         const current = aggregationMap.get(key);
@@ -111,6 +113,9 @@ function aggregateData(data: ProcessedDataRow[]) {
         current.growthPotential += item.growthPotential;
         current.growthRateSum += item.growthRate;
         current.count += 1;
+        if (item.fullAddress) {
+            current.addresses.add(item.fullAddress);
+        }
     });
 
     return Array.from(aggregationMap.values()).map(item => {
@@ -129,7 +134,8 @@ function aggregateData(data: ProcessedDataRow[]) {
             potentialTTs: item.potentialTTs,
             potentialClients: uniqueClients,
             cityCenter: item.cityCenter,
-            growthRate: item.count > 0 ? item.growthRateSum / item.count : 0,
+            growthRate: item.count > 0 ? (item.growthRateSum / item.count) : 0,
+            activeTT: item.addresses.size,
         };
     });
 }

@@ -291,7 +291,7 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
                     if (regionFound) {
                         location = regionFound;
                     } else {
-                        const normalizedLocation = mainLocationPart.toLowerCase().replace('ё', 'е');
+                        const normalizedLocation = mainLocationPart.toLowerCase().replace(/ё/g, 'е');
                         location = CITY_TO_REGION_MAP[normalizedLocation] || '';
                     }
 
@@ -334,7 +334,6 @@ export default function App() {
     
     const [baseAggregatedData, setBaseAggregatedData] = useState<AggregatedDataRow[]>([]);
     const [dataWithPlan, setDataWithPlan] = useState<AggregatedDataRow[]>([]);
-    const [rawParsedData, setRawParsedData] = useState<RawDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
@@ -384,36 +383,26 @@ export default function App() {
         setLoadingState(prev => ({ ...prev, status: 'aggregating', text: 'Расчет новых планов...', progress: 98 }));
 
         // --- PRE-COMPUTATION ---
-        const rmTotals = new Map<string, { fact: number; cities: Set<string> }>();
+        const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
         const cityOkbTTs = new Map<string, number>();
+        const brandRowCounts = new Map<string, number>();
         let totalFactAll = 0;
 
         baseAggregatedData.forEach(row => {
-            // Totals for Brand Share (RM)
             const rmKey = row.rm;
-            const currentRMTotals = rmTotals.get(rmKey) || { fact: 0, cities: new Set() };
-            currentRMTotals.fact += row.fact;
-            currentRMTotals.cities.add(row.city);
-            rmTotals.set(rmKey, currentRMTotals);
+            rmTotals.set(rmKey, { fact: (rmTotals.get(rmKey)?.fact || 0) + row.fact });
             
-            // Totals for Brand Share (Average)
             const brandKey = row.brand;
-            const currentBrandTotals = brandTotals.get(brandKey) || { fact: 0 };
-            currentBrandTotals.fact += row.fact;
-            brandTotals.set(brandKey, currentBrandTotals);
+            brandTotals.set(brandKey, { fact: (brandTotals.get(brandKey)?.fact || 0) + row.fact });
 
-            // Totals for RM-Brand combination
             const rmBrandKey = `${row.rm}|${row.brand}`;
-            const currentRMBrandTotals = rmBrandTotals.get(rmBrandKey) || { fact: 0 };
-            currentRMBrandTotals.fact += row.fact;
-            rmBrandTotals.set(rmBrandKey, currentRMBrandTotals);
+            rmBrandTotals.set(rmBrandKey, { fact: (rmBrandTotals.get(rmBrandKey)?.fact || 0) + row.fact });
 
-            // Total Fact
             totalFactAll += row.fact;
+            brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
 
-            // City OKB for coverage calculation
             if (!cityOkbTTs.has(row.city)) {
                 cityOkbTTs.set(row.city, row.potentialTTs);
             }
@@ -421,19 +410,28 @@ export default function App() {
         
         // --- MAIN CALCULATION ---
         const calculatedData = baseAggregatedData.map(row => {
-            const { fact, rm, brand, activeTT } = row;
+            const { fact, rm, brand, city, activeTT } = row;
             
-            // Formula constants
+            if (fact === 0) {
+                const brandTotalFact = brandTotals.get(brand)?.fact || 0;
+                const brandCount = brandRowCounts.get(brand) || 1;
+                // Calculate average sales for this brand across all its occurrences
+                const brandAvgFact = brandTotalFact / brandCount;
+                // The new plan for a zero-fact entry is a fraction of the brand's average, with a floor value.
+                // This provides a reasonable starting target.
+                const newPlan = Math.max(50, brandAvgFact * 0.1); 
+                return { ...row, newPlan };
+            }
+
             const baseInc = baseIncreasePercent / 100;
-            const w2 = 0.7; // coverage
-            const w3 = 0.3; // brand potential
+            const w_coverage = 0.7;
+            const w_brand = 0.3;
 
-            // 1. Coverage Factor
-            const rmTotal = rmTotals.get(rm);
-            const rmTotalOkbTT = rmTotal ? Array.from(rmTotal.cities).reduce((sum, city) => sum + (cityOkbTTs.get(city) || 0), 0) : 0;
-            const coverageFactor = rmTotalOkbTT > 0 ? w2 * (1 - activeTT / rmTotalOkbTT) : 0;
+            // 1. Coverage Factor (based on this city's potential)
+            const cityOkb = cityOkbTTs.get(city) || 0;
+            const coverageFactor = cityOkb > 0 ? w_coverage * Math.max(0, (1 - activeTT / cityOkb)) : 0;
 
-            // 2. Brand Potential Factor
+            // 2. Brand Potential Factor (based on RM's performance vs. average)
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
@@ -443,15 +441,14 @@ export default function App() {
             
             let brandPotentialFactor = 0;
             if (brandShareRM > 0) {
-                const shareRatio = Math.min(5, brandShareAvg / brandShareRM);
-                brandPotentialFactor = w3 * (shareRatio - 1);
+                const shareRatio = Math.min(5, brandShareAvg / brandShareRM); // Cap growth potential
+                brandPotentialFactor = w_brand * (shareRatio - 1);
             } else if (brandShareAvg > 0) {
-                brandPotentialFactor = w3 * 4; // Capped equivalent of ratio = 5
+                brandPotentialFactor = w_brand * 4; // Max potential if RM doesn't sell the brand at all
             }
 
-            // Final Calculation
             const totalMultiplier = 1 + baseInc + coverageFactor + brandPotentialFactor;
-            const newPlan = Math.max(fact, fact * totalMultiplier); // Plan should not be less than current fact
+            const newPlan = Math.max(fact, fact * totalMultiplier);
 
             return { ...row, newPlan };
         });
@@ -484,14 +481,12 @@ export default function App() {
         cleanupWorker();
         setBaseAggregatedData([]);
         setDataWithPlan([]);
-        setRawParsedData([]);
         setFilters({ rm: '', brand: [], city: [] });
         setSearchTerm('');
         
         try {
             setLoadingState({ status: 'reading', progress: 10, text: 'Чтение и разбор файла...', etr: '' });
             const { processedData, uniqueLocations, existingClientsByRegion } = await parseFileAndExtractData(file);
-            setRawParsedData(processedData);
             setLoadingState(prev => ({ ...prev, progress: 25, text: 'Файл успешно разобран. Инициализация AI-аналитика...' }));
 
             const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
@@ -502,29 +497,7 @@ export default function App() {
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    const aggregatedFromWorker = payload;
-                    
-                    // Calculate activeTT per RM from the raw parsed data
-                    const rmToAddresses = new Map<string, Set<string>>();
-                    processedData.forEach(row => {
-                        if (!rmToAddresses.has(row.rm)) {
-                            rmToAddresses.set(row.rm, new Set());
-                        }
-                        rmToAddresses.get(row.rm)!.add(row.fullAddress);
-                    });
-                    
-                    const rmToActiveTT = new Map<string, number>();
-                    rmToAddresses.forEach((addresses, rm) => {
-                        rmToActiveTT.set(rm, addresses.size);
-                    });
-
-                    // Augment the aggregated data with the calculated activeTT
-                    const augmentedData = aggregatedFromWorker.map((row: Omit<AggregatedDataRow, 'activeTT'>) => ({
-                        ...row,
-                        activeTT: rmToActiveTT.get(row.rm) || 0,
-                    }));
-                    
-                    setBaseAggregatedData(augmentedData); // This will trigger the calculation useEffect
+                    setBaseAggregatedData(payload); // This will trigger the calculation useEffect
                     setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
                     addNotification('Анализ рынка и расчет планов завершен!', 'success');
                     setTimeout(() => {

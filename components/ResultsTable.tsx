@@ -76,7 +76,18 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
             <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.city}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-300 font-mono">{item.potentialTTs}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.fact)}</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-purple-400 font-bold text-right">{item.newPlan ? formatLargeNumber(item.newPlan) : '-'}</td>
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-purple-400 font-bold text-right">
+                {item.newPlan ? (
+                    <div className="flex flex-col items-end leading-tight">
+                        <span>{formatLargeNumber(item.newPlan)}</span>
+                        {item.fact > 0 && item.newPlan > item.fact && (
+                            <span className="text-xs text-purple-300/70 font-normal mt-0.5">
+                                (+{((item.newPlan - item.fact) / item.fact * 100).toFixed(1)}%)
+                            </span>
+                        )}
+                    </div>
+                ) : '-'}
+            </td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.potential)}</td>
             <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold ${item.growthPotential >= 0 ? 'text-green-400' : 'text-danger'} text-right`}>
                 {formatLargeNumber(item.growthPotential)}
