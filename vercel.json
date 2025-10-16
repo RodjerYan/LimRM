@@ -1,13 +1,13 @@
 {
   "functions": {
-    "api/gemini-proxy.ts": {
+    "api/osm-proxy.ts": {
       "maxDuration": 58
     }
   },
   "rewrites": [
     {
-      "source": "/api/gemini-proxy",
-      "destination": "/api/gemini-proxy"
+      "source": "/api/osm-proxy",
+      "destination": "/api/osm-proxy"
     }
   ]
 }
