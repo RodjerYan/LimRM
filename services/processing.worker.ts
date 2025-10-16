@@ -146,7 +146,7 @@ function aggregateData(data: ProcessedDataRow[]) {
 // --- END dataUtils ---
 
 // --- START geminiService ---
-let baseUrl = ''; // Will be set by the main thread
+let proxyUrl = ''; // Will be set by the main thread
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
@@ -156,7 +156,6 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromGemini(locationName: string) {
-    const proxyUrl = baseUrl + '/api/gemini-proxy';
     const prompt = `
         You are a market research expert for the Russian market. Your task is to identify potential business clients for Limkorm, a pet food company.
         For the entire region (oblast, krai, republic) of "${locationName}", Russia, please provide a comprehensive list of potential clients. This includes veterinary clinics, pet stores, and pharmacies that might sell pet supplies across all cities and towns within this region.
@@ -317,10 +316,10 @@ self.onmessage = async (e: MessageEvent<{
     processedData: ProcessedDataRow[], 
     uniqueLocations: string[], 
     existingClientsByRegion: Record<string, string[]>,
-    baseUrl: string 
+    proxyUrl: string 
 }>) => {
-    const { processedData, uniqueLocations, existingClientsByRegion, baseUrl: newBaseUrl } = e.data;
-    baseUrl = newBaseUrl;
+    const { processedData, uniqueLocations, existingClientsByRegion, proxyUrl: newProxyUrl } = e.data;
+    proxyUrl = newProxyUrl;
 
     try {
         const locationCount = uniqueLocations.length;

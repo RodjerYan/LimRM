@@ -530,12 +530,17 @@ export default function App() {
                  setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
                  cleanupWorker();
             };
+            
+            const proxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
+            if (!proxyUrl) {
+                throw new Error("URL прокси-сервера Gemini не настроен. Проверьте переменную VITE_GEMINI_PROXY_URL.");
+            }
 
             worker.postMessage({ 
                 processedData, 
                 uniqueLocations: Array.from(uniqueLocations),
                 existingClientsByRegion,
-                baseUrl: window.location.origin 
+                proxyUrl
             });
 
         } catch(error) {
