@@ -194,9 +194,9 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                     <h2 className="text-xl font-bold text-white whitespace-nowrap">Детализированные результаты</h2>
-                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                    <div className="flex items-end gap-4 w-full sm:w-auto">
                         <div className="relative flex-shrink-0">
-                            <label htmlFor="baseIncreaseInput" className="block text-xs font-medium text-gray-400 mb-1 text-center">Базовый рост (%)</label>
+                            <label htmlFor="baseIncreaseInput" className="block text-xs font-medium text-gray-400 mb-1">Базовый рост (%)</label>
                             <input
                                 id="baseIncreaseInput"
                                 type="number"

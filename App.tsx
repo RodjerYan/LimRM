@@ -580,6 +580,10 @@ export default function App() {
         }
         setSortConfig({ key, direction });
     }, [sortConfig]);
+    
+    const handleBaseIncreaseChange = useCallback((value: number) => {
+        setBaseIncreasePercent(value);
+    }, []);
 
     const filterOptions = useMemo(() => {
         const rms = [...new Set(baseAggregatedData.map(d => d.rm))].sort();
@@ -680,7 +684,7 @@ export default function App() {
                         searchTerm={searchTerm}
                         onSearchChange={setSearchTerm}
                         baseIncreasePercent={baseIncreasePercent}
-                        onBaseIncreaseChange={setBaseIncreasePercent}
+                        onBaseIncreaseChange={handleBaseIncreaseChange}
                     />
                 </div>
             </div>
