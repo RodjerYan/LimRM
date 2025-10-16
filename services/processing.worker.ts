@@ -155,7 +155,10 @@ const normalizeAddress = (addr: string): string => {
         .replace(/^(ул|улица|пр|проспект|пер|переулок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
 };
 
-async function getMarketPotentialFromGemini(locationName: string) {
+async function getMarketPotentialFromGemini(locationName: string, onRateLimit: (delay: number) => void) {
+    const MAX_RETRIES = 5;
+    let attempt = 0;
+
     const prompt = `
         You are a market research expert for the Russian market. Your task is to identify potential business clients for Limkorm, a pet food company.
         For the entire region (oblast, krai, republic) of "${locationName}", Russia, please provide a comprehensive list of potential clients. This includes veterinary clinics, pet stores, and pharmacies that might sell pet supplies across all cities and towns within this region.
@@ -195,31 +198,74 @@ async function getMarketPotentialFromGemini(locationName: string) {
         required: ['potentialTTs', 'cityCenter', 'potentialClients']
     };
 
-    try {
-        const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: prompt,
-                config: { responseMimeType: "application/json", responseSchema: schema }
-            })
-        });
-        if (!response.ok) {
+    while (attempt < MAX_RETRIES) {
+        try {
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: prompt,
+                    config: { responseMimeType: "application/json", responseSchema: schema }
+                })
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                return {
+                    count: data.potentialTTs || 0,
+                    clients: data.potentialClients || [],
+                    cityCenter: data.cityCenter || null,
+                };
+            }
+            
+            attempt++;
+            let delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000; // Default exponential backoff
+
+            if (response.status === 429) {
+                try {
+                    const errorJson = await response.json();
+                    const retryInfo = errorJson?.error?.details?.find((d: any) => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
+                    if (retryInfo && retryInfo.retryDelay) {
+                        const seconds = parseInt(retryInfo.retryDelay.replace('s', ''), 10);
+                        if (!isNaN(seconds)) {
+                            delayMs = (seconds * 1000) + (Math.random() * 500); // Use server-suggested delay + jitter
+                        }
+                    }
+                } catch (e) { /* Ignore parsing errors, use default backoff */ }
+
+                if (attempt >= MAX_RETRIES) {
+                    throw new Error(`Превышен лимит API. Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
+                }
+                onRateLimit(delayMs);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                continue;
+            }
+            
+            // For other server errors (5xx), also retry
+            if (response.status >= 500) {
+                 if (attempt >= MAX_RETRIES) {
+                    throw new Error(`Сервер вернул ошибку ${response.status}. Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
+                 }
+                 console.warn(`Server error ${response.status} for ${locationName}. Retrying in ${delayMs / 1000}s...`);
+                 await new Promise(resolve => setTimeout(resolve, delayMs));
+                 continue;
+            }
+
+            // For other client errors (4xx), fail immediately
             const errorText = await response.text();
             throw new Error(`API request failed for ${locationName}: ${errorText}`);
+
+        } catch (error) {
+            console.error(`Gemini request failed for ${locationName} (attempt ${attempt}):`, error);
+            if (attempt >= MAX_RETRIES) {
+                throw error; // Rethrow after final attempt
+            }
+             // Backoff for network errors
+            const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+            await new Promise(resolve => setTimeout(resolve, delayMs));
         }
-        const data = await response.json();
-        return {
-            count: data.potentialTTs || 0,
-            clients: data.potentialClients || [],
-            cityCenter: data.cityCenter || null,
-        };
-    } catch (error) {
-        console.error('Gemini request failed for ' + locationName + ':', error);
-        // FIX: Re-throw the error so the main worker handler can catch it and
-        // show a detailed, user-friendly message instead of silently failing.
-        throw error;
     }
+    throw new Error(`Не удалось получить данные для "${locationName}" после ${MAX_RETRIES} попыток.`);
 }
 
 function createRequestQueue(concurrency: number) {
@@ -253,7 +299,7 @@ const calculateRealisticPotential = async (
     
     onProgress(30, 'Этап 1: Запрос данных у AI-аналитика...', NaN);
 
-    const enqueue = createRequestQueue(4);
+    const enqueue = createRequestQueue(2); // Reduced concurrency
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();
@@ -262,8 +308,18 @@ const calculateRealisticPotential = async (
         normalizedExistingClients.set(region, normalizedSet);
     }
 
+    const onRateLimit = (delayMs: number) => {
+        const currentProgress = 30 + (processedCount / totalLocations) * 65;
+        const etr = calculateEtr(startTime, processedCount, totalLocations);
+        onProgress(
+            currentProgress, 
+            `Лимит API. Пауза ${Math.round(delayMs / 1000)}с... (${processedCount}/${totalLocations})`, 
+            etr + (delayMs / 1000)
+        );
+    };
+
     const promises = locationArray.map(locationName => enqueue(async () => {
-        const totalPotential = await getMarketPotentialFromGemini(locationName);
+        const totalPotential = await getMarketPotentialFromGemini(locationName, onRateLimit);
         
         const existingAddressesSet = normalizedExistingClients.get(locationName) || new Set();
 
