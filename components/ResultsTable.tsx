@@ -12,6 +12,8 @@ interface ResultsTableProps {
     requestSort: (key: keyof AggregatedDataRow) => void;
     searchTerm: string;
     onSearchChange: (value: string) => void;
+    baseIncreasePercent: number;
+    onBaseIncreaseChange: (value: number) => void;
 }
 
 const TableHeader: React.FC<{
@@ -106,7 +108,7 @@ const SkeletonRow: React.FC = () => (
     </tr>
 );
 
-const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig, requestSort, searchTerm, onSearchChange }) => {
+const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig, requestSort, searchTerm, onSearchChange, baseIncreasePercent, onBaseIncreaseChange }) => {
     const [modalData, setModalData] = useState<AggregatedDataRow | null>(null);
 
     const handleRowClick = (item: AggregatedDataRow) => setModalData(item);
@@ -165,6 +167,18 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
         XLSX.writeFile(wb, 'Limkorm_Market_Analysis_Report.xlsx');
     };
 
+    const handleBaseIncreaseInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        if (value === '') {
+            onBaseIncreaseChange(0);
+            return;
+        }
+        const numValue = parseFloat(value);
+        if (!isNaN(numValue) && numValue >= 0) {
+            onBaseIncreaseChange(numValue);
+        }
+    };
+
     const renderBody = () => {
         if (isLoading) {
             return Array.from({ length: 8 }).map((_, i) => <SkeletonRow key={i} />);
@@ -179,8 +193,22 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
         <>
             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                    <h2 className="text-xl font-bold text-white">Детализированные результаты</h2>
-                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <h2 className="text-xl font-bold text-white whitespace-nowrap">Детализированные результаты</h2>
+                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div className="relative flex-shrink-0">
+                            <label htmlFor="baseIncreaseInput" className="block text-xs font-medium text-gray-400 mb-1 text-center">Базовый рост (%)</label>
+                            <input
+                                id="baseIncreaseInput"
+                                type="number"
+                                value={baseIncreasePercent}
+                                onChange={handleBaseIncreaseInputChange}
+                                className="w-28 p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition text-center"
+                                min="0"
+                                step="0.1"
+                                disabled={isLoading || data.length === 0}
+                            />
+                        </div>
+
                         <div className="relative flex-grow sm:flex-grow-0">
                             <input 
                                 type="text"
@@ -193,7 +221,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
                                 <SearchIcon />
                             </div>
                         </div>
-                         <button onClick={handleExport} className="p-2.5 bg-success/20 hover:bg-success/30 text-success font-bold rounded-lg transition duration-200" title="Экспорт в Excel (.xlsx)">
+                         <button onClick={handleExport} disabled={data.length === 0} className="p-2.5 bg-success/20 hover:bg-success/30 text-success font-bold rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                             <ExportIcon />
                         </button>
                     </div>

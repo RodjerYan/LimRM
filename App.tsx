@@ -354,6 +354,7 @@ export default function App() {
     });
     const [searchTerm, setSearchTerm] = useState<string>(() => localStorage.getItem('geoAnalysisSearchTerm') || '');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'growthPotential', direction: 'descending' });
+    const [baseIncreasePercent, setBaseIncreasePercent] = useState<number>(15);
 
     const workerRef = useRef<Worker | null>(null);
 
@@ -423,7 +424,7 @@ export default function App() {
             const { fact, rm, brand, activeTT } = row;
             
             // Formula constants
-            const baseInc = 0.15;
+            const baseInc = baseIncreasePercent / 100;
             const w2 = 0.7; // coverage
             const w3 = 0.3; // brand potential
 
@@ -456,7 +457,7 @@ export default function App() {
         });
 
         setDataWithPlan(calculatedData);
-    }, [baseAggregatedData]);
+    }, [baseAggregatedData, baseIncreasePercent]);
 
 
     const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
@@ -678,6 +679,8 @@ export default function App() {
                         requestSort={requestSort}
                         searchTerm={searchTerm}
                         onSearchChange={setSearchTerm}
+                        baseIncreasePercent={baseIncreasePercent}
+                        onBaseIncreaseChange={setBaseIncreasePercent}
                     />
                 </div>
             </div>
