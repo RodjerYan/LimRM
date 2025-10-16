@@ -416,39 +416,43 @@ export default function App() {
             }
 
             const baseInc = baseIncreasePercent / 100;
-            const w_coverage = 0.6; // Weight for market coverage potential
-            const w_brand = 0.4;    // Weight for brand portfolio balancing
+            
+            // Define weights and caps for dynamic growth factors
+            const maxDynamicGrowth = 0.30; // Max additional growth is 30%
+            const w_coverage = 0.6; // 60% of dynamic growth comes from market coverage
+            const w_brand = 0.4;    // 40% of dynamic growth comes from brand balancing
 
-            // 1. Coverage Factor (robustly calculated)
-            // This factor provides growth based on untapped market potential.
-            // It's designed to be resilient to underestimates of market size from the AI.
-            // We assume the real market is AT LEAST 10% larger than currently served TPs.
+            // 1. Calculate Coverage Score (0 to 1)
+            // A score of 1 means high potential (low market penetration).
             const effectiveTotalMarket = Math.max(activeTT, totalMarketTTs) + Math.ceil(activeTT * 0.10);
-            const penetration = Math.min(1.0, activeTT / effectiveTotalMarket);
-            // Use a non-linear (sqrt) curve to give a stronger boost for less saturated markets.
-            // This ensures the factor is never zero unless penetration is 100%, which is now impossible by design.
-            const coverageFactor = w_coverage * Math.sqrt(1 - penetration);
+            const penetration = Math.min(1.0, activeTT > 0 ? (activeTT / effectiveTotalMarket) : 0);
+            const coverageScore = Math.sqrt(1 - penetration);
 
-
-            // 2. Brand Potential Factor (balancing RM's brand portfolio against company average)
+            // 2. Calculate Brand Balance Score (-1 to 1)
+            // A positive score means the RM is under-performing on this brand compared to the company average.
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
             
-            const brandShareAvg = totalFactAll > 0 ? brandTotalFact / totalFactAll : 0;
-            const brandShareRM = rmTotalFact > 0 ? rmBrandTotalFact / rmTotalFact : 0;
-            
-            let brandPotentialFactor = 0;
-            if (brandShareRM > 0) {
-                // If RM sells less of this brand than the average, this ratio is > 1, giving a bonus.
-                const shareRatio = Math.min(3, brandShareAvg / brandShareRM); // Cap potential to avoid extreme values
-                brandPotentialFactor = w_brand * (shareRatio - 1); // Can be negative if RM over-performs
-            } else if (brandShareAvg > 0) {
-                // Assign a high potential factor if the RM doesn't sell this successful brand at all.
-                brandPotentialFactor = w_brand * 2; 
+            let brandScore = 0;
+            if (rmTotalFact > 0 && brandTotalFact > 0 && totalFactAll > 0) {
+                const brandShareAvg = brandTotalFact / totalFactAll;
+                const brandShareRM = rmBrandTotalFact / rmTotalFact;
+                if (brandShareRM > 0) {
+                    const shareRatio = brandShareAvg / brandShareRM;
+                    // Use tanh for smooth, bounded [-1, 1] scoring
+                    brandScore = Math.tanh(shareRatio - 1);
+                } else {
+                    // RM doesn't sell this brand at all, give a high score
+                    brandScore = 1; 
+                }
             }
-
-            const totalMultiplier = 1 + baseInc + coverageFactor + brandPotentialFactor;
+            
+            // 3. Combine scores into a single, capped dynamic growth factor
+            const dynamicGrowth = maxDynamicGrowth * (w_coverage * coverageScore + w_brand * brandScore);
+            
+            // 4. Calculate final multiplier and the new plan
+            const totalMultiplier = 1 + baseInc + dynamicGrowth;
             const newPlan = Math.max(fact, fact * totalMultiplier);
 
             return { ...row, newPlan };
