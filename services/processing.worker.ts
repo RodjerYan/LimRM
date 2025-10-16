@@ -65,8 +65,9 @@ function calculateRealisticGrowthRate(fact: number, potentialTTs: number) {
     else if (potentialTTs <= 100) cityMultiplier = 1.6;
     else cityMultiplier = 2.0;
     growthRate *= cityMultiplier;
-    const randomVariation = 0.8 + (Math.random() * 0.4);
-    growthRate *= randomVariation;
+    // Удален случайный коэффициент для обеспечения стабильности расчетов
+    // const randomVariation = 0.8 + (Math.random() * 0.4);
+    // growthRate *= randomVariation;
     return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
 }
 

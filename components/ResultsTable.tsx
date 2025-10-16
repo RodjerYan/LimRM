@@ -194,15 +194,17 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
                     <h2 className="text-xl font-bold text-white whitespace-nowrap">Детализированные результаты</h2>
-                    <div className="flex items-end gap-4 w-full sm:w-auto">
-                        <div className="relative flex-shrink-0">
-                            <label htmlFor="baseIncreaseInput" className="block text-xs font-medium text-gray-400 mb-1">Базовый рост (%)</label>
+                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div className="relative">
                             <input
                                 id="baseIncreaseInput"
+                                aria-label="Базовый рост в процентах"
                                 type="number"
                                 value={baseIncreasePercent}
                                 onChange={handleBaseIncreaseInputChange}
-                                className="w-28 p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition text-center"
+                                placeholder="Рост (%)"
+                                title="Базовый рост (%)"
+                                className="w-32 p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition text-center"
                                 min="0"
                                 step="0.1"
                                 disabled={isLoading || data.length === 0}
