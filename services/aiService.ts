@@ -37,84 +37,99 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
         contents: prompt
     };
 
-    try {
-        const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
-        });
-        
-        if (!response.ok) {
-            const errorText = await response.text();
-            let detailedError = "Неизвестная ошибка сервера.";
-            let isApiKeyError = false;
+    const maxRetries = 3;
+    let attempt = 1;
 
-            try {
-                const errorJson = JSON.parse(errorText);
-                const errorMessage = errorJson.error || '';
-                detailedError = errorJson.details || errorMessage || errorText;
-                if (typeof errorMessage === 'string' && errorMessage.includes('API key is not configured')) {
-                    isApiKeyError = true;
+    while (attempt <= maxRetries) {
+        try {
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                let detailedError = "Неизвестная ошибка сервера.";
+                let isApiKeyError = false;
+
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    const errorMessage = errorJson.error || '';
+                    detailedError = errorJson.details || errorMessage || errorText;
+                    if (typeof errorMessage === 'string' && errorMessage.includes('API key is not configured')) {
+                        isApiKeyError = true;
+                    }
+                } catch (e) {
+                    detailedError = errorText;
                 }
-            } catch (e) {
-                detailedError = errorText;
+
+                if (isApiKeyError) {
+                    yield `### 🚨 **Критическая Ошибка Конфигурации Сервера**\n\n` +
+                          `**Проблема:** Ключ API для Google Gemini **не найден на сервере**.\n\n` +
+                          `Это означает, что переменная окружения с именем \`API_KEY\` отсутствует или неверно настроена в вашем проекте на Vercel.\n\n` +
+                          `--- \n` +
+                          `#### 🔍 **Важное замечание (частая ошибка):** \n` +
+                          `Пожалуйста, убедитесь, что вы создали переменную с именем ровно **\`API_KEY\`**, а не \`VITE_GEMINI_API_KEY\`. \n\n`+
+                          `*   \`VITE_GEMINI_API_KEY\` — это **клиентская** переменная. Она нужна только для того, чтобы приложение запустилось. \n` +
+                          `*   \`API_KEY\` — это **серверная** переменная. Именно она содержит сам ключ и используется для запросов к AI. **Именно её сейчас не хватает.**\n\n` +
+                          `--- \n` +
+                          `**Как исправить:**\n` +
+                          `1.  Перейдите в настройки вашего проекта на **Vercel**.\n` +
+                          `2.  Найдите раздел **Settings → Environment Variables**.\n` +
+                          `3.  Создайте **новую** переменную с именем (Key) **\`API_KEY\`**.\n` +
+                          `4.  В поле значения (Value) вставьте ваш ключ API от **Google Gemini**.\n` +
+                          `5.  Убедитесь, что переменная доступна для всех окружений (Production, Preview, Development).\n` +
+                          `6.  Сохраните и **перезапустите развертывание (Redeploy)**.\n\n` +
+                          `*Эта функция не заработает, пока вы не выполните эти шаги.*`;
+                    return; // Non-retryable error, exit immediately
+                }
+
+                yield `### Ошибка API\n\nПрокси-сервер вернул ошибку от Google Gemini.\n**Статус:** ${response.status}\n**Ответ:** \`${detailedError}\``;
+                return; // Non-retryable error, exit immediately
             }
 
-            if (isApiKeyError) {
-                yield `### 🚨 **Критическая Ошибка Конфигурации Сервера**\n\n` +
-                      `**Проблема:** Ключ API для Google Gemini **не найден на сервере**.\n\n` +
-                      `Это означает, что переменная окружения с именем \`API_KEY\` отсутствует или неверно настроена в вашем проекте на Vercel.\n\n` +
-                      `--- \n` +
-                      `#### 🔍 **Важное замечание (частая ошибка):** \n` +
-                      `Пожалуйста, убедитесь, что вы создали переменную с именем ровно **\`API_KEY\`**, а не \`VITE_GEMINI_API_KEY\`. \n\n`+
-                      `*   \`VITE_GEMINI_API_KEY\` — это **клиентская** переменная. Она нужна только для того, чтобы приложение запустилось. \n` +
-                      `*   \`API_KEY\` — это **серверная** переменная. Именно она содержит сам ключ и используется для запросов к AI. **Именно её сейчас не хватает.**\n\n` +
-                      `--- \n` +
-                      `**Как исправить:**\n` +
-                      `1.  Перейдите в настройки вашего проекта на **Vercel**.\n` +
-                      `2.  Найдите раздел **Settings → Environment Variables**.\n` +
-                      `3.  Создайте **новую** переменную с именем (Key) **\`API_KEY\`**.\n` +
-                      `4.  В поле значения (Value) вставьте ваш ключ API от **Google Gemini**.\n` +
-                      `5.  Убедитесь, что переменная доступна для всех окружений (Production, Preview, Development).\n` +
-                      `6.  Сохраните и **перезапустите развертывание (Redeploy)**.\n\n` +
-                      `*Эта функция не заработает, пока вы не выполните эти шаги.*`;
+            const fullText = await response.text();
+
+            if (!fullText) {
+                yield "### Ошибка\n\nСервер вернул пустой ответ.";
                 return;
             }
 
-            yield `### Ошибка API\n\nПрокси-сервер вернул ошибку от Google Gemini.\n**Статус:** ${response.status}\n**Ответ:** \`${detailedError}\``;
-            return;
+            // Simulate stream for better UX by yielding chunks of the full text
+            const chunkSize = 10; // characters per chunk
+            for (let i = 0; i < fullText.length; i += chunkSize) {
+                yield fullText.substring(i, i + chunkSize);
+                await new Promise(resolve => setTimeout(resolve, 15)); // Small delay for typing effect
+            }
+            return; // Success, exit the loop
+
+        } catch (error) {
+            console.error(`Gemini fetch attempt ${attempt}/${maxRetries} failed:`, error);
+            
+            if (attempt === maxRetries) {
+                // Last attempt failed, show the final error message
+                let errorMessage = `### 🚨 Ошибка сети\n\nНе удалось подключиться к серверу аналитики (\`${proxyUrl}\`).\n\n` +
+                                   `Это критическая ошибка, которая обычно вызвана одной из двух причин:\n\n` +
+                                   `**1. Изменения не вступили в силу.**\n` +
+                                   `Если вы только что добавили или изменили переменные окружения (например, \`API_KEY\`) в настройках Vercel, вам **необходимо перезапустить развертывание (Redeploy)**.\n` +
+                                   `*Перейдите в ваш проект на Vercel → Deployments → выберите последнее развертывание и нажмите "Redeploy".*\n\n` +
+                                   `**2. Проблема с ключом API на стороне Google.**\n` +
+                                   `Даже если ключ скопирован верно, он может быть неактивен. Проверьте в [Google AI Studio](https://aistudio.google.com/app/apikey) или [Google Cloud Console](https://console.cloud.google.com/): \n` +
+                                   `*   Что ключ API **активен (enabled)**.\n` +
+                                   `*   Что для проекта **включен биллинг (billing)**, если это требуется.\n\n` +
+                                   `Пожалуйста, проверьте эти два пункта. После перезапуска развертывания проблема должна исчезнуть.`;
+
+                if (error instanceof Error && !error.message.toLowerCase().includes('failed to fetch')) {
+                     errorMessage = `### Внутренняя ошибка\n\nПроизошла ошибка при обработке запроса: ${error.message}`;
+                }
+                yield errorMessage;
+                return; // Exit after final error
+            }
+
+            // Not the last attempt, wait and prepare for retry
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // 1s, 2s delay
+            attempt++;
         }
-
-        const fullText = await response.text();
-
-        if (!fullText) {
-            yield "### Ошибка\n\nСервер вернул пустой ответ.";
-            return;
-        }
-
-        // Simulate stream for better UX by yielding chunks of the full text
-        const chunkSize = 10; // characters per chunk
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(resolve => setTimeout(resolve, 15)); // Small delay for typing effect
-        }
-
-    } catch (error) {
-        console.error("Gemini fetch stream error:", error);
-        let errorMessage = `### 🚨 Ошибка сети\n\nНе удалось подключиться к серверу аналитики (\`${proxyUrl}\`).\n\n` +
-                           `Это критическая ошибка, которая обычно вызвана одной из двух причин:\n\n` +
-                           `**1. Изменения не вступили в силу.**\n` +
-                           `Если вы только что добавили или изменили переменные окружения (например, \`API_KEY\`) в настройках Vercel, вам **необходимо перезапустить развертывание (Redeploy)**.\n` +
-                           `*Перейдите в ваш проект на Vercel → Deployments → выберите последнее развертывание и нажмите "Redeploy".*\n\n` +
-                           `**2. Проблема с ключом API на стороне Google.**\n` +
-                           `Даже если ключ скопирован верно, он может быть неактивен. Проверьте в [Google AI Studio](https://aistudio.google.com/app/apikey) или [Google Cloud Console](https://console.cloud.google.com/): \n` +
-                           `*   Что ключ API **активен (enabled)**.\n` +
-                           `*   Что для проекта **включен биллинг (billing)**, если это требуется.\n\n` +
-                           `Пожалуйста, проверьте эти два пункта. После перезапуска развертывания проблема должна исчезнуть.`;
-
-        if (error instanceof Error && !error.message.toLowerCase().includes('failed to fetch')) {
-             errorMessage = `### Внутренняя ошибка\n\nПроизошла ошибка при обработке запроса: ${error.message}`;
-        }
-        yield errorMessage;
     }
 };
