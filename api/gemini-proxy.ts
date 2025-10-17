@@ -1,157 +1,169 @@
 import { GoogleGenAI } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// --- Управление ключами API ---
+// 🎨 Цвета для консоли
+const colors = {
+  reset: "\x1b[0m",
+  gray: "\x1b[90m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  bold: "\x1b[1m"
+};
+
+// --- Получение ключей API ---
 const getApiKeys = (): string[] => {
-    const keys: string[] = [];
-    if (process.env.API_KEY) {
-        keys.push(process.env.API_KEY);
-    }
-    let i = 2;
-    while (process.env[`API_KEY_${i}`]) {
-        keys.push(process.env[`API_KEY_${i}`]!);
-        i++;
-    }
-    return keys;
+  const keys: string[] = [];
+  if (process.env.API_KEY) keys.push(process.env.API_KEY);
+  let i = 2;
+  while (process.env[`API_KEY_${i}`]) {
+    keys.push(process.env[`API_KEY_${i}`]!);
+    i++;
+  }
+  return keys;
 };
 
-// Перемешивание массива по алгоритму Фишера-Йейтса для случайного порядка ключей
+// --- Перемешивание массива (Фишер-Йейтс) ---
 const shuffleArray = <T>(array: T[]): T[] => {
-    const newArray = [...array];
-    for (let i = newArray.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-    }
-    return newArray;
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 };
-// --- Конец управления ключами ---
 
-
+// --- Основной обработчик ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Разрешаем CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  // --- CORS ---
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
 
-    if (req.method !== 'POST') {
-        res.status(405).json({ error: 'Метод не разрешен' });
-        return;
-    }
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Метод не разрешён' });
+    return;
+  }
 
-    const { contents, config } = req.body;
-    if (!contents) {
-        res.status(400).json({ error: 'Тело запроса должно содержать поле "contents"' });
-        return;
-    }
+  const { contents, config } = req.body;
+  if (!contents) {
+    res.status(400).json({ error: 'Не указано поле "contents" в теле запроса' });
+    return;
+  }
 
-    const apiKeys = getApiKeys();
-    if (apiKeys.length === 0) {
-        res.status(500).json({ error: 'Ключи API не настроены', details: 'Ни одна из переменных окружения `API_KEY`, `API_KEY_2`,... не установлена на сервере.' });
-        return;
-    }
+  const apiKeys = shuffleArray(getApiKeys());
+  if (apiKeys.length === 0) {
+    res.status(500).json({ error: 'Ключи API не настроены' });
+    return;
+  }
 
-    const shuffledKeys = shuffleArray(apiKeys);
-    let lastError: any = null;
-    let requestHandled = false;
+  console.log(`${colors.cyan}${colors.bold}🧠 Найдено ${apiKeys.length} ключ(ей) Gemini. Начинаю обработку...${colors.reset}`);
+  const startTime = Date.now();
 
-    for (const apiKey of shuffledKeys) {
-        if (!apiKey || !apiKey.startsWith('AIza')) {
-            console.warn('Пропуск ключа API с неверным форматом.');
-            continue;
-        }
+  let lastError: any = null;
+  let handled = false;
+  let attempts = 0;
+
+  for (const apiKey of apiKeys) {
+    attempts++;
+    const shortKey = apiKey.slice(-6);
+    console.log(`${colors.blue}🚀 Попытка #${attempts}${colors.reset} — ${colors.gray}ключ ...${shortKey}${colors.reset}`);
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+
+      // --- JSON-запрос ---
+      if (config?.responseMimeType === 'application/json') {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config,
+        });
+
+        const text = response.text?.trim();
+        if (!text) throw new Error('Пустой ответ модели');
 
         try {
-            const ai = new GoogleGenAI({ apiKey });
-            
-            if (config?.responseMimeType === 'application/json') {
-                // --- Обработка НЕ-потокового JSON-запроса ---
-                const response = await ai.models.generateContent({
-                    model: "gemini-2.5-flash",
-                    contents,
-                    config,
-                });
-
-                const jsonText = response.text?.trim();
-                if (!jsonText) {
-                    throw new Error('Получен пустой текстовый ответ от Gemini, возможно из-за фильтров безопасности.');
-                }
-                
-                try {
-                    const jsonData = JSON.parse(jsonText);
-                    res.status(200).json(jsonData);
-                } catch (parseError: any) {
-                     throw new Error(`Не удалось разобрать JSON-ответ от Gemini: ${parseError.message}. Ответ: ${jsonText}`);
-                }
-
-            } else {
-                // --- Обработка потокового текстового запроса ---
-                const responseStream = await ai.models.generateContentStream({
-                    model: "gemini-2.5-flash",
-                    contents,
-                    config,
-                });
-
-                const iterator = responseStream[Symbol.asyncIterator]();
-                const firstChunkResult = await iterator.next();
-
-                if (firstChunkResult.done) {
-                    res.status(200).end();
-                } else {
-                    if (!res.headersSent) {
-                        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-                        res.setHeader('Cache-Control', 'no-cache');
-                        res.setHeader('Connection', 'keep-alive');
-                    }
-                    
-                    res.write(firstChunkResult.value.text);
-                    
-                    const streamTimeout = setTimeout(() => {
-                        if (!res.writableEnded) {
-                            console.warn(`Таймаут (60с) при чтении потока Gemini (ключ ...${apiKey.slice(-4)}). Завершение ответа.`);
-                            res.end();
-                        }
-                    }, 60000);
-
-                    try {
-                        for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
-                            if (res.writableEnded) break;
-                            res.write(chunk.text);
-                        }
-                    } finally {
-                        clearTimeout(streamTimeout);
-                        if (!res.writableEnded) {
-                            res.end();
-                        }
-                    }
-                }
-            }
-            
-            console.info(`✅ Запрос успешно обработан ключом ...${apiKey.slice(-4)}.`);
-            requestHandled = true;
-            break; 
-
-        } catch (error: any) {
-            lastError = error;
-            const errorMessage = (error.message || '').toLowerCase();
-            
-            if (errorMessage.includes('429') || errorMessage.includes('resource_exhausted') || errorMessage.includes('too many requests') || errorMessage.includes('failed to fetch')) {
-                console.warn(`Ключ API (...${apiKey.slice(-4)}) столкнулся с лимитом или сетевой ошибкой. Пробуем следующий. Ошибка: ${error.message}`);
-            } else {
-                console.error('Невосстановимая ошибка Gemini API. Прерывание попыток.', error);
-                break; 
-            }
+          const json = JSON.parse(text);
+          console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${Date.now() - startTime} мс`);
+          res.status(200).json(json);
+          handled = true;
+          break;
+        } catch (e) {
+          console.error(`${colors.red}⚠️ Ошибка парсинга JSON при ключе ...${shortKey}:${colors.reset}`, e);
+          res.status(500).json({ error: 'Ошибка парсинга JSON', raw: text });
+          handled = true;
+          break;
         }
-    }
+      }
 
-    if (!requestHandled && !res.headersSent) {
-        console.error('Все ключи API не сработали. Последняя ошибка:', lastError);
-        const errorDetails = lastError?.message || 'Неизвестная ошибка.';
-        const finalMessage = `Все доступные ключи API исчерпали лимиты или произошла невосстановимая ошибка. Последняя ошибка: ${errorDetails}`;
-        res.status(500).json({ error: 'Не удалось выполнить запрос к Gemini API', details: finalMessage });
+      // --- Потоковый ответ ---
+      const stream = await ai.models.generateContentStream({
+        model: 'gemini-2.5-flash',
+        contents,
+        config,
+      });
+
+      const iterator = stream[Symbol.asyncIterator]();
+      const first = await iterator.next();
+
+      if (first.done) {
+        console.log(`${colors.yellow}⚠️ Поток пуст (ключ ...${shortKey}), но без ошибок.${colors.reset}`);
+        res.status(200).end();
+        handled = true;
+        break;
+      }
+
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      res.write(first.value.text);
+
+      for await (const chunk of iterator) {
+        if (chunk.text) res.write(chunk.text);
+      }
+
+      res.end();
+      console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} завершил стрим за ${Date.now() - startTime} мс`);
+      handled = true;
+      break;
+
+    } catch (err: any) {
+      lastError = err;
+      const msg = (err.message || '').toLowerCase();
+
+      if (
+        msg.includes('429') ||
+        msg.includes('resource_exhausted') ||
+        msg.includes('quota') ||
+        msg.includes('too many requests')
+      ) {
+        console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь на следующий.${colors.reset}`);
+        continue;
+      }
+
+      console.error(`${colors.red}❌ Ошибка при ключе ...${shortKey}:${colors.reset} ${err.message}`);
+      break;
     }
+  }
+
+  if (!handled && !res.headersSent) {
+    console.error(`${colors.red}${colors.bold}💥 Все ключи не сработали. Последняя ошибка:${colors.reset}`, lastError?.message);
+    res.status(500).json({
+      error: 'Не удалось выполнить запрос к Gemini API',
+      details: lastError?.message || 'Неизвестная ошибка.',
+    });
+  }
+
+  const totalTime = Date.now() - startTime;
+  console.log(`${colors.magenta}⏱️ Всего времени: ${totalTime} мс (${attempts} попыток).${colors.reset}`);
 }
