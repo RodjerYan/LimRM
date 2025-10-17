@@ -336,7 +336,7 @@ self.onmessage = async (e: MessageEvent<{
         
         const onProgress = (progress: number, text: string, etr: number) => {
             self.postMessage({ type: 'progress', payload: { status: 'fetching', progress, text, etr: formatTime(etr) } });
-        };Ф
+        };
         
         const dataWithPotential = await calculateRealisticPotential(processedData, uniqueLocations, existingClientsByRegion, onProgress);
         
