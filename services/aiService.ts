@@ -1,8 +1,7 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-// This function now uses a simple, robust proxy endpoint.
-// It fetches the full response and then simulates a stream for the UI.
+// This function now uses the robust task queue architecture.
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -29,9 +28,13 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
 
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
     `;
+    
+    const POLLING_INTERVAL = 1500; // ms
+    const MAX_ATTEMPTS = 40; // 1500ms * 40 = 60 seconds timeout
 
     try {
-        const response = await fetch('/api/gemini-proxy', {
+        // --- Step 1: Create the task ---
+        const createTaskResponse = await fetch('/api/gemini-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -40,29 +43,57 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
             }),
         });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            yield `### Ошибка AI-Аналитика\n\nНе удалось получить ответ от сервера. Детали: ${errorData.error || response.statusText}`;
+        if (!createTaskResponse.ok) {
+            const errorText = await createTaskResponse.text();
+            yield `### Ошибка\n\nНе удалось создать задачу для AI-аналитика. Статус: ${createTaskResponse.status}. ${errorText}`;
             return;
         }
 
-        const result = await response.json();
-        const fullText = result.text;
-
-        if (!fullText) {
-             yield `### Ошибка AI-Аналитика\n\nСервер вернул пустой ответ.`;
-             return;
+        const { taskId } = await createTaskResponse.json();
+        if (!taskId) {
+            yield `### Ошибка\n\nСервер не вернул ID задачи.`;
+            return;
         }
 
-        // Simulate the "typing" effect on the client side
-        const chunkSize = 15;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20));
+        // --- Step 2: Poll for the result ---
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            if (!statusResponse.ok) {
+                // If the status check fails, wait and retry.
+                await new Promise(r => setTimeout(r, POLLING_INTERVAL));
+                continue;
+            }
+
+            const taskStatus = await statusResponse.json();
+
+            if (taskStatus.status === 'done') {
+                const fullText = taskStatus.result?.text;
+                 if (!fullText) {
+                    yield `### Ошибка AI-Аналитика\n\nЗадача выполнена, но результат пуст.`;
+                    return;
+                }
+                // Simulate typing effect
+                const chunkSize = 15;
+                for (let j = 0; j < fullText.length; j += chunkSize) {
+                    yield fullText.substring(j, j + chunkSize);
+                    await new Promise(r => setTimeout(r, 20));
+                }
+                return; // Success, end the generator
+            }
+            
+            if (taskStatus.status === 'error') {
+                yield `### Ошибка AI-Аналитика\n\nВо время обработки произошла ошибка: ${taskStatus.error}`;
+                return; // Failure, end the generator
+            }
+
+            // If still pending, wait for the next poll
+            await new Promise(r => setTimeout(r, POLLING_INTERVAL));
         }
+        
+        yield `### Ошибка\n\nВремя ожидания ответа от AI-аналитика истекло.`;
 
     } catch (err: any) {
-        console.error("Gemini fetch failed:", err);
+        console.error("Gemini task process failed:", err);
         yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
     }
 }
