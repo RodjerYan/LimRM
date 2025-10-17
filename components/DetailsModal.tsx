@@ -88,7 +88,7 @@ const AiSummaryDisplay: React.FC<{ text: string }> = ({ text }) => {
         return result;
     }, [text]);
 
-    return <div className="prose prose-invert text-gray-300 max-w-none">{elements}</div>;
+    return <div className="prose prose-invert text-gray-300 max-w-none break-words">{elements}</div>;
 };
 
 
@@ -266,10 +266,10 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
 
                 {/* BOTTOM ROW: AI Analysis + Map/Client List */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
-                    <div className="lg:col-span-1">
+                    <div className="lg:col-span-1 min-w-0">
                         <AiAnalysis data={data} className="h-[450px]" />
                     </div>
-                    <div className="lg:col-span-1">
+                    <div className="lg:col-span-1 min-w-0">
                         <div className="bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-[450px] flex flex-col">
                             <h3 className="text-xl font-semibold text-white mb-4 text-center">Карта Потенциальных Клиентов</h3>
                             <div className="relative flex-grow w-full min-h-0 rounded-lg overflow-hidden border border-gray-700 shadow-inner">
