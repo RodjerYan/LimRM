@@ -1,37 +1,6 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-const GEMINI_PROXY_URL = '/api/gemini-proxy';
-
-/**
- * Выполняет fetch-запрос с несколькими попытками в случае сбоя сети или серверных ошибок.
- * @param url - URL для запроса.
- * @param options - Опции для fetch.
- * @param retries - Количество попыток.
- * @param delay - Начальная задержка между попытками.
- * @returns Промис с объектом Response.
- */
-async function fetchWithRetry(url: string, options: RequestInit, retries = 3, delay = 500): Promise<Response> {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const response = await fetch(url, options);
-            if (response.status === 429 || response.status >= 500) { // Повтор при ограничении скорости или ошибках сервера
-                throw new Error(`Ошибка сервера: ${response.status}`);
-            }
-            return response;
-        } catch (error) {
-            if (i < retries - 1) {
-                await new Promise(res => setTimeout(res, delay * (i + 1))); // Экспоненциальная задержка
-            } else {
-                console.error(`Последняя попытка для ${url} не удалась:`, error);
-                throw error;
-            }
-        }
-    }
-    // Этот код не должен быть достижим, но необходим для TypeScript.
-    throw new Error("Fetch с повторами неожиданно завершился неудачей.");
-}
-
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -58,44 +27,69 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
 
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
     `;
-    
-    const absoluteProxyUrl = `${window.location.origin}${GEMINI_PROXY_URL}`;
 
     try {
-        const response = await fetchWithRetry(absoluteProxyUrl, {
+        // 1. Создаём задачу на сервере
+        const createResponse = await fetch('/api/gemini-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: prompt }),
+            body: JSON.stringify({ prompt }),
         });
 
-        if (!response.ok) {
-            const errorText = await response.text().catch(() => 'Не удалось прочитать тело ответа.');
-            throw new Error(`Ошибка сети или сервера (${response.status}): ${errorText}`);
+        if (!createResponse.ok) {
+            const errorData = await createResponse.json();
+            yield `### Ошибка создания задачи\n\nНе удалось запустить AI-аналитика. Сервер ответил: ${errorData.error || 'Неизвестная ошибка'}`;
+            return;
         }
 
-        if (!response.body) {
-            throw new Error("Ответ сервера не содержит тела для стриминга.");
+        const { taskId } = await createResponse.json();
+        if (!taskId) {
+            yield "### Ошибка\n\nСервер не вернул идентификатор задачи.";
+            return;
         }
 
-        // Read from the stream
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let done = false;
+        // 2. Опрашиваем статус задачи, пока она не будет выполнена
+        let isFinished = false;
+        const maxPolls = 60; // ~1 минута ожидания
+        let polls = 0;
 
-        while (!done) {
-            const { value, done: readerDone } = await reader.read();
-            done = readerDone;
-            if (value) {
-                const chunk = decoder.decode(value, { stream: true });
-                yield chunk;
+        while (!isFinished && polls < maxPolls) {
+            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            
+            if (!statusResponse.ok) {
+                // Если сам сервер опроса недоступен, прекращаем
+                yield `### Ошибка сети\n\nНе удалось проверить статус задачи. Попробуйте снова.`;
+                return;
+            }
+
+            const taskStatus = await statusResponse.json();
+
+            if (taskStatus.status === 'done') {
+                const fullText = taskStatus.result;
+                // Симулируем "печатание" текста на клиенте
+                const chunkSize = 15;
+                for (let i = 0; i < fullText.length; i += chunkSize) {
+                    yield fullText.substring(i, i + chunkSize);
+                    await new Promise(r => setTimeout(r, 20));
+                }
+                isFinished = true;
+
+            } else if (taskStatus.status === 'error') {
+                yield `### Ошибка AI-Аналитика\n\nПроизошла ошибка при обработке вашего запроса: ${taskStatus.error}`;
+                isFinished = true;
+
+            } else {
+                // Статус 'pending', ждем и пробуем снова
+                await new Promise(r => setTimeout(r, 1500)); 
+                polls++;
             }
         }
 
+        if (!isFinished) {
+            yield `### Ошибка: Время ожидания истекло\n\nАнализ занимает слишком много времени. Пожалуйста, попробуйте снова.`;
+        }
+
     } catch (err: any) {
-        console.error("AI summary generation failed:", err);
-        const errorMessage = (err.message || '').toLowerCase().includes('failed to fetch')
-            ? `Критическая сетевая ошибка: Не удалось подключиться к AI-сервису. Проверьте ваше интернет-соединение или настройки Vercel (особенно таймауты).`
-            : `Ошибка AI-сервиса: ${err.message}`;
-        yield `### Ошибка Аналитики\n\n${errorMessage}`;
+        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
     }
 }

@@ -144,32 +144,7 @@ function aggregateData(data: ProcessedDataRow[]) {
 
 
 // --- START osmService ---
-const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path.
-const MAX_RETRIES = 3;
-
-// NEW: Robust fetch with retry and exponential backoff
-async function fetchWithRetry(url: string, options: RequestInit, retries = MAX_RETRIES, delay = 1000): Promise<Response> {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const response = await fetch(url, options);
-            // Retry on specific server errors or rate limiting, which Nominatim might return
-            if (response.status === 429 || response.status >= 500) {
-                 throw new Error(`Сервер ответил со статусом ${response.status}`);
-            }
-            return response;
-        } catch (error) {
-             console.warn(`Попытка ${i + 1} для ${url} не удалась. Повтор...`, error);
-            if (i < retries - 1) {
-                await new Promise(res => setTimeout(res, delay * (i + 1)));
-            } else {
-                console.error(`Все ${retries} попыток для ${url} провалились.`);
-                throw error;
-            }
-        }
-    }
-    // This should be unreachable
-    throw new Error('Fetch с повторами неожиданно завершился неудачей.');
-}
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
@@ -179,42 +154,60 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
-    
-    try {
-        const searchParams = new URLSearchParams({ q: `${combinedSearchTerm} в ${locationName}` });
-        const absoluteProxyUrl = `${self.location.origin}${proxyUrl}?${searchParams.toString()}`;
+    const MAX_RETRIES = 3;
 
-        const response = await fetchWithRetry(absoluteProxyUrl, {});
-        
-        if (!response.ok) {
-            const errorText = await response.text().catch(() => 'Неизвестное тело ошибки');
-            throw new Error(`Прокси OSM не удался для "${locationName}" со статусом ${response.status}: ${errorText}`);
-        }
-
-        const results = await response.json();
-        
-        for (const result of results) {
-            const key = result.osm_type + result.osm_id;
-            if (!allClients.has(key) && result.lat && result.lon) {
-                allClients.set(key, {
-                    name: result.name || result.display_name.split(',')[0],
-                    address: result.display_name,
-                    type: result.extratags?.shop || result.extratags?.amenity || result.type,
-                    lat: parseFloat(result.lat),
-                    lon: parseFloat(result.lon)
+    const queryNominatim = async (term: string) => {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const searchParams = new URLSearchParams({
+                    q: `${term} в ${locationName}`,
                 });
-
-                if (!cityCenter && result.importance > 0.4) {
-                    cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                const response = await fetch(`${proxyUrl}?${searchParams.toString()}`);
+                
+                if (!response.ok) {
+                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
+                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                        continue;
+                    }
+                    throw new Error(`OSM Proxy failed for "${term}" with status ${response.status}`);
                 }
+                return await response.json();
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1) {
+                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
             }
         }
-    } catch (error) {
-        // Log the error but don't stop the entire worker. Return empty results for this location.
-        console.error(`Не удалось получить данные OSM для локации "${locationName}" после всех попыток:`, error);
+        return [];
+    };
+
+    for (const term of searchTerms) {
+        try {
+            const results = await queryNominatim(term);
+            for (const result of results) {
+                const key = result.osm_type + result.osm_id;
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                        lat: parseFloat(result.lat),
+                        lon: parseFloat(result.lon)
+                    });
+
+                    if (!cityCenter && result.importance > 0.4) {
+                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
+        }
     }
     
     if (!cityCenter && allClients.size > 0) {
@@ -263,7 +256,7 @@ const calculateRealisticPotential = async (
     
     onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
 
-    const enqueue = createRequestQueue(1); // FIX: Respect Nominatim API limit (1 req/sec) to avoid IP bans.
+    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();
@@ -354,7 +347,7 @@ self.onmessage = async (e: MessageEvent<{
             const lowerCaseMessage = error.message.toLowerCase();
             
             if (lowerCaseMessage.includes('failed to fetch')) {
-                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${self.location.origin}${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
+                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
             } else if (lowerCaseMessage.includes('api request failed') || lowerCaseMessage.includes('osm proxy failed')) {
                 errorMessage = `Ошибка от сервера OSM: ${error.message}`;
             } else {

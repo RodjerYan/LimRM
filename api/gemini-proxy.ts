@@ -81,32 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const ai = new GoogleGenAI({ apiKey });
       const isJsonRequest = config?.responseMimeType === 'application/json';
 
-      // --- NEW: Streaming Logic ---
-      if (!isJsonRequest) {
-        // For text requests, we use streaming to avoid timeouts.
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Transfer-Encoding', 'chunked'); // Vercel uses this to stream
-
-        const stream = await ai.models.generateContentStream({
-            model: 'gemini-2.5-flash',
-            contents,
-            config,
-        });
-        
-        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно начал стриминг.`);
-        handled = true; // Mark as handled once streaming starts
-
-        for await (const chunk of stream) {
-            if (chunk.text) {
-                res.write(chunk.text);
-            }
-        }
-        
-        res.end(); // IMPORTANT: Close the stream
-        break; // Exit the loop on success
-      }
-      
-      // --- Fallback for JSON requests (non-streaming) ---
+      // Для стабильности на Vercel, всегда получаем полный ответ от Gemini, избегая прямого стриминга клиенту.
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents,
@@ -118,13 +93,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       const duration = Date.now() - startTime;
 
-      try {
-        const json = JSON.parse(text);
-        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${duration} мс`);
-        res.status(200).json(json);
-      } catch (e) {
-        console.error(`${colors.red}⚠️ Ошибка парсинга JSON при ключе ...${shortKey}:${colors.reset}`, e);
-        res.status(500).json({ error: 'Ошибка парсинга JSON', raw: text });
+      if (isJsonRequest) {
+        try {
+          const json = JSON.parse(text);
+          console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${duration} мс`);
+          res.status(200).json(json);
+        } catch (e) {
+          console.error(`${colors.red}⚠️ Ошибка парсинга JSON при ключе ...${shortKey}:${colors.reset}`, e);
+          res.status(500).json({ error: 'Ошибка парсинга JSON', raw: text });
+        }
+      } else {
+        // Для текстовых запросов, отправляем полный текст. Клиент симулирует стрим.
+        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} выполнил текстовый запрос за ${duration} мс`);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.status(200).send(text);
       }
       
       handled = true;
@@ -140,7 +122,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         msg.includes('quota') ||
         msg.includes('too many requests') ||
         msg.includes('failed to fetch') ||
-        msg.includes('connection')
+        msg.includes('connection') // Catches connection errors like ERR_CONNECTION_CLOSED
       ) {
         if(msg.includes('failed to fetch') || msg.includes('connection')) {
           console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий.${colors.reset}`);
