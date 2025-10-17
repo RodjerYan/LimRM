@@ -256,7 +256,7 @@ const calculateRealisticPotential = async (
     
     onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
 
-    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
+    const enqueue = createRequestQueue(1); // Concurrency set to 1 to respect Nominatim's rate limit (1 req/sec)
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();
