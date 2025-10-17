@@ -534,8 +534,7 @@ export default function App() {
                  cleanupWorker();
             };
             
-            const osmProxyPath = import.meta.env.VITE_OSM_PROXY_URL || '/api/osm-proxy';
-            const osmProxyUrl = new URL(osmProxyPath, window.location.origin).href;
+            const osmProxyUrl = import.meta.env.VITE_OSM_PROXY_URL || '/api/osm-proxy';
 
             worker.postMessage({ 
                 processedData, 
