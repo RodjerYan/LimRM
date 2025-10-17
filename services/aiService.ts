@@ -48,9 +48,8 @@ export function streamAiSummary(data: AggregatedDataRow, callbacks: StreamCallba
 
     const startStreaming = async () => {
         try {
-            // A single, direct streaming POST request.
-            // The body contains the prompt, and the response is streamed back.
-            const streamResponse = await fetch('/api/gemini-task', {
+            // A single, direct streaming POST request to the new, stable endpoint.
+            const streamResponse = await fetch('/api/streamAiSummary', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
