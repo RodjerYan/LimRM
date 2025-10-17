@@ -1,6 +1,37 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
+const GEMINI_PROXY_URL = '/api/gemini-proxy';
+
+/**
+ * Выполняет fetch-запрос с несколькими попытками в случае сбоя сети или серверных ошибок.
+ * @param url - URL для запроса.
+ * @param options - Опции для fetch.
+ * @param retries - Количество попыток.
+ * @param delay - Начальная задержка между попытками.
+ * @returns Промис с объектом Response.
+ */
+async function fetchWithRetry(url: string, options: RequestInit, retries = 3, delay = 500): Promise<Response> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url, options);
+            if (response.status === 429 || response.status >= 500) { // Повтор при ограничении скорости или ошибках сервера
+                throw new Error(`Ошибка сервера: ${response.status}`);
+            }
+            return response;
+        } catch (error) {
+            if (i < retries - 1) {
+                await new Promise(res => setTimeout(res, delay * (i + 1))); // Экспоненциальная задержка
+            } else {
+                console.error(`Последняя попытка для ${url} не удалась:`, error);
+                throw error;
+            }
+        }
+    }
+    // Этот код не должен быть достижим, но необходим для TypeScript.
+    throw new Error("Fetch с повторами неожиданно завершился неудачей.");
+}
+
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -28,17 +59,20 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
 
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
     `;
+    
+    // Используем абсолютный URL для надежности
+    const absoluteProxyUrl = `${window.location.origin}${GEMINI_PROXY_URL}`;
 
     try {
-        const response = await fetch('/api/gemini-proxy', {
+        const response = await fetchWithRetry(absoluteProxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ contents: prompt }),
         });
 
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'Не удалось прочитать ответ сервера' }));
-            throw new Error(errorData.error || `Сервер ответил ошибкой ${response.status}`);
+            const errorText = await response.text().catch(() => 'Не удалось прочитать тело ответа.');
+            throw new Error(`Ошибка сети или сервера (${response.status}): ${errorText}`);
         }
 
         const fullText = await response.text();
@@ -52,6 +86,9 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
 
     } catch (err: any) {
         console.error("AI summary generation failed:", err);
-        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
+        const errorMessage = (err.message || '').toLowerCase().includes('failed to fetch')
+            ? `Критическая сетевая ошибка: Не удалось подключиться к AI-сервису. Проверьте ваше интернет-соединение или настройки Vercel (особенно таймауты).`
+            : `Ошибка AI-сервиса: ${err.message}`;
+        yield `### Ошибка Аналитики\n\n${errorMessage}`;
     }
 }

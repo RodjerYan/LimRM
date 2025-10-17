@@ -144,7 +144,32 @@ function aggregateData(data: ProcessedDataRow[]) {
 
 
 // --- START osmService ---
-const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path.
+const MAX_RETRIES = 3;
+
+// NEW: Robust fetch with retry and exponential backoff
+async function fetchWithRetry(url: string, options: RequestInit, retries = MAX_RETRIES, delay = 1000): Promise<Response> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(url, options);
+            // Retry on specific server errors or rate limiting, which Nominatim might return
+            if (response.status === 429 || response.status >= 500) {
+                 throw new Error(`Сервер ответил со статусом ${response.status}`);
+            }
+            return response;
+        } catch (error) {
+             console.warn(`Попытка ${i + 1} для ${url} не удалась. Повтор...`, error);
+            if (i < retries - 1) {
+                await new Promise(res => setTimeout(res, delay * (i + 1)));
+            } else {
+                console.error(`Все ${retries} попыток для ${url} провалились.`);
+                throw error;
+            }
+        }
+    }
+    // This should be unreachable
+    throw new Error('Fetch с повторами неожиданно завершился неудачей.');
+}
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
@@ -154,42 +179,23 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    // FIX: Combined all search terms into a single query to reduce API calls by 66%
     const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
-    const MAX_RETRIES = 3;
-
-    const queryNominatim = async (term: string) => {
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                const searchParams = new URLSearchParams({
-                    q: `${term} в ${locationName}`,
-                });
-                // FIX: Use an absolute URL to prevent issues when called from a worker context.
-                const response = await fetch(`${self.location.origin}${proxyUrl}?${searchParams.toString()}`);
-                
-                if (!response.ok) {
-                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
-                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
-                        continue;
-                    }
-                    throw new Error(`OSM Proxy failed for "${term}" with status ${response.status}`);
-                }
-                return await response.json();
-            } catch (error) {
-                if (attempt < MAX_RETRIES - 1) {
-                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
-                    continue;
-                }
-                throw error;
-            }
-        }
-        return [];
-    };
-
+    
     try {
-        const results = await queryNominatim(combinedSearchTerm);
+        const searchParams = new URLSearchParams({ q: `${combinedSearchTerm} в ${locationName}` });
+        const absoluteProxyUrl = `${self.location.origin}${proxyUrl}?${searchParams.toString()}`;
+
+        const response = await fetchWithRetry(absoluteProxyUrl, {});
+        
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Неизвестное тело ошибки');
+            throw new Error(`Прокси OSM не удался для "${locationName}" со статусом ${response.status}: ${errorText}`);
+        }
+
+        const results = await response.json();
+        
         for (const result of results) {
             const key = result.osm_type + result.osm_id;
             if (!allClients.has(key) && result.lat && result.lon) {
@@ -207,7 +213,8 @@ async function getMarketPotentialFromOSM(locationName: string) {
             }
         }
     } catch (error) {
-        console.warn(`Failed to get OSM data for combined search in "${locationName}":`, error);
+        // Log the error but don't stop the entire worker. Return empty results for this location.
+        console.error(`Не удалось получить данные OSM для локации "${locationName}" после всех попыток:`, error);
     }
     
     if (!cityCenter && allClients.size > 0) {
