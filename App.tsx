@@ -1,5 +1,4 @@
 
-
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -642,14 +641,19 @@ export default function App() {
 
 
     return (
-        <div className="container mx-auto p-4 md:p-8 min-h-screen">
-            <header className="mb-10 text-center">
-                <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight">
-                    Гео-Анализ <span className="text-accent">Limkorm</span>
-                </h1>
-                <p className="text-gray-400 mt-2 max-w-2xl mx-auto">
-                    Инструмент для планирования продаж: детализация по РМ, Бренду и Региону на основе открытых данных OpenStreetMap.
-                </p>
+        <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
+            <header className="mb-8 md:mb-12">
+                <div className="flex items-center gap-4">
+                    <img src="/favicon.svg" alt="Limkorm Analytics Logo" className="h-12 w-12"/>
+                    <div>
+                         <h1 className="text-3xl md:text-4xl font-extrabold text-white tracking-tight">
+                            Limkorm <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-hover">Analytics</span>
+                        </h1>
+                        <p className="text-gray-400 text-sm md:text-base mt-1">
+                            Инструмент для планирования продаж и анализа рыночного потенциала
+                        </p>
+                    </div>
+                </div>
             </header>
 
             <div id="notification-area" className="fixed top-4 right-4 z-[100] space-y-2 w-full max-w-sm">
@@ -658,8 +662,8 @@ export default function App() {
                 ))}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 space-y-8">
+            <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <aside className="lg:col-span-3 space-y-6">
                     <FileUpload onFileSelect={handleFileSelect} loadingState={loadingState} />
                     <Filters 
                         options={filterOptions}
@@ -669,9 +673,9 @@ export default function App() {
                         disabled={baseAggregatedData.length === 0}
                     />
                     <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
-                </div>
+                </aside>
 
-                <div className="lg:col-span-2 space-y-8">
+                <div className="lg:col-span-9 space-y-6">
                     <PotentialChart data={filteredAndSortedData} />
                     <ResultsTable 
                         data={filteredAndSortedData} 
@@ -684,7 +688,7 @@ export default function App() {
                         onBaseIncreaseChange={handleBaseIncreaseChange}
                     />
                 </div>
-            </div>
+            </main>
         </div>
     );
 }

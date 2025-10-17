@@ -5,7 +5,7 @@ import { formatLargeNumber } from '../utils/dataUtils';
 import { generateAiSummaryStream } from '../services/aiService';
 import Modal from './Modal';
 import InteractiveMap from './InteractiveMap';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, CopyIcon, CheckIcon, ExportIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, CopyIcon, CheckIcon, ExportIcon, ArrowUpIcon, ArrowDownIcon, TargetIcon, UsersIcon } from './icons';
 
 
 const CodeCopyButton: React.FC<{ code: string }> = ({ code }) => {
@@ -136,7 +136,7 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     };
 
     return (
-        <div className="bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-full flex flex-col">
+        <div className="bg-gray-900/50 p-4 sm:p-6 rounded-xl border border-border-color h-full flex flex-col">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-white">
                     Gemini: AI-Аналитик
@@ -172,12 +172,12 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     );
 };
 
-const MetricCard: React.FC<{ title: string, value: string, icon: React.ReactNode, valueColor?: string, className?: string }> = ({ title, value, icon, valueColor = 'text-white', className }) => (
-    <div className={`bg-gray-900/50 p-3 rounded-lg border border-gray-700 flex items-center ${className}`}>
-        <div className="mr-3 text-accent">{icon}</div>
+const MetricCard: React.FC<{ title: string, value: string | React.ReactNode, icon: React.ReactNode, className?: string, valueClassName?: string }> = ({ title, value, icon, className = '', valueClassName = '' }) => (
+    <div className={`bg-gray-900/50 p-4 rounded-lg border border-border-color flex items-center gap-4 ${className}`}>
+        <div className="text-accent text-opacity-80">{icon}</div>
         <div>
-            <p className="text-xs text-gray-400">{title}</p>
-            <p className={`text-xl font-bold ${valueColor}`}>{value}</p>
+            <p className="text-sm text-gray-400">{title}</p>
+            <div className={`text-xl font-bold text-slate-100 ${valueClassName}`}>{value}</div>
         </div>
     </div>
 );
@@ -230,58 +230,51 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
         const safeRegionName = data.city.replace(/[^a-zа-я0-9]/gi, '_').toLowerCase();
         XLSX.writeFile(wb, `Potential_Clients_${safeRegionName}.xlsx`);
     };
+    
+    const newPlanGrowthKg = data.newPlan && data.fact ? data.newPlan - data.fact : 0;
+    const newPlanGrowthPercent = data.newPlan && data.fact > 0 ? (newPlanGrowthKg / data.fact) * 100 : 0;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Аналитический дашборд: ${data.city}`}>
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
                 {/* TOP ROW: Header + Key Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
-                    <div className="bg-gray-900/50 p-3 rounded-lg border border-gray-700 flex flex-col justify-center">
-                        <h4 className="text-base font-semibold text-white truncate" title={data.rm}>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                     <div className="bg-gray-900/50 p-4 rounded-lg border border-border-color flex flex-col justify-center col-span-1">
+                        <h4 className="text-lg font-semibold text-white truncate" title={data.rm}>
                             {data.rm}
                         </h4>
-                        <p className="text-sm text-accent">{data.brand}</p>
+                        <p className="text-base text-accent">{data.brand}</p>
                     </div>
-
-                    <MetricCard 
-                        title="Текущий Факт (кг/ед)"
-                        value={formatLargeNumber(data.fact)}
-                        icon={<FactIcon />}
-                        valueColor="text-green-400"
-                    />
-                    <MetricCard 
-                        title="Прогнозный Потенциал"
-                        value={formatLargeNumber(data.potential)}
-                        icon={<PotentialIcon />}
-                        valueColor="text-blue-400"
-                    />
-                    <div className="bg-gray-900/50 p-3 rounded-lg border-2 border-yellow-500/50 shadow-md shadow-yellow-500/10 flex items-center">
-                        <div className="mr-3 text-yellow-400"><GrowthIcon /></div>
-                        <div>
-                            <p className="text-xs text-gray-400">Потенциал Роста</p>
-                            <div className="flex items-baseline gap-x-2">
-                                <p className="text-xl font-bold text-yellow-400">{formatLargeNumber(data.growthPotential)}</p>
-                                <p className="text-base font-bold text-red-400">{data.growthRate.toFixed(1)}%</p>
-                            </div>
+                    <MetricCard title="Текущий Факт (кг/ед)" value={formatLargeNumber(data.fact)} icon={<FactIcon />} valueClassName="text-success" />
+                    <MetricCard title="Новый План (кг/ед)" value={
+                        <div className="flex items-center gap-2">
+                            <span>{formatLargeNumber(data.newPlan || 0)}</span>
+                            {newPlanGrowthPercent > 0 && (
+                                <span className="text-sm font-medium text-accent-hover flex items-center gap-1">
+                                    <ArrowUpIcon small/> {newPlanGrowthPercent.toFixed(1)}%
+                                </span>
+                            )}
                         </div>
-                    </div>
+                    } icon={<TargetIcon />} valueClassName="text-accent" />
+                     <MetricCard title="Потенциал Роста" value={formatLargeNumber(data.growthPotential)} icon={<GrowthIcon />} valueClassName="text-warning"/>
                 </div>
 
-                {/* BOTTOM ROW: AI Analysis + Map/Client List */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
-                    <div className="lg:col-span-1 min-w-0 h-[450px]">
+                {/* MAIN CONTENT: AI Analysis + Map/Client List */}
+                <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+                    <div className="lg:col-span-2 min-w-0 h-[500px]">
                         <AiAnalysis data={data} />
                     </div>
-                    <div className="lg:col-span-1 min-w-0">
-                        <div className="bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-[450px] flex flex-col">
-                            <h3 className="text-xl font-semibold text-white mb-4 text-center">Карта Потенциальных Клиентов</h3>
-                            <div className="relative flex-grow w-full min-h-0 rounded-lg overflow-hidden border border-gray-700 shadow-inner">
+                    <div className="lg:col-span-3 min-w-0">
+                        <div className="bg-gray-900/50 p-4 sm:p-6 rounded-xl border border-border-color h-[500px] flex flex-col">
+                            <h3 className="text-xl font-semibold text-white mb-4 text-center">Карта и Список Потенциальных Клиентов</h3>
+                            <div className="relative flex-grow w-full min-h-0 rounded-lg overflow-hidden border border-border-color shadow-inner">
                                 <InteractiveMap city={data.city} clients={potentialClients} selectedClientKey={hoveredClientKey} cityCenter={data.cityCenter} />
                             </div>
                             <div className="mt-4 flex-shrink-0">
                                 <div className="flex justify-between items-center mb-2">
-                                    <h4 className="text-sm font-semibold text-gray-300">
-                                        Список ({potentialClients.length} из {data.potentialTTs} шт.)
+                                    <h4 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                                        <UsersIcon small />
+                                        <span>Список ({potentialClients.length} из {data.totalMarketTTs} шт.)</span>
                                     </h4>
                                     <button
                                         onClick={handleExport}
@@ -293,21 +286,18 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
                                         <span className="ml-1.5">Экспорт</span>
                                     </button>
                                 </div>
-                                <ul className="h-[140px] overflow-y-auto custom-scrollbar pr-2 space-y-2">
+                                <ul className="h-[120px] overflow-y-auto custom-scrollbar pr-2 space-y-2">
                                     {potentialClients.length > 0 ? potentialClients.map((client, index) => {
                                         const clientKey = (client.lat && client.lon) ? `${client.lat},${client.lon}` : null;
                                         return (
                                             <li key={index} 
                                                 onMouseEnter={() => clientKey && setHoveredClientKey(clientKey)} 
                                                 onMouseLeave={() => clientKey && setHoveredClientKey(null)}
-                                                className="p-2 rounded-md hover:bg-indigo-500/20 cursor-pointer transition-colors text-sm"
+                                                className={`p-2 rounded-md hover:bg-accent/20 cursor-pointer transition-colors text-sm ${hoveredClientKey === clientKey ? 'bg-accent/20' : ''}`}
                                             >
                                                 <p className="font-semibold text-white truncate">{client.name || 'Без названия'}</p>
                                                 <p className="text-xs text-gray-400 truncate">
                                                     {client.type}
-                                                </p>
-                                                <p className="text-xs text-gray-500 mt-1">
-                                                    {client.address}
                                                 </p>
                                             </li>
                                         );
