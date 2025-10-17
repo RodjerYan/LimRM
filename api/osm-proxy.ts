@@ -20,13 +20,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'Требуется параметр запроса (q).' });
         }
         
+        // --- Улучшенная и безопасная обработка параметров ---
+        const params: Record<string, string> = {};
+        for (const key in query) {
+            const value = query[key];
+            if (value) { // Пропускаем null/undefined
+                 params[key] = Array.isArray(value) ? value[0] : value;
+            }
+        }
+        
         // Гарантируем формат ответа jsonv2 и добавляем другие полезные параметры
-        query.format = 'jsonv2';
-        query.addressdetails = '1';
-        query.extratags = '1';
-        query.limit = '100'; // Увеличиваем лимит для получения большего количества результатов
+        params.format = 'jsonv2';
+        params.addressdetails = '1';
+        params.extratags = '1';
+        params.limit = '100'; // Увеличиваем лимит для получения большего количества результатов
 
-        const searchParams = new URLSearchParams(query as Record<string, string>);
+        const searchParams = new URLSearchParams(params);
         const nominatimUrl = `https://nominatim.openstreetmap.org/search?${searchParams.toString()}`;
 
         // Nominatim требует кастомный User-Agent для всех запросов
