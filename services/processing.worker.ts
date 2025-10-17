@@ -154,7 +154,8 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    // FIX: Combined all search terms into a single query to reduce API calls by 66%
+    const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
     const MAX_RETRIES = 3;
@@ -165,7 +166,8 @@ async function getMarketPotentialFromOSM(locationName: string) {
                 const searchParams = new URLSearchParams({
                     q: `${term} в ${locationName}`,
                 });
-                const response = await fetch(`${proxyUrl}?${searchParams.toString()}`);
+                // FIX: Use an absolute URL to prevent issues when called from a worker context.
+                const response = await fetch(`${self.location.origin}${proxyUrl}?${searchParams.toString()}`);
                 
                 if (!response.ok) {
                     if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
@@ -186,28 +188,26 @@ async function getMarketPotentialFromOSM(locationName: string) {
         return [];
     };
 
-    for (const term of searchTerms) {
-        try {
-            const results = await queryNominatim(term);
-            for (const result of results) {
-                const key = result.osm_type + result.osm_id;
-                if (!allClients.has(key) && result.lat && result.lon) {
-                    allClients.set(key, {
-                        name: result.name || result.display_name.split(',')[0],
-                        address: result.display_name,
-                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
-                        lat: parseFloat(result.lat),
-                        lon: parseFloat(result.lon)
-                    });
+    try {
+        const results = await queryNominatim(combinedSearchTerm);
+        for (const result of results) {
+            const key = result.osm_type + result.osm_id;
+            if (!allClients.has(key) && result.lat && result.lon) {
+                allClients.set(key, {
+                    name: result.name || result.display_name.split(',')[0],
+                    address: result.display_name,
+                    type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                    lat: parseFloat(result.lat),
+                    lon: parseFloat(result.lon)
+                });
 
-                    if (!cityCenter && result.importance > 0.4) {
-                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
-                    }
+                if (!cityCenter && result.importance > 0.4) {
+                    cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
                 }
             }
-        } catch (error) {
-            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
         }
+    } catch (error) {
+        console.warn(`Failed to get OSM data for combined search in "${locationName}":`, error);
     }
     
     if (!cityCenter && allClients.size > 0) {
@@ -256,7 +256,7 @@ const calculateRealisticPotential = async (
     
     onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
 
-    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
+    const enqueue = createRequestQueue(1); // FIX: Respect Nominatim API limit (1 req/sec) to avoid IP bans.
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();
@@ -347,7 +347,7 @@ self.onmessage = async (e: MessageEvent<{
             const lowerCaseMessage = error.message.toLowerCase();
             
             if (lowerCaseMessage.includes('failed to fetch')) {
-                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
+                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${self.location.origin}${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
             } else if (lowerCaseMessage.includes('api request failed') || lowerCaseMessage.includes('osm proxy failed')) {
                 errorMessage = `Ошибка от сервера OSM: ${error.message}`;
             } else {
