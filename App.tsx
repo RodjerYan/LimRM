@@ -36,6 +36,7 @@ declare global {
   interface ImportMetaEnv {
     readonly VITE_GEMINI_API_KEY: string;
     readonly VITE_GEMINI_PROXY_URL?: string;
+    readonly VITE_OSM_PROXY_URL?: string;
   }
   interface ImportMeta {
     readonly env: ImportMetaEnv;
@@ -331,7 +332,7 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
 export default function App() {
     const clientApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-    if (!clientApiKey) {
+    if (!clientApiKey || !import.meta.env.VITE_OSM_PROXY_URL || !import.meta.env.VITE_GEMINI_PROXY_URL) {
         return <ApiKeyErrorDisplay errorType="missing" />;
     }
     // NEW: Add a specific check to prevent a common user error where the actual API key
@@ -533,8 +534,8 @@ export default function App() {
                  cleanupWorker();
             };
             
-            // The worker now uses a dedicated OSM proxy, not the Gemini proxy.
-            const osmProxyUrl = new URL('/api/osm-proxy', window.location.origin).href;
+            const osmProxyPath = import.meta.env.VITE_OSM_PROXY_URL || '/api/osm-proxy';
+            const osmProxyUrl = new URL(osmProxyPath, window.location.origin).href;
 
             worker.postMessage({ 
                 processedData, 
