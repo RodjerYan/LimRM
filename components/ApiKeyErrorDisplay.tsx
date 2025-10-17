@@ -28,7 +28,7 @@ const MissingKeyInstructions = () => (
                     **(Клиентский Флаг)** Создайте переменную <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_GEMINI_API_KEY</code> и вставьте в нее **текст-заглушку**, например, <code className="bg-gray-900 text-gray-300 px-1 py-0.5 rounded mx-1">key_is_set_on_server</code>.
                 </li>
                  <li className="font-bold text-amber-400">
-                    **(Прокси Gemini)** Создайте переменную <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_GEMINI_PROXY_URL</code> и установите значение <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">/api/gemini-proxy</code>. Это должен быть **относительный путь**, чтобы избежать ошибок CORS.
+                    **(Прокси Gemini)** Создайте переменную <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_GEMINI_PROXY_URL</code> и установите значение <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">/api/gemini-proxy</code>. Это должен быть **относительный путь**.
                 </li>
                 <li className="font-bold text-amber-400">
                      **(Прокси OSM)** Создайте переменную <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">VITE_OSM_PROXY_URL</code> и установите значение <code className="bg-gray-900 text-accent px-1 py-0.5 rounded mx-1">/api/osm-proxy</code>. Это также **относительный путь**.
@@ -40,6 +40,12 @@ const MissingKeyInstructions = () => (
                     Сохраните и <strong>перезапустите развертывание (Redeploy)</strong> вашего проекта, чтобы изменения вступили в силу.
                 </li>
             </ol>
+             <div className="bg-blue-900/40 border border-blue-500/50 p-3 rounded-md mt-4 text-sm">
+                <p className="font-bold text-blue-300">Примечание о прокси</p>
+                <p className="text-slate-300 text-xs mt-1">
+                    Эти переменные (`VITE_..._PROXY_URL`) используются как флаг для проверки завершенности настройки. Для максимальной стабильности приложение будет использовать внутренне заданные пути (`/api/...`), чтобы избежать ошибок CORS.
+                </p>
+            </div>
         </div>
         <p className="text-xs text-gray-500 mt-6">
             Эта ошибка отображается, потому что одна из клиентских переменных (`VITE_...`) не была найдена.

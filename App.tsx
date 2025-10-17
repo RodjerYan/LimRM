@@ -534,13 +534,10 @@ export default function App() {
                  cleanupWorker();
             };
             
-            const osmProxyUrl = import.meta.env.VITE_OSM_PROXY_URL || '/api/osm-proxy';
-
             worker.postMessage({ 
                 processedData, 
                 uniqueLocations: Array.from(uniqueLocations),
                 existingClientsByRegion,
-                proxyUrl: osmProxyUrl
             });
 
         } catch(error) {

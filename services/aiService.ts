@@ -3,16 +3,10 @@ import { formatLargeNumber } from "../utils/dataUtils";
 
 // This service is now refactored to use the Google Gemini API via a proxy.
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
-    // FIX: Use correctly typed `import.meta.env` now that the global types are fixed.
-    const proxyUrl = import.meta.env.VITE_GEMINI_PROXY_URL;
-
-    if (!proxyUrl) {
-        yield "### Ошибка Конфигурации\n\nПрокси-сервер не настроен. Пожалуйста, установите переменную окружения `VITE_GEMINI_PROXY_URL` в настройках Vercel на значение `/api/gemini-proxy` и перезапустите развертывание.";
-        return;
-    }
+    // FIX: Hardcode the relative proxy URL to guarantee same-origin requests
+    // and prevent CORS issues caused by stale environment variables on Vercel deployments.
+    const proxyUrl = '/api/gemini-proxy';
     
-    const fullUrl = `${proxyUrl}`;
-
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
     Твоя задача — предоставить краткую, но ёмкую аналитическую справку для регионального менеджера (${data.rm}) по городу ${data.city} и бренду ${data.brand}.
@@ -45,7 +39,7 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     };
 
     try {
-        const response = await fetch(fullUrl, {
+        const response = await fetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody),

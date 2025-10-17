@@ -144,7 +144,7 @@ function aggregateData(data: ProcessedDataRow[]) {
 
 
 // --- START osmService ---
-let proxyUrl = ''; // Will be set by the main thread
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
@@ -318,11 +318,9 @@ const calculateRealisticPotential = async (
 self.onmessage = async (e: MessageEvent<{ 
     processedData: ProcessedDataRow[], 
     uniqueLocations: string[], 
-    existingClientsByRegion: Record<string, string[]>,
-    proxyUrl: string 
+    existingClientsByRegion: Record<string, string[]>
 }>) => {
-    const { processedData, uniqueLocations, existingClientsByRegion, proxyUrl: newProxyUrl } = e.data;
-    proxyUrl = newProxyUrl;
+    const { processedData, uniqueLocations, existingClientsByRegion } = e.data;
 
     try {
         const locationCount = uniqueLocations.length;
