@@ -1,6 +1,8 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
+// This function now uses a simple, robust proxy endpoint.
+// It fetches the full response and then simulates a stream for the UI.
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -29,67 +31,38 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     `;
 
     try {
-        // 1. Создаём задачу на сервере
-        const createResponse = await fetch('/api/gemini-task', {
+        const response = await fetch('/api/gemini-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+            }),
         });
 
-        if (!createResponse.ok) {
-            const errorData = await createResponse.json();
-            yield `### Ошибка создания задачи\n\nНе удалось запустить AI-аналитика. Сервер ответил: ${errorData.error || 'Неизвестная ошибка'}`;
+        if (!response.ok) {
+            const errorData = await response.json();
+            yield `### Ошибка AI-Аналитика\n\nНе удалось получить ответ от сервера. Детали: ${errorData.error || response.statusText}`;
             return;
         }
 
-        const { taskId } = await createResponse.json();
-        if (!taskId) {
-            yield "### Ошибка\n\nСервер не вернул идентификатор задачи.";
-            return;
+        const result = await response.json();
+        const fullText = result.text;
+
+        if (!fullText) {
+             yield `### Ошибка AI-Аналитика\n\nСервер вернул пустой ответ.`;
+             return;
         }
 
-        // 2. Опрашиваем статус задачи, пока она не будет выполнена
-        let isFinished = false;
-        const maxPolls = 60; // ~1 минута ожидания
-        let polls = 0;
-
-        while (!isFinished && polls < maxPolls) {
-            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
-            
-            if (!statusResponse.ok) {
-                // Если сам сервер опроса недоступен, прекращаем
-                yield `### Ошибка сети\n\nНе удалось проверить статус задачи. Попробуйте снова.`;
-                return;
-            }
-
-            const taskStatus = await statusResponse.json();
-
-            if (taskStatus.status === 'done') {
-                const fullText = taskStatus.result;
-                // Симулируем "печатание" текста на клиенте
-                const chunkSize = 15;
-                for (let i = 0; i < fullText.length; i += chunkSize) {
-                    yield fullText.substring(i, i + chunkSize);
-                    await new Promise(r => setTimeout(r, 20));
-                }
-                isFinished = true;
-
-            } else if (taskStatus.status === 'error') {
-                yield `### Ошибка AI-Аналитика\n\nПроизошла ошибка при обработке вашего запроса: ${taskStatus.error}`;
-                isFinished = true;
-
-            } else {
-                // Статус 'pending', ждем и пробуем снова
-                await new Promise(r => setTimeout(r, 1500)); 
-                polls++;
-            }
-        }
-
-        if (!isFinished) {
-            yield `### Ошибка: Время ожидания истекло\n\nАнализ занимает слишком много времени. Пожалуйста, попробуйте снова.`;
+        // Simulate the "typing" effect on the client side
+        const chunkSize = 15;
+        for (let i = 0; i < fullText.length; i += chunkSize) {
+            yield fullText.substring(i, i + chunkSize);
+            await new Promise(r => setTimeout(r, 20));
         }
 
     } catch (err: any) {
+        console.error("Gemini fetch failed:", err);
         yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
     }
 }
