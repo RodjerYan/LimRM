@@ -1,4 +1,4 @@
-import fuzz from 'fuzzball';
+import * as fuzz from 'fuzzball';
 
 /**
  * Нормализует строку адреса для сравнения: приводит к нижнему регистру,
