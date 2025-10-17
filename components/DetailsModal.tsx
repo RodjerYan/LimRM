@@ -155,15 +155,18 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow, className?: string }> = ({
                     <span className="ml-2 whitespace-nowrap">{isCopied ? 'Скопировано!' : 'Копировать'}</span>
                 </button>
             </div>
-            {isLoading && !summary && (
-                <div className="flex-grow flex items-center justify-center">
-                    <LoaderIcon />
-                    <span className="ml-3 text-gray-400">Анализ данных...</span>
-                </div>
-            )}
             <div className="flex-grow overflow-y-auto pr-2 custom-scrollbar min-h-0">
-               <AiSummaryDisplay text={summary} />
-               {isLoading && <span className="inline-block w-2 h-4 bg-accent animate-pulse ml-1"></span>}
+               {isLoading && !summary ? (
+                   <div className="flex h-full items-center justify-center">
+                       <LoaderIcon />
+                       <span className="ml-3 text-gray-400">Анализ данных...</span>
+                   </div>
+               ) : (
+                   <>
+                       <AiSummaryDisplay text={summary} />
+                       {isLoading && <span className="inline-block w-2 h-4 bg-accent animate-pulse ml-1"></span>}
+                   </>
+               )}
             </div>
         </div>
     );
