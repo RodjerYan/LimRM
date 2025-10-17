@@ -3,10 +3,7 @@
     "api/gemini-proxy.ts": {
       "maxDuration": 58
     },
-    "api/streamAiSummary.ts": {
-      "maxDuration": 58
-    },
-    "api/osm-proxy.ts": {
+    "api/gemini-task.ts": {
       "maxDuration": 58
     }
   },

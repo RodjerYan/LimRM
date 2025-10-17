@@ -35,7 +35,7 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 declare global {
   interface ImportMetaEnv {
     readonly VITE_GEMINI_API_KEY: string;
-    readonly VITE_STREAMING_API_URL?: string;
+    readonly VITE_GEMINI_PROXY_URL?: string;
     readonly VITE_OSM_PROXY_URL?: string;
   }
   interface ImportMeta {
@@ -138,7 +138,7 @@ const CITY_TO_REGION_MAP: Record<string, string> = {
     'кострома': 'Костромская область',
     'курган': 'Курганская область',
     'курск': 'Курская область',
-    'железногорск': 'Курской области',
+    'железногорск': 'Курская область',
     'липецк': 'Липецкая область',
     'елец': 'Липецкая область',
     'магадан': 'Магаданская область',
@@ -332,7 +332,7 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
 export default function App() {
     const clientApiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-    if (!clientApiKey || !import.meta.env.VITE_OSM_PROXY_URL || !import.meta.env.VITE_STREAMING_API_URL) {
+    if (!clientApiKey || !import.meta.env.VITE_OSM_PROXY_URL || !import.meta.env.VITE_GEMINI_PROXY_URL) {
         return <ApiKeyErrorDisplay errorType="missing" />;
     }
     // NEW: Add a specific check to prevent a common user error where the actual API key

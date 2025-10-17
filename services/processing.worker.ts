@@ -1,4 +1,3 @@
-
 /// <reference lib="webworker" />
 
 // NOTE: Types are self-contained here to avoid complex worker bundling configurations.
@@ -143,7 +142,89 @@ function aggregateData(data: ProcessedDataRow[]) {
 }
 // --- END dataUtils ---
 
-// --- START OSM Service (Worker Side) ---
+
+// --- START osmService ---
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
+
+const normalizeAddress = (addr: string): string => {
+    if (!addr) return '';
+    return addr.toLowerCase()
+        .replace(/[\s.,-/\\()]/g, '')
+        .replace(/^(ул|улица|пр|проспект|пер|перелок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
+};
+
+async function getMarketPotentialFromOSM(locationName: string) {
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    const allClients = new Map<string, PotentialClient>();
+    let cityCenter: { lat: number, lon: number } | null = null;
+    const MAX_RETRIES = 3;
+
+    const queryNominatim = async (term: string) => {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const searchParams = new URLSearchParams({
+                    q: `${term} в ${locationName}`,
+                });
+                const response = await fetch(`${proxyUrl}?${searchParams.toString()}`);
+                
+                if (!response.ok) {
+                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
+                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                        continue;
+                    }
+                    throw new Error(`OSM Proxy failed for "${term}" with status ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1) {
+                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
+            }
+        }
+        return [];
+    };
+
+    for (const term of searchTerms) {
+        try {
+            const results = await queryNominatim(term);
+            for (const result of results) {
+                const key = result.osm_type + result.osm_id;
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                        lat: parseFloat(result.lat),
+                        lon: parseFloat(result.lon)
+                    });
+
+                    if (!cityCenter && result.importance > 0.4) {
+                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
+        }
+    }
+    
+    if (!cityCenter && allClients.size > 0) {
+        const firstClient = allClients.values().next().value;
+        if (firstClient?.lat && firstClient?.lon) {
+            cityCenter = { lat: firstClient.lat, lon: firstClient.lon };
+        }
+    }
+    
+    return {
+        count: allClients.size,
+        clients: Array.from(allClients.values()),
+        cityCenter: cityCenter
+    };
+}
+
+
 function createRequestQueue(concurrency: number) {
     const queue: any[] = []; let activeRequests = 0;
     function processQueue() {
@@ -160,6 +241,7 @@ function createRequestQueue(concurrency: number) {
         });
     };
 }
+// --- END osmService ---
 
 const calculateRealisticPotential = async (
     initialData: ProcessedDataRow[], 
@@ -171,62 +253,59 @@ const calculateRealisticPotential = async (
     const totalLocations = locationArray.length;
     let processedCount = 0;
     const startTime = Date.now();
+    
+    onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
+
+    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
     const potentialMap = new Map();
-    const enqueue = createRequestQueue(5); // Concurrency control for API calls
 
-    onProgress(30, `Анализ регионов... (0/${totalLocations})`, Infinity);
+    const normalizedExistingClients = new Map<string, Set<string>>();
+    for (const region in existingClientsByRegion) {
+        const normalizedSet = new Set(existingClientsByRegion[region].map(normalizeAddress).filter(Boolean));
+        normalizedExistingClients.set(region, normalizedSet);
+    }
 
-    const analysisPromises = locationArray.map(locationName => enqueue(async () => {
-        try {
-            // Call the new stateless analysis endpoint
-            const response = await fetch('/api/osm-proxy', { 
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    locationName,
-                    existingClients: existingClientsByRegion[locationName] || []
-                }),
-            });
+    const promises = locationArray.map(locationName => enqueue(async () => {
+        const totalPotential = await getMarketPotentialFromOSM(locationName);
+        
+        const existingAddressesSet = normalizedExistingClients.get(locationName) || new Set();
 
-            if (!response.ok) {
-                const error = await response.json().catch(() => ({error: 'Unknown error during analysis'}));
-                throw new Error(`Analysis failed for ${locationName}: ${error.error}`);
-            }
+        const newPotentialClients = (totalPotential.clients || []).filter((client: PotentialClient) => {
+            const normalizedNewAddress = normalizeAddress(client.address);
+            return normalizedNewAddress && !existingAddressesSet.has(normalizedNewAddress);
+        });
+        
+        potentialMap.set(locationName, {
+            totalCount: totalPotential.count, // Total market size for growth calculation
+            clients: newPotentialClients,    // Filtered list of NEW clients
+            cityCenter: totalPotential.cityCenter,
+            okb: newPotentialClients.length, // OKB is the count of NEW clients
+        });
 
-            const result = await response.json();
-            potentialMap.set(locationName, result);
-
-        } catch (error) {
-            console.error(`Error analyzing ${locationName}:`, error);
-            // Set default values on error so the process can continue
-            potentialMap.set(locationName, { totalMarketCount: 0, newClients: [], okbCount: 0, cityCenter: null });
-        } finally {
-            processedCount++;
-            const etr = calculateEtr(startTime, processedCount, totalLocations);
-            onProgress(30 + (processedCount / totalLocations) * 65, `Анализ регионов... (${processedCount}/${totalLocations})`, etr);
-        }
+        processedCount++;
+        const etr = calculateEtr(startTime, processedCount, totalLocations);
+        onProgress(30 + (processedCount / totalLocations) * 65, `Анализ регионов... (${processedCount}/${totalLocations})`, etr);
     }));
+
+    await Promise.all(promises);
     
-    await Promise.all(analysisPromises);
-    
-    // Process data with the fetched potentials
     for (const item of initialData) {
         const regionPotential = potentialMap.get(item.city);
         if (regionPotential) {
-            const growthRate = calculateRealisticGrowthRate(item.fact, regionPotential.totalMarketCount);
+            const totalMarketTTs = regionPotential.totalCount;
+            const growthRate = calculateRealisticGrowthRate(item.fact, totalMarketTTs);
             const potential = item.fact * (1 + growthRate);
             dataWithPotential.push({ 
                 ...item, 
                 potential, 
                 growthPotential: potential - item.fact, 
                 growthRate: growthRate * 100, 
-                potentialTTs: regionPotential.okbCount,
-                totalMarketTTs: regionPotential.totalMarketCount, 
-                potentialClients: regionPotential.newClients, 
+                potentialTTs: regionPotential.okb,
+                totalMarketTTs: totalMarketTTs, 
+                potentialClients: regionPotential.clients, 
                 cityCenter: regionPotential.cityCenter 
             });
         } else {
-            // Fallback for failed requests
             dataWithPotential.push({ ...item, potential: item.fact, growthPotential: 0, growthRate: 0, potentialTTs: 0, totalMarketTTs: 0, potentialClients: [], cityCenter: null });
         }
     }
@@ -263,7 +342,18 @@ self.onmessage = async (e: MessageEvent<{
         self.postMessage({ type: 'result', payload: finalAggregatedData });
 
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Произошла неизвестная ошибка в фоновом обработчике.";
+        let errorMessage = "Произошла неизвестная ошибка в фоновом обработчике.";
+        if (error instanceof Error) {
+            const lowerCaseMessage = error.message.toLowerCase();
+            
+            if (lowerCaseMessage.includes('failed to fetch')) {
+                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
+            } else if (lowerCaseMessage.includes('api request failed') || lowerCaseMessage.includes('osm proxy failed')) {
+                errorMessage = `Ошибка от сервера OSM: ${error.message}`;
+            } else {
+                errorMessage = error.message;
+            }
+        }
         self.postMessage({ type: 'error', payload: errorMessage });
     }
 };

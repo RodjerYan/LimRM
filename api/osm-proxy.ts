@@ -1,105 +1,4 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-
-// --- Типы данных ---
-interface PotentialClient {
-    name: string; address: string; type: string;
-    lat?: number; lon?: number;
-}
-
-interface TaskResult {
-    totalMarketCount: number;
-    newClients: PotentialClient[];
-    okbCount: number;
-    cityCenter: { lat: number; lon: number } | null;
-}
-
-// --- Логика обработки ---
-const normalizeAddress = (addr: string): string => {
-    if (!addr) return '';
-    return addr.toLowerCase()
-        .replace(/[\s.,-/\\()]/g, '')
-        .replace(/^(ул|улица|пр|проспект|пер|перелок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
-};
-
-async function getAndFilterMarketPotential(locationName: string, existingClients: string[]): Promise<TaskResult> {
-    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
-    const allFoundClients = new Map<string, PotentialClient>();
-    let cityCenter: { lat: number; lon: number } | null = null;
-    const MAX_RETRIES = 3;
-
-    const normalizedExistingAddresses = new Set(existingClients.map(normalizeAddress).filter(Boolean));
-
-    const queryNominatim = async (term: string) => {
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-            try {
-                const params = new URLSearchParams({
-                    q: `${term} в ${locationName}`,
-                    format: 'jsonv2', addressdetails: '1', extratags: '1', limit: '100'
-                });
-                const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
-                const response = await fetch(url, { headers: { 'User-Agent': 'Limkorm-Geo-Analysis-App/1.2 (Vercel Serverless)' }});
-                if (!response.ok) {
-                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
-                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1))); continue;
-                    }
-                    throw new Error(`Nominatim query failed for "${term}" with status ${response.status}`);
-                }
-                return await response.json();
-            } catch (error) {
-                if (attempt < MAX_RETRIES - 1) {
-                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1))); continue;
-                }
-                throw error;
-            }
-        }
-        return [];
-    };
-
-    for (const term of searchTerms) {
-        try {
-            const results = await queryNominatim(term);
-            if (Array.isArray(results)) {
-                for (const result of results) {
-                    const key = result.osm_type + result.osm_id;
-                    if (!allFoundClients.has(key) && result.lat && result.lon) {
-                        const client: PotentialClient = {
-                            name: result.name || result.display_name.split(',')[0],
-                            address: result.display_name,
-                            type: result.extratags?.shop || result.extratags?.amenity || result.type,
-                            lat: parseFloat(result.lat),
-                            lon: parseFloat(result.lon)
-                        };
-                        allFoundClients.set(key, client);
-                        if (!cityCenter && result.importance > 0.4) {
-                            cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            console.warn(`[OSM Analysis] Failed for term "${term}" in "${locationName}":`, error);
-        }
-    }
-    
-    if (!cityCenter && allFoundClients.size > 0) {
-        const firstClient = allFoundClients.values().next().value;
-        if (firstClient?.lat && firstClient?.lon) cityCenter = { lat: firstClient.lat, lon: firstClient.lon };
-    }
-
-    const newClients = Array.from(allFoundClients.values()).filter(client => {
-        const normalizedNewAddress = normalizeAddress(client.address);
-        return normalizedNewAddress && !normalizedExistingAddresses.has(normalizedNewAddress);
-    });
-    
-    return {
-        totalMarketCount: allFoundClients.size,
-        newClients: newClients,
-        okbCount: newClients.length,
-        cityCenter
-    };
-}
-
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- Полный CORS для любого домена ---
@@ -107,28 +6,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
+  // Preflight
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Метод не разрешен. Используйте POST для анализа.' });
+  // Разрешаем только GET и POST
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return res.status(405).json({ error: 'Метод не разрешен. Используйте GET или POST.' });
   }
 
   try {
-    const { locationName, existingClients } = req.body;
-    if (!locationName) {
-      return res.status(400).json({ error: 'Не указан обязательный параметр "locationName"' });
+    // Берем параметры запроса
+    const query: Record<string, any> = req.method === 'GET' ? req.query : req.body;
+    if (!query.q) {
+      return res.status(400).json({ error: 'Не указан обязательный параметр q' });
     }
-    
-    const result = await getAndFilterMarketPotential(locationName, existingClients || []);
+
+    // Формируем безопасные параметры для Nominatim
+    const params: Record<string, string> = {};
+    for (const key in query) {
+      const value = query[key];
+      if (value) {
+        params[key] = Array.isArray(value) ? value[0] : String(value);
+      }
+    }
+
+    // Всегда возвращаем JSON с деталями
+    params.format = 'jsonv2';
+    params.addressdetails = '1';
+    params.extratags = '1';
+    params.limit = '100';
+
+    const searchParams = new URLSearchParams(params);
+    const nominatimUrl = `https://nominatim.openstreetmap.org/search?${searchParams.toString()}`;
+
+    const nominatimResponse = await fetch(nominatimUrl, {
+      headers: {
+        'User-Agent': 'Limkorm-Geo-Analysis-App/1.1 (Vercel Serverless Function)',
+      }
+    });
+
+    if (!nominatimResponse.ok) {
+      const errorText = await nominatimResponse.text();
+      return res.status(nominatimResponse.status).json({ error: 'Ошибка Nominatim', details: errorText });
+    }
+
+    const data = await nominatimResponse.json();
 
     // Кэшируем на стороне Vercel на 1 день
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-    return res.status(200).json(result);
+    return res.status(200).json(data);
 
   } catch (err: any) {
-    console.error('Ошибка OSM Analysis:', err);
+    console.error('Ошибка OSM Proxy:', err);
     return res.status(500).json({ error: 'Внутренняя ошибка сервера', details: err.message });
   }
 }

@@ -2,8 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow } from '../types';
 import { formatLargeNumber } from '../utils/dataUtils';
-// FIX: Corrected the import name from `generateAiSummaryStream` to `streamAiSummary`.
-import { streamAiSummary } from '../services/aiService';
+import { generateAiSummaryStream } from '../services/aiService';
 import Modal from './Modal';
 import InteractiveMap from './InteractiveMap';
 import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, CopyIcon, CheckIcon, ExportIcon } from './icons';
@@ -99,31 +98,25 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
 
-    // FIX: Replaced async generator usage with the correct callback-based implementation
-    // for `streamAiSummary`, which handles streaming chunks, completion, and errors.
     useEffect(() => {
-        setIsLoading(true);
-        setSummary('');
-        if (!data) {
-            setIsLoading(false);
-            return;
-        }
-
-        const cleanup = streamAiSummary(data, {
-            onChunk: (chunk) => {
-                setSummary(prev => prev + chunk);
-            },
-            onComplete: () => {
-                setIsLoading(false);
-            },
-            onError: (error) => {
+        const streamSummary = async () => {
+            setIsLoading(true);
+            setSummary('');
+            try {
+                for await (const chunk of generateAiSummaryStream(data)) {
+                    setSummary(prev => prev + chunk);
+                }
+            } catch (error) {
                 console.error("AI summary streaming failed:", error);
-                setSummary(`### Ошибка\n\nНе удалось получить аналитическую справку. ${error}`);
+                setSummary("### Ошибка\n\nНе удалось получить аналитическую справку.");
+            } finally {
                 setIsLoading(false);
             }
-        });
+        };
 
-        return cleanup;
+        if (data) {
+          streamSummary();
+        }
     }, [data]);
 
     const handleCopy = () => {
