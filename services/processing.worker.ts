@@ -154,8 +154,6 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    // OPTIMIZATION: Combine multiple search terms into a single, more efficient query
-    // to significantly reduce the number of API calls and speed up the analysis.
     const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
@@ -189,7 +187,6 @@ async function getMarketPotentialFromOSM(locationName: string) {
     };
 
     try {
-        // A single, powerful query instead of a loop over multiple terms.
         const results = await queryNominatim(combinedSearchTerm);
         for (const result of results) {
             const key = result.osm_type + result.osm_id;
@@ -208,7 +205,9 @@ async function getMarketPotentialFromOSM(locationName: string) {
             }
         }
     } catch (error) {
-        console.warn(`Failed to get OSM data for combined search in "${locationName}":`, error);
+        console.error(`CRITICAL: Failed to get OSM data for "${locationName}" after all retries.`, error);
+        // Re-throw the error to prevent silent failures and notify the user.
+        throw error;
     }
     
     if (!cityCenter && allClients.size > 0) {

@@ -1,45 +1,6 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-// Helper function to poll for the task result
-async function pollForTaskResult(taskId: string, timeout = 58000): Promise<string> {
-    const startTime = Date.now();
-    const pollInterval = 1500; // Poll every 1.5 seconds
-
-    while (Date.now() - startTime < timeout) {
-        await new Promise(resolve => setTimeout(resolve, pollInterval));
-        
-        try {
-            const res = await fetch(`/api/gemini-task?taskId=${taskId}`);
-            
-            if (!res.ok) {
-                // Handle cases where the task might not be found on a cold start instance
-                if (res.status === 404) {
-                    console.warn(`Task ${taskId} not found, may be a cold start. Retrying...`);
-                    continue; // Continue polling
-                }
-                const errorData = await res.json().catch(() => ({ error: 'Failed to parse error response from task endpoint.' }));
-                throw new Error(`Task status check failed with status ${res.status}: ${errorData.error || res.statusText}`);
-            }
-
-            const data = await res.json();
-
-            if (data.status === 'done') {
-                return data.result;
-            } else if (data.status === 'error') {
-                throw new Error(`AI task failed: ${data.error}`);
-            }
-            // If status is 'pending', the loop continues
-        } catch (error) {
-            console.error('Polling error:', error);
-            // Don't throw immediately, allow for retries within the timeout
-        }
-    }
-
-    throw new Error("AI task timed out after waiting for a response.");
-}
-
-
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -68,39 +29,36 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     `;
 
     try {
-        // --- Step 1: Create the task ---
-        const createTaskResponse = await fetch('/api/gemini-task', {
+        // Используем абсолютный путь для надежности
+        const proxyUrl = `${window.location.origin}/api/gemini-proxy`;
+        
+        const response = await fetch(proxyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify({ contents: prompt }),
         });
 
-        if (!createTaskResponse.ok) {
-            const errorText = await createTaskResponse.text();
-            throw new Error(`Failed to create AI task: ${errorText}`);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: 'Не удалось разобрать ответ об ошибке от сервера.' }));
+            throw new Error(`Запрос к AI-аналитику не удался: ${errorData.details || errorData.error || response.statusText}`);
         }
 
-        const { taskId } = await createTaskResponse.json();
-        if (!taskId) {
-            throw new Error('Did not receive a task ID from the server.');
-        }
-        
-        // --- Step 2: Poll for the result ---
-        const fullText = await pollForTaskResult(taskId);
-        
+        const fullText = await response.text();
+
         if (!fullText || fullText.trim() === '') {
-            yield '### Ошибка\n\nМодель вернула пустой ответ. Возможно, сработал фильтр безопасности.';
+            yield '### Ошибка\n\nМодель вернула пустой ответ. Возможно, сработал внутренний фильтр безопасности.';
             return;
         }
-        
-        // --- Step 3: Stream the result to the UI ---
+
+        // Симулируем стриминг для лучшего UX
         const chunkSize = 15;
         for (let i = 0; i < fullText.length; i += chunkSize) {
             yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20));
+            await new Promise(r => setTimeout(r, 20)); // Небольшая задержка для плавности
         }
 
     } catch (err: any) {
-        yield `### Критическая ошибка\n\nНе удалось получить аналитическую справку. Проверьте ваше интернет-соединение или настройки сервера. Ошибка: ${err.message}`;
+        console.error("AI summary generation failed:", err);
+        yield `### Критическая ошибка\n\nНе удалось получить аналитическую справку. Проверьте ваше интернет-соединение или настройки сервера.\n\n**Детали:** ${err.message}`;
     }
 }
