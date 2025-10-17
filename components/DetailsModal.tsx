@@ -93,7 +93,7 @@ const AiSummaryDisplay: React.FC<{ text: string }> = ({ text }) => {
 
 
 
-const AiAnalysis: React.FC<{ data: AggregatedDataRow, className?: string }> = ({ data, className }) => {
+const AiAnalysis: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [summary, setSummary] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
@@ -136,7 +136,7 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow, className?: string }> = ({
     };
 
     return (
-        <div className={`bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-full flex flex-col ${className}`}>
+        <div className="bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-full flex flex-col">
             <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-white">
                     Gemini: AI-Аналитик
@@ -269,8 +269,8 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
 
                 {/* BOTTOM ROW: AI Analysis + Map/Client List */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-2">
-                    <div className="lg:col-span-1 min-w-0">
-                        <AiAnalysis data={data} className="h-[450px]" />
+                    <div className="lg:col-span-1 min-w-0 h-[450px]">
+                        <AiAnalysis data={data} />
                     </div>
                     <div className="lg:col-span-1 min-w-0">
                         <div className="bg-gray-900/50 p-6 rounded-xl border border-gray-700 h-[450px] flex flex-col">
