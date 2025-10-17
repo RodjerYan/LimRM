@@ -79,72 +79,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const ai = new GoogleGenAI({ apiKey });
+      const isJsonRequest = config?.responseMimeType === 'application/json';
 
-      // --- JSON-запрос ---
-      if (config?.responseMimeType === 'application/json') {
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
-          contents,
-          config,
-        });
+      // Для стабильности на Vercel, всегда получаем полный ответ от Gemini, избегая прямого стриминга клиенту.
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents,
+        config,
+      });
 
-        const text = response.text?.trim();
-        if (!text) throw new Error('Пустой ответ модели');
+      const text = response.text?.trim();
+      if (!text) throw new Error('Пустой ответ модели');
+      
+      const duration = Date.now() - startTime;
 
+      if (isJsonRequest) {
         try {
           const json = JSON.parse(text);
-          console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${Date.now() - startTime} мс`);
+          console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${duration} мс`);
           res.status(200).json(json);
-          handled = true;
-          break;
         } catch (e) {
           console.error(`${colors.red}⚠️ Ошибка парсинга JSON при ключе ...${shortKey}:${colors.reset}`, e);
           res.status(500).json({ error: 'Ошибка парсинга JSON', raw: text });
-          handled = true;
-          break;
         }
       } else {
-        // --- Потоковый ответ ---
-        const stream = await ai.models.generateContentStream({
-          model: 'gemini-2.5-flash',
-          contents,
-          config,
-        });
-
-        const timeout = setTimeout(() => {
-          if (!res.writableEnded) {
-            console.warn(`${colors.yellow}⏰ Таймаут 60с при чтении потока от Gemini (ключ ...${shortKey}). Завершаю соединение.${colors.reset}`);
-            res.end();
-            handled = true;
-          }
-        }, 60000); // 60 seconds
-
-        try {
-          let firstChunk = true;
-          for await (const chunk of stream) {
-            if (firstChunk) {
-              if (!res.headersSent) {
-                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-                res.setHeader('Cache-Control', 'no-cache');
-                res.setHeader('Connection', 'keep-alive');
-              }
-              firstChunk = false;
-            }
-            if (chunk.text) {
-              res.write(chunk.text);
-            }
-          }
-        } finally {
-          clearTimeout(timeout);
-          if (!res.writableEnded) {
-            res.end();
-          }
-        }
-        
-        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} завершил стрим за ${Date.now() - startTime} мс`);
-        handled = true;
-        break;
+        // Для текстовых запросов, отправляем полный текст. Клиент симулирует стрим.
+        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} выполнил текстовый запрос за ${duration} мс`);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.status(200).send(text);
       }
+      
+      handled = true;
+      break;
+
     } catch (err: any) {
       lastError = err;
       const msg = (err.message || '').toLowerCase();
@@ -154,9 +121,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         msg.includes('resource_exhausted') ||
         msg.includes('quota') ||
         msg.includes('too many requests') ||
-        msg.includes('failed to fetch')
+        msg.includes('failed to fetch') ||
+        msg.includes('connection') // Catches connection errors like ERR_CONNECTION_CLOSED
       ) {
-        if(msg.includes('failed to fetch')) {
+        if(msg.includes('failed to fetch') || msg.includes('connection')) {
           console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий.${colors.reset}`);
         } else {
           console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь на следующий.${colors.reset}`);

@@ -34,8 +34,7 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     `;
 
     const requestBody = {
-        contents: prompt,
-        stream: true
+        contents: prompt
     };
 
     try {
@@ -86,23 +85,18 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
             return;
         }
 
-        if (!response.body) {
-            yield "### Ошибка\n\nОтвет от сервера не содержит данных для потоковой передачи.";
+        const fullText = await response.text();
+
+        if (!fullText) {
+            yield "### Ошибка\n\nСервер вернул пустой ответ.";
             return;
         }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            yield decoder.decode(value, { stream: true });
-        }
-        
-        const finalChunk = decoder.decode();
-        if (finalChunk) {
-           yield finalChunk;
+        // Simulate stream for better UX by yielding chunks of the full text
+        const chunkSize = 10; // characters per chunk
+        for (let i = 0; i < fullText.length; i += chunkSize) {
+            yield fullText.substring(i, i + chunkSize);
+            await new Promise(resolve => setTimeout(resolve, 15)); // Small delay for typing effect
         }
 
     } catch (error) {
