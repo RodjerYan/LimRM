@@ -54,7 +54,7 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
             return;
         }
 
-        // Simulate typing effect
+        // Simulate typing effect on the client side
         const chunkSize = 15;
         for (let i = 0; i < fullText.length; i += chunkSize) {
             yield fullText.substring(i, i + chunkSize);

@@ -1,10 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
+export const config = {
+  maxDuration: 58, // Set max duration to 58 seconds
+};
+
 // --- Helper to get all available API keys from environment variables ---
 function getApiKeys(): string[] {
     const keys = [process.env.API_KEY];
     let i = 2;
+    // Check for API_KEY_2, API_KEY_3, etc.
     while (process.env[`API_KEY_${i}`]) {
         keys.push(process.env[`API_KEY_${i}`]);
         i++;
@@ -36,8 +41,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const { model, contents, config } = req.body;
-    if (!model || !contents) {
-        return res.status(400).json({ error: 'Missing required parameters: model and contents.' });
+    if (!contents) {
+        return res.status(400).json({ error: 'Missing required parameter: contents.' });
     }
 
     const apiKeys = getApiKeys();
@@ -51,9 +56,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const apiKey of shuffledKeys) {
         try {
             const ai = new GoogleGenAI({ apiKey });
-            const response = await ai.models.generateContent({ model, contents, config });
+            const response = await ai.models.generateContent({ 
+                model: model || 'gemini-2.5-flash', 
+                contents, 
+                config 
+            });
 
             console.info(`✅ Successfully used API key ...${apiKey.slice(-4)}`);
+            // Vercel handles JSON serialization, so we just return the object.
             return res.status(200).json({ text: response.text });
 
         } catch (error: any) {
