@@ -1,8 +1,5 @@
 /// <reference lib="webworker" />
 
-import { searchTerms } from './searchTerms';
-import { normalizeAddress, normalizeName, isSimilar } from '../utils/stringUtils';
-
 // NOTE: Types are self-contained here to avoid complex worker bundling configurations.
 interface PotentialClient {
     name: string;
@@ -149,38 +146,16 @@ function aggregateData(data: ProcessedDataRow[]) {
 // --- START osmService ---
 const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
 
-/**
- * Удаляет семантические дубликаты из списка клиентов, используя нечеткое сравнение
- * названий и адресов.
- */
-const deduplicateClients = (clients: PotentialClient[]): PotentialClient[] => {
-  const result: PotentialClient[] = [];
-  clients.forEach(client => {
-    // Проверяем, существует ли уже очень похожий клиент в результирующем массиве
-    const exists = result.some(existingClient =>
-      // Сравниваем имена с высоким порогом схожести (90)
-      (existingClient.name && client.name && isSimilar(normalizeName(existingClient.name), normalizeName(client.name), 90)) &&
-      // Сравниваем адреса с высоким порогом схожести (90)
-      (existingClient.address && client.address && isSimilar(normalizeAddress(existingClient.address), normalizeAddress(client.address), 90))
-    );
-    
-    if (!exists) {
-      // Дополнительная проверка на дубликаты по точным координатам,
-      // чтобы избежать добавления разных объектов в одной и той же точке.
-      const hasSameCoords = result.some(existingClient => 
-        existingClient.lat === client.lat && existingClient.lon === client.lon
-      );
-      if (!hasSameCoords) {
-        result.push(client);
-      }
-    }
-  });
-  return result;
+const normalizeAddress = (addr: string): string => {
+    if (!addr) return '';
+    return addr.toLowerCase()
+        .replace(/[\s.,-/\\()]/g, '')
+        .replace(/^(ул|улица|пр|проспект|пер|перелок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
 };
 
-
 async function getMarketPotentialFromOSM(locationName: string) {
-    const allClientsById = new Map<string, PotentialClient>();
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
     const MAX_RETRIES = 3;
 
@@ -210,16 +185,14 @@ async function getMarketPotentialFromOSM(locationName: string) {
         }
         return [];
     };
-    
-    // Итерация по расширенному списку ключевых слов
+
     for (const term of searchTerms) {
         try {
             const results = await queryNominatim(term);
             for (const result of results) {
                 const key = result.osm_type + result.osm_id;
-                // Первичная дедупликация по уникальному ID объекта из OSM
-                if (!allClientsById.has(key) && result.lat && result.lon) {
-                    allClientsById.set(key, {
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
                         name: result.name || result.display_name.split(',')[0],
                         address: result.display_name,
                         type: result.extratags?.shop || result.extratags?.amenity || result.type,
@@ -237,20 +210,16 @@ async function getMarketPotentialFromOSM(locationName: string) {
         }
     }
     
-    const uniqueByIdClients = Array.from(allClientsById.values());
-    // Вторичная, "умная" дедупликация с использованием нечеткого сравнения
-    const finalClients = deduplicateClients(uniqueByIdClients);
-    
-    if (!cityCenter && finalClients.length > 0) {
-        const firstClient = finalClients[0];
+    if (!cityCenter && allClients.size > 0) {
+        const firstClient = allClients.values().next().value;
         if (firstClient?.lat && firstClient?.lon) {
             cityCenter = { lat: firstClient.lat, lon: firstClient.lon };
         }
     }
     
     return {
-        count: finalClients.length,
-        clients: finalClients,
+        count: allClients.size,
+        clients: Array.from(allClients.values()),
         cityCenter: cityCenter
     };
 }
