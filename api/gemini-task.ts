@@ -8,7 +8,7 @@ const colors = {
   magenta: "\x1b[35m", cyan: "\x1b[36m", bold: "\x1b[1m"
 };
 
-// --- Получение и перемешивание ключей API (из gemini-proxy) ---
+// --- Получение и перемешивание ключей API ---
 const getApiKeys = (): string[] => {
   const keys: string[] = [];
   if (process.env.API_KEY) keys.push(process.env.API_KEY);
@@ -29,27 +29,14 @@ const shuffleArray = <T>(array: T[]): T[] => {
   return arr;
 };
 
-// --- Stateless Task Encoding/Decoding ---
-// We encode the entire payload (contents + systemInstruction) into the taskId itself.
-const encodeTask = (payload: object): string => {
-    return Buffer.from(JSON.stringify(payload)).toString('base64url');
-};
-
-const decodeTask = <T>(taskId: string): T => {
-    const jsonString = Buffer.from(taskId, 'base64url').toString('utf-8');
-    return JSON.parse(jsonString) as T;
-};
-
-
 // --- Основной обработчик API ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
-
-  // POST: Создать stateless ID задачи
+  
   if (req.method === 'POST') {
     const { contents, systemInstruction } = req.body;
     if (!contents || typeof contents !== 'string') {
@@ -58,34 +45,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!systemInstruction || typeof systemInstruction !== 'string') {
         return res.status(400).json({ error: 'В теле запроса отсутствует или некорректно поле "systemInstruction"' });
     }
-    const taskId = encodeTask({ contents, systemInstruction });
-    console.log(`${colors.cyan}✨ Создан stateless ID задачи...${colors.reset}`);
-    return res.status(200).json({ taskId });
-  }
-
-  // GET: Выполнить задачу и стримить ответ
-  if (req.method === 'GET') {
-    const { taskId } = req.query;
-    if (!taskId || typeof taskId !== 'string') {
-        return res.status(400).json({ error: 'Отсутствует параметр "taskId"' });
-    }
-    
-    let contents: string;
-    let systemInstruction: string;
-    try {
-        const payload = decodeTask<{ contents: string, systemInstruction: string }>(taskId);
-        contents = payload.contents;
-        systemInstruction = payload.systemInstruction;
-    } catch (error) {
-        return res.status(400).json({ error: 'Некорректный ID задачи' });
-    }
 
     const apiKeys = shuffleArray(getApiKeys());
     if (apiKeys.length === 0) {
         return res.status(500).json({ error: 'Ключи API не настроены на сервере' });
     }
 
-    console.log(`${colors.cyan}${colors.bold}🧠 Начинаю стрим для задачи...${colors.reset}`);
+    console.log(`${colors.cyan}${colors.bold}🧠 Начинаю потоковую передачу AI-аналитики...${colors.reset}`);
     const startTime = Date.now();
     let lastError: any = null;
     let handled = false;

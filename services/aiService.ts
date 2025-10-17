@@ -37,8 +37,8 @@ interface StreamCallbacks {
 }
 
 /**
- * Initiates a streaming request for an AI summary using a stateless, two-step task pattern
- * to prevent serverless function timeouts.
+ * Initiates a streaming request for an AI summary using a robust, single POST request
+ * to prevent serverless function timeouts and URL length limit errors.
  * @param data The data for the analysis.
  * @param callbacks Callbacks to handle stream events.
  * @returns A cleanup function to abort the request.
@@ -48,28 +48,15 @@ export function streamAiSummary(data: AggregatedDataRow, callbacks: StreamCallba
 
     const startStreaming = async () => {
         try {
-            // STEP 1: Create a self-contained "task ID" by POSTing the prompt and system instruction.
-            // This request is instant and avoids the initial timeout.
-            const contents = createContents(data);
-            const taskResponse = await fetch('/api/gemini-task', {
+            // A single, direct streaming POST request.
+            // The body contains the prompt, and the response is streamed back.
+            const streamResponse = await fetch('/api/gemini-task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents, systemInstruction: SYSTEM_INSTRUCTION }),
-                signal: controller.signal,
-            });
-
-            if (!taskResponse.ok) {
-                const errorData = await taskResponse.json().catch(() => ({ error: 'Failed to create analysis task.' }));
-                throw new Error(errorData.error);
-            }
-            const { taskId } = await taskResponse.json();
-            if (!taskId) {
-                throw new Error("Did not receive a valid task ID from the server.");
-            }
-
-            // STEP 2: Start a streaming GET request using the task ID.
-            // Vercel allows this connection to be held open for streaming.
-            const streamResponse = await fetch(`/api/gemini-task?taskId=${taskId}`, {
+                body: JSON.stringify({
+                    contents: createContents(data),
+                    systemInstruction: SYSTEM_INSTRUCTION
+                }),
                 signal: controller.signal,
             });
 
