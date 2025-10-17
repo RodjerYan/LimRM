@@ -43,7 +43,6 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     - Региональный менеджер (РМ): ${data.rm}
     - Бренд: ${data.brand}
     - Текущие продажи (Факт): ${formatLargeNumber(data.fact)} кг/ед.
-    // FIX: Corrected a typo in the function name from 'formatLarge_number' to 'formatLargeNumber'.
     - Прогнозный потенциал рынка: ${formatLargeNumber(data.potential)} кг/ед.
     - Потенциал роста: ${formatLargeNumber(data.growthPotential)} кг/ед. (${data.growthRate.toFixed(1)}%)
     - Количество потенциальных торговых точек (зоомагазины, ветклиники и т.д.) в городе: ${data.potentialTTs} шт.
@@ -60,7 +59,6 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
     `;
     
-    // Используем абсолютный URL для надежности
     const absoluteProxyUrl = `${window.location.origin}${GEMINI_PROXY_URL}`;
 
     try {
@@ -75,13 +73,22 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
             throw new Error(`Ошибка сети или сервера (${response.status}): ${errorText}`);
         }
 
-        const fullText = await response.text();
-        
-        // Симулируем "печатание" текста на клиенте для лучшего UX
-        const chunkSize = 15;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20));
+        if (!response.body) {
+            throw new Error("Ответ сервера не содержит тела для стриминга.");
+        }
+
+        // Read from the stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let done = false;
+
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            done = readerDone;
+            if (value) {
+                const chunk = decoder.decode(value, { stream: true });
+                yield chunk;
+            }
         }
 
     } catch (err: any) {
