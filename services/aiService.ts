@@ -1,7 +1,7 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-// This function now uses a simple, robust proxy request.
+// This function now uses a real streaming response.
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -40,25 +40,24 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
         });
 
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'Failed to parse error response.' }));
-            const errorMessage = errorData.error || `Request failed with status ${response.status}`;
-            yield `### Ошибка AI-Аналитика\n\n${errorMessage}`;
+            const errorText = await response.text();
+            yield `### Ошибка AI-Аналитика\n\n${errorText}`;
             return;
         }
 
-        const result = await response.json();
-        const fullText = result.text;
-        
-        if (!fullText) {
-            yield `### Ошибка AI-Аналитика\n\nПолучен пустой ответ от сервиса.`;
-            return;
+        if (!response.body) {
+            throw new Error("Response body is missing.");
         }
 
-        // Simulate typing effect on the client side
-        const chunkSize = 15;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20));
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            yield decoder.decode(value, { stream: true });
         }
 
     } catch (err: any) {

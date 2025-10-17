@@ -56,33 +56,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const apiKey of shuffledKeys) {
         try {
             const ai = new GoogleGenAI({ apiKey });
-            const response = await ai.models.generateContent({ 
+            const responseStream = await ai.models.generateContentStream({ 
                 model: model || 'gemini-2.5-flash', 
                 contents, 
                 config 
             });
 
-            console.info(`✅ Successfully used API key ...${apiKey.slice(-4)}`);
-            // Vercel handles JSON serialization, so we just return the object.
-            return res.status(200).json({ text: response.text });
+            // If stream is initiated, we commit to this key and start streaming the response.
+            console.info(`✅ Streaming with API key ...${apiKey.slice(-4)}`);
+            
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            
+            // FIX: The `generateContentStream` method returns an async generator directly.
+            // It does not have a `.stream` property. The loop should iterate over `responseStream` itself.
+            for await (const chunk of responseStream) {
+                res.write(chunk.text);
+            }
+
+            res.end();
+            return; // Successfully streamed, exit the handler.
 
         } catch (error: any) {
-            console.warn(`API key ...${apiKey.slice(-4)} failed.`);
+            console.warn(`API key ...${apiKey.slice(-4)} failed to initiate stream.`);
             lastError = error;
             const errorMessage = error.message?.toLowerCase() || '';
             
-            // If it's a quota or network error, try the next key
+            // If it's a retriable error (like quota), try the next key.
             if (errorMessage.includes('quota') || errorMessage.includes('resource_exhausted') || errorMessage.includes('too many requests') || errorMessage.includes('failed to fetch') || errorMessage.includes('network')) {
-                console.warn(`Retriable error: "${errorMessage}". Trying next key.`);
                 continue;
             }
             
-            // For other errors (like invalid arguments), break immediately
+            // For other errors (like invalid arguments), break immediately.
             break; 
         }
     }
 
-    console.error(`All API keys failed. Last error:`, lastError);
+    // This block is reached only if all keys failed to initiate a stream.
+    console.error(`All API keys failed to initiate stream. Last error:`, lastError);
     const finalErrorMessage = lastError instanceof Error ? lastError.message : 'An unknown error occurred after trying all available keys.';
-    return res.status(500).json({ error: finalErrorMessage });
+    if (!res.headersSent) {
+       return res.status(500).json({ error: finalErrorMessage });
+    }
 }
