@@ -1,6 +1,6 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
-import { nanoid } from 'nanoid';
 
 // 🎨 Цвета для консоли
 const colors = {
@@ -9,17 +9,7 @@ const colors = {
   magenta: "\x1b[35m", cyan: "\x1b[36m", bold: "\x1b[1m"
 };
 
-// --- Типы и хранилище задач ---
-interface AiTask {
-    id: string;
-    status: 'pending' | 'done' | 'error';
-    resultText: string;
-    error?: string;
-    createdAt: number;
-}
-const tasks = new Map<string, AiTask>();
-
-// --- Получение и перемешивание ключей API ---
+// --- Получение и перемешивание ключей API (из gemini-proxy) ---
 const getApiKeys = (): string[] => {
   const keys: string[] = [];
   if (process.env.API_KEY) keys.push(process.env.API_KEY);
@@ -40,73 +30,17 @@ const shuffleArray = <T>(array: T[]): T[] => {
   return arr;
 };
 
-// --- Фоновая обработка задачи Gemini ---
-async function processGeminiTask(taskId: string, prompt: string) {
-    const task = tasks.get(taskId);
-    if (!task) return;
+// --- Stateless Task Encoding/Decoding ---
+// We encode the prompt into the taskId itself to avoid state on the server.
+const encodeTask = (prompt: string): string => {
+    // Using base64url is safer for query parameters than standard base64.
+    return Buffer.from(prompt).toString('base64url');
+};
 
-    const apiKeys = shuffleArray(getApiKeys());
-    if (apiKeys.length === 0) {
-        tasks.set(taskId, { ...task, status: 'error', error: 'Ключи API не настроены на сервере' });
-        return;
-    }
+const decodeTask = (taskId: string): string => {
+    return Buffer.from(taskId, 'base64url').toString('utf-8');
+};
 
-    let lastError: any = null;
-    let handled = false;
-
-    for (const apiKey of apiKeys) {
-        try {
-            const shortKey = apiKey.slice(-6);
-            console.log(`${colors.blue}🤖 Запуск стрима для задачи ${taskId} с ключом ...${shortKey}${colors.reset}`);
-            
-            const ai = new GoogleGenAI({ apiKey });
-            const streamResponse = await ai.models.generateContentStream({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-            });
-
-            for await (const chunk of streamResponse) {
-                const text = chunk.text;
-                if (text) {
-                    const currentTask = tasks.get(taskId);
-                    if (currentTask) {
-                        currentTask.resultText += text;
-                    }
-                }
-            }
-            
-            const finalTask = tasks.get(taskId);
-            if(finalTask) {
-                finalTask.status = 'done';
-            }
-            console.log(`${colors.green}✅ Стрим для задачи ${taskId} (ключ ...${shortKey}) завершен.${colors.reset}`);
-            handled = true;
-            break; 
-
-        } catch (err: any) {
-            lastError = err;
-            const msg = (err.message || '').toLowerCase();
-            const shortKey = apiKey.slice(-6);
-
-            if (msg.includes('429') || msg.includes('quota') || msg.includes('too many requests')) {
-                console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} для задачи ${taskId} исчерпал лимит.${colors.reset}`);
-                continue;
-            }
-            
-            console.error(`${colors.red}❌ Ошибка стрима для задачи ${taskId} (ключ ...${shortKey}):${colors.reset} ${err.message}`);
-            break; 
-        }
-    }
-
-    if (!handled) {
-        const finalTask = tasks.get(taskId);
-        if(finalTask) {
-            finalTask.status = 'error';
-            finalTask.error = lastError?.message || 'Не удалось выполнить запрос к Gemini API после нескольких попыток.';
-        }
-        console.error(`${colors.red}${colors.bold}💥 Все ключи для задачи ${taskId} не сработали.${colors.reset}`);
-    }
-}
 
 // --- Основной обработчик API ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -116,54 +50,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // POST: Создать новую задачу
+  // POST: Создать stateless ID задачи
   if (req.method === 'POST') {
     const { prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'В теле запроса отсутствует поле "prompt"' });
-
-    const taskId = nanoid(12);
-    const newTask: AiTask = {
-      id: taskId,
-      status: 'pending',
-      resultText: '',
-      createdAt: Date.now(),
-    };
-    tasks.set(taskId, newTask);
-
-    // Запускаем обработку в фоне, НЕ ожидая ее завершения
-    processGeminiTask(taskId, prompt);
-
-    console.log(`${colors.cyan}✨ Новая задача Gemini создана:${colors.reset} ${taskId}`);
-    return res.status(202).json({ taskId });
+    if (!prompt || typeof prompt !== 'string') {
+        return res.status(400).json({ error: 'В теле запроса отсутствует или некорректно поле "prompt"' });
+    }
+    const taskId = encodeTask(prompt);
+    console.log(`${colors.cyan}✨ Создан stateless ID задачи...${colors.reset}`);
+    return res.status(200).json({ taskId });
   }
 
-  // GET: Получить статус задачи
+  // GET: Выполнить задачу и стримить ответ
   if (req.method === 'GET') {
     const { taskId } = req.query;
-    if (!taskId || typeof taskId !== 'string') return res.status(400).json({ error: 'Отсутствует параметр "taskId"' });
+    if (!taskId || typeof taskId !== 'string') {
+        return res.status(400).json({ error: 'Отсутствует параметр "taskId"' });
+    }
+    
+    let contents: string;
+    try {
+        contents = decodeTask(taskId);
+    } catch (error) {
+        return res.status(400).json({ error: 'Некорректный ID задачи' });
+    }
 
-    const task = tasks.get(taskId);
-    if (!task) return res.status(404).json({ error: 'Задача не найдена' });
+    const apiKeys = shuffleArray(getApiKeys());
+    if (apiKeys.length === 0) {
+        return res.status(500).json({ error: 'Ключи API не настроены на сервере' });
+    }
 
-    return res.status(200).json({
-      status: task.status,
-      resultText: task.resultText,
-      error: task.error,
-    });
+    console.log(`${colors.cyan}${colors.bold}🧠 Начинаю стрим для задачи...${colors.reset}`);
+    const startTime = Date.now();
+    let lastError: any = null;
+    let handled = false;
+
+    for (const apiKey of apiKeys) {
+        const shortKey = apiKey.slice(-6);
+        try {
+            const ai = new GoogleGenAI({ apiKey });
+            const streamResponse = await ai.models.generateContentStream({
+                model: 'gemini-2.5-flash',
+                contents,
+            });
+
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            res.status(200);
+
+            for await (const chunk of streamResponse) {
+                const text = chunk.text;
+                if (text) {
+                    res.write(text);
+                }
+            }
+            
+            res.end();
+            const duration = Date.now() - startTime;
+            console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно завершил стрим за ${duration} мс`);
+            handled = true;
+            break;
+
+        } catch (err: any) {
+            lastError = err;
+            const msg = (err.message || '').toLowerCase();
+            if (msg.includes('429') || msg.includes('quota') || msg.includes('too many requests')) {
+                console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь...${colors.reset}`);
+                continue;
+            }
+            console.error(`${colors.red}❌ Неперехватываемая ошибка (ключ ...${shortKey}):${colors.reset} ${err.message}`);
+            break;
+        }
+    }
+
+    if (!handled && !res.headersSent) {
+        console.error(`${colors.red}${colors.bold}💥 Все ключи не сработали. Последняя ошибка:${colors.reset}`, lastError?.message);
+        res.status(500).json({
+            error: 'Не удалось выполнить запрос к Gemini API',
+            details: lastError?.message || 'Неизвестная ошибка.',
+        });
+    }
+    return;
   }
 
   return res.status(405).json({ error: 'Метод не разрешен' });
 }
-
-
-// --- Очистка старых задач ---
-setInterval(() => {
-    const now = Date.now();
-    const tenMinutes = 10 * 60 * 1000;
-    for (const [key, task] of tasks.entries()) {
-        if (now - task.createdAt > tenMinutes) {
-            tasks.delete(key);
-            console.log(`${colors.gray}🗑️ Очищена старая задача Gemini:${colors.reset} ${key}`);
-        }
-    }
-}, 60 * 1000);

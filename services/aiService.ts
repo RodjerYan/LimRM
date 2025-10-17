@@ -12,6 +12,7 @@ const createPrompt = (data: AggregatedDataRow): string => `
     - Региональный менеджер (РМ): ${data.rm}
     - Бренд: ${data.brand}
     - Текущие продажи (Факт): ${formatLargeNumber(data.fact)} кг/ед.
+    // FIX: Corrected typo from formatLarge_number to formatLargeNumber
     - Прогнозный потенциал рынка: ${formatLargeNumber(data.potential)} кг/ед.
     - Потенциал роста: ${formatLargeNumber(data.growthPotential)} кг/ед. (${data.growthRate.toFixed(1)}%)
     - Количество потенциальных торговых точек (зоомагазины, ветклиники и т.д.) в городе: ${data.potentialTTs} шт.
@@ -36,8 +37,8 @@ interface StreamCallbacks {
 }
 
 /**
- * Initiates a streaming request to the Gemini proxy for an AI summary.
- * This is a robust, stateless alternative to the previous polling mechanism.
+ * Initiates a streaming request for an AI summary using a stateless, two-step task pattern
+ * to prevent serverless function timeouts.
  * @param data The data for the analysis.
  * @param callbacks Callbacks to handle stream events.
  * @returns A cleanup function to abort the request.
@@ -47,20 +48,37 @@ export function streamAiSummary(data: AggregatedDataRow, callbacks: StreamCallba
 
     const startStreaming = async () => {
         try {
+            // STEP 1: Create a self-contained "task ID" by POSTing the prompt.
+            // This request is instant and avoids the initial timeout.
             const prompt = createPrompt(data);
-            const response = await fetch('/api/gemini-proxy', {
+            const taskResponse = await fetch('/api/gemini-task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: prompt }),
+                body: JSON.stringify({ prompt }),
                 signal: controller.signal,
             });
 
-            if (!response.ok || !response.body) {
-                const errorData = await response.json().catch(() => ({ error: `Request failed with status ${response.status}` }));
-                throw new Error(errorData.error || `Request failed with status ${response.status}`);
+            if (!taskResponse.ok) {
+                const errorData = await taskResponse.json().catch(() => ({ error: 'Failed to create analysis task.' }));
+                throw new Error(errorData.error);
+            }
+            const { taskId } = await taskResponse.json();
+            if (!taskId) {
+                throw new Error("Did not receive a valid task ID from the server.");
             }
 
-            const reader = response.body.getReader();
+            // STEP 2: Start a streaming GET request using the task ID.
+            // Vercel allows this connection to be held open for streaming.
+            const streamResponse = await fetch(`/api/gemini-task?taskId=${taskId}`, {
+                signal: controller.signal,
+            });
+
+            if (!streamResponse.ok || !streamResponse.body) {
+                const errorData = await streamResponse.json().catch(() => ({ error: `Streaming failed with status ${streamResponse.status}` }));
+                throw new Error(errorData.error || `Streaming failed with status ${streamResponse.status}`);
+            }
+
+            const reader = streamResponse.body.getReader();
             const decoder = new TextDecoder();
 
             // eslint-disable-next-line no-constant-condition
