@@ -103,40 +103,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           handled = true;
           break;
         }
-      }
+      } else {
+        // --- Потоковый ответ ---
+        const stream = await ai.models.generateContentStream({
+          model: 'gemini-2.5-flash',
+          contents,
+          config,
+        });
 
-      // --- Потоковый ответ ---
-      const stream = await ai.models.generateContentStream({
-        model: 'gemini-2.5-flash',
-        contents,
-        config,
-      });
+        const timeout = setTimeout(() => {
+          if (!res.writableEnded) {
+            console.warn(`${colors.yellow}⏰ Таймаут 60с при чтении потока от Gemini (ключ ...${shortKey}). Завершаю соединение.${colors.reset}`);
+            res.end();
+            handled = true;
+          }
+        }, 60000); // 60 seconds
 
-      const iterator = stream[Symbol.asyncIterator]();
-      const first = await iterator.next();
-
-      if (first.done) {
-        console.log(`${colors.yellow}⚠️ Поток пуст (ключ ...${shortKey}), но без ошибок.${colors.reset}`);
-        res.status(200).end();
+        try {
+          let firstChunk = true;
+          for await (const chunk of stream) {
+            if (firstChunk) {
+              if (!res.headersSent) {
+                res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+                res.setHeader('Cache-Control', 'no-cache');
+                res.setHeader('Connection', 'keep-alive');
+              }
+              firstChunk = false;
+            }
+            if (chunk.text) {
+              res.write(chunk.text);
+            }
+          }
+        } finally {
+          clearTimeout(timeout);
+          if (!res.writableEnded) {
+            res.end();
+          }
+        }
+        
+        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} завершил стрим за ${Date.now() - startTime} мс`);
         handled = true;
         break;
       }
-
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
-      res.write(first.value.text);
-
-      for await (const chunk of iterator) {
-        if (chunk.text) res.write(chunk.text);
-      }
-
-      res.end();
-      console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} завершил стрим за ${Date.now() - startTime} мс`);
-      handled = true;
-      break;
-
     } catch (err: any) {
       lastError = err;
       const msg = (err.message || '').toLowerCase();
@@ -145,13 +153,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         msg.includes('429') ||
         msg.includes('resource_exhausted') ||
         msg.includes('quota') ||
-        msg.includes('too many requests')
+        msg.includes('too many requests') ||
+        msg.includes('failed to fetch')
       ) {
-        console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь на следующий.${colors.reset}`);
+        if(msg.includes('failed to fetch')) {
+          console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий.${colors.reset}`);
+        } else {
+          console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь на следующий.${colors.reset}`);
+        }
         continue;
       }
 
-      console.error(`${colors.red}❌ Ошибка при ключе ...${shortKey}:${colors.reset} ${err.message}`);
+      console.error(`${colors.red}❌ Неперехватываемая ошибка при ключе ...${shortKey}:${colors.reset} ${err.message}`);
       break;
     }
   }
@@ -164,6 +177,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const totalTime = Date.now() - startTime;
-  console.log(`${colors.magenta}⏱️ Всего времени: ${totalTime} мс (${attempts} попыток).${colors.reset}`);
+  if (handled) {
+    const totalTime = Date.now() - startTime;
+    console.log(`${colors.magenta}⏱️ Всего времени: ${totalTime} мс (${attempts} попыток).${colors.reset}`);
+  }
 }
