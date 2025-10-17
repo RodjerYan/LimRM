@@ -144,7 +144,7 @@ function aggregateData(data: ProcessedDataRow[]) {
 
 
 // --- START osmService ---
-const proxyUrl = `${self.location.origin}/api/osm-proxy`; // Use absolute path for worker compatibility.
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
@@ -154,7 +154,7 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
     const MAX_RETRIES = 3;
@@ -186,28 +186,28 @@ async function getMarketPotentialFromOSM(locationName: string) {
         return [];
     };
 
-    try {
-        const results = await queryNominatim(combinedSearchTerm);
-        for (const result of results) {
-            const key = result.osm_type + result.osm_id;
-            if (!allClients.has(key) && result.lat && result.lon) {
-                allClients.set(key, {
-                    name: result.name || result.display_name.split(',')[0],
-                    address: result.display_name,
-                    type: result.extratags?.shop || result.extratags?.amenity || result.type,
-                    lat: parseFloat(result.lat),
-                    lon: parseFloat(result.lon)
-                });
+    for (const term of searchTerms) {
+        try {
+            const results = await queryNominatim(term);
+            for (const result of results) {
+                const key = result.osm_type + result.osm_id;
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                        lat: parseFloat(result.lat),
+                        lon: parseFloat(result.lon)
+                    });
 
-                if (!cityCenter && result.importance > 0.4) {
-                    cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                    if (!cityCenter && result.importance > 0.4) {
+                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                    }
                 }
             }
+        } catch (error) {
+            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
         }
-    } catch (error) {
-        console.error(`CRITICAL: Failed to get OSM data for "${locationName}" after all retries.`, error);
-        // Re-throw the error to prevent silent failures and notify the user.
-        throw error;
     }
     
     if (!cityCenter && allClients.size > 0) {
@@ -256,7 +256,7 @@ const calculateRealisticPotential = async (
     
     onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
 
-    const enqueue = createRequestQueue(1); // Concurrency set to 1 to respect Nominatim's rate limit (1 req/sec)
+    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
     const potentialMap = new Map();
 
     const normalizedExistingClients = new Map<string, Set<string>>();

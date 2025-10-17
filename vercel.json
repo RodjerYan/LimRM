@@ -5,9 +5,6 @@
     },
     "api/gemini-task.ts": {
       "maxDuration": 58
-    },
-    "api/osm-proxy.ts": {
-      "maxDuration": 30
     }
   },
   "rewrites": [
