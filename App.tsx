@@ -587,17 +587,28 @@ export default function App() {
 
         if (searchTerm) {
             const lowercasedTerm = searchTerm.toLowerCase();
-            processedData = processedData.filter(item =>
-                item.rm.toLowerCase().includes(lowercasedTerm) ||
-                item.brand.toLowerCase().includes(lowercasedTerm) ||
-                item.city.toLowerCase().includes(lowercasedTerm) ||
-                String(item.potentialTTs).includes(lowercasedTerm) ||
-                formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
-                (item.newPlan && formatLargeNumber(item.newPlan).toLowerCase().includes(lowercasedTerm)) ||
-                item.growthRate.toFixed(2).includes(lowercasedTerm)
-            );
+            processedData = processedData.filter(item => {
+                // Main visible fields
+                const mainMatch = 
+                    item.rm.toLowerCase().includes(lowercasedTerm) ||
+                    item.brand.toLowerCase().includes(lowercasedTerm) ||
+                    item.city.toLowerCase().includes(lowercasedTerm) ||
+                    String(item.potentialTTs).includes(lowercasedTerm) ||
+                    formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
+                    formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
+                    formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
+                    (item.newPlan && formatLargeNumber(item.newPlan).toLowerCase().includes(lowercasedTerm)) ||
+                    item.growthRate.toFixed(2).includes(lowercasedTerm);
+
+                if (mainMatch) return true;
+
+                // Search in potential clients (OKB)
+                return item.potentialClients?.some(client =>
+                    (client.name?.toLowerCase().includes(lowercasedTerm)) ||
+                    (client.address?.toLowerCase().includes(lowercasedTerm)) ||
+                    (client.type?.toLowerCase().includes(lowercasedTerm))
+                );
+            });
         }
 
         if (sortConfig !== null) {

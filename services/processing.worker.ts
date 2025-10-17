@@ -154,7 +154,10 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    const searchTerms = [
+        'зоомагазин', 'ветеринарная клиника', 'ветаптека',
+        'зоотовары', 'товары для животных', 'ветклиника', 'ветеринарный кабинет'
+    ];
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
     const MAX_RETRIES = 3;
@@ -333,7 +336,7 @@ self.onmessage = async (e: MessageEvent<{
         
         const onProgress = (progress: number, text: string, etr: number) => {
             self.postMessage({ type: 'progress', payload: { status: 'fetching', progress, text, etr: formatTime(etr) } });
-        };
+        };Ф
         
         const dataWithPotential = await calculateRealisticPotential(processedData, uniqueLocations, existingClientsByRegion, onProgress);
         
