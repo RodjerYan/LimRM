@@ -1,17 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Устанавливаем CORS заголовки для воркера и локальной разработки
+    // --- Улучшенная обработка CORS ---
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+        return res.status(204).end(); // Используем 204 No Content
     }
     
+    // Этот эндпоинт принимает только GET-запросы
     if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Метод не разрешен' });
+        return res.status(405).json({ error: 'Метод не разрешен. Этот эндпоинт принимает только GET-запросы.' });
     }
 
     try {
