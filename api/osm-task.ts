@@ -1,5 +1,12 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { nanoid } from 'nanoid';
+
+// 🎨 Цвета для консоли
+const colors = {
+  reset: "\x1b[0m", gray: "\x1b[90m", red: "\x1b[31m", 
+  green: "\x1b[32m", yellow: "\x1b[33m", blue: "\x1b[34m",
+  magenta: "\x1b[35m", cyan: "\x1b[36m", bold: "\x1b[1m"
+};
 
 // --- Типы данных ---
 interface PotentialClient {
@@ -13,6 +20,17 @@ interface TaskResult {
     okbCount: number;
     cityCenter: { lat: number; lon: number } | null;
 }
+
+interface Task {
+    id: string;
+    locationName: string;
+    status: 'pending' | 'done' | 'error';
+    result?: TaskResult;
+    error?: string;
+    createdAt: number;
+}
+
+const tasks = new Map<string, Task>();
 
 // --- Логика обработки ---
 const normalizeAddress = (addr: string): string => {
@@ -38,7 +56,7 @@ async function getAndFilterMarketPotential(locationName: string, existingClients
                     format: 'jsonv2', addressdetails: '1', extratags: '1', limit: '100'
                 });
                 const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
-                const response = await fetch(url, { headers: { 'User-Agent': 'Limkorm-Geo-Analysis-App/1.2 (Vercel Serverless)' }});
+                const response = await fetch(url, { headers: { 'User-Agent': 'Limkorm-Geo-Analysis-App/1.2 (Vercel Serverless Task)' }});
                 if (!response.ok) {
                     if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
                         await new Promise(res => setTimeout(res, 1000 * (attempt + 1))); continue;
@@ -78,7 +96,7 @@ async function getAndFilterMarketPotential(locationName: string, existingClients
                 }
             }
         } catch (error) {
-            console.warn(`[OSM Analysis] Failed for term "${term}" in "${locationName}":`, error);
+            console.warn(`[OSM Task] Failed for term "${term}" in "${locationName}":`, error);
         }
     }
     
@@ -100,35 +118,67 @@ async function getAndFilterMarketPotential(locationName: string, existingClients
     };
 }
 
+async function processTask(taskId: string) {
+    const task = tasks.get(taskId);
+    if (!task) return;
 
+    try {
+        const { locationName } = task as any; // Temporary cast to get extra properties
+        const { existingClients } = task as any;
+        const result = await getAndFilterMarketPotential(locationName, existingClients);
+        tasks.set(taskId, { ...task, status: 'done', result });
+    } catch (err: any) {
+        tasks.set(taskId, { ...task, status: 'error', error: err.message || 'Unknown error during processing.' });
+    }
+}
+
+// --- Основной обработчик API ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // --- Полный CORS для любого домена ---
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  if (req.method === 'OPTIONS') {
-    return res.status(204).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(204).end();
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Метод не разрешен. Используйте POST для анализа.' });
-  }
-
-  try {
+  if (req.method === 'POST') {
     const { locationName, existingClients } = req.body;
-    if (!locationName) {
-      return res.status(400).json({ error: 'Не указан обязательный параметр "locationName"' });
-    }
-    
-    const result = await getAndFilterMarketPotential(locationName, existingClients || []);
+    if (!locationName) return res.status(400).json({ error: 'Missing "locationName" in request body.' });
 
-    // Кэшируем на стороне Vercel на 1 день
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-    return res.status(200).json(result);
+    const taskId = nanoid(10);
+    const newTask: any = { // Using `any` to attach temp properties
+      id: taskId, locationName, existingClients: existingClients || [],
+      status: 'pending', createdAt: Date.now(),
+    };
+    tasks.set(taskId, newTask);
 
-  } catch (err: any) {
-    console.error('Ошибка OSM Analysis:', err);
-    return res.status(500).json({ error: 'Внутренняя ошибка сервера', details: err.message });
+    processTask(taskId); // Run async
+
+    console.log(`${colors.cyan}✨ New OSM task created:${colors.reset} ${taskId} for ${locationName}`);
+    return res.status(202).json({ taskId });
   }
+
+  if (req.method === 'GET') {
+    const { taskId } = req.query;
+    if (!taskId || typeof taskId !== 'string') return res.status(400).json({ error: 'Missing "taskId" query parameter.' });
+
+    const task = tasks.get(taskId);
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    
+    const { locationName, existingClients, ...publicTaskData } = task as any;
+    return res.status(200).json(publicTaskData);
+  }
+
+  return res.status(405).json({ error: 'Method Not Allowed' });
 }
+
+// Простая очистка старых задач
+setInterval(() => {
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+    for (const [key, task] of tasks.entries()) {
+        if (now - task.createdAt > tenMinutes) {
+            tasks.delete(key);
+            console.log(`${colors.gray}🗑️ Cleared old OSM task:${colors.reset} ${key}`);
+        }
+    }
+}, 60 * 1000);

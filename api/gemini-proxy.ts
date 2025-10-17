@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -72,6 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let handled = false;
   let attempts = 0;
 
+  const isJsonRequest = config?.responseMimeType === 'application/json';
+
   for (const apiKey of apiKeys) {
     attempts++;
     const shortKey = apiKey.slice(-6);
@@ -79,21 +82,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
       const ai = new GoogleGenAI({ apiKey });
-      const isJsonRequest = config?.responseMimeType === 'application/json';
-
-      // Для стабильности на Vercel, всегда получаем полный ответ от Gemini, избегая прямого стриминга клиенту.
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-        config,
-      });
-
-      const text = response.text?.trim();
-      if (!text) throw new Error('Пустой ответ модели');
       
-      const duration = Date.now() - startTime;
-
       if (isJsonRequest) {
+        // --- HANDLE JSON REQUEST (NON-STREAMING) ---
+        // For JSON, we need the full response to parse it. Relies on increased Vercel timeout.
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config,
+        });
+
+        const text = response.text?.trim();
+        if (!text) throw new Error('Пустой ответ модели');
+        
+        const duration = Date.now() - startTime;
+        
         try {
           const json = JSON.parse(text);
           console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно выполнил JSON-запрос за ${duration} мс`);
@@ -103,10 +106,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           res.status(500).json({ error: 'Ошибка парсинга JSON', raw: text });
         }
       } else {
-        // Для текстовых запросов, отправляем полный текст. Клиент симулирует стрим.
-        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} выполнил текстовый запрос за ${duration} мс`);
+        // --- HANDLE TEXT REQUEST (STREAMING) ---
+        // For text, stream the response to avoid Vercel timeouts by keeping the connection alive.
+        const streamResponse = await ai.models.generateContentStream({
+            model: 'gemini-2.5-flash',
+            contents,
+            config,
+        });
+        
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.status(200).send(text);
+        res.status(200);
+
+        for await (const chunk of streamResponse) {
+            const text = chunk.text;
+            if (text) {
+                res.write(text);
+            }
+        }
+        
+        res.end();
+        const duration = Date.now() - startTime;
+        console.log(`${colors.green}✅ Ключ ...${shortKey}${colors.reset} успешно завершил стрим за ${duration} мс`);
       }
       
       handled = true;
@@ -122,7 +142,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         msg.includes('quota') ||
         msg.includes('too many requests') ||
         msg.includes('failed to fetch') ||
-        msg.includes('connection') // Catches connection errors like ERR_CONNECTION_CLOSED
+        msg.includes('connection')
       ) {
         if(msg.includes('failed to fetch') || msg.includes('connection')) {
           console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий.${colors.reset}`);

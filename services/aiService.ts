@@ -1,8 +1,8 @@
+
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
-    const prompt = `
+const createPrompt = (data: AggregatedDataRow): string => `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
     Твоя задача — предоставить краткую, но ёмкую аналитическую справку для регионального менеджера (${data.rm}) по городу ${data.city} и бренду ${data.brand}.
     Справка должна быть в формате markdown, структурирована, позитивна и мотивирующа.
@@ -26,70 +26,63 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     6.  **Заключение**: Закончи на позитивной и мотивирующей ноте.
 
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
-    `;
+`;
 
-    try {
-        // 1. Создаём задачу на сервере
-        const createResponse = await fetch('/api/gemini-task', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
-        });
 
-        if (!createResponse.ok) {
-            const errorData = await createResponse.json();
-            yield `### Ошибка создания задачи\n\nНе удалось запустить AI-аналитика. Сервер ответил: ${errorData.error || 'Неизвестная ошибка'}`;
-            return;
-        }
+interface StreamCallbacks {
+    onChunk: (chunk: string) => void;
+    onComplete: () => void;
+    onError: (error: string) => void;
+}
 
-        const { taskId } = await createResponse.json();
-        if (!taskId) {
-            yield "### Ошибка\n\nСервер не вернул идентификатор задачи.";
-            return;
-        }
+/**
+ * Initiates a streaming request to the Gemini proxy for an AI summary.
+ * This is a robust, stateless alternative to the previous polling mechanism.
+ * @param data The data for the analysis.
+ * @param callbacks Callbacks to handle stream events.
+ * @returns A cleanup function to abort the request.
+ */
+export function streamAiSummary(data: AggregatedDataRow, callbacks: StreamCallbacks): () => void {
+    const controller = new AbortController();
 
-        // 2. Опрашиваем статус задачи, пока она не будет выполнена
-        let isFinished = false;
-        const maxPolls = 60; // ~1 минута ожидания
-        let polls = 0;
+    const startStreaming = async () => {
+        try {
+            const prompt = createPrompt(data);
+            const response = await fetch('/api/gemini-proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: prompt }),
+                signal: controller.signal,
+            });
 
-        while (!isFinished && polls < maxPolls) {
-            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
-            
-            if (!statusResponse.ok) {
-                // Если сам сервер опроса недоступен, прекращаем
-                yield `### Ошибка сети\n\nНе удалось проверить статус задачи. Попробуйте снова.`;
-                return;
+            if (!response.ok || !response.body) {
+                const errorData = await response.json().catch(() => ({ error: `Request failed with status ${response.status}` }));
+                throw new Error(errorData.error || `Request failed with status ${response.status}`);
             }
 
-            const taskStatus = await statusResponse.json();
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
 
-            if (taskStatus.status === 'done') {
-                const fullText = taskStatus.result;
-                // Симулируем "печатание" текста на клиенте
-                const chunkSize = 15;
-                for (let i = 0; i < fullText.length; i += chunkSize) {
-                    yield fullText.substring(i, i + chunkSize);
-                    await new Promise(r => setTimeout(r, 20));
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    callbacks.onComplete();
+                    break;
                 }
-                isFinished = true;
-
-            } else if (taskStatus.status === 'error') {
-                yield `### Ошибка AI-Аналитика\n\nПроизошла ошибка при обработке вашего запроса: ${taskStatus.error}`;
-                isFinished = true;
-
-            } else {
-                // Статус 'pending', ждем и пробуем снова
-                await new Promise(r => setTimeout(r, 1500)); 
-                polls++;
+                callbacks.onChunk(decoder.decode(value, { stream: true }));
+            }
+        } catch (error: any) {
+            if (error.name !== 'AbortError') {
+                console.error("AI summary streaming failed:", error);
+                callbacks.onError(error instanceof Error ? error.message : String(error));
             }
         }
+    };
 
-        if (!isFinished) {
-            yield `### Ошибка: Время ожидания истекло\n\nАнализ занимает слишком много времени. Пожалуйста, попробуйте снова.`;
-        }
+    startStreaming();
 
-    } catch (err: any) {
-        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
-    }
+    return () => {
+        controller.abort();
+    };
 }

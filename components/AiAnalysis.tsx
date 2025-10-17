@@ -2,7 +2,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow } from '../types';
 import { formatLargeNumber } from '../utils/dataUtils';
-// FIX: Corrected the import name from `generateAiSummaryStream` to `streamAiSummary`.
 import { streamAiSummary } from '../services/aiService';
 import Modal from './Modal';
 import InteractiveMap from './InteractiveMap';
@@ -99,15 +98,10 @@ const AiAnalysis: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isCopied, setIsCopied] = useState(false);
 
-    // FIX: Replaced async generator usage with the correct callback-based implementation
-    // for `streamAiSummary`, which handles streaming chunks, completion, and errors.
     useEffect(() => {
         setIsLoading(true);
         setSummary('');
-        if (!data) {
-            setIsLoading(false);
-            return;
-        }
+        if (!data) return;
 
         const cleanup = streamAiSummary(data, {
             onChunk: (chunk) => {
