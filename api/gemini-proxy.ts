@@ -38,13 +38,9 @@ const shuffleArray = <T>(array: T[]): T[] => {
 
 // --- Основной обработчик ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // --- Улучшенная обработка CORS ---
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
+  // CORS теперь обрабатывается в vercel.json
   if (req.method === 'OPTIONS') {
-    res.status(204).end(); // Используем 204 No Content
+    res.status(204).end();
     return;
   }
 

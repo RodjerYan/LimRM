@@ -1,13 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // --- Улучшенная обработка CORS ---
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
+    // CORS теперь обрабатывается в vercel.json
     if (req.method === 'OPTIONS') {
-        return res.status(204).end(); // Используем 204 No Content
+        return res.status(204).end();
     }
     
     // Этот эндпоинт принимает только GET-запросы
