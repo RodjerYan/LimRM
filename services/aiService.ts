@@ -1,6 +1,45 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
+// Helper function to poll for the task result
+async function pollForTaskResult(taskId: string, timeout = 58000): Promise<string> {
+    const startTime = Date.now();
+    const pollInterval = 1500; // Poll every 1.5 seconds
+
+    while (Date.now() - startTime < timeout) {
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+        
+        try {
+            const res = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            
+            if (!res.ok) {
+                // Handle cases where the task might not be found on a cold start instance
+                if (res.status === 404) {
+                    console.warn(`Task ${taskId} not found, may be a cold start. Retrying...`);
+                    continue; // Continue polling
+                }
+                const errorData = await res.json().catch(() => ({ error: 'Failed to parse error response from task endpoint.' }));
+                throw new Error(`Task status check failed with status ${res.status}: ${errorData.error || res.statusText}`);
+            }
+
+            const data = await res.json();
+
+            if (data.status === 'done') {
+                return data.result;
+            } else if (data.status === 'error') {
+                throw new Error(`AI task failed: ${data.error}`);
+            }
+            // If status is 'pending', the loop continues
+        } catch (error) {
+            console.error('Polling error:', error);
+            // Don't throw immediately, allow for retries within the timeout
+        }
+    }
+
+    throw new Error("AI task timed out after waiting for a response.");
+}
+
+
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -29,44 +68,39 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     `;
 
     try {
-        // Используем единый, надежный прокси-эндпоинт, который дожидается ответа от Gemini.
-        // Это решает проблему с 404 на /api/gemini-task и нестабильностью в serverless-окружении.
-        const response = await fetch('/api/gemini-proxy', {
+        // --- Step 1: Create the task ---
+        const createTaskResponse = await fetch('/api/gemini-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: prompt }),
+            body: JSON.stringify({ prompt }),
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            let errorMessage = `Ошибка ${response.status}: ${response.statusText}.`;
-            try {
-                // Пытаемся распарсить JSON, если он есть
-                const errorJson = JSON.parse(errorText);
-                errorMessage = errorJson.error || errorJson.details || errorMessage;
-            } catch (e) {
-                // Если не JSON, используем текст как есть
-                errorMessage = errorText || errorMessage;
-            }
-            yield `### Ошибка AI-Аналитика\n\nНе удалось получить ответ от сервера.\n\n${errorMessage}`;
-            return;
+        if (!createTaskResponse.ok) {
+            const errorText = await createTaskResponse.text();
+            throw new Error(`Failed to create AI task: ${errorText}`);
         }
 
-        const fullText = await response.text();
-
+        const { taskId } = await createTaskResponse.json();
+        if (!taskId) {
+            throw new Error('Did not receive a task ID from the server.');
+        }
+        
+        // --- Step 2: Poll for the result ---
+        const fullText = await pollForTaskResult(taskId);
+        
         if (!fullText || fullText.trim() === '') {
             yield '### Ошибка\n\nМодель вернула пустой ответ. Возможно, сработал фильтр безопасности.';
             return;
         }
         
-        // Симулируем "печатание" текста на клиенте для лучшего UX, как и раньше.
+        // --- Step 3: Stream the result to the UI ---
         const chunkSize = 15;
         for (let i = 0; i < fullText.length; i += chunkSize) {
             yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20)); // Небольшая задержка
+            await new Promise(r => setTimeout(r, 20));
         }
 
     } catch (err: any) {
-        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение или настройки прокси. Ошибка: ${err.message}`;
+        yield `### Критическая ошибка\n\nНе удалось получить аналитическую справку. Проверьте ваше интернет-соединение или настройки сервера. Ошибка: ${err.message}`;
     }
 }
