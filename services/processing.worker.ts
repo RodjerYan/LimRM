@@ -144,7 +144,7 @@ function aggregateData(data: ProcessedDataRow[]) {
 
 
 // --- START osmService ---
-const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
+const proxyUrl = `${self.location.origin}/api/osm-proxy`; // Use absolute path for worker compatibility.
 
 const normalizeAddress = (addr: string): string => {
     if (!addr) return '';
