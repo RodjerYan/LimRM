@@ -154,7 +154,9 @@ const normalizeAddress = (addr: string): string => {
 };
 
 async function getMarketPotentialFromOSM(locationName: string) {
-    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    // OPTIMIZATION: Combine multiple search terms into a single, more efficient query
+    // to significantly reduce the number of API calls and speed up the analysis.
+    const combinedSearchTerm = 'зоомагазин, ветеринарная клиника, ветаптека';
     const allClients = new Map<string, PotentialClient>();
     let cityCenter: { lat: number, lon: number } | null = null;
     const MAX_RETRIES = 3;
@@ -186,28 +188,27 @@ async function getMarketPotentialFromOSM(locationName: string) {
         return [];
     };
 
-    for (const term of searchTerms) {
-        try {
-            const results = await queryNominatim(term);
-            for (const result of results) {
-                const key = result.osm_type + result.osm_id;
-                if (!allClients.has(key) && result.lat && result.lon) {
-                    allClients.set(key, {
-                        name: result.name || result.display_name.split(',')[0],
-                        address: result.display_name,
-                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
-                        lat: parseFloat(result.lat),
-                        lon: parseFloat(result.lon)
-                    });
+    try {
+        // A single, powerful query instead of a loop over multiple terms.
+        const results = await queryNominatim(combinedSearchTerm);
+        for (const result of results) {
+            const key = result.osm_type + result.osm_id;
+            if (!allClients.has(key) && result.lat && result.lon) {
+                allClients.set(key, {
+                    name: result.name || result.display_name.split(',')[0],
+                    address: result.display_name,
+                    type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                    lat: parseFloat(result.lat),
+                    lon: parseFloat(result.lon)
+                });
 
-                    if (!cityCenter && result.importance > 0.4) {
-                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
-                    }
+                if (!cityCenter && result.importance > 0.4) {
+                    cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
                 }
             }
-        } catch (error) {
-            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
         }
+    } catch (error) {
+        console.warn(`Failed to get OSM data for combined search in "${locationName}":`, error);
     }
     
     if (!cityCenter && allClients.size > 0) {
