@@ -1,25 +1,13 @@
-
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-const createPrompt = (data: AggregatedDataRow): string => `
+const SYSTEM_INSTRUCTION = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
-    Твоя задача — предоставить краткую, но ёмкую аналитическую справку для регионального менеджера (${data.rm}) по городу ${data.city} и бренду ${data.brand}.
+    Твоя задача — предоставить краткую, но ёмкую аналитическую справку для регионального менеджера.
     Справка должна быть в формате markdown, структурирована, позитивна и мотивирующа.
 
-    Входные данные:
-    - Город: ${data.city}
-    - Региональный менеджер (РМ): ${data.rm}
-    - Бренд: ${data.brand}
-    - Текущие продажи (Факт): ${formatLargeNumber(data.fact)} кг/ед.
-    // FIX: Corrected typo from formatLarge_number to formatLargeNumber
-    - Прогнозный потенциал рынка: ${formatLargeNumber(data.potential)} кг/ед.
-    - Потенциал роста: ${formatLargeNumber(data.growthPotential)} кг/ед. (${data.growthRate.toFixed(1)}%)
-    - Количество потенциальных торговых точек (зоомагазины, ветклиники и т.д.) в городе: ${data.potentialTTs} шт.
-    - Примеры потенциальных клиентов: ${data.potentialClients.slice(0, 3).map(c => c.name).join(', ')}.
-
-    Твоя задача:
-    1.  **Заголовок**: Создай четкий заголовок, например, "Анализ потенциала: г. ${data.city} / ${data.brand}".
+    Структура ответа:
+    1.  **Заголовок**: Создай четкий заголовок, например, "Анализ потенциала: г. [Город] / [Бренд]".
     2.  **Ключевые выводы (Executive Summary)**: Напиши 2-3 предложения с главной мыслью. Подчеркни основной потенциал роста.
     3.  **Сильные стороны**: Отметь текущие достижения (объем продаж).
     4.  **Зоны роста**: Укажи на разницу между фактом и потенциалом. Используй данные о количестве ТТ как обоснование для возможностей.
@@ -27,6 +15,18 @@ const createPrompt = (data: AggregatedDataRow): string => `
     6.  **Заключение**: Закончи на позитивной и мотивирующей ноте.
 
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
+`;
+
+const createContents = (data: AggregatedDataRow): string => `
+    Проанализируй следующие данные:
+    - Город: ${data.city}
+    - Региональный менеджер (РМ): ${data.rm}
+    - Бренд: ${data.brand}
+    - Текущие продажи (Факт): ${formatLargeNumber(data.fact)} кг/ед.
+    - Прогнозный потенциал рынка: ${formatLargeNumber(data.potential)} кг/ед.
+    - Потенциал роста: ${formatLargeNumber(data.growthPotential)} кг/ед. (${data.growthRate.toFixed(1)}%)
+    - Количество потенциальных торговых точек (зоомагазины, ветклиники и т.д.) в городе: ${data.potentialTTs} шт.
+    - Примеры потенциальных клиентов: ${data.potentialClients.slice(0, 3).map(c => c.name).join(', ')}.
 `;
 
 
@@ -48,13 +48,13 @@ export function streamAiSummary(data: AggregatedDataRow, callbacks: StreamCallba
 
     const startStreaming = async () => {
         try {
-            // STEP 1: Create a self-contained "task ID" by POSTing the prompt.
+            // STEP 1: Create a self-contained "task ID" by POSTing the prompt and system instruction.
             // This request is instant and avoids the initial timeout.
-            const prompt = createPrompt(data);
+            const contents = createContents(data);
             const taskResponse = await fetch('/api/gemini-task', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt }),
+                body: JSON.stringify({ contents, systemInstruction: SYSTEM_INSTRUCTION }),
                 signal: controller.signal,
             });
 

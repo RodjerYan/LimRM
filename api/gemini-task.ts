@@ -1,4 +1,3 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
@@ -31,14 +30,14 @@ const shuffleArray = <T>(array: T[]): T[] => {
 };
 
 // --- Stateless Task Encoding/Decoding ---
-// We encode the prompt into the taskId itself to avoid state on the server.
-const encodeTask = (prompt: string): string => {
-    // Using base64url is safer for query parameters than standard base64.
-    return Buffer.from(prompt).toString('base64url');
+// We encode the entire payload (contents + systemInstruction) into the taskId itself.
+const encodeTask = (payload: object): string => {
+    return Buffer.from(JSON.stringify(payload)).toString('base64url');
 };
 
-const decodeTask = (taskId: string): string => {
-    return Buffer.from(taskId, 'base64url').toString('utf-8');
+const decodeTask = <T>(taskId: string): T => {
+    const jsonString = Buffer.from(taskId, 'base64url').toString('utf-8');
+    return JSON.parse(jsonString) as T;
 };
 
 
@@ -52,11 +51,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // POST: Создать stateless ID задачи
   if (req.method === 'POST') {
-    const { prompt } = req.body;
-    if (!prompt || typeof prompt !== 'string') {
-        return res.status(400).json({ error: 'В теле запроса отсутствует или некорректно поле "prompt"' });
+    const { contents, systemInstruction } = req.body;
+    if (!contents || typeof contents !== 'string') {
+        return res.status(400).json({ error: 'В теле запроса отсутствует или некорректно поле "contents"' });
     }
-    const taskId = encodeTask(prompt);
+    if (!systemInstruction || typeof systemInstruction !== 'string') {
+        return res.status(400).json({ error: 'В теле запроса отсутствует или некорректно поле "systemInstruction"' });
+    }
+    const taskId = encodeTask({ contents, systemInstruction });
     console.log(`${colors.cyan}✨ Создан stateless ID задачи...${colors.reset}`);
     return res.status(200).json({ taskId });
   }
@@ -69,8 +71,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     
     let contents: string;
+    let systemInstruction: string;
     try {
-        contents = decodeTask(taskId);
+        const payload = decodeTask<{ contents: string, systemInstruction: string }>(taskId);
+        contents = payload.contents;
+        systemInstruction = payload.systemInstruction;
     } catch (error) {
         return res.status(400).json({ error: 'Некорректный ID задачи' });
     }
@@ -92,6 +97,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const streamResponse = await ai.models.generateContentStream({
                 model: 'gemini-2.5-flash',
                 contents,
+                config: {
+                    systemInstruction,
+                },
             });
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
