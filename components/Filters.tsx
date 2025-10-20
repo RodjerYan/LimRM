@@ -59,7 +59,7 @@ const FilterSelect: React.FC<{
                     onChange={handleInputChange}
                     onFocus={() => setIsOpen(true)}
                     placeholder={`Поиск и выбор (${label})...`}
-                    className="w-full p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
+                    className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500 transition"
                 />
                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
                      <svg className="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -69,10 +69,10 @@ const FilterSelect: React.FC<{
             </div>
 
             {isOpen && (
-                <ul className="absolute z-50 w-full mt-1 bg-card-bg/80 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
+                <ul className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
                     <li
                         onClick={() => handleOptionClick('')}
-                        className="px-4 py-2 text-gray-300 cursor-pointer hover:bg-indigo-500/20"
+                        className="px-4 py-2 text-gray-300 cursor-pointer hover:bg-accent/20"
                     >
                         Все РМ
                     </li>
@@ -80,7 +80,7 @@ const FilterSelect: React.FC<{
                         <li
                             key={opt}
                             onClick={() => handleOptionClick(opt)}
-                            className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20"
+                            className="px-4 py-2 text-white cursor-pointer hover:bg-accent/20"
                         >
                             {opt}
                         </li>
@@ -144,7 +144,7 @@ const MultiFilterSelect: React.FC<{
             <button
                 type="button"
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white text-left flex justify-between items-center transition"
+                className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white text-left flex justify-between items-center transition"
             >
                 <span className="truncate pr-1">{getDisplayValue()}</span>
                 <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
@@ -153,18 +153,18 @@ const MultiFilterSelect: React.FC<{
             </button>
 
             {isOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-card-bg/80 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg">
-                    <div className="p-2 border-b border-gray-700">
+                <div className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg">
+                    <div className="p-2 border-b border-border-color">
                          <input
                             type="text"
                             placeholder="Поиск..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full p-2 bg-gray-900/70 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500"
+                            className="w-full p-2 bg-gray-900/70 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500"
                         />
                     </div>
-                     <div className="flex justify-between px-3 py-2 border-b border-gray-700">
-                        <button onClick={handleSelectAll} className="text-xs text-accent hover:text-white transition-colors">Выбрать все</button>
+                     <div className="flex justify-between px-3 py-2 border-b border-border-color">
+                        <button onClick={handleSelectAll} className="text-xs text-accent hover:text-accent-hover transition-colors">Выбрать все</button>
                         <button onClick={handleDeselectAll} className="text-xs text-gray-400 hover:text-white transition-colors">Очистить</button>
                     </div>
                     <ul className="max-h-52 overflow-y-auto custom-scrollbar">
@@ -172,13 +172,13 @@ const MultiFilterSelect: React.FC<{
                             <li
                                 key={opt}
                                 onClick={() => handleToggleOption(opt)}
-                                className="px-3 py-2 text-white cursor-pointer hover:bg-indigo-500/20 flex items-center select-none"
+                                className="px-3 py-2 text-white cursor-pointer hover:bg-accent/20 flex items-center select-none"
                             >
                                <input
                                     type="checkbox"
                                     readOnly
                                     checked={selectedOptions.includes(opt)}
-                                    className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-accent focus:ring-accent mr-3 pointer-events-none"
+                                    className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-accent focus:ring-accent focus:ring-offset-0 mr-3 pointer-events-none"
                                 />
                                 <span className="truncate">{opt}</span>
                             </li>
@@ -207,8 +207,8 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
     };
 
     return (
-        <div className={`relative z-20 bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
+        <div className={`relative z-20 bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color transition-opacity ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-3">
                 <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">2</span>
                 Фильтры
             </h2>
@@ -219,7 +219,7 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
                 
                 <button
                     onClick={onReset}
-                    className="w-full mt-5 bg-transparent hover:bg-indigo-500/20 text-gray-300 border border-gray-600 font-bold py-2.5 px-4 rounded-lg transition duration-200"
+                    className="w-full mt-5 bg-transparent hover:bg-accent/20 text-gray-300 border border-border-color font-bold py-2.5 px-4 rounded-lg transition-colors duration-200"
                 >
                     Сбросить фильтры
                 </button>

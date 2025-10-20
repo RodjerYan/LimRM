@@ -1,198 +1,359 @@
-import { RawDataRow, ProcessedData, AggregatedDataRow, PotentialClient, FilterOptions, WorkerMessage } from '../types';
-import { mapHeaders, normalizeRow } from '../utils/columnMapper';
+/// <reference lib="webworker" />
 
-// --- Глобальные переменные воркера ---
-const geocodingCache = new Map<string, { lat: number, lon: number } | null>();
-
-// --- Вспомогательные функции для отправки сообщений ---
-const postProgress = (text: string, progress: number) => {
-    const message: WorkerMessage = { type: 'progress', payload: { text, progress } };
-    postMessage(message);
-};
-
-const postError = (error: string) => {
-    const message: WorkerMessage = { type: 'error', payload: error };
-    postMessage(message);
-};
-
-const postResult = (result: ProcessedData) => {
-    const message: WorkerMessage = { type: 'result', payload: result };
-    postMessage(message);
-};
-
-// --- Геокодирование через прокси ---
-async function geocode(query: string): Promise<{ lat: number, lon: number } | null> {
-    if (!query || query.trim().length < 3) return null;
-    const cacheKey = query.toLowerCase().trim();
-    if (geocodingCache.has(cacheKey)) {
-        return geocodingCache.get(cacheKey)!;
-    }
-    try {
-        const response = await fetch(`/api/osm-proxy?q=${encodeURIComponent(query)}`);
-        if (!response.ok) {
-            geocodingCache.set(cacheKey, null); // Кэшируем неудачу, чтобы не повторять запрос
-            return null;
-        }
-
-        const data = await response.json();
-        if (data && data.length > 0) {
-            const bestResult = data.sort((a: any, b: any) => b.importance - a.importance)[0];
-            const coords = { lat: bestResult.lat, lon: bestResult.lon };
-            geocodingCache.set(cacheKey, coords);
-            return coords;
-        }
-        geocodingCache.set(cacheKey, null);
-        return null;
-    } catch (e) {
-        console.error(`Ошибка геокодирования для "${query}":`, e);
-        geocodingCache.set(cacheKey, null);
-        return null;
-    }
+// NOTE: Types are self-contained here to avoid complex worker bundling configurations.
+interface PotentialClient {
+    name: string;
+    address: string;
+    type: string;
+    lat?: number;
+    lon?: number;
 }
 
-// --- Основная логика обработки ---
-async function processData(rawData: RawDataRow[]) {
+interface ProcessedDataRow {
+    rm: string;
+    brand: string;
+    city: string; // This is now the region
+    fact: number;
+    fullAddress: string;
+    potential?: number;
+    growthPotential?: number;
+    growthRate?: number;
+    potentialTTs?: number; // This will be the count of NEW clients (OKB)
+    totalMarketTTs?: number;
+    potentialClients?: PotentialClient[];
+    cityCenter?: { lat: number; lon: number; };
+    activeTT?: number; // Added for aggregation
+}
 
-    // 1. Валидация заголовков
-    postProgress('Проверка заголовков...', 5);
-    const headers = Object.keys(rawData[0] || {});
-    const { mapped: mappedHeaders, errors } = mapHeaders(headers);
-    if (errors.length > 0) {
-        postError(`Ошибка в заголовках файла: ${errors.join(', ')}`);
-        return;
+// --- START timeUtils ---
+function formatTime(seconds: number) {
+    if (isNaN(seconds) || seconds <= 0 || !isFinite(seconds)) {
+        return '';
     }
+    if (seconds < 1) {
+        return 'Осталось менее секунды';
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    let result = '~';
+    if (minutes > 0) {
+        result += ' ' + minutes + ' мин';
+    }
+    if (remainingSeconds > 0) {
+        result += ' ' + remainingSeconds + ' сек';
+    }
+    return 'Осталось ' + result.trim();
+}
+function calculateEtr(startTime: number, done: number, total: number) {
+    if (done === 0) return Infinity;
+    const elapsedTime = (Date.now() - startTime) / 1000;
+    const timePerItem = elapsedTime / done;
+    const remainingItems = total - done;
+    return timePerItem * remainingItems;
+}
+// --- END timeUtils ---
 
-    // 2. Нормализация и группировка данных
-    postProgress('Нормализация данных...', 15);
-    const groupedData = new Map<string, { rm: string; city: string; brand: string; clients: any[] }>();
-    
-    rawData.forEach(row => {
-        const normalized = normalizeRow(row, mappedHeaders);
-        // Пропускаем строки без ключевых данных
-        if (!normalized.city || !normalized.brand || !normalized.clientName) return;
+// --- START dataUtils ---
+const MIN_GROWTH_RATE = 0.05;
+const MAX_GROWTH_RATE = 0.80;
+const BASE_GROWTH_RATE = 0.15;
+function calculateRealisticGrowthRate(fact: number, potentialTTs: number) {
+    let growthRate = BASE_GROWTH_RATE;
+    const saturationFactor = Math.max(0.1, 1 - (fact / 10000));
+    growthRate *= saturationFactor;
+    let cityMultiplier = 1.0;
+    if (potentialTTs <= 10) cityMultiplier = 1.0;
+    else if (potentialTTs <= 30) cityMultiplier = 1.3;
+    else if (potentialTTs <= 100) cityMultiplier = 1.6;
+    else cityMultiplier = 2.0;
+    growthRate *= cityMultiplier;
+    return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
+}
 
-        const key = `${normalized.city}|${normalized.brand}|${normalized.rm}`;
-        
-        if (!groupedData.has(key)) {
-            groupedData.set(key, {
-                rm: normalized.rm,
-                city: normalized.city,
-                brand: normalized.brand,
-                clients: []
+function aggregateData(data: ProcessedDataRow[]) {
+    const aggregationMap = new Map();
+    const cityPotentialMap = new Map();
+
+    const seenSettlements = new Set();
+    data.forEach(item => {
+        if (item.city && !seenSettlements.has(item.city)) {
+            cityPotentialMap.set(item.city, { 
+                potentialTTs: item.potentialTTs || 0,
+                totalMarketTTs: item.totalMarketTTs || 0, 
+                potentialClients: item.potentialClients || [], 
+                cityCenter: item.cityCenter 
             });
+            seenSettlements.add(item.city);
         }
-        groupedData.get(key)!.clients.push(normalized);
     });
-    
-    // 3. Агрегация данных и геокодирование городов
-    postProgress('Анализ и геокодирование городов...', 40);
-    const aggregatedData: AggregatedDataRow[] = [];
-    const rms = new Set<string>();
-    const brands = new Set<string>();
-    const cities = new Set<string>();
-    let totalFact = 0;
-    let totalPotential = 0;
 
-    const groupEntries = Array.from(groupedData.entries());
-    let geocodedCount = 0;
-
-    for (const [key, group] of groupEntries) {
-        const cityCenter = await geocode(group.city);
-        geocodedCount++;
-        const progress = 40 + (geocodedCount / groupEntries.length) * 30; // 40% -> 70%
-        postProgress(`Анализ региона: ${group.city}`, progress);
-
-        let fact = 0;
-        let potential = 0;
-        const potentialClients: PotentialClient[] = [];
-
-        group.clients.forEach(client => {
-            fact += client.salesFact;
-            potential += client.salesPotential;
-            // FIX: Explicitly cast properties to string to match PotentialClient type.
-            // The source `normalizeRow` function ensures these are strings, but the broad
-            // return type `Record<..., string | number>` requires this for type safety.
-            potentialClients.push({
-                name: String(client.clientName),
-                address: String(client.clientAddress),
-                type: String(client.clientType),
+    data.forEach(item => {
+        const key = `${item.rm}|${item.brand}|${item.city}`;
+        if (!aggregationMap.has(key)) {
+            const potentials = cityPotentialMap.get(item.city) || { potentialTTs: 0, totalMarketTTs: 0, potentialClients: [], cityCenter: null };
+            aggregationMap.set(key, {
+                rm: item.rm,
+                brand: item.brand,
+                city: item.city,
+                fact: 0,
+                potential: 0,
+                growthPotential: 0,
+                growthRateSum: 0,
+                count: 0,
+                potentialTTs: potentials.potentialTTs,
+                totalMarketTTs: potentials.totalMarketTTs,
+                potentialClients: potentials.potentialClients,
+                cityCenter: potentials.cityCenter,
+                addresses: new Set<string>(),
             });
-        });
-
-        const growthPotential = Math.max(0, potential - fact);
-        const growthRate = fact > 0 ? (growthPotential / fact) * 100 : Infinity;
-        
-        aggregatedData.push({
-            key,
-            rm: group.rm,
-            city: group.city,
-            brand: group.brand,
-            fact,
-            potential,
-            growthPotential,
-            growthRate,
-            potentialTTs: group.clients.length,
-            potentialClients,
-            cityCenter: cityCenter || undefined,
-        });
-
-        rms.add(group.rm);
-        brands.add(group.brand);
-        cities.add(group.city);
-
-        totalFact += fact;
-        totalPotential += potential;
-    }
-    
-    // 4. Геокодирование клиентов
-    postProgress('Поиск координат клиентов...', 75);
-    const allClientsToGeocode = aggregatedData.flatMap(row => 
-        row.potentialClients.slice(0, 50).map(c => ({ client: c, city: row.city })) // Ограничение на 50 клиентов на группу
-    );
-    let geocodedClients = 0;
-    
-    for (const { client, city } of allClientsToGeocode) {
-        const fullAddress = `${city}, ${client.address}`;
-        const clientCoords = await geocode(fullAddress);
-        if (clientCoords) {
-            client.lat = clientCoords.lat;
-            client.lon = clientCoords.lon;
         }
-        geocodedClients++;
-        const progress = 75 + (geocodedClients / allClientsToGeocode.length) * 20; // 75% -> 95%
-        if (geocodedClients % 10 === 0) { // Обновляем прогресс не так часто
-             postProgress(`Поиск координат: ${client.name.substring(0, 20)}...`, progress);
+        const current = aggregationMap.get(key);
+        current.fact += item.fact;
+        current.potential += item.potential;
+        current.growthPotential += item.growthPotential;
+        current.growthRateSum += item.growthRate;
+        current.count += 1;
+        if (item.fullAddress) {
+            current.addresses.add(item.fullAddress);
         }
-    }
+    });
 
-    postProgress('Формирование отчета...', 98);
+    return Array.from(aggregationMap.values()).map(item => {
+        const uniqueClients = Array.from(new Map(item.potentialClients.map((c: PotentialClient) => [
+            c.lat && c.lon ? `${c.lat},${c.lon}` : `${c.name}-${c.address}`, 
+            c
+        ])).values());
 
-    const filterOptions: FilterOptions = {
-        rms: Array.from(rms).sort((a,b) => a.localeCompare(b)),
-        brands: Array.from(brands).sort((a,b) => a.localeCompare(b)),
-        cities: Array.from(cities).sort((a,b) => a.localeCompare(b)),
+        return {
+            rm: item.rm,
+            brand: item.brand,
+            city: item.city,
+            fact: item.fact,
+            potential: item.potential,
+            growthPotential: item.growthPotential,
+            potentialTTs: item.potentialTTs,
+            totalMarketTTs: item.totalMarketTTs,
+            potentialClients: uniqueClients,
+            cityCenter: item.cityCenter,
+            growthRate: item.count > 0 ? (item.growthRateSum / item.count) : 0,
+            activeTT: item.addresses.size,
+        };
+    });
+}
+// --- END dataUtils ---
+
+
+// --- START osmService ---
+const proxyUrl = '/api/osm-proxy'; // Hardcoded relative path to prevent CORS issues.
+
+const normalizeAddress = (addr: string): string => {
+    if (!addr) return '';
+    return addr.toLowerCase()
+        .replace(/[\s.,-/\\()]/g, '')
+        .replace(/^(ул|улица|пр|проспект|пер|перелок|д|дом|к|корпус|кв|квартира|стр|строение|обл|область|рн|район|г|город|пос|поселок)\.?/g, '');
+};
+
+async function getMarketPotentialFromOSM(locationName: string) {
+    const searchTerms = ['зоомагазин', 'ветеринарная клиника', 'ветаптека'];
+    const allClients = new Map<string, PotentialClient>();
+    let cityCenter: { lat: number, lon: number } | null = null;
+    const MAX_RETRIES = 3;
+
+    const queryNominatim = async (term: string) => {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                const searchParams = new URLSearchParams({
+                    q: `${term} в ${locationName}`,
+                });
+                const response = await fetch(`${proxyUrl}?${searchParams.toString()}`);
+                
+                if (!response.ok) {
+                    if (response.status >= 500 && attempt < MAX_RETRIES - 1) {
+                        await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                        continue;
+                    }
+                    throw new Error(`OSM Proxy failed for "${term}" with status ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                if (attempt < MAX_RETRIES - 1) {
+                    await new Promise(res => setTimeout(res, 1000 * (attempt + 1)));
+                    continue;
+                }
+                throw error;
+            }
+        }
+        return [];
     };
 
-    const result: ProcessedData = {
-        aggregatedData,
-        filterOptions,
-        totalFact,
-        totalPotential,
-    };
+    for (const term of searchTerms) {
+        try {
+            const results = await queryNominatim(term);
+            for (const result of results) {
+                const key = result.osm_type + result.osm_id;
+                if (!allClients.has(key) && result.lat && result.lon) {
+                    allClients.set(key, {
+                        name: result.name || result.display_name.split(',')[0],
+                        address: result.display_name,
+                        type: result.extratags?.shop || result.extratags?.amenity || result.type,
+                        lat: parseFloat(result.lat),
+                        lon: parseFloat(result.lon)
+                    });
 
-    postResult(result);
+                    if (!cityCenter && result.importance > 0.4) {
+                        cityCenter = { lat: parseFloat(result.lat), lon: parseFloat(result.lon) };
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`Failed to get OSM data for term "${term}" in "${locationName}":`, error);
+        }
+    }
+    
+    if (!cityCenter && allClients.size > 0) {
+        const firstClient = allClients.values().next().value;
+        if (firstClient?.lat && firstClient?.lon) {
+            cityCenter = { lat: firstClient.lat, lon: firstClient.lon };
+        }
+    }
+    
+    return {
+        count: allClients.size,
+        clients: Array.from(allClients.values()),
+        cityCenter: cityCenter
+    };
 }
 
 
-// --- Обработчик сообщений воркера ---
-self.onmessage = (e: MessageEvent<{ fileData: RawDataRow[] }>) => {
-    const { fileData } = e.data;
-    if (fileData) {
-        processData(fileData).catch(err => {
-            postError(err instanceof Error ? err.message : 'Произошла неизвестная ошибка в воркере.');
-        });
+function createRequestQueue(concurrency: number) {
+    const queue: any[] = []; let activeRequests = 0;
+    function processQueue() {
+        if (activeRequests >= concurrency || queue.length === 0) return;
+        activeRequests++;
+        const { task, resolve, reject } = queue.shift();
+        task().then(resolve).catch(reject)
+            .finally(() => { activeRequests--; processQueue(); });
     }
+    return function enqueue(task: () => Promise<any>) {
+        return new Promise((resolve, reject) => {
+            queue.push({ task, resolve, reject });
+            processQueue();
+        });
+    };
+}
+// --- END osmService ---
+
+const calculateRealisticPotential = async (
+    initialData: ProcessedDataRow[], 
+    locationArray: string[], 
+    existingClientsByRegion: Record<string, string[]>,
+    onProgress: (progress: number, text: string, etr: number) => void
+) => {
+    const dataWithPotential: ProcessedDataRow[] = [];
+    const totalLocations = locationArray.length;
+    let processedCount = 0;
+    const startTime = Date.now();
+    
+    onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
+
+    const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
+    const potentialMap = new Map();
+
+    const normalizedExistingClients = new Map<string, Set<string>>();
+    for (const region in existingClientsByRegion) {
+        const normalizedSet = new Set(existingClientsByRegion[region].map(normalizeAddress).filter(Boolean));
+        normalizedExistingClients.set(region, normalizedSet);
+    }
+
+    const promises = locationArray.map(locationName => enqueue(async () => {
+        const totalPotential = await getMarketPotentialFromOSM(locationName);
+        
+        const existingAddressesSet = normalizedExistingClients.get(locationName) || new Set();
+
+        const newPotentialClients = (totalPotential.clients || []).filter((client: PotentialClient) => {
+            const normalizedNewAddress = normalizeAddress(client.address);
+            return normalizedNewAddress && !existingAddressesSet.has(normalizedNewAddress);
+        });
+        
+        potentialMap.set(locationName, {
+            totalCount: totalPotential.count, // Total market size for growth calculation
+            clients: newPotentialClients,    // Filtered list of NEW clients
+            cityCenter: totalPotential.cityCenter,
+            okb: newPotentialClients.length, // OKB is the count of NEW clients
+        });
+
+        processedCount++;
+        const etr = calculateEtr(startTime, processedCount, totalLocations);
+        onProgress(30 + (processedCount / totalLocations) * 65, `Анализ регионов... (${processedCount}/${totalLocations})`, etr);
+    }));
+
+    await Promise.all(promises);
+    
+    for (const item of initialData) {
+        const regionPotential = potentialMap.get(item.city);
+        if (regionPotential) {
+            const totalMarketTTs = regionPotential.totalCount;
+            const growthRate = calculateRealisticGrowthRate(item.fact, totalMarketTTs);
+            const potential = item.fact * (1 + growthRate);
+            dataWithPotential.push({ 
+                ...item, 
+                potential, 
+                growthPotential: potential - item.fact, 
+                growthRate: growthRate * 100, 
+                potentialTTs: regionPotential.okb,
+                totalMarketTTs: totalMarketTTs, 
+                potentialClients: regionPotential.clients, 
+                cityCenter: regionPotential.cityCenter 
+            });
+        } else {
+            dataWithPotential.push({ ...item, potential: item.fact, growthPotential: 0, growthRate: 0, potentialTTs: 0, totalMarketTTs: 0, potentialClients: [], cityCenter: null });
+        }
+    }
+    
+    return dataWithPotential;
 };
 
-// Экспорт для соответствия требованиям TypeScript к модулям
-export {};
+
+// --- WORKER MAIN LOGIC ---
+self.onmessage = async (e: MessageEvent<{ 
+    processedData: ProcessedDataRow[], 
+    uniqueLocations: string[], 
+    existingClientsByRegion: Record<string, string[]>
+}>) => {
+    const { processedData, uniqueLocations, existingClientsByRegion } = e.data;
+
+    try {
+        const locationCount = uniqueLocations.length;
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: `Найдено ${locationCount} уникальных регионов. Запрос данных...`, etr: '' } });
+        
+        if (locationCount === 0) {
+            self.postMessage({ type: 'error', payload: "В файле не найдено локаций для анализа. Проверьте данные." });
+            return;
+        }
+        
+        const onProgress = (progress: number, text: string, etr: number) => {
+            self.postMessage({ type: 'progress', payload: { status: 'fetching', progress, text, etr: formatTime(etr) } });
+        };
+        
+        const dataWithPotential = await calculateRealisticPotential(processedData, uniqueLocations, existingClientsByRegion, onProgress);
+        
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Агрегация результатов...', etr: '' } });
+        const finalAggregatedData = aggregateData(dataWithPotential);
+        self.postMessage({ type: 'result', payload: finalAggregatedData });
+
+    } catch (error) {
+        let errorMessage = "Произошла неизвестная ошибка в фоновом обработчике.";
+        if (error instanceof Error) {
+            const lowerCaseMessage = error.message.toLowerCase();
+            
+            if (lowerCaseMessage.includes('failed to fetch')) {
+                errorMessage = `Сетевая ошибка: Не удалось подключиться к серверу аналитики по адресу '${proxyUrl}'. Это может быть проблема с CORS, сбоем серверной функции или сетевым подключением. Убедитесь, что вы **перезапустили развертывание (Redeploy)** на Vercel после внесения изменений в конфигурацию.`;
+            } else if (lowerCaseMessage.includes('api request failed') || lowerCaseMessage.includes('osm proxy failed')) {
+                errorMessage = `Ошибка от сервера OSM: ${error.message}`;
+            } else {
+                errorMessage = error.message;
+            }
+        }
+        self.postMessage({ type: 'error', payload: errorMessage });
+    }
+};

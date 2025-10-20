@@ -1,19 +1,32 @@
-import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { randomUUID } from 'crypto';
-import { kv } from '@vercel/kv';
+import { GoogleGenAI } from '@google/genai';
+import { nanoid } from 'nanoid';
 
-// --- Хранилище задач теперь работает на Vercel KV ---
-// Это персистентное хранилище, которое гарантирует сохранность
-// статуса задач между вызовами serverless-функций.
+// 🎨 Цвета для консоли
+const colors = {
+  reset: "\x1b[0m", gray: "\x1b[90m", red: "\x1b[31m", 
+  green: "\x1b[32m", yellow: "\x1b[33m", blue: "\x1b[34m",
+  magenta: "\x1b[35m", cyan: "\x1b[36m", bold: "\x1b[1m"
+};
 
 interface Task {
+  id: string;
+  prompt: string;
   status: 'pending' | 'done' | 'error';
   result?: string;
   error?: string;
+  createdAt: number;
 }
 
-// --- Получение ключей API (аналогично gemini-proxy) ---
+// -----------------------------------------------------------------------------
+// ВНИМАНИЕ: Хранилище задач в памяти.
+// Это простое решение для демонстрации. В продакшене задачи будут теряться
+// при перезапуске serverless-функции. Для настоящих приложений используйте
+// Vercel KV, Redis, Firestore или другую персистентную базу данных.
+// -----------------------------------------------------------------------------
+const tasks = new Map<string, Task>();
+
+// --- Получение и перемешивание ключей API (скопировано из gemini-proxy.ts) ---
 const getApiKeys = (): string[] => {
   const keys: string[] = [];
   if (process.env.API_KEY) keys.push(process.env.API_KEY);
@@ -22,10 +35,9 @@ const getApiKeys = (): string[] => {
     keys.push(process.env[`API_KEY_${i}`]!);
     i++;
   }
-  return keys.filter(Boolean);
+  return keys;
 };
 
-// --- Перемешивание массива (Фишер-Йейтс) ---
 const shuffleArray = <T>(array: T[]): T[] => {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
@@ -35,11 +47,15 @@ const shuffleArray = <T>(array: T[]): T[] => {
   return arr;
 };
 
-// --- Асинхронное выполнение запроса к Gemini ---
-const runGeminiTask = async (prompt: string) => {
+// --- Фоновая обработка задачи ---
+async function processTask(taskId: string) {
+    const task = tasks.get(taskId);
+    if (!task) return;
+
     const apiKeys = shuffleArray(getApiKeys());
     if (apiKeys.length === 0) {
-        throw new Error('Ключи API не настроены на сервере.');
+        tasks.set(taskId, { ...task, status: 'error', error: 'Ключи API не настроены на сервере' });
+        return;
     }
 
     let lastError: any = null;
@@ -47,33 +63,37 @@ const runGeminiTask = async (prompt: string) => {
     for (const apiKey of apiKeys) {
         try {
             const ai = new GoogleGenAI({ apiKey });
-            const response: GenerateContentResponse = await ai.models.generateContent({
+            const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: prompt,
+                contents: task.prompt,
             });
-            
-            const text = response.text;
-            if (!text || text.trim() === '') throw new Error('Модель вернула пустой ответ.');
 
-            return text; // Успех
+            const text = response.text?.trim();
+            if (!text) throw new Error('Модель вернула пустой ответ');
+
+            tasks.set(taskId, { ...task, status: 'done', result: text });
+            return; // Успешно, выходим
 
         } catch (err: any) {
             lastError = err;
             const msg = (err.message || '').toLowerCase();
-            if (msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota')) {
-                console.warn(`Ключ ...${apiKey.slice(-4)} исчерпал лимит, пробую следующий.`);
+            if (msg.includes('429') || msg.includes('quota') || msg.includes('too many requests')) {
+                // Если лимит исчерпан, просто пробуем следующий ключ
                 continue;
             }
-            console.error(`Неперехватываемая ошибка с ключом ...${apiKey.slice(-4)}: ${err.message}`);
-            break;
+            // Для других ошибок прекращаем попытки
+            break; 
         }
     }
-    throw lastError || new Error('Не удалось выполнить запрос ко всем доступным ключам Gemini API.');
-};
 
+    // Если все ключи не сработали
+    const errorMessage = lastError?.message || 'Неизвестная ошибка при запросе к Gemini API.';
+    tasks.set(taskId, { ...task, status: 'error', error: errorMessage });
+}
 
+// --- Основной обработчик API ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // --- CORS ---
+  // CORS заголовки
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -82,45 +102,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(204).end();
   }
 
-  // --- GET: Проверка статуса задачи ---
-  if (req.method === 'GET') {
-    const { taskId } = req.query;
-    if (typeof taskId !== 'string') {
-        return res.status(400).json({ error: 'Некорректный taskId.' });
-    }
-    const task: Task | null = await kv.get(taskId);
-    if (!task) {
-        return res.status(404).json({ error: 'Задача не найдена или срок ее хранения истек.' });
-    }
-    return res.status(200).json(task);
-  }
-
-  // --- POST: Создание новой задачи ---
+  // POST /api/gemini-task -> Создать задачу
   if (req.method === 'POST') {
     const { prompt } = req.body;
     if (!prompt) {
-        return res.status(400).json({ error: 'Не указано поле "prompt".' });
+      return res.status(400).json({ error: 'В теле запроса отсутствует поле "prompt"' });
     }
 
-    const taskId = randomUUID();
-    // Устанавливаем начальный статус с временем жизни 5 минут
-    await kv.set(taskId, { status: 'pending' }, { ex: 300 });
+    const taskId = nanoid(10);
+    const newTask: Task = {
+      id: taskId,
+      prompt,
+      status: 'pending',
+      createdAt: Date.now(),
+    };
+    tasks.set(taskId, newTask);
 
-    // Запускаем асинхронную задачу без `await`
-    runGeminiTask(prompt)
-        .then(result => {
-            // Обновляем задачу с результатом и тем же временем жизни
-            kv.set(taskId, { status: 'done', result }, { ex: 300 });
-        })
-        .catch(error => {
-            // Обновляем задачу с ошибкой
-            kv.set(taskId, { status: 'error', error: error.message || 'Неизвестная ошибка выполнения задачи.' }, { ex: 300 });
-        });
+    // Запускаем обработку асинхронно, не дожидаясь ее завершения
+    processTask(taskId);
 
-    return res.status(202).json({ taskId });
+    console.log(`${colors.cyan}✨ Новая задача создана:${colors.reset} ${taskId}`);
+    return res.status(202).json({ taskId }); // 202 Accepted
   }
 
-  // --- Метод не поддерживается ---
-  res.setHeader('Allow', ['GET', 'POST']);
-  res.status(405).json({ error: `Метод ${req.method} не разрешен.` });
+  // GET /api/gemini-task?taskId=... -> Проверить статус
+  if (req.method === 'GET') {
+    const { taskId } = req.query;
+
+    if (!taskId || typeof taskId !== 'string') {
+      return res.status(400).json({ error: 'Необходим параметр "taskId"' });
+    }
+
+    const task = tasks.get(taskId);
+
+    if (!task) {
+      return res.status(404).json({ error: 'Задача не найдена' });
+    }
+    
+    // Возвращаем только публичные данные, не сам промпт
+    const { prompt: _, ...publicTaskData } = task;
+    return res.status(200).json(publicTaskData);
+  }
+
+  return res.status(405).json({ error: 'Метод не разрешен' });
 }
+
+// Простая очистка старых задач, чтобы избежать утечки памяти
+setInterval(() => {
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+    for (const [key, task] of tasks.entries()) {
+        if (now - task.createdAt > tenMinutes) {
+            tasks.delete(key);
+            console.log(`${colors.gray}🗑️ Очищена старая задача:${colors.reset} ${key}`);
+        }
+    }
+}, 60 * 1000);

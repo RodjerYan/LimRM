@@ -1,3 +1,5 @@
+
+
 {
   "compilerOptions": {
     "target": "es2022",
@@ -10,11 +12,7 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "skipLibCheck": true
   },
   "include": [
     "**/*.ts",
