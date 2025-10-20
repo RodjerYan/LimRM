@@ -1,5 +1,4 @@
 
-
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -499,9 +498,9 @@ export default function App() {
         setSearchTerm('');
         
         try {
-            setLoadingState({ status: 'reading', progress: 10, text: 'Чтение и разбор файла...', etr: '' });
+            setLoadingState({ status: 'reading', progress: 10, text: 'Анализ структуры файла...', etr: '' });
             const { processedData, uniqueLocations, existingClientsByRegion } = await parseFileAndExtractData(file);
-            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Файл успешно разобран. Инициализация AI-аналитика...' }));
+            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Структура файла корректна. Запускаю фоновый анализ...' }));
 
             const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             workerRef.current = worker;
