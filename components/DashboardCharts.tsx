@@ -1,129 +1,90 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef } from 'react';
 import Chart from 'chart.js/auto';
 import { AggregatedDataRow } from '../types';
+import { formatLargeNumber } from '../utils/dataUtils';
 
 interface DashboardChartsProps {
     data: AggregatedDataRow[];
 }
 
-const CHART_COLORS = [
-    '#818cf8', '#34d399', '#fbbf24', '#f87171', '#60a5fa', 
-    '#a78bfa', '#f472b6', '#4ade80', '#fb923c', '#22d3ee'
-];
+const DashboardCharts: React.FC<DashboardChartsProps> = ({ data }) => {
+    const pieChartContainer = useRef<HTMLCanvasElement>(null);
+    const pieChartInstance = useRef<Chart | null>(null);
 
-const ChartCard: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
-    <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-800 h-80">
-        <h3 className="text-lg font-bold text-white mb-3 text-center">{title}</h3>
-        <div className="relative h-64">
-            {children}
-        </div>
-    </div>
-);
-
-const BarChart: React.FC<{ data: AggregatedDataRow[] }> = ({ data }) => {
-    const chartContainer = useRef<HTMLCanvasElement>(null);
-
-    const chartData = useMemo(() => {
+    const pieChartData = React.useMemo(() => {
         const rmData = new Map<string, number>();
         data.forEach(row => {
-            rmData.set(row.rm, (rmData.get(row.rm) || 0) + row.fact);
+            const current = rmData.get(row.rm) || 0;
+            rmData.set(row.rm, current + row.potential);
         });
-        const sorted = [...rmData.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+        const sortedRMs = Array.from(rmData.entries()).sort((a, b) => b[1] - a[1]).slice(0, 7);
+        const labels = sortedRMs.map(item => item[0]);
+        const values = sortedRMs.map(item => item[1]);
+
         return {
-            labels: sorted.map(d => d[0]),
+            labels,
             datasets: [{
-                label: 'Факт продаж',
-                data: sorted.map(d => d[1]),
-                backgroundColor: CHART_COLORS,
-                borderRadius: 4,
+                data: values,
+                backgroundColor: ['#818cf8', '#34d399', '#fbbf24', '#f87171', '#60a5fa', '#a78bfa', '#e879f9'],
+                hoverOffset: 4
             }]
         };
     }, [data]);
 
     useEffect(() => {
-        if (!chartContainer.current) return;
-        const chart = new Chart(chartContainer.current, {
-            type: 'bar',
-            data: chartData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { ticks: { color: '#e2e8f0' }, grid: { color: '#4a5568' } },
-                    x: { ticks: { color: '#e2e8f0' }, grid: { display: false } }
-                }
-            }
-        });
-        return () => chart.destroy();
-    }, [chartData]);
-    
-    return <canvas ref={chartContainer} />;
-};
+        if (!pieChartContainer.current) return;
+        const ctx = pieChartContainer.current.getContext('2d');
+        if (!ctx) return;
 
-const PieChart: React.FC<{ data: AggregatedDataRow[] }> = ({ data }) => {
-    const chartContainer = useRef<HTMLCanvasElement>(null);
-
-    const chartData = useMemo(() => {
-        const brandData = new Map<string, number>();
-        data.forEach(row => {
-            brandData.set(row.brand, (brandData.get(row.brand) || 0) + row.fact);
-        });
-        const sorted = [...brandData.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-        return {
-            labels: sorted.map(d => d[0]),
-            datasets: [{
-                data: sorted.map(d => d[1]),
-                backgroundColor: CHART_COLORS,
-                hoverOffset: 4,
-            }]
-        };
-    }, [data]);
-    
-    useEffect(() => {
-        if (!chartContainer.current) return;
-        const chart = new Chart(chartContainer.current, {
-            type: 'pie',
-            data: chartData,
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'right',
-                        labels: { color: '#e2e8f0' }
+        if (pieChartInstance.current) {
+            pieChartInstance.current.data = pieChartData;
+            pieChartInstance.current.update();
+        } else {
+            pieChartInstance.current = new Chart(ctx, {
+                type: 'pie',
+                data: pieChartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { color: '#e2e8f0' } },
+                        title: {
+                            display: true,
+                            text: 'Распределение Потенциала по РМ (Топ-7)',
+                            color: '#e2e8f0',
+                            font: { size: 16 }
+                        },
+                        tooltip: {
+                             callbacks: {
+                                label: (context) => {
+                                    const label = context.label || '';
+                                    const value = context.raw as number;
+                                    return `${label}: ${formatLargeNumber(value)} кг/ед`;
+                                },
+                            },
+                        }
                     }
                 }
-            }
-        });
-        return () => chart.destroy();
-    }, [chartData]);
-
-    return <canvas ref={chartContainer} />;
-};
-
-const DashboardCharts: React.FC<DashboardChartsProps> = ({ data }) => {
-    if (data.length === 0) {
-        return (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-800 h-80 flex items-center justify-center text-gray-500">
-                    Графики появятся после загрузки данных.
-                </div>
-                <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-800 h-80 flex items-center justify-center text-gray-500">
-                    Графики появятся после загрузки данных.
-                </div>
-            </div>
-        );
-    }
+            });
+        }
+    }, [pieChartData]);
     
+     useEffect(() => {
+        return () => {
+            pieChartInstance.current?.destroy();
+            pieChartInstance.current = null;
+        };
+    }, []);
+
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <ChartCard title="Топ-10 РМ по объему продаж">
-                <BarChart data={data} />
-            </ChartCard>
-            <ChartCard title="Доля брендов в продажах (Топ-10)">
-                <PieChart data={data} />
-            </ChartCard>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="bg-card-bg/70 p-6 rounded-2xl h-96">
+                <canvas ref={pieChartContainer} />
+            </div>
+             <div className="bg-card-bg/70 p-6 rounded-2xl h-96 flex items-center justify-center">
+                <p className="text-gray-500">Другой график здесь...</p>
+            </div>
         </div>
     );
 };

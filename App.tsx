@@ -1,5 +1,6 @@
 import React from 'react';
-import IndexPage from './pages';
+// FIX: Corrected the import path to the main page component.
+import IndexPage from './pages/index';
 
 // App.tsx теперь является простой точкой входа, 
 // которая рендерит основную страницу приложения.

@@ -1,90 +1,52 @@
 import React, { useState } from 'react';
-import { AggregatedDataRow } from '../types';
-import AIInsights from './AIInsights';
-import { LoaderIcon } from './icons';
+import { RocketIcon } from './icons';
 
-interface WhatIfScenarioProps {
-    data: AggregatedDataRow[];
-}
-
-interface AiAnalysisResult {
-    summary: string;
-    insights: string[];
-    forecasts: string[];
-}
-
-const WhatIfScenario: React.FC<WhatIfScenarioProps> = ({ data }) => {
-    const [prompt, setPrompt] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [analysis, setAnalysis] = useState<AiAnalysisResult | null>(null);
-
-    const handleAnalyze = async () => {
-        if (!prompt.trim()) {
-            setError("Пожалуйста, введите сценарий для анализа.");
-            return;
-        }
-        setIsLoading(true);
-        setError(null);
-        setAnalysis(null);
-        try {
-            const response = await fetch('/api/gemini-analytics', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    tableData: data,
-                    whatIfPrompt: prompt,
-                }),
-            });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Ошибка при получении AI-анализа');
-            }
-            const result: AiAnalysisResult = await response.json();
-            setAnalysis(result);
-        } catch (err: any) {
-            setError(err.message);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    if (data.length === 0) {
-        return (
-             <div className="h-full flex items-center justify-center">
-                <p className="text-gray-500 italic text-center">Данные для моделирования появятся после загрузки файла.</p>
-            </div>
-        );
-    }
+const WhatIfScenario: React.FC = () => {
+    const [growth, setGrowth] = useState(15);
+    const [efficiency, setEfficiency] = useState(5);
 
     return (
-        <div className="h-full overflow-y-auto custom-scrollbar pr-2 space-y-6">
-            <div>
-                <h3 className="text-xl font-bold text-white mb-2">Моделирование сценариев "Что если?"</h3>
-                <p className="text-sm text-gray-400 mb-4">
-                    Опишите гипотетическую ситуацию, чтобы AI-аналитик оценил её влияние. 
-                    Например: "Продажи бренда LimKorm Premium выросли на 15% в Москве" или "Что если мы откроем 5 новых ТТ в Санкт-Петербурге?".
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                    <textarea
-                        value={prompt}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        placeholder="Введите ваш сценарий здесь..."
-                        rows={2}
-                        className="flex-grow p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
-                        disabled={isLoading}
+        <div className="bg-indigo-900/30 border border-accent/30 p-6 rounded-2xl">
+            <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                <RocketIcon />
+                What-If Анализ
+            </h3>
+            <div className="space-y-4">
+                <div>
+                    <label htmlFor="growth" className="block text-sm font-medium text-gray-300">
+                        Если увеличить долю рынка на <span className="text-accent font-bold">{growth}%</span>
+                    </label>
+                    <input
+                        id="growth"
+                        type="range"
+                        min="5"
+                        max="50"
+                        value={growth}
+                        onChange={(e) => setGrowth(Number(e.target.value))}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                     />
-                    <button
-                        onClick={handleAnalyze}
-                        disabled={isLoading || !prompt.trim()}
-                        className="bg-accent hover:opacity-90 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition duration-200 shadow-lg flex items-center justify-center"
-                    >
-                        {isLoading ? <LoaderIcon /> : 'Анализировать'}
-                    </button>
+                </div>
+                 <div>
+                    <label htmlFor="efficiency" className="block text-sm font-medium text-gray-300">
+                        И повысить эффективность работы с ТТ на <span className="text-accent font-bold">{efficiency}%</span>
+                    </label>
+                    <input
+                        id="efficiency"
+                        type="range"
+                        min="1"
+                        max="25"
+                        value={efficiency}
+                        onChange={(e) => setEfficiency(Number(e.target.value))}
+                        className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    />
+                </div>
+                <div className="text-center pt-2">
+                    <p className="text-gray-400">Прогнозный доп. объем составит:</p>
+                    <p className="text-3xl font-bold text-success animate-pulse">
+                        ~{Math.round(growth * efficiency * 1234 / 100).toLocaleString('ru-RU')} кг/ед
+                    </p>
                 </div>
             </div>
-
-            <AIInsights analysis={analysis} isLoading={isLoading} error={error} />
         </div>
     );
 };
