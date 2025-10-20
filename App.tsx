@@ -12,6 +12,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import ChoroplethMap from './components/ChoroplethMap';
 import InsightCard from './components/InsightCard';
+import AiAssistant from './components/AiAssistant';
 
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
@@ -363,7 +364,12 @@ export default function App() {
                         onReset={resetFilters}
                         disabled={baseAggregatedData.length === 0}
                     />
-                    {baseAggregatedData.length > 0 && <InsightCard analysisState={geminiAnalysis} />}
+                    {baseAggregatedData.length > 0 && (
+                        <>
+                            <InsightCard analysisState={geminiAnalysis} />
+                            <AiAssistant dataContext={filteredAndSortedData} />
+                        </>
+                    )}
                     <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} totalActiveTTs={totalActiveTTs} />
                 </aside>
 

@@ -104,3 +104,8 @@ export interface GeminiAnalysisResult {
   };
   insights?: string[];
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
