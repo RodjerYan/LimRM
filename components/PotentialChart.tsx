@@ -77,22 +77,7 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { 
-                        legend: {
-                            labels: {
-                                color: '#e2e8f0',
-                                usePointStyle: true,
-                                boxWidth: 8,
-                                padding: 10,
-                                generateLabels: (chart: Chart) => {
-                                    const originalLabels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                                    originalLabels.forEach(label => {
-                                        // Add spacing (approx. 2mm) between the legend point and the text
-                                        label.text = '  ' + label.text;
-                                    });
-                                    return originalLabels;
-                                }
-                            }
-                        },
+                        legend: { labels: { color: '#e2e8f0', usePointStyle: true, boxWidth: 8 } },
                         tooltip: {
                             mode: 'index',
                             intersect: false,

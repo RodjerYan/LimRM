@@ -366,14 +366,6 @@ export default function App() {
 
     const workerRef = useRef<Worker | null>(null);
 
-    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
-        const id = Date.now();
-        setNotifications(prev => [...prev, { id, message, type }]);
-        setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 4000);
-    }, []);
-
     useEffect(() => {
         try {
             localStorage.setItem('geoAnalysisFilters', JSON.stringify(filters));
@@ -396,6 +388,8 @@ export default function App() {
             setDataWithPlan([]);
             return;
         }
+
+        setLoadingState(prev => ({ ...prev, status: 'aggregating', text: 'Расчет новых планов...', progress: 98 }));
 
         // --- PRE-COMPUTATION ---
         const rmTotals = new Map<string, { fact: number }>();
@@ -474,21 +468,17 @@ export default function App() {
         });
 
         setDataWithPlan(calculatedData);
-
-        // Final state update after all calculations are complete.
-        setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-        addNotification('Анализ рынка и расчет планов завершен!', 'success');
-
-        const resetTimer = setTimeout(() => {
-            setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
-        }, 3000);
-
-        // Cleanup the timer if the component unmounts or if the effect re-runs.
-        return () => clearTimeout(resetTimer);
-
-    }, [baseAggregatedData, baseIncreasePercent, addNotification]);
+    }, [baseAggregatedData, baseIncreasePercent]);
 
 
+    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+        const id = Date.now();
+        setNotifications(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setNotifications(prev => prev.filter(n => n.id !== id));
+        }, 4000);
+    }, []);
+    
     const cleanupWorker = () => {
         if (workerRef.current) {
             workerRef.current.terminate();
@@ -509,9 +499,9 @@ export default function App() {
         setSearchTerm('');
         
         try {
-            setLoadingState({ status: 'reading', progress: 10, text: 'Анализ структуры файла...', etr: '' });
+            setLoadingState({ status: 'reading', progress: 10, text: 'Чтение и разбор файла...', etr: '' });
             const { processedData, uniqueLocations, existingClientsByRegion } = await parseFileAndExtractData(file);
-            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Структура файла корректна. Запускаю фоновый анализ...' }));
+            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Файл успешно разобран. Инициализация AI-аналитика...' }));
 
             const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             workerRef.current = worker;
@@ -521,8 +511,12 @@ export default function App() {
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет новых планов...', etr: '' });
-                    setBaseAggregatedData(payload); // This triggers the plan calculation useEffect
+                    setBaseAggregatedData(payload); // This will trigger the calculation useEffect
+                    setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
+                    addNotification('Анализ рынка и расчет планов завершен!', 'success');
+                    setTimeout(() => {
+                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
+                    }, 3000);
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
@@ -615,7 +609,7 @@ export default function App() {
                     bVal = (b.newPlan || b.fact) - b.fact;
                 } else if (sortConfig.key === 'growthRate') {
                     aVal = a.fact > 0 ? ((a.newPlan || a.fact) - a.fact) / a.fact : 0;
-                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - a.fact) / b.fact : 0;
+                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - b.fact) / b.fact : 0;
                 } else {
                     aVal = a[sortConfig.key] ?? -Infinity;
                     bVal = b[sortConfig.key] ?? -Infinity;
