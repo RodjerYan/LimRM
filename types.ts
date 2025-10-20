@@ -36,6 +36,7 @@ export interface AggregatedDataRow {
     potentialClients: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
     activeTT: number;
+    activeAddresses: string[];
     newPlan?: number;
 }
 

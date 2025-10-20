@@ -9,6 +9,7 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import ChoroplethMap from './components/ChoroplethMap';
 
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
@@ -314,13 +315,33 @@ export default function App() {
 
         return { rms, brands, cities };
     }, [baseAggregatedData, filters]);
+    
+    const handleRegionClick = useCallback((regionName: string) => {
+        setFilters(prevFilters => {
+            const currentCities = prevFilters.city;
+            const isSelected = currentCities.length === 1 && currentCities[0] === regionName;
+            const newCities = isSelected ? [] : [regionName];
+            
+            if (!isSelected) {
+                addNotification(`Отфильтровано по региону: ${regionName}`, 'info');
+            } else {
+                 addNotification('Фильтр по регионам сброшен', 'info');
+            }
 
-    const filteredAndSortedData = useMemo(() => {
-        let processedData = dataWithPlan.filter(item => 
+            return { ...prevFilters, city: newCities };
+        });
+    }, [addNotification]);
+
+    const filteredByDropdownsData = useMemo(() => {
+        return dataWithPlan.filter(item =>
             (filters.rm.length === 0 || filters.rm.includes(item.rm)) &&
             (filters.brand.length === 0 || filters.brand.includes(item.brand)) &&
             (filters.city.length === 0 || filters.city.includes(item.city))
         );
+    }, [dataWithPlan, filters]);
+
+    const filteredAndSortedData = useMemo(() => {
+        let processedData = filteredByDropdownsData;
 
         if (searchTerm) {
             const lowercasedTerm = searchTerm.toLowerCase();
@@ -338,7 +359,7 @@ export default function App() {
         }
 
         if (sortConfig !== null) {
-            processedData.sort((a, b) => {
+            processedData = [...processedData].sort((a, b) => {
                 let aVal, bVal;
 
                 if (sortConfig.key === 'growthPotential') {
@@ -363,7 +384,7 @@ export default function App() {
         }
         
         return processedData;
-    }, [dataWithPlan, filters, searchTerm, sortConfig]);
+    }, [filteredByDropdownsData, searchTerm, sortConfig]);
 
     const metrics = useMemo(() => calculateMetrics(filteredAndSortedData), [filteredAndSortedData]);
 
@@ -371,14 +392,20 @@ export default function App() {
         const cityTTs = new Map<string, number>();
         filteredAndSortedData.forEach(item => {
             if (!cityTTs.has(item.city)) {
-                cityTTs.set(item.city, item.potentialTTs || 0);
+                cityTTs.set(item.city, item.totalMarketTTs || 0);
             }
         });
         return Array.from(cityTTs.values()).reduce((sum, count) => sum + count, 0);
     }, [filteredAndSortedData]);
 
     const totalActiveTTs = useMemo(() => {
-        return filteredAndSortedData.reduce((sum, item) => sum + (item.activeTT || 0), 0);
+        const uniqueAddresses = new Set<string>();
+        filteredAndSortedData.forEach(item => {
+            item.activeAddresses?.forEach(address => {
+                uniqueAddresses.add(address);
+            });
+        });
+        return uniqueAddresses.size;
     }, [filteredAndSortedData]);
 
 
@@ -419,7 +446,12 @@ export default function App() {
                 </aside>
 
                 <div className="lg:col-span-9 space-y-6">
-                    <PotentialChart data={filteredAndSortedData} />
+                    <PotentialChart data={filteredByDropdownsData} />
+                    <ChoroplethMap 
+                        data={filteredByDropdownsData} 
+                        onRegionClick={handleRegionClick}
+                        selectedRegions={filters.city} 
+                    />
                     <ResultsTable 
                         data={filteredAndSortedData} 
                         isLoading={loadingState.status !== 'idle' && loadingState.status !== 'done'}

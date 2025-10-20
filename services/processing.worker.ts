@@ -1,4 +1,5 @@
 
+
 /// <reference lib="webworker" />
 
 // NOTE: Types are self-contained here to avoid complex worker bundling configurations.
@@ -24,6 +25,7 @@ interface ProcessedDataRow {
     potentialClients?: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
     activeTT?: number; // Added for aggregation
+    activeAddresses?: string[];
 }
 
 // --- START timeUtils ---
@@ -152,6 +154,7 @@ function aggregateData(data: ProcessedDataRow[]) {
             cityCenter: item.cityCenter,
             growthRate: item.count > 0 ? (item.growthRateSum / item.count) : 0,
             activeTT: item.addresses.size,
+            activeAddresses: Array.from(item.addresses),
         };
     });
 }
