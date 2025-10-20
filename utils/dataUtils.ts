@@ -1,9 +1,19 @@
 import { AggregatedDataRow, FilterState } from "../types";
 import * as XLSX from 'xlsx';
 import pdfMake from "pdfmake/build/pdfmake";
-import pdfFonts from "pdfmake/build/vfs_fonts";
+// FIX: Changed import to be compatible with Vite/Vercel build process.
+// The previous import resulted in `pdfFonts` being undefined, causing a fatal error.
+import * as pdfFonts from "pdfmake/build/vfs_fonts";
 
-pdfMake.vfs = pdfFonts.pdfMake.vfs;
+// FIX: Added a guard to prevent the app from crashing if fonts fail to load.
+// This was the source of the "Cannot read properties of undefined (reading 'vfs')" error.
+// The type definitions for vfs_fonts are often incorrect with module bundlers, so we cast to `any` to bypass the type error.
+if ((pdfFonts as any)?.pdfMake?.vfs) {
+  pdfMake.vfs = (pdfFonts as any).pdfMake.vfs;
+} else {
+    console.error("Failed to load pdfMake VFS fonts. PDF export might not work correctly.");
+}
+
 
 // --- Форматирование чисел ---
 export const formatLargeNumber = (num: number, digits = 0): string => {

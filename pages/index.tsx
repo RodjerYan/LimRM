@@ -1,4 +1,15 @@
-/// <reference types="vite/client" />
+// FIX: Define types for import.meta.env directly, as the vite/client types seem to be undiscoverable in this environment.
+// This resolves errors about 'env' not existing on 'ImportMeta'.
+declare global {
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+  interface ImportMetaEnv {
+    readonly VITE_GEMINI_API_KEY: string;
+    readonly VITE_GEMINI_PROXY_URL: string;
+    readonly VITE_OSM_PROXY_URL: string;
+  }
+}
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import FileUpload from '../components/FileUpload';
@@ -20,7 +31,6 @@ import { applyFilters } from '../utils/dataUtils';
 import { formatETR } from '../utils/timeUtils';
 
 // --- Проверка переменных окружения ---
-// FIX: Added a triple-slash directive (`/// <reference types="vite/client" />`) at the top of this file to provide TypeScript with types for `import.meta.env`, resolving the "Property 'env' does not exist" error.
 const VITE_GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const VITE_GEMINI_PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL;
 const VITE_OSM_PROXY_URL = import.meta.env.VITE_OSM_PROXY_URL;
