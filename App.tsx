@@ -18,8 +18,9 @@ description: >
 // FIX: Corrected React import for hooks
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
+import { AggregatedDataRow, AiAnalysisResult, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
 import { calculateMetrics, formatLargeNumber } from './services/utils/dataUtils';
+import { generateFullAnalysis } from './services/aiService';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
@@ -27,6 +28,7 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import AiInsights from './components/AiInsights';
 
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
@@ -345,6 +347,7 @@ export default function App() {
     const [dataWithPlan, setDataWithPlan] = useState<AggregatedDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
+    const [aiInsights, setAiInsights] = useState<AiAnalysisResult | null>(null);
     
     const [filters, setFilters] = useState<FilterState>(() => {
         try {
@@ -381,6 +384,32 @@ export default function App() {
             console.error("Could not save search term to localStorage", error);
         }
     }, [searchTerm]);
+
+    // --- AI Analysis Trigger ---
+    useEffect(() => {
+        if (baseAggregatedData.length > 0 && !aiInsights) {
+            const runAnalysis = async () => {
+                setLoadingState(prev => ({ ...prev, status: 'analyzing', text: 'Gemini анализирует данные...', progress: 99, etr: 'Это может занять до минуты' }));
+                try {
+                    const insights = await generateFullAnalysis(baseAggregatedData);
+                    setAiInsights(insights);
+                    addNotification('AI-анализ завершен!', 'success');
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка AI-анализа";
+                    console.error("Full analysis failed:", error);
+                    addNotification(`Ошибка AI-анализа: ${errorMessage}`, 'error');
+                } finally {
+                    setLoadingState(prev => ({...prev, status: 'done', text: 'Анализ завершен!', progress: 100, etr: ''}));
+                     setTimeout(() => {
+                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
+                    }, 3000);
+                }
+            };
+            runAnalysis();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [baseAggregatedData]);
+
 
     // --- New Plan Calculation Effect ---
     useEffect(() => {
@@ -495,6 +524,7 @@ export default function App() {
         cleanupWorker();
         setBaseAggregatedData([]);
         setDataWithPlan([]);
+        setAiInsights(null);
         setFilters({ rm: '', brand: [], city: [] });
         setSearchTerm('');
         
@@ -511,12 +541,7 @@ export default function App() {
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    setBaseAggregatedData(payload); // This will trigger the calculation useEffect
-                    setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-                    addNotification('Анализ рынка и расчет планов завершен!', 'success');
-                    setTimeout(() => {
-                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
-                    }, 3000);
+                    setBaseAggregatedData(payload); // This will trigger the calculation & AI analysis useEffect
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
@@ -669,6 +694,10 @@ export default function App() {
                         onFilterChange={handleFilterChange}
                         onReset={resetFilters}
                         disabled={baseAggregatedData.length === 0}
+                    />
+                     <AiInsights 
+                        data={aiInsights} 
+                        isLoading={loadingState.status === 'analyzing'}
                     />
                     <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
                 </aside>

@@ -1,5 +1,76 @@
-import { AggregatedDataRow } from "../types";
+import { AggregatedDataRow, AiAnalysisResult } from "../types";
 import { formatLargeNumber } from "./utils/dataUtils";
+import { SALES_ANALYSIS_PROMPT } from "../prompts/salesAnalysisPrompt";
+
+export async function generateFullAnalysis(data: AggregatedDataRow[]): Promise<AiAnalysisResult> {
+    // To prevent overly large API payloads, we'll send a representative sample of the data.
+    const dataSample = data.slice(0, 100).map(d => ({
+        rm: d.rm,
+        brand: d.brand,
+        region: d.city,
+        sales_kg: d.fact,
+        potential_kg: d.potential,
+        okb_count: d.potentialTTs
+    }));
+    
+    const prompt = `${SALES_ANALYSIS_PROMPT}\n\nВот данные из файла в формате JSON:\n${JSON.stringify(dataSample, null, 2)}`;
+
+    try {
+        const createResponse = await fetch('/api/gemini-task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+        });
+
+        if (!createResponse.ok) {
+            const errorData = await createResponse.json();
+            throw new Error(`Ошибка создания задачи: ${errorData.error || 'Неизвестная ошибка сервера'}`);
+        }
+
+        const { taskId } = await createResponse.json();
+        if (!taskId) {
+            throw new Error("Сервер не вернул идентификатор задачи.");
+        }
+
+        // Poll for the result
+        const maxPolls = 60; // ~1.5 minute timeout
+        for (let i = 0; i < maxPolls; i++) {
+            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            if (!statusResponse.ok) {
+                // If the poll itself fails, wait and retry
+                 await new Promise(r => setTimeout(r, 2000));
+                 continue;
+            }
+
+            const taskStatus = await statusResponse.json();
+
+            if (taskStatus.status === 'done') {
+                try {
+                    // Gemini sometimes wraps the JSON in markdown code blocks. Clean it up.
+                    const cleanResponse = taskStatus.result
+                        .replace(/^```json\s*/, '')
+                        .replace(/```\s*$/, '')
+                        .trim();
+                    return JSON.parse(cleanResponse);
+                } catch (e) {
+                    console.error("Failed to parse AI analysis JSON:", e);
+                    throw new Error("Не удалось разобрать JSON-ответ от AI-аналитика.");
+                }
+            } else if (taskStatus.status === 'error') {
+                throw new Error(`Ошибка AI-аналитика: ${taskStatus.error}`);
+            }
+
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
+        throw new Error("Время ожидания ответа от AI-аналитика истекло.");
+
+    } catch (err) {
+        console.error("AI Service Error:", err);
+        throw err; // Re-throw the error to be caught by the caller
+    }
+}
+
 
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
