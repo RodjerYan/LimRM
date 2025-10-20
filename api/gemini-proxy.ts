@@ -90,7 +90,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         config,
       });
 
-      const text = response.text?.trim();
+      // FIX: Per @google/genai guidelines, response.text is a non-nullable getter.
+      const text = response.text.trim();
       if (!text) throw new Error('Пустой ответ модели');
       
       const duration = Date.now() - startTime;
