@@ -1,5 +1,5 @@
 import { AggregatedDataRow } from "../types";
-import { formatLargeNumber } from "../utils/dataUtils";
+import { formatLargeNumber } from "./utils/dataUtils";
 
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `

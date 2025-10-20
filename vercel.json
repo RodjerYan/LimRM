@@ -6,11 +6,5 @@
     "api/gemini-task.ts": {
       "maxDuration": 58
     }
-  },
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "/api/:path*"
-    }
-  ]
+  }
 }
