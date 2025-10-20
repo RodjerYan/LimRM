@@ -1,9 +1,16 @@
+
 {
   "functions": {
     "api/gemini-proxy.ts": {
       "maxDuration": 58
     },
     "api/gemini-task.ts": {
+      "maxDuration": 58
+    },
+    "api/osm-proxy.ts": {
+      "maxDuration": 20
+    },
+    "api/gemini-analytics.ts": {
       "maxDuration": 58
     }
   },

@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { AggregatedDataRow, RMPerformanceAnalysis } from '../types';
 import { formatLargeNumber, formatPercentage } from '../utils/dataUtils';
 import DetailChart from './DetailChart';
+import AIInsights from './AIInsights';
 import { StarIcon, BriefcaseIcon, RocketIcon } from './icons';
 
 interface PlanningModuleProps {
@@ -9,6 +10,12 @@ interface PlanningModuleProps {
 }
 
 const BASE_PLAN_INCREASE = 15; // Базовый годовой ориентир по росту
+
+interface AiAnalysisResult {
+    summary: string;
+    insights: string[];
+    forecasts: string[];
+}
 
 const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[] => {
     const rmData = new Map<string, { fact: number, potential: number, growth: number }>();
@@ -24,7 +31,7 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
     const analysisResults: RMPerformanceAnalysis[] = [];
     
     rmData.forEach((metrics, rmName) => {
-        if (metrics.potential <= 0) return; // Исключаем РМ без данных о потенциале
+        if (metrics.potential <= 0) return; 
 
         const realizationRate = (metrics.fact / metrics.potential) * 100;
 
@@ -34,19 +41,16 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
 
         if (realizationRate > 75) {
             category = 'Лидер рынка';
-            // Цель ниже базовой, т.к. рынок почти освоен. Рост сложный.
             recommendedIncrease = Math.max(5, BASE_PLAN_INCREASE - (realizationRate - 75) / 4); 
-            justification = `Высочайшая эффективность на зрелом рынке (${realizationRate.toFixed(0)}%). Цель скорректирована для удержания доли и органического роста в сложных условиях.`;
+            justification = `Высочайшая эффективность на зрелом рынке (${realizationRate.toFixed(0)}%). Цель скорректирована для удержания доли и органического роста.`;
         } else if (realizationRate > 35) {
             category = 'Стабильный рост';
-            // Цель близка к базовой. Есть баланс между текущими продажами и потенциалом.
             recommendedIncrease = BASE_PLAN_INCREASE;
-            justification = `Хороший баланс между освоенной долей (${realizationRate.toFixed(0)}%) и потенциалом. Стандартная цель в ${BASE_PLAN_INCREASE}% является достижимой при планомерной работе.`;
+            justification = `Хороший баланс между освоенной долей (${realizationRate.toFixed(0)}%) и потенциалом. Стандартная цель в ${BASE_PLAN_INCREASE}% достижима.`;
         } else {
             category = 'Высокий потенциал';
-            // Цель выше базовой, т.к. есть огромный неосвоенный рынок.
             recommendedIncrease = BASE_PLAN_INCREASE + (100 - realizationRate) / 10;
-            justification = `Огромный неосвоенный потенциал (${(100 - realizationRate).toFixed(0)}% свободно). Повышенная цель отражает возможность взрывного роста за счет активного захвата рынка.`;
+            justification = `Огромный неосвоенный потенциал (${(100 - realizationRate).toFixed(0)}% свободно). Повышенная цель отражает возможность взрывного роста.`;
         }
         
         analysisResults.push({
@@ -54,7 +58,6 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
             ...metrics,
             realizationRate,
             category,
-            // Округляем до одного знака после запятой для аккуратности
             recommendedIncrease: parseFloat(recommendedIncrease.toFixed(1)),
             justification
         });
@@ -77,7 +80,6 @@ const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysi
 
     return (
         <div className={`p-4 rounded-lg border ${styles.border} ${styles.bg} flex flex-col md:flex-row gap-4`}>
-            {/* Left Side: Info & Justification */}
             <div className="flex-1">
                 <div className="flex items-center gap-3">
                     <span className={`p-2 rounded-full ${styles.bg}`}>
@@ -88,7 +90,6 @@ const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysi
                         <p className={`text-sm font-semibold ${styles.text}`}>{analysis.category}</p>
                     </div>
                 </div>
-                
                 <div className="my-4">
                     <p className="text-gray-400 text-sm">Рекомендуемый рост плана:</p>
                     <p className="text-4xl font-bold text-white my-1 flex items-center gap-2">
@@ -98,14 +99,11 @@ const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysi
                     </p>
                     <p className="text-xs text-gray-500">Ориентир компании: {BASE_PLAN_INCREASE}%</p>
                 </div>
-
                 <div className="bg-gray-900/40 p-3 rounded-md">
                      <p className="text-sm text-gray-300 font-semibold mb-1">Обоснование:</p>
                      <p className="text-xs text-gray-400">{analysis.justification}</p>
                 </div>
             </div>
-
-            {/* Right Side: Chart & Metrics */}
             <div className="md:w-1/2 lg:w-2/5">
                  <div className="h-40 mb-3">
                     <DetailChart fact={analysis.fact} potential={analysis.potential} />
@@ -121,7 +119,42 @@ const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysi
 
 const PlanningModule: React.FC<PlanningModuleProps> = ({ data }) => {
     
+    const [aiAnalysis, setAiAnalysis] = useState<AiAnalysisResult | null>(null);
+    const [isLoadingAi, setIsLoadingAi] = useState(false);
+    const [aiError, setAiError] = useState<string | null>(null);
+
     const performanceData = useMemo(() => analyzeRMPerformance(data), [data]);
+
+    useEffect(() => {
+        if (data.length > 0) {
+            const fetchAiAnalysis = async () => {
+                setIsLoadingAi(true);
+                setAiError(null);
+                setAiAnalysis(null);
+                try {
+                    const response = await fetch('/api/gemini-analytics', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tableData: data }),
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Ошибка при получении AI-анализа');
+                    }
+                    const result: AiAnalysisResult = await response.json();
+                    setAiAnalysis(result);
+                } catch (error: any) {
+                    setAiError(error.message);
+                } finally {
+                    setIsLoadingAi(false);
+                }
+            };
+
+            const timerId = setTimeout(fetchAiAnalysis, 500);
+            return () => clearTimeout(timerId);
+        }
+    }, [data]);
+
 
     if (data.length === 0) {
         return (
@@ -133,7 +166,9 @@ const PlanningModule: React.FC<PlanningModuleProps> = ({ data }) => {
 
     return (
         <div className="h-full overflow-y-auto custom-scrollbar pr-2">
-            <div className="space-y-4">
+            <div className="space-y-6">
+                 <AIInsights analysis={aiAnalysis} isLoading={isLoadingAi} error={aiError} />
+
                 {performanceData.map(analysis => (
                     <RMAnalysisCard key={analysis.rmName} analysis={analysis} />
                 ))}
