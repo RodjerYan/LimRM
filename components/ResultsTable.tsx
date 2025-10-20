@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AggregatedDataRow, SortConfig } from '../types';
-import { formatLargeNumber } from '../utils/dataUtils';
+import { formatLargeNumber } from '../services/utils/dataUtils';
 import * as XLSX from 'xlsx';
 import DetailsModal from './DetailsModal';
 import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, ExportIcon, ArrowUpIcon, ArrowDownIcon } from './icons';

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { AggregatedDataRow } from '../types';
 import Chart from 'chart.js/auto';
-import { formatLargeNumber } from '../utils/dataUtils';
+import { formatLargeNumber } from '../services/utils/dataUtils';
 
 interface PotentialChartProps {
     data: AggregatedDataRow[];

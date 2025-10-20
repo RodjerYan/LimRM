@@ -1,6 +1,6 @@
 import React from 'react';
 import { Metrics } from '../types';
-import { formatLargeNumber } from '../utils/dataUtils';
+import { formatLargeNumber } from '../services/utils/dataUtils';
 import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon } from './icons';
 
 interface MetricsSummaryProps {
