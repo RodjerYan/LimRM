@@ -77,7 +77,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const ai = new GoogleGenAI({ apiKey });
         
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-2.5-pro',
           contents: fullPrompt,
           config: {
             responseMimeType: 'application/json',
@@ -94,7 +94,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } catch (e) {
             console.error(`${colors.red}⚠️ Ошибка парсинга JSON от Gemini при ключе ...${shortKey}:${colors.reset}`, text);
             lastError = new Error('Ошибка парсинга JSON ответа модели');
-            break;
+            // Don't continue here, the model responded but the format is wrong. Retrying with another key won't help.
+            break; 
         }
 
       } catch (err: any) {

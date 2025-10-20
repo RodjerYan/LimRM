@@ -80,17 +80,27 @@ export type SortConfig = {
 } | null;
 
 export interface GeminiAnalysisResult {
-  summary: {
-    total_sales_kg: number;
-    total_sales_amount: number;
-    avg_by_manager: { name: string; avg_kg: number; avg_amount: number }[];
-    avg_by_region: { name: string; avg_kg: number; avg_amount: number }[];
-    avg_by_city: { name: string; avg_kg: number; avg_amount: number }[];
-    avg_by_brand: { name: string; avg_kg: number; avg_amount: number }[];
+  structure?: {
+    columns_detected?: string[];
+    total_rows?: number;
   };
-  top_managers: { name: string; value: number; metric: string }[];
-  top_brands: { name: string; value: number; metric: string }[];
-  top_cities: { name: string; value: number; metric: string }[];
-  top_regions: { name: string; value: number; metric: string }[];
-  insights: string[];
+  summary?: {
+    total_sales_amount?: string;
+    total_sales_kg?: string;
+    avg_by_manager?: { name: string; avg_kg: number; avg_amount: number }[];
+    avg_by_region?: { region: string; avg_kg: number; avg_amount: number }[];
+    avg_by_brand?: { brand: string; avg_kg: number; avg_amount: number }[];
+  };
+  leaders?: {
+    top_managers?: string[];
+    top_brands?: string[];
+    top_regions?: string[];
+  };
+  forecast?: {
+    method?: string;
+    period?: string;
+    predicted_growth_percent?: string;
+    predicted_sales?: string;
+  };
+  insights?: string[];
 }
