@@ -1,1 +1,33 @@
-full contents of tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["vite/client", "node", "office-js", "leaflet"]
+  },
+  "include": [
+    "api", 
+    "components", 
+    "services", 
+    "utils", 
+    "App.tsx", 
+    "index.tsx", 
+    "types.ts", 
+    "prompts",
+    "postcss.config.js",
+    "tailwind.config.js"
+  ],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
