@@ -397,7 +397,8 @@ export default function App() {
             return;
         }
 
-        // --- PRE-COMPUTATION ---
+        // --- Этап 1: Предварительный расчет общих сумм ---
+        // Собираем агрегированные данные по РМ, брендам и их комбинациям для быстрого доступа.
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
@@ -418,10 +419,13 @@ export default function App() {
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
         });
         
-        // --- MAIN CALCULATION ---
+        // --- Этап 2: Основной расчет нового плана для каждой строки ---
         const calculatedData = baseAggregatedData.map(row => {
             const { fact, rm, brand, activeTT, totalMarketTTs } = row;
             
+            // --- Сценарий 1: Нулевой факт ---
+            // Если текущих продаж нет, устанавливаем небольшой стартовый план,
+            // основанный на средних продажах по бренду.
             if (fact === 0) {
                 const brandTotalFact = brandTotals.get(brand)?.fact || 0;
                 const brandCount = brandRowCounts.get(brand) || 1;
@@ -430,52 +434,55 @@ export default function App() {
                 return { ...row, newPlan };
             }
 
+            // --- Сценарий 2: Есть фактические продажи ---
             const baseInc = baseIncreasePercent / 100;
             
-            // Define weights and caps for dynamic growth factors
-            const maxDynamicGrowth = 0.15; // Max additional growth is 15%
-            const w_coverage = 0.6; // 60% of dynamic growth comes from market coverage
-            const w_brand = 0.4;    // 40% of dynamic growth comes from brand balancing
+            // Определяем веса и максимальный порог для динамического роста
+            const maxDynamicGrowth = 0.15; // Максимальный дополнительный рост: 15%
+            const w_coverage = 0.6; // 60% влияния от показателя покрытия рынка
+            const w_brand = 0.4;    // 40% влияния от показателя баланса брендов
 
-            // 1. Calculate Coverage Score (0 to 1)
-            // A score of 1 means high potential (low market penetration).
+            // --- Фактор 1: Охват рынка (Coverage Score) ---
+            // Оценивает, насколько полно мы представлены на рынке.
+            // Score -> 1: низкое покрытие (большой потенциал). Score -> 0: высокое покрытие.
             const effectiveTotalMarket = Math.max(activeTT, totalMarketTTs) + Math.ceil(activeTT * 0.10);
             const penetration = Math.min(1.0, activeTT > 0 ? (activeTT / effectiveTotalMarket) : 0);
-            const coverageScore = Math.sqrt(1 - penetration);
+            const coverageScore = Math.sqrt(1 - penetration); // sqrt для нелинейного поощрения низкого охвата
 
-            // 2. Calculate Brand Balance Score (-1 to 1)
-            // A positive score means the RM is under-performing on this brand compared to the company average.
+            // --- Фактор 2: Баланс брендов (Brand Balance Score) ---
+            // Сравнивает долю продаж бренда у конкретного РМ с долей этого же бренда в целом по компании.
+            // Score > 0: РМ недорабатывает по бренду (план будет увеличен).
+            // Score < 0: РМ перевыполняет по бренду (динамический рост будет уменьшен).
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
             
             let brandScore = 0;
             if (rmTotalFact > 0 && brandTotalFact > 0 && totalFactAll > 0) {
-                const brandShareAvg = brandTotalFact / totalFactAll;
-                const brandShareRM = rmBrandTotalFact / rmTotalFact;
+                const brandShareAvg = brandTotalFact / totalFactAll; // Доля бренда в компании
+                const brandShareRM = rmBrandTotalFact / rmTotalFact; // Доля бренда у РМ
                 if (brandShareRM > 0) {
                     const shareRatio = brandShareAvg / brandShareRM;
-                    // Use tanh for smooth, bounded [-1, 1] scoring
+                    // Используем tanh для получения гладкого, ограниченного [-1, 1] значения
                     brandScore = Math.tanh(shareRatio - 1);
                 } else {
-                    // RM doesn't sell this brand at all, give a high score
+                    // Если РМ вообще не продает этот бренд, даем максимальный стимул
                     brandScore = 1; 
                 }
             }
             
-            // 3. Combine scores into a single, capped dynamic growth factor
+            // --- Этап 3: Комбинирование факторов и финальный расчет ---
+            // Суммируем базовый рост и динамический рост (с учетом весов)
             const dynamicGrowth = maxDynamicGrowth * (w_coverage * coverageScore + w_brand * brandScore);
-            
-            // 4. Calculate final multiplier and the new plan
             const totalMultiplier = 1 + baseInc + dynamicGrowth;
-            const newPlan = Math.max(fact, fact * totalMultiplier);
+            const newPlan = Math.max(fact, fact * totalMultiplier); // План не может быть меньше факта
 
             return { ...row, newPlan };
         });
 
         setDataWithPlan(calculatedData);
 
-        // Final state update after all calculations are complete.
+        // Финальное обновление статуса после завершения всех расчетов
         setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
         addNotification('Анализ рынка и расчет планов завершен!', 'success');
 
@@ -483,7 +490,6 @@ export default function App() {
             setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
         }, 3000);
 
-        // Cleanup the timer if the component unmounts or if the effect re-runs.
         return () => clearTimeout(resetTimer);
 
     }, [baseAggregatedData, baseIncreasePercent, addNotification]);
@@ -646,6 +652,10 @@ export default function App() {
         return Array.from(cityTTs.values()).reduce((sum, count) => sum + count, 0);
     }, [filteredAndSortedData]);
 
+    const totalActiveTTs = useMemo(() => {
+        return filteredAndSortedData.reduce((sum, item) => sum + (item.activeTT || 0), 0);
+    }, [filteredAndSortedData]);
+
 
     return (
         <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
@@ -676,7 +686,11 @@ export default function App() {
                         onReset={resetFilters}
                         disabled={baseAggregatedData.length === 0}
                     />
-                    <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
+                    <MetricsSummary 
+                        metrics={metrics} 
+                        totalPotentialTTs={totalPotentialTTs} 
+                        totalActiveTTs={totalActiveTTs}
+                    />
                 </aside>
 
                 <div className="lg:col-span-9 space-y-6">
