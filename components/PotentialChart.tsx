@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { AggregatedDataRow } from '../types';
 import Chart from 'chart.js/auto';
+import { AggregatedDataRow } from '../types';
+import { formatLargeNumber } from '../utils/dataUtils';
 
 interface PotentialChartProps {
     data: AggregatedDataRow[];
@@ -10,106 +11,98 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
     const chartContainer = useRef<HTMLCanvasElement>(null);
     const chartInstance = useRef<Chart | null>(null);
 
+    // Aggregate data by brand for the chart
+    const chartData = React.useMemo(() => {
+        const brandData = new Map<string, { fact: number, potential: number }>();
+        data.forEach(row => {
+            const current = brandData.get(row.brand) || { fact: 0, potential: 0 };
+            current.fact += row.fact;
+            current.potential += row.potential;
+            brandData.set(row.brand, current);
+        });
+
+        const sortedBrands = Array.from(brandData.entries()).sort((a, b) => b[1].potential - a[1].potential).slice(0, 10);
+
+        return {
+            labels: sortedBrands.map(item => item[0]),
+            datasets: [
+                {
+                    label: 'Факт',
+                    data: sortedBrands.map(item => item[1].fact),
+                    backgroundColor: 'rgba(52, 211, 153, 0.7)',
+                    borderColor: '#34d399',
+                    borderWidth: 1,
+                },
+                {
+                    label: 'Потенциал',
+                    data: sortedBrands.map(item => item[1].potential),
+                    backgroundColor: 'rgba(129, 140, 248, 0.7)',
+                    borderColor: '#818cf8',
+                    borderWidth: 1,
+                },
+            ],
+        };
+    }, [data]);
+
     useEffect(() => {
         if (!chartContainer.current) return;
         const ctx = chartContainer.current.getContext('2d');
         if (!ctx) return;
 
-        const rmAggregation = data.reduce((acc, item) => {
-            if (!acc[item.rm]) {
-                acc[item.rm] = { fact: 0, potential: 0, growth: 0 };
-            }
-            acc[item.rm].fact += item.fact;
-            acc[item.rm].potential += item.potential;
-            acc[item.rm].growth += item.growthPotential;
-            return acc;
-        }, {} as { [key: string]: { fact: number, potential: number, growth: number } });
-
-        const labels = Object.keys(rmAggregation).sort((a, b) => rmAggregation[b].potential - rmAggregation[a].potential);
-
-        const maxValue = Math.max(...labels.map(rm => rmAggregation[rm].potential));
-        const unit = maxValue > 1_000_000 ? 'млн' : maxValue > 1_000 ? 'тыс.' : '';
-        const factor = unit === 'млн' ? 1_000_000 : unit === 'тыс.' ? 1_000 : 1;
-        const yAxisLabel = `Сумма (${unit})`;
-        
-        const factData = labels.map(rm => rmAggregation[rm].fact / factor);
-        const potentialData = labels.map(rm => rmAggregation[rm].potential / factor);
-        const growthData = labels.map(rm => rmAggregation[rm].growth / factor);
-
-        // Gradient fills
-        const successGradient = ctx.createLinearGradient(0, 0, 0, 400);
-        successGradient.addColorStop(0, 'rgba(52, 211, 153, 0.8)');
-        successGradient.addColorStop(1, 'rgba(52, 211, 153, 0.2)');
-        
-        const accentGradient = ctx.createLinearGradient(0, 0, 0, 400);
-        accentGradient.addColorStop(0, 'rgba(129, 140, 248, 0.8)');
-        accentGradient.addColorStop(1, 'rgba(129, 140, 248, 0.2)');
-
-        const chartData = {
-            labels,
-            datasets: [
-                { type: 'bar' as const, label: `Факт`, data: factData, backgroundColor: successGradient, borderColor: '#34d399', borderWidth: 1 },
-                { type: 'bar' as const, label: `Потенциал`, data: potentialData, backgroundColor: accentGradient, borderColor: '#818cf8', borderWidth: 1 },
-                { 
-                    label: `Потенциал Роста`, data: growthData, type: 'line' as const, 
-                    borderColor: '#fbbf24', tension: 0.4, yAxisID: 'y1', pointBackgroundColor: '#fbbf24'
-                },
-            ],
-        };
-
         if (chartInstance.current) {
             chartInstance.current.data = chartData;
-            const yScale: any = chartInstance.current.options.scales?.y;
-            if (yScale?.title) {
-                yScale.title.text = yAxisLabel;
-            }
-            const y1Scale: any = chartInstance.current.options.scales?.y1;
-            if (y1Scale?.title) {
-                y1Scale.title.text = `Потенциал Роста (${unit})`;
-            }
             chartInstance.current.update();
         } else {
-            chartInstance.current = new Chart(chartContainer.current, {
+            chartInstance.current = new Chart(ctx, {
                 type: 'bar',
                 data: chartData,
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { legend: { labels: { color: '#e2e8f0' }}},
-                    scales: {
-                        x: { grid: { color: 'rgba(74, 85, 104, 0.5)' }, ticks: { color: '#e2e8f0' } },
-                        y: { 
-                            beginAtZero: true, 
-                            title: { display: true, text: yAxisLabel, color: '#e2e8f0' },
-                            grid: { color: 'rgba(74, 85, 104, 0.5)' }, ticks: { color: '#e2e8f0' } 
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: { color: '#e2e8f0' }
                         },
-                        y1: {
-                            type: 'linear', display: true, position: 'right',
-                            title: { display: true, text: `Потенциал Роста (${unit})`, color: '#fbbf24' },
-                            grid: { drawOnChartArea: false }, ticks: { color: '#fbbf24' }
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `${context.dataset.label}: ${formatLargeNumber(context.raw as number)} кг/ед`,
+                            },
+                        },
+                        title: {
+                            display: true,
+                            text: 'Топ-10 Брендов по Потенциалу',
+                            color: '#e2e8f0',
+                            font: { size: 16 }
                         }
+                    },
+                    scales: {
+                        x: {
+                            stacked: true,
+                            grid: { color: '#4a5568' },
+                            ticks: { color: '#e2e8f0' },
+                            title: { display: true, text: 'Объем (кг/ед)', color: '#e2e8f0' }
+                        },
+                        y: {
+                            stacked: true,
+                            grid: { display: false },
+                            ticks: { color: '#e2e8f0' }
+                        },
                     },
                 },
             });
         }
-    }, [data]);
-    
-    // Cleanup chart instance on component unmount
+    }, [chartData]);
+
     useEffect(() => {
         return () => {
             chartInstance.current?.destroy();
             chartInstance.current = null;
-        }
+        };
     }, []);
 
-    return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <h2 className="text-xl font-bold mb-4 text-white">Визуализация рыночного потенциала</h2>
-            <div className="relative h-[40vh] w-full">
-                <canvas ref={chartContainer} />
-            </div>
-        </div>
-    );
+    return <canvas ref={chartContainer} />;
 };
 
 export default PotentialChart;

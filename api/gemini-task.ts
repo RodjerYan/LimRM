@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import { nanoid } from 'nanoid';
 
 // 🎨 Цвета для консоли
@@ -63,13 +63,14 @@ async function processTask(taskId: string) {
     for (const apiKey of apiKeys) {
         try {
             const ai = new GoogleGenAI({ apiKey });
-            const response = await ai.models.generateContent({
+            const response: GenerateContentResponse = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: task.prompt,
             });
-
-            const text = response.text?.trim();
-            if (!text) throw new Error('Модель вернула пустой ответ');
+            
+            // FIX: Use response.text directly to get model output as per guidelines.
+            const text = response.text;
+            if (!text || text.trim() === '') throw new Error('Модель вернула пустой ответ');
 
             tasks.set(taskId, { ...task, status: 'done', result: text });
             return; // Успешно, выходим

@@ -1,31 +1,79 @@
-import { AggregatedDataRow, FilterOptions, Metrics } from "../types";
+import { AggregatedDataRow, FilterState } from "../types";
 
+// --- Форматирование чисел ---
+export const formatLargeNumber = (num: number, digits = 0): string => {
+    if (num === null || num === undefined) return '0';
+    return new Intl.NumberFormat('ru-RU', {
+        maximumFractionDigits: digits,
+    }).format(num);
+};
 
-export function getUniqueFilterOptions(data: AggregatedDataRow[]): FilterOptions {
-    const rms = [...new Set(data.map(item => item.rm))].sort();
-    const brands = [...new Set(data.map(item => item.brand))].sort();
-    const cities = [...new Set(data.map(item => item.city))].sort();
-    return { rms, brands, cities };
-}
+export const formatPercentage = (num: number): string => {
+    if (num === null || num === undefined) return '0%';
+    return `${num.toFixed(1)}%`;
+};
 
-// --- Metrics Calculation ---
+// --- Фильтрация данных ---
+export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
+    return data.filter(row => {
+        const rmMatch = !filters.rm || row.rm === filters.rm;
+        const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
+        const cityMatch = filters.city.length === 0 || filters.city.includes(row.city);
+        return rmMatch && brandMatch && cityMatch;
+    });
+};
 
-export function calculateMetrics(data: AggregatedDataRow[]): Metrics {
-    const totalFact = data.reduce((sum, item) => sum + item.fact, 0);
-    const totalPotential = data.reduce((sum, item) => sum + item.potential, 0);
-    const totalGrowthPotential = totalPotential - totalFact;
-    const totalGrowthRate = totalFact > 0 ? (totalGrowthPotential / totalFact) * 100 : 0;
-    const totalNewPlan = data.reduce((sum, item) => sum + (item.newPlan || 0), 0);
-    const avgPlanIncrease = data.length > 0
-        ? data.reduce((sum, item) => sum + item.growthRate, 0) / data.length
-        : 0;
+// --- Сортировка данных ---
+export type SortDirection = 'asc' | 'desc';
+export type SortKey = keyof AggregatedDataRow;
 
-    return { totalFact, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease, totalNewPlan };
-}
+export const sortData = (data: AggregatedDataRow[], sortKey: SortKey, sortDirection: SortDirection): AggregatedDataRow[] => {
+    return [...data].sort((a, b) => {
+        const valA = a[sortKey];
+        const valB = b[sortKey];
 
-export function formatLargeNumber(num: number): string {
-    if (typeof num !== 'number' || isNaN(num)) return '0.00';
-    if (Math.abs(num) >= 1_000_000) return (num / 1_000_000).toFixed(2) + ' млн';
-    if (Math.abs(num) >= 1_000) return (num / 1_000).toFixed(2) + ' тыс.';
-    return num.toFixed(2);
-}
+        if (typeof valA === 'number' && typeof valB === 'number') {
+            return sortDirection === 'asc' ? valA - valB : valB - valA;
+        }
+
+        if (typeof valA === 'string' && typeof valB === 'string') {
+            return sortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        }
+        
+        return 0;
+    });
+};
+
+// --- Экспорт в CSV ---
+export const exportToCSV = (data: AggregatedDataRow[], fileName: string = 'analysis_export.csv') => {
+    const headers = [
+        "РМ", "Город", "Бренд", "Факт (кг/ед)", "Потенциал (кг/ед)", 
+        "Потенциал Роста (кг/ед)", "Темп Роста (%)", "Кол-во Потенц. ТТ",
+        "Примеры клиентов"
+    ];
+    
+    const rows = data.map(row => [
+        `"${row.rm}"`,
+        `"${row.city}"`,
+        `"${row.brand}"`,
+        row.fact,
+        row.potential,
+        row.growthPotential,
+        row.growthRate.toFixed(2),
+        row.potentialTTs,
+        `"${row.potentialClients.slice(0, 3).map(c => c.name).join('; ')}"`
+    ].join(','));
+
+    // Adding BOM for proper Excel compatibility with Cyrillic characters
+    const BOM = '\uFEFF';
+    const csvContent = "data:text/csv;charset=utf-8," 
+        + BOM + [headers.join(','), ...rows].join('\n');
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};

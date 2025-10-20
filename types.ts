@@ -1,79 +1,62 @@
 export interface RawDataRow {
-    rm: string;
-    brand: string;
-    fullAddress: string;
-    city: string;
-    fact: number;
-}
-
-export interface PotentialClient {
-    name: string;
-    address: string;
-    type: string;
-    lat?: number;
-    lon?: number;
-}
-
-export interface ProcessedDataRow extends RawDataRow {
-    potential: number;
-    growthPotential: number;
-    growthRate: number;
-    potentialTTs: number;
-    potentialClients: PotentialClient[];
-    cityCenter?: { lat: number; lon: number; };
-}
-
-export interface AggregatedDataRow {
-    rm: string;
-    brand: string;
-    city: string;
-    fact: number;
-    potential: number;
-    growthPotential: number;
-    growthRate: number;
-    potentialTTs: number;
-    totalMarketTTs: number;
-    potentialClients: PotentialClient[];
-    cityCenter?: { lat: number; lon: number; };
-    activeTT: number;
-    newPlan?: number;
+  [key: string]: string | number;
 }
 
 export interface LoadingState {
-    status: 'idle' | 'reading' | 'fetching' | 'aggregating' | 'done' | 'error';
-    progress: number;
-    text: string;
-    etr: string;
+  status: 'idle' | 'reading' | 'processing' | 'geocoding' | 'done' | 'error';
+  progress: number;
+  text: string;
+  etr?: string; // Estimated Time Remaining
 }
 
 export interface FilterOptions {
-    rms: string[];
-    brands: string[];
-    cities: string[];
+  rms: string[];
+  brands: string[];
+  cities: string[];
 }
 
 export interface FilterState {
-    rm: string;
-    brand: string[];
-    city: string[];
+  rm: string;
+  brand: string[];
+  city: string[];
 }
 
-export interface Metrics {
-    totalFact: number;
-    totalPotential: number;
-    totalGrowthPotential: number;
-    totalGrowthRate: number;
-    avgPlanIncrease: number;
-    totalNewPlan: number;
+export interface PotentialClient {
+  name: string;
+  address: string;
+  type: string;
+  lat?: number;
+  lon?: number;
+}
+
+export interface AggregatedDataRow {
+  key: string;
+  rm: string;
+  city: string;
+  brand: string;
+  fact: number;
+  potential: number;
+  growthPotential: number;
+  growthRate: number;
+  potentialTTs: number;
+  potentialClients: PotentialClient[];
+  cityCenter?: { lat: number, lon: number };
+}
+
+export interface ProcessedData {
+  aggregatedData: AggregatedDataRow[];
+  filterOptions: FilterOptions;
+  totalFact: number;
+  totalPotential: number;
+}
+
+export interface WorkerMessage {
+  type: 'progress' | 'result' | 'error';
+  payload: any;
 }
 
 export interface NotificationMessage {
-    id: number;
-    message: string;
-    type: 'success' | 'error' | 'info';
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
 }
-
-export type SortConfig = {
-    key: keyof AggregatedDataRow;
-    direction: 'ascending' | 'descending';
-} | null;

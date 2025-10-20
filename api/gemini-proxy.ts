@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // 🎨 Цвета для консоли
@@ -82,14 +82,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const isJsonRequest = config?.responseMimeType === 'application/json';
 
       // Для стабильности на Vercel, всегда получаем полный ответ от Gemini, избегая прямого стриминга клиенту.
-      const response = await ai.models.generateContent({
+      const response: GenerateContentResponse = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents,
         config,
       });
-
-      const text = response.text?.trim();
-      if (!text) throw new Error('Пустой ответ модели');
+      
+      // FIX: Use response.text directly to get model output as per guidelines.
+      const text = response.text;
+      if (!text || text.trim() === '') throw new Error('Пустой ответ модели');
       
       const duration = Date.now() - startTime;
 
