@@ -19,7 +19,7 @@ description: >
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
-import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
+import { calculateMetrics, formatLargeNumber } from './services/utils/dataUtils';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
