@@ -77,8 +77,22 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { 
-                        // FIX: Changed invalid Chart.js property 'boxPadding' to 'padding' to resolve type error.
-                        legend: { labels: { color: '#e2e8f0', usePointStyle: true, boxWidth: 8, padding: 10 } },
+                        legend: {
+                            labels: {
+                                color: '#e2e8f0',
+                                usePointStyle: true,
+                                boxWidth: 8,
+                                padding: 10,
+                                generateLabels: (chart: Chart) => {
+                                    const originalLabels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
+                                    originalLabels.forEach(label => {
+                                        // Add spacing (approx. 4mm) between the legend point and the text
+                                        label.text = '    ' + label.text;
+                                    });
+                                    return originalLabels;
+                                }
+                            }
+                        },
                         tooltip: {
                             mode: 'index',
                             intersect: false,
