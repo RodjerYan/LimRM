@@ -644,16 +644,13 @@ export default function App() {
     return (
         <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
             <header className="mb-8 md:mb-12">
-                <div className="flex items-center gap-4">
-                    <img src="/limkorm-logo.svg" alt="Limkorm Logo" className="h-10 w-10"/>
-                    <div>
-                         <h1 className="text-3xl md:text-4xl font-extrabold text-white tracking-tight">
-                            Limkorm <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-hover">Analytics</span>
-                        </h1>
-                        <p className="text-gray-400 text-sm md:text-base mt-1">
-                            Инструмент для планирования продаж и анализа рыночного потенциала
-                        </p>
-                    </div>
+                <div>
+                    <h1 className="text-3xl md:text-4xl font-extrabold text-white tracking-tight">
+                        Limkorm <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-hover">Analytics</span>
+                    </h1>
+                    <p className="text-gray-400 text-sm md:text-base mt-1">
+                        Инструмент для планирования продаж и анализа рыночного потенциала
+                    </p>
                 </div>
             </header>
 
