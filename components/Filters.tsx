@@ -155,10 +155,10 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
                 <button
                     onClick={onReset}
                     disabled={!areFiltersActive}
-                    className="w-full mt-5 bg-transparent hover:bg-accent/20 text-gray-300 border border-border-color font-bold py-2.5 px-4 rounded-lg transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                    className="w-full mt-5 bg-gradient-to-r from-accent to-purple-600 hover:from-accent-hover hover:to-purple-500 text-white font-bold py-2.5 px-4 rounded-lg transition-all duration-300 shadow-lg shadow-accent/20 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-500 disabled:to-gray-600 disabled:shadow-none"
                 >
                     <ResetIcon />
-                    Сбросить фильтры
+                    Сбросить все фильтры
                 </button>
             </fieldset>
         </div>
