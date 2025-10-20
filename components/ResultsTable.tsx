@@ -3,7 +3,7 @@ import { AggregatedDataRow, SortConfig } from '../types';
 import { formatLargeNumber } from '../utils/dataUtils';
 import * as XLSX from 'xlsx';
 import DetailsModal from './DetailsModal';
-import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, ExportIcon, ArrowUpIcon, ArrowDownIcon } from './icons';
+import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, ExportIcon } from './icons';
 
 interface ResultsTableProps {
     data: AggregatedDataRow[];
@@ -26,8 +26,8 @@ const TableHeader: React.FC<{
         { key: 'city', label: 'Регион', align: 'text-left' },
         { key: 'potentialTTs', label: 'ОКБ (шт)', align: 'text-center' },
         { key: 'fact', label: 'Факт (кг/ед)', align: 'text-right' },
-        { key: 'newPlan', label: 'Новый План', align: 'text-right' },
-        { key: 'potential', label: 'Потенциал', align: 'text-right' },
+        { key: 'newPlan', label: 'Новый План (кг/ед)', align: 'text-right' },
+        { key: 'potential', label: 'Потенциал (кг/ед)', align: 'text-right' },
         { key: 'growthPotential', label: 'Рост (кг/ед)', align: 'text-right' },
         { key: 'growthRate', label: 'Рост (%)', align: 'text-right' },
     ];
@@ -54,12 +54,12 @@ const TableHeader: React.FC<{
                 {headers.map(({ key, label, align }) => (
                     <th 
                         key={key} 
-                        className={`px-4 py-3 ${align} text-xs font-medium text-gray-400 uppercase tracking-wider cursor-pointer select-none transition-colors hover:text-white`}
+                        className={`px-4 py-3 ${align} text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer select-none`}
                         onClick={() => requestSort(key)}
                     >
-                        <div className={`flex items-center gap-1.5 ${getJustifyClass(align)}`}>
+                        <div className={`flex items-center ${getJustifyClass(align)}`}>
                             <span>{label}</span>
-                            <span className="w-4 h-4">{getSortIcon(key)}</span>
+                            <span className="ml-1.5 w-4 h-4">{getSortIcon(key)}</span>
                         </div>
                     </th>
                 ))}
@@ -73,37 +73,43 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
     const newPlanGrowthPercent = item.newPlan && item.fact > 0 ? (newPlanGrowthKg / item.fact) * 100 : 0;
 
     return (
-        <tr onClick={() => onRowClick(item)} className="hover:bg-accent/10 transition duration-150 cursor-pointer border-b border-border-color">
-            <td className="px-4 py-3 text-sm font-medium text-white text-left truncate">{item.rm}</td>
-            <td className="px-4 py-3 text-sm text-gray-300 text-left truncate">{item.brand}</td>
-            <td className="px-4 py-3 text-sm text-gray-300 text-left truncate">{item.city}</td>
+        <tr onClick={() => onRowClick(item)} className="hover:bg-gray-700/50 transition duration-150 cursor-pointer border-l-2 border-transparent hover:border-accent">
+            <td className="px-4 py-3 text-sm font-medium text-white text-left">{item.rm}</td>
+            <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.brand}</td>
+            <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.city}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-300 font-mono">{item.potentialTTs}</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right font-mono">{formatLargeNumber(item.fact)}</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-accent font-bold text-right font-mono">
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.fact)}</td>
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-purple-400 font-bold text-right">
                 {item.newPlan ? (
                     <div className="flex flex-col items-end leading-tight">
                         <span>{formatLargeNumber(item.newPlan)}</span>
                         {item.fact > 0 && item.newPlan > item.fact && (
-                            <span className="text-xs text-accent-hover/70 font-normal mt-0.5 flex items-center gap-1">
-                                <ArrowUpIcon /> (+{newPlanGrowthPercent.toFixed(1)}%)
+                            <span className="text-xs text-purple-300/70 font-normal mt-0.5">
+                                (+{newPlanGrowthPercent.toFixed(1)}%)
                             </span>
                         )}
                     </div>
                 ) : '-'}
             </td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-info text-right font-mono">{formatLargeNumber(item.potential)}</td>
-            <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold text-right font-mono ${newPlanGrowthKg >= 0 ? 'text-success' : 'text-danger'}`}>
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.potential)}</td>
+            <td className={`px-4 py-3 whitespace-nowrap text-sm font-bold ${newPlanGrowthKg >= 0 ? 'text-green-400' : 'text-danger'} text-right`}>
                 {formatLargeNumber(newPlanGrowthKg)}
             </td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-warning font-semibold text-right font-mono">
-                {newPlanGrowthPercent.toFixed(2)}%
+            <td className="px-4 py-3 whitespace-nowrap text-sm text-yellow-400 font-semibold text-right">
+                 <div className="group relative inline-block">
+                  {newPlanGrowthPercent.toFixed(2)}%
+                  <div className="absolute bottom-full mb-2 w-64 p-2 text-xs bg-gray-900 text-white rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-10 left-1/2 -translate-x-1/2">
+                    Рост нового плана по отношению к факту.
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-900"></div>
+                  </div>
+                </div>
             </td>
         </tr>
     );
 };
 
 const SkeletonRow: React.FC = () => (
-    <tr className="shimmer-effect border-b border-border-color">
+    <tr className="shimmer-effect">
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-3/4"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-2/3"></div></td>
@@ -199,47 +205,48 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
 
     return (
         <>
-            <div className="bg-card-bg/80 backdrop-blur-sm p-4 sm:p-6 rounded-2xl shadow-lg border border-border-color">
+            <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                 <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4">
-                    <h2 className="text-xl font-bold text-white whitespace-nowrap self-start sm:self-center">Детализированные результаты</h2>
-                    <div className="flex items-center gap-2 sm:gap-4 w-full sm:w-auto">
-                        <div className="relative group">
-                            <label htmlFor="baseIncreaseInput" className="absolute -top-2 left-2 text-xs text-gray-400 bg-card-bg px-1 hidden sm:block">Базовый рост</label>
+                    <h2 className="text-xl font-bold text-white whitespace-nowrap">Детализированные результаты</h2>
+                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div className="relative">
                             <input
                                 id="baseIncreaseInput"
                                 aria-label="Базовый рост в процентах"
                                 type="number"
                                 value={baseIncreasePercent}
                                 onChange={handleBaseIncreaseInputChange}
+                                placeholder="Рост (%)"
                                 title="Базовый рост (%)"
-                                className="w-28 p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500 transition text-center"
+                                className="w-32 p-2.5 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition text-center"
                                 min="0"
                                 step="0.1"
                                 disabled={isLoading || data.length === 0}
                             />
                         </div>
+
                         <div className="relative flex-grow sm:flex-grow-0">
                             <input 
                                 type="text"
                                 placeholder="Поиск..."
                                 value={searchTerm}
                                 onChange={(e) => onSearchChange(e.target.value)}
-                                className="w-full sm:w-48 p-2.5 pl-10 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500 transition"
+                                className="w-full sm:w-48 p-2.5 pl-10 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
                             />
                              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                                 <SearchIcon />
                             </div>
                         </div>
-                         <button onClick={handleExport} title="Экспорт в Excel" disabled={data.length === 0} className="p-2.5 bg-success/20 hover:bg-success/30 text-success font-bold rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                         <button onClick={handleExport} disabled={data.length === 0} className="p-2.5 bg-success/20 hover:bg-success/30 text-success font-bold rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                             <ExportIcon />
                         </button>
                     </div>
                 </div>
 
-                <div className="max-h-[60vh] overflow-y-auto overflow-x-auto custom-scrollbar border border-border-color rounded-lg">
-                    <table className="w-full min-w-[1000px] table-fixed">
+                <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden custom-scrollbar border border-gray-700/50 rounded-lg">
+                    <table className="w-full divide-y divide-gray-800 table-fixed">
                         <TableHeader sortConfig={sortConfig} requestSort={requestSort} />
-                        <tbody className="divide-y divide-border-color">
+                        <tbody className="divide-y divide-gray-700/50">
                             {renderBody()}
                         </tbody>
                     </table>

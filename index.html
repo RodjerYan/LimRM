@@ -3,43 +3,20 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Limkorm Analytics | Гео-Анализ Рынка</title>
+    <title>Гео-Анализ Рынка | Limkorm</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
     <style>
         body {
-            background-color: #0d1117;
-            background-image: 
-                radial-gradient(circle at 15% 25%, rgba(139, 92, 246, 0.1), transparent 30%),
-                radial-gradient(circle at 85% 75%, rgba(99, 102, 241, 0.1), transparent 40%);
+            background-color: #111827;
+            background-image: radial-gradient(circle at 10% 20%, rgba(129, 140, 248, 0.15), transparent 40%),
+                              radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.15), transparent 50%);
             background-attachment: fixed;
         }
-
-        /* Animated Grid Background */
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-image: 
-                linear-gradient(to right, rgba(55, 65, 81, 0.2) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(55, 65, 81, 0.2) 1px, transparent 1px);
-            background-size: 4rem 4rem;
-            animation: bg-pan 20s linear infinite;
-            z-index: -1;
-            opacity: 0.5;
-        }
-
-        @keyframes bg-pan {
-            from { background-position: 0 0; }
-            to { background-position: 4rem 4rem; }
-        }
-
         /* Custom animations */
         @keyframes fade-in {
             from { opacity: 0; }
@@ -74,18 +51,17 @@
         /* Custom scrollbar for modal/table */
         .custom-scrollbar::-webkit-scrollbar {
             width: 8px;
-            height: 8px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(30, 41, 59, 0.5); /* slate-800 */
+            background: rgba(31, 41, 55, 0.5); /* gray-800 */
             border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #8b5cf6; /* violet-500 */
+            background: #4f46e5; /* indigo-600 */
             border-radius: 10px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #a78bfa; /* violet-400 */
+            background: #6366f1; /* indigo-500 */
         }
     </style>
 <script type="importmap">
@@ -103,7 +79,8 @@
     "path": "https://aistudiocdn.com/path@^0.12.7",
     "vite": "https://aistudiocdn.com/vite@^7.1.10",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
-    "url": "https://aistudiocdn.com/url@^0.11.4"
+    "url": "https://aistudiocdn.com/url@^0.11.4",
+    "nanoid": "https://aistudiocdn.com/nanoid@^5.1.6"
   }
 }
 </script>

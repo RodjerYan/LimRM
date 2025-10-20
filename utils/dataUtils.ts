@@ -9,35 +9,19 @@ export function getUniqueFilterOptions(data: AggregatedDataRow[]): FilterOptions
 }
 
 // --- Metrics Calculation ---
+
 export function calculateMetrics(data: AggregatedDataRow[]): Metrics {
     const totalFact = data.reduce((sum, item) => sum + item.fact, 0);
-    
-    // "Новый План" является ключевой метрикой. Если он не рассчитан, используем факт.
-    const totalNewPlan = data.reduce((sum, item) => sum + (item.newPlan || item.fact), 0);
-    
-    // "Потенциал Роста" теперь строго основан на разнице между новым планом и фактом.
-    const totalGrowthPotential = totalNewPlan - totalFact;
-    
-    // "Средний Рост" также рассчитывается на основе этой разницы, что обеспечивает консистентность.
+    const totalPotential = data.reduce((sum, item) => sum + item.potential, 0);
+    const totalGrowthPotential = totalPotential - totalFact;
     const totalGrowthRate = totalFact > 0 ? (totalGrowthPotential / totalFact) * 100 : 0;
+    const totalNewPlan = data.reduce((sum, item) => sum + (item.newPlan || 0), 0);
+    const avgPlanIncrease = data.length > 0
+        ? data.reduce((sum, item) => sum + item.growthRate, 0) / data.length
+        : 0;
 
-    // "Общий Потенциал" - это предварительная оценка из worker'а, используемая в основном для графика.
-    // Оставляем его для совместимости с графиком, но ключевыми метриками являются totalNewPlan и totalGrowthPotential.
-    const workerCalculatedTotalPotential = data.reduce((sum, item) => sum + item.potential, 0);
-
-    // Эта метрика теперь дублирует totalGrowthRate и является более точной.
-    const avgPlanIncrease = totalGrowthRate;
-
-    return { 
-        totalFact, 
-        totalPotential: workerCalculatedTotalPotential,
-        totalGrowthPotential, // Исправлено
-        totalGrowthRate,      // Исправлено
-        avgPlanIncrease,      // Исправлено
-        totalNewPlan 
-    };
+    return { totalFact, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease, totalNewPlan };
 }
-
 
 export function formatLargeNumber(num: number): string {
     if (typeof num !== 'number' || isNaN(num)) return '0.00';

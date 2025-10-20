@@ -16,7 +16,8 @@
     "xlsx": "^0.18.5",
     "@google/genai": "^0.15.0",
     "papaparse": "^5.4.1",
-    "@vercel/node": "^5.4.0"
+    "@vercel/node": "^5.4.0",
+    "nanoid": "^5.0.7"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

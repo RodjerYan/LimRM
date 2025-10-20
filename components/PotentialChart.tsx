@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { AggregatedDataRow } from '../types';
 import Chart from 'chart.js/auto';
-import { formatLargeNumber } from '../utils/dataUtils';
 
 interface PotentialChartProps {
     data: AggregatedDataRow[];
@@ -39,21 +38,21 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
 
         // Gradient fills
         const successGradient = ctx.createLinearGradient(0, 0, 0, 400);
-        successGradient.addColorStop(0, 'rgba(52, 211, 153, 0.7)');
-        successGradient.addColorStop(1, 'rgba(52, 211, 153, 0.1)');
+        successGradient.addColorStop(0, 'rgba(52, 211, 153, 0.8)');
+        successGradient.addColorStop(1, 'rgba(52, 211, 153, 0.2)');
         
         const accentGradient = ctx.createLinearGradient(0, 0, 0, 400);
-        accentGradient.addColorStop(0, 'rgba(96, 165, 250, 0.7)');
-        accentGradient.addColorStop(1, 'rgba(96, 165, 250, 0.1)');
+        accentGradient.addColorStop(0, 'rgba(129, 140, 248, 0.8)');
+        accentGradient.addColorStop(1, 'rgba(129, 140, 248, 0.2)');
 
         const chartData = {
             labels,
             datasets: [
-                { type: 'bar' as const, label: `Факт`, data: factData, backgroundColor: successGradient, borderColor: '#34d399', borderWidth: 1, borderRadius: 4 },
-                { type: 'bar' as const, label: `Потенциал`, data: potentialData, backgroundColor: accentGradient, borderColor: '#60a5fa', borderWidth: 1, borderRadius: 4 },
+                { type: 'bar' as const, label: `Факт`, data: factData, backgroundColor: successGradient, borderColor: '#34d399', borderWidth: 1 },
+                { type: 'bar' as const, label: `Потенциал`, data: potentialData, backgroundColor: accentGradient, borderColor: '#818cf8', borderWidth: 1 },
                 { 
                     label: `Потенциал Роста`, data: growthData, type: 'line' as const, 
-                    borderColor: '#fbbf24', tension: 0.4, yAxisID: 'y1', pointBackgroundColor: '#fbbf24', pointRadius: 4, pointHoverRadius: 6
+                    borderColor: '#fbbf24', tension: 0.4, yAxisID: 'y1', pointBackgroundColor: '#fbbf24'
                 },
             ],
         };
@@ -76,44 +75,13 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: { 
-                        legend: {
-                            labels: {
-                                color: '#e2e8f0',
-                                usePointStyle: true,
-                                boxWidth: 8,
-                                padding: 10,
-                                generateLabels: (chart: Chart) => {
-                                    const originalLabels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                                    originalLabels.forEach(label => {
-                                        // Add spacing (approx. 2mm) between the legend point and the text
-                                        label.text = '  ' + label.text;
-                                    });
-                                    return originalLabels;
-                                }
-                            }
-                        },
-                        tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            backgroundColor: '#161b22',
-                            titleFont: { weight: 'bold' },
-                            bodySpacing: 4,
-                            padding: 10,
-                            callbacks: {
-                                label: function(context) {
-                                    const rawValue = (context.raw as number) * factor;
-                                    return `${context.dataset.label}: ${formatLargeNumber(rawValue)}`;
-                                }
-                            }
-                        }
-                    },
+                    plugins: { legend: { labels: { color: '#e2e8f0' }}},
                     scales: {
-                        x: { grid: { color: 'rgba(139, 148, 158, 0.2)' }, ticks: { color: '#e2e8f0' } },
+                        x: { grid: { color: 'rgba(74, 85, 104, 0.5)' }, ticks: { color: '#e2e8f0' } },
                         y: { 
                             beginAtZero: true, 
                             title: { display: true, text: yAxisLabel, color: '#e2e8f0' },
-                            grid: { color: 'rgba(139, 148, 158, 0.2)' }, ticks: { color: '#e2e8f0' } 
+                            grid: { color: 'rgba(74, 85, 104, 0.5)' }, ticks: { color: '#e2e8f0' } 
                         },
                         y1: {
                             type: 'linear', display: true, position: 'right',
@@ -135,9 +103,9 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
     }, []);
 
     return (
-        <div className="bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color">
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
             <h2 className="text-xl font-bold mb-4 text-white">Визуализация рыночного потенциала</h2>
-            <div className="relative h-[45vh] w-full">
+            <div className="relative h-[40vh] w-full">
                 <canvas ref={chartContainer} />
             </div>
         </div>

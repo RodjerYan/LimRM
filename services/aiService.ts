@@ -1,14 +1,6 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
-/**
- * Generates an AI-powered summary for a given data row by making a direct,
- * synchronous-like call to a stateless proxy. This approach is reliable for
- * serverless environments like Vercel.
- *
- * @param data The aggregated data row for which to generate the summary.
- * @returns An async generator that yields the summary text in chunks.
- */
 export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
     const prompt = `
     Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
@@ -37,28 +29,67 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     `;
 
     try {
-        const response = await fetch('/api/gemini-proxy', {
+        // 1. Создаём задачу на сервере
+        const createResponse = await fetch('/api/gemini-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: prompt }),
+            body: JSON.stringify({ prompt }),
         });
 
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: `Сервер ответил со статусом ${response.status}` }));
-            throw new Error(errorData.error || errorData.details || `HTTP ошибка: ${response.status}`);
+        if (!createResponse.ok) {
+            const errorData = await createResponse.json();
+            yield `### Ошибка создания задачи\n\nНе удалось запустить AI-аналитика. Сервер ответил: ${errorData.error || 'Неизвестная ошибка'}`;
+            return;
         }
 
-        const fullText = await response.text();
-
-        // Simulate a "typing" effect on the client side for a better user experience,
-        // even though we received the full response at once.
-        const chunkSize = 15;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20)); // Small delay for typing effect
+        const { taskId } = await createResponse.json();
+        if (!taskId) {
+            yield "### Ошибка\n\nСервер не вернул идентификатор задачи.";
+            return;
         }
-    } catch (error: any) {
-        console.error("AI summary generation failed:", error);
-        yield `### Ошибка AI-Аналитика\n\nНе удалось получить результат анализа. Ошибка: ${error.message}`;
+
+        // 2. Опрашиваем статус задачи, пока она не будет выполнена
+        let isFinished = false;
+        const maxPolls = 60; // ~1 минута ожидания
+        let polls = 0;
+
+        while (!isFinished && polls < maxPolls) {
+            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            
+            if (!statusResponse.ok) {
+                // Если сам сервер опроса недоступен, прекращаем
+                yield `### Ошибка сети\n\nНе удалось проверить статус задачи. Попробуйте снова.`;
+                return;
+            }
+
+            const taskStatus = await statusResponse.json();
+
+            if (taskStatus.status === 'done') {
+                const fullText = taskStatus.result;
+                // Симулируем "печатание" текста на клиенте
+                const chunkSize = 15;
+                for (let i = 0; i < fullText.length; i += chunkSize) {
+                    yield fullText.substring(i, i + chunkSize);
+                    await new Promise(r => setTimeout(r, 20));
+                }
+                isFinished = true;
+
+            } else if (taskStatus.status === 'error') {
+                yield `### Ошибка AI-Аналитика\n\nПроизошла ошибка при обработке вашего запроса: ${taskStatus.error}`;
+                isFinished = true;
+
+            } else {
+                // Статус 'pending', ждем и пробуем снова
+                await new Promise(r => setTimeout(r, 1500)); 
+                polls++;
+            }
+        }
+
+        if (!isFinished) {
+            yield `### Ошибка: Время ожидания истекло\n\nАнализ занимает слишком много времени. Пожалуйста, попробуйте снова.`;
+        }
+
+    } catch (err: any) {
+        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение. Ошибка: ${err.message}`;
     }
 }
