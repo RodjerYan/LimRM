@@ -60,3 +60,14 @@ export interface NotificationMessage {
   message: string;
   type: 'success' | 'error' | 'info';
 }
+
+export interface RMPerformanceAnalysis {
+  rmName: string;
+  fact: number;
+  potential: number;
+  growth: number;
+  realizationRate: number;
+  category: 'Звезда' | 'Рабочая лошадка' | 'Зона Роста';
+  recommendedIncrease: number;
+  justification: string;
+}

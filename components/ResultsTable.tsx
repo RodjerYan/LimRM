@@ -1,15 +1,14 @@
 import React, { useState, useMemo } from 'react';
 import { AggregatedDataRow } from '../types';
 import { formatLargeNumber, formatPercentage, sortData, SortDirection, SortKey } from '../utils/dataUtils';
-import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, ExportIcon } from './icons';
+import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon } from './icons';
 
 interface ResultsTableProps {
     data: AggregatedDataRow[];
     onRowClick: (rowData: AggregatedDataRow) => void;
-    onExport: () => void;
 }
 
-const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onExport }) => {
+const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [sortKey, setSortKey] = useState<SortKey>('growthPotential');
     const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -53,31 +52,24 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onExport 
     };
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 h-full flex flex-col">
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-4">
-                 <h2 className="text-xl font-bold text-white">Результаты Анализа</h2>
-                 <div className="flex gap-2">
-                    <div className="relative">
-                        <input
-                            type="text"
-                            placeholder="Поиск по таблице..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="pl-10 pr-4 py-2 w-full sm:w-64 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
-                        />
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <SearchIcon />
-                        </div>
+        <div className="h-full flex flex-col">
+            <div className="mb-4">
+                 <div className="relative">
+                    <input
+                        type="text"
+                        placeholder="Поиск по детальной таблице..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-10 pr-4 py-2 w-full sm:w-72 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
+                    />
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <SearchIcon />
                     </div>
-                    <button onClick={onExport} className="flex items-center gap-2 bg-transparent hover:bg-indigo-500/20 text-gray-300 border border-gray-600 font-bold py-2 px-4 rounded-lg transition duration-200">
-                        <ExportIcon />
-                        <span>Экспорт</span>
-                    </button>
-                 </div>
+                </div>
             </div>
             <div className="flex-grow overflow-auto custom-scrollbar">
                 <table className="min-w-full divide-y divide-gray-700">
-                    <thead className="bg-gray-900/50 sticky top-0 backdrop-blur-sm">
+                    <thead className="bg-gray-900/70 sticky top-0 backdrop-blur-sm">
                         <tr>
                             <SortableHeader columnKey="rm" title="РМ" />
                             <SortableHeader columnKey="city" title="Город" />
