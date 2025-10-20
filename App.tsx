@@ -1,26 +1,7 @@
-
-
-/*
----
-title: fix(worker): Refactor file parsing to prevent critical errors
-description: >
-  Overhauls the data processing pipeline to resolve a persistent 'Unhandled
-  worker error'. The root cause was the worker's dependency on `importScripts`
-  to fetch the XLSX library from a CDN, which could fail silently in certain
-  environments. The fix moves the file parsing logic (using XLSX) to the main
-  thread, ensuring the library is reliably available. The worker is now
-  dramatically simplified: it no longer parses files but receives pre-parsed
-  JSON data. Its sole responsibility is to perform the long-running Gemini API
-  calls, thus preventing UI blocking without the risk of script-loading
-  failures.
----
-*/
-// FIX: Corrected React import for hooks
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import * as XLSX from 'xlsx';
-import { AggregatedDataRow, AiAnalysisResult, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
-import { calculateMetrics, formatLargeNumber } from './services/utils/dataUtils';
-import { generateFullAnalysis } from './services/aiService';
+import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
+import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
+import { parseFile } from './services/fileParser';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
@@ -28,7 +9,6 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import AiInsights from './components/AiInsights';
 
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
@@ -44,292 +24,6 @@ declare global {
     readonly env: ImportMetaEnv;
   }
 }
-
-
-// --- START Location Normalization ---
-const CITY_TO_REGION_MAP: Record<string, string> = {
-    // Federal Cities (they are their own region)
-    'москва': 'Москва',
-    'санкт-петербург': 'Санкт-Петербург',
-    'севастополь': 'Севастополь',
-    
-    // Republics
-    'майкоп': 'Республика Адыгея',
-    'горно-алтайск': 'Республика Алтай',
-    'уфа': 'Республика Башкортостан',
-    'стерлитамак': 'Республика Башкортостан',
-    'салават': 'Республика Башкортостан',
-    'улан-удэ': 'Республика Бурятия',
-    'махачкала': 'Республика Дагестан',
-    'дербент': 'Республика Дагестан',
-    'хасавюрт': 'Республика Дагестан',
-    'магас': 'Республика Ингушетия',
-    'назрань': 'Республика Ингушетия',
-    'нальчик': 'Кабардино-Балкарская Республика',
-    'элиста': 'Республика Калмыкия',
-    'черкесск': 'Карачаево-Черкесская Республика',
-    'петрозаводск': 'Республика Карелия',
-    'сыктывкар': 'Республика Коми',
-    'ухта': 'Республика Коми',
-    'симферополь': 'Республика Крым',
-    'керчь': 'Республика Крым',
-    'евпатория': 'Республика Крым',
-    'йошкар-ола': 'Республика Марий Эл',
-    'саранск': 'Республика Мордовия',
-    'якутск': 'Республика Саха (Якутия)',
-    'владикавказ': 'Республика Северная Осетия — Алания',
-    'казань': 'Республика Татарстан',
-    'набережные челны': 'Республика Татарстан',
-    'нижнекамск': 'Республика Татарстан',
-    'кызыл': 'Республика Тыва',
-    'ижевск': 'Удмуртская Республика',
-    'абакан': 'Республика Хакасия',
-    'грозный': 'Чеченская Республика',
-    'чебоксары': 'Чувашская Республика',
-    'новочебоксары': 'Чувашская Республика',
-
-    // Krais
-    'барнаул': 'Алтайский край',
-    'бийск': 'Алтайский край',
-    'чита': 'Забайкальский край',
-    'петропавловск-камчатский': 'Камчатский край',
-    'краснодар': 'Краснодарский край',
-    'сочи': 'Краснодарский край',
-    'новороссийск': 'Краснодарский край',
-    'красноярск': 'Красноярский край',
-    'норильск': 'Красноярский край',
-    'пермь': 'Пермский край',
-    'владивосток': 'Приморский край',
-    'уссурийск': 'Приморский край',
-    'находка': 'Приморский край',
-    'ставрополь': 'Ставропольский край',
-    'пятигорск': 'Ставропольский край',
-    'кисловодск': 'Ставропольский край',
-    'хабаровск': 'Хабаровский край',
-    'комсомольск-на-амуре': 'Хабаровский край',
-
-    // Oblasts
-    'благовещенск': 'Амурская область',
-    'архангельск': 'Архангельская область',
-    'северодвинск': 'Архангельская область',
-    'астрахань': 'Астраханская область',
-    'белгород': 'Белгородская область',
-    'старый оскол': 'Белгородская область',
-    'брянск': 'Брянская область',
-    'клинцы': 'Брянская область',
-    'новозыбков': 'Брянская область',
-    'владимир': 'Владимирская область',
-    'ковров': 'Владимирская область',
-    'муром': 'Владимирская область',
-    'волгоград': 'Волгоградская область',
-    'волжский': 'Волгоградская область',
-    'вологда': 'Вологодская область',
-    'череповец': 'Вологодская область',
-    'воронеж': 'Воронежская область',
-    'иваново': 'Ивановская область',
-    'иркутск': 'Иркутская область',
-    'братск': 'Иркутская область',
-    'ангарск': 'Иркутская область',
-    'калининград': 'Калининградская область',
-    'калуга': 'Калужская область',
-    'обнинск': 'Калужская область',
-    'кемерово': 'Кемеровская область - Кузбасс',
-    'новокузнецк': 'Кемеровская область - Кузбасс',
-    'прокопьевск': 'Кемеровская область - Кузбасс',
-    'киров': 'Кировская область',
-    'кострома': 'Костромская область',
-    'курган': 'Курганская область',
-    'курск': 'Курская область',
-    'железногорск': 'Курская область',
-    'липецк': 'Липецкая область',
-    'елец': 'Липецкая область',
-    'магадан': 'Магаданская область',
-    'мурманск': 'Мурманская область',
-    'нижний новгород': 'Нижегородская область',
-    'дзержинск': 'Нижегородская область',
-    'великий новгород': 'Новгородская область',
-    'новгород': 'Новгородская область', // Common shorter name
-    'новосибирск': 'Новосибирская область',
-    'омск': 'Омская область',
-    'оренбург': 'Оренбургская область',
-    'орск': 'Оренбургская область',
-    'орёл': 'Орловская область',
-    'орел': 'Орловская область',
-    'ливны': 'Орловская область',
-    'мценск': 'Орловская область',
-    'пенза': 'Пензенская область',
-    'псков': 'Псковская область',
-    'ростов-на-дону': 'Ростовская область',
-    'таганрог': 'Ростовская область',
-    'шахты': 'Ростовская область',
-    'рязань': 'Рязанская область',
-    'самара': 'Самарская область',
-    'тольятти': 'Самарская область',
-    'саратов': 'Саратовская область',
-    'энгельс': 'Саратовская область',
-    'южно-сахалинск': 'Сахалинская область',
-    'екатеринбург': 'Свердловская область',
-    'нижний тагил': 'Свердловская область',
-    'каменск-уральский': 'Свердловская область',
-    'смоленск': 'Смоленская область',
-    'вязьма': 'Смоленская область',
-    'рославль': 'Смоленская область',
-    'ярцево': 'Смоленская область',
-    'десногорск': 'Смоленская область',
-    'смоленский район': 'Смоленская область',
-    'тамбов': 'Тамбовская область',
-    'тверь': 'Тверская область',
-    'томск': 'Томская область',
-    'тула': 'Тульская область',
-    'новомосковск': 'Тульская область',
-    'тюмень': 'Тюменская область',
-    'тобольск': 'Тюменская область',
-    'ульяновск': 'Ульяновская область',
-    'димитровград': 'Ульяновская область',
-    'челябинск': 'Челябинская область',
-    'магнитогорск': 'Челябинская область',
-    'златоуст': 'Челябинская область',
-    'ярославль': 'Ярославская область',
-    'рыбинск': 'Ярославская область',
-    
-    // Autonomous Oblast
-    'биробиджан': 'Еврейская автономная область',
-
-    // Autonomous Okrugs
-    'нарьян-мар': 'Ненецкий автономный округ',
-    'ханты-мансийск': 'Ханты-Мансийский автономный округ - Югра',
-    'сургут': 'Ханты-Мансийский автономный округ - Югра',
-    'нижневартовск': 'Ханты-Мансийский автономный округ - Югра',
-    'анадырь': 'Чукотский автономный округ',
-    'салехард': 'Ямало-Ненецкий автономный округ',
-    'новый уренгой': 'Ямало-Ненецкий автономный округ',
-    'ноябрьск': 'Ямало-Ненецкий автономный округ',
-};
-// --- END Location Normalization ---
-
-
-// --- START File Parser (runs on main thread) ---
-const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRow[], uniqueLocations: Set<string>, existingClientsByRegion: Record<string, string[]> }> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                if (!e.target?.result) throw new Error("Не удалось прочитать файл.");
-                const data = new Uint8Array(e.target.result as ArrayBuffer);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-
-                if (json.length === 0) {
-                     throw new Error("Файл пуст или имеет неверный формат.");
-                }
-
-                const fileHeaders = Object.keys(json[0] as object);
-                const normalizeHeader = (header: string) => String(header || '').toLowerCase().trim().replace(/\s+/g, ' ');
-
-                const HEADER_ALIASES = {
-                    rm: ['рм', 'региональный менеджер', 'rm', 'regional manager'],
-                    brand: ['бренд', 'brand', 'торговая марка'],
-                    city: ['адрес тт limkorm', 'город', 'city', 'адрес поставки', 'адрес'],
-                    fact: ['вес, кг', 'факт (кг/ед)', 'факт', 'fact', 'факт (кг)'],
-                };
-
-                const findHeaderKey = (headers: string[], aliases: string[]) => {
-                    for (const header of headers) {
-                        if (aliases.includes(normalizeHeader(header))) return header;
-                    }
-                    return null;
-                };
-
-                const headerMap = {
-                    rm: findHeaderKey(fileHeaders, HEADER_ALIASES.rm),
-                    brand: findHeaderKey(fileHeaders, HEADER_ALIASES.brand),
-                    city: findHeaderKey(fileHeaders, HEADER_ALIASES.city),
-                    fact: findHeaderKey(fileHeaders, HEADER_ALIASES.fact),
-                };
-
-                const requiredHeaders = { rm: "'РМ'", city: "'Адрес' или 'Город'", fact: "'Факт' или 'Вес, кг'" };
-                const missing = Object.entries(requiredHeaders)
-                    .filter(([key]) => !headerMap[key as keyof typeof headerMap])
-                    .map(([, value]) => value)
-                    .join(', ');
-
-                if (missing) {
-                    throw new Error(`Не найдены обязательные столбцы: ${missing}.`);
-                }
-
-                const uniqueLocations = new Set<string>();
-                const existingClientsByRegion: Record<string, string[]> = {};
-
-                const processedData = (json as any[]).map((row): RawDataRow | null => {
-                    const rm = String(row[headerMap.rm!] || '').trim();
-                    const brand = String(row[headerMap.brand!] || 'Не указан').trim();
-                    const factValue = String(row[headerMap.fact!] || '0').replace(',', '.');
-                    const fact = parseFloat(factValue) || 0;
-                    
-                    const fullAddress = String(row[headerMap.city!] || '').trim();
-                    
-                    let location = '';
-                    let regionFound = '';
-                    const addressParts = fullAddress.replace(/^\d{6},?/, '').split(',').map(p => p.trim()).filter(Boolean);
-
-                    const regionPart = addressParts.find(p => 
-                        /область|край|республика|автономный округ|ао|аобл/i.test(p)
-                    );
-                    if (regionPart) {
-                        regionFound = regionPart.trim();
-                    }
-
-                    const cityPart = addressParts.find(p => p.toLowerCase().startsWith('г ') || p.toLowerCase().startsWith('г.'));
-                    const districtPart = addressParts.find(p => p.toLowerCase().includes(' р-н') || p.toLowerCase().includes(' район'));
-                    
-                    let mainLocationPart = '';
-                    if (cityPart) {
-                        mainLocationPart = cityPart.replace(/^[г|Г]\.?\s*/, '').trim();
-                    } else if (districtPart) {
-                        mainLocationPart = districtPart.trim();
-                    } else {
-                        mainLocationPart = addressParts[1] || addressParts[0] || '';
-                    }
-                    mainLocationPart = mainLocationPart.trim();
-
-                    if (regionFound) {
-                        location = regionFound;
-                    } else {
-                        const normalizedLocation = mainLocationPart.toLowerCase().replace(/ё/g, 'е');
-                        location = CITY_TO_REGION_MAP[normalizedLocation] || '';
-                    }
-
-                    if (rm && location && brand) {
-                        uniqueLocations.add(location);
-                        if (!existingClientsByRegion[location]) {
-                            existingClientsByRegion[location] = [];
-                        }
-                        if (fullAddress && !existingClientsByRegion[location].includes(fullAddress)) {
-                            existingClientsByRegion[location].push(fullAddress);
-                        }
-                         return { rm, brand, city: location, fact, fullAddress };
-                    }
-                    return null;
-
-                }).filter((item): item is RawDataRow => item !== null);
-                
-                if (processedData.length === 0) throw new Error("В файле не найдено корректных строк с данными, которые можно сопоставить с регионами. Проверьте адреса или содержимое столбцов.");
-
-                resolve({ processedData, uniqueLocations, existingClientsByRegion });
-            } catch (error) {
-                console.error('File parsing error:', error);
-                reject(error instanceof Error ? error : new Error("Не удалось разобрать файл."));
-            }
-        };
-        reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(file);
-    });
-};
-// --- END File Parser ---
-
-
 
 export default function App() {
     const clientApiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -347,20 +41,19 @@ export default function App() {
     const [dataWithPlan, setDataWithPlan] = useState<AggregatedDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [aiInsights, setAiInsights] = useState<AiAnalysisResult | null>(null);
     
     const [filters, setFilters] = useState<FilterState>(() => {
         try {
             const savedFilters = localStorage.getItem('geoAnalysisFilters');
             const parsed = savedFilters ? JSON.parse(savedFilters) : null;
             return {
-                rm: parsed?.rm || '',
+                rm: Array.isArray(parsed?.rm) ? parsed.rm : [],
                 brand: Array.isArray(parsed?.brand) ? parsed.brand : [],
                 city: Array.isArray(parsed?.city) ? parsed.city : [],
             };
         } catch (error) {
             console.error("Failed to parse filters from localStorage", error);
-            return { rm: '', brand: [], city: [] };
+            return { rm: [], brand: [], city: [] };
         }
     });
     const [searchTerm, setSearchTerm] = useState<string>(() => localStorage.getItem('geoAnalysisSearchTerm') || '');
@@ -368,6 +61,14 @@ export default function App() {
     const [baseIncreasePercent, setBaseIncreasePercent] = useState<number>(15);
 
     const workerRef = useRef<Worker | null>(null);
+
+    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+        const id = Date.now();
+        setNotifications(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setNotifications(prev => prev.filter(n => n.id !== id));
+        }, 4000);
+    }, []);
 
     useEffect(() => {
         try {
@@ -385,32 +86,6 @@ export default function App() {
         }
     }, [searchTerm]);
 
-    // --- AI Analysis Trigger ---
-    useEffect(() => {
-        if (baseAggregatedData.length > 0 && !aiInsights) {
-            const runAnalysis = async () => {
-                setLoadingState(prev => ({ ...prev, status: 'analyzing', text: 'Gemini анализирует данные...', progress: 99, etr: 'Это может занять до минуты' }));
-                try {
-                    const insights = await generateFullAnalysis(baseAggregatedData);
-                    setAiInsights(insights);
-                    addNotification('AI-анализ завершен!', 'success');
-                } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка AI-анализа";
-                    console.error("Full analysis failed:", error);
-                    addNotification(`Ошибка AI-анализа: ${errorMessage}`, 'error');
-                } finally {
-                    setLoadingState(prev => ({...prev, status: 'done', text: 'Анализ завершен!', progress: 100, etr: ''}));
-                     setTimeout(() => {
-                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
-                    }, 3000);
-                }
-            };
-            runAnalysis();
-        }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [baseAggregatedData]);
-
-
     // --- New Plan Calculation Effect ---
     useEffect(() => {
         if (baseAggregatedData.length === 0) {
@@ -418,9 +93,8 @@ export default function App() {
             return;
         }
 
-        setLoadingState(prev => ({ ...prev, status: 'aggregating', text: 'Расчет новых планов...', progress: 98 }));
-
-        // --- PRE-COMPUTATION ---
+        // --- Этап 1: Предварительный расчет общих сумм ---
+        // Собираем агрегированные данные по РМ, брендам и их комбинациям для быстрого доступа.
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
@@ -441,10 +115,13 @@ export default function App() {
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
         });
         
-        // --- MAIN CALCULATION ---
+        // --- Этап 2: Основной расчет нового плана для каждой строки ---
         const calculatedData = baseAggregatedData.map(row => {
             const { fact, rm, brand, activeTT, totalMarketTTs } = row;
             
+            // --- Сценарий 1: Нулевой факт ---
+            // Если текущих продаж нет, устанавливаем небольшой стартовый план,
+            // основанный на средних продажах по бренду.
             if (fact === 0) {
                 const brandTotalFact = brandTotals.get(brand)?.fact || 0;
                 const brandCount = brandRowCounts.get(brand) || 1;
@@ -453,61 +130,67 @@ export default function App() {
                 return { ...row, newPlan };
             }
 
+            // --- Сценарий 2: Есть фактические продажи ---
             const baseInc = baseIncreasePercent / 100;
             
-            // Define weights and caps for dynamic growth factors
-            const maxDynamicGrowth = 0.15; // Max additional growth is 15%
-            const w_coverage = 0.6; // 60% of dynamic growth comes from market coverage
-            const w_brand = 0.4;    // 40% of dynamic growth comes from brand balancing
+            // Определяем веса и максимальный порог для динамического роста
+            const maxDynamicGrowth = 0.15; // Максимальный дополнительный рост: 15%
+            const w_coverage = 0.6; // 60% влияния от показателя покрытия рынка
+            const w_brand = 0.4;    // 40% влияния от показателя баланса брендов
 
-            // 1. Calculate Coverage Score (0 to 1)
-            // A score of 1 means high potential (low market penetration).
+            // --- Фактор 1: Охват рынка (Coverage Score) ---
+            // Оценивает, насколько полно мы представлены на рынке.
+            // Score -> 1: низкое покрытие (большой потенциал). Score -> 0: высокое покрытие.
             const effectiveTotalMarket = Math.max(activeTT, totalMarketTTs) + Math.ceil(activeTT * 0.10);
             const penetration = Math.min(1.0, activeTT > 0 ? (activeTT / effectiveTotalMarket) : 0);
-            const coverageScore = Math.sqrt(1 - penetration);
+            const coverageScore = Math.sqrt(1 - penetration); // sqrt для нелинейного поощрения низкого охвата
 
-            // 2. Calculate Brand Balance Score (-1 to 1)
-            // A positive score means the RM is under-performing on this brand compared to the company average.
+            // --- Фактор 2: Баланс брендов (Brand Balance Score) ---
+            // Сравнивает долю продаж бренда у конкретного РМ с долей этого же бренда в целом по компании.
+            // Score > 0: РМ недорабатывает по бренду (план будет увеличен).
+            // Score < 0: РМ перевыполняет по бренду (динамический рост будет уменьшен).
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
             
             let brandScore = 0;
             if (rmTotalFact > 0 && brandTotalFact > 0 && totalFactAll > 0) {
-                const brandShareAvg = brandTotalFact / totalFactAll;
-                const brandShareRM = rmBrandTotalFact / rmTotalFact;
+                const brandShareAvg = brandTotalFact / totalFactAll; // Доля бренда в компании
+                const brandShareRM = rmBrandTotalFact / rmTotalFact; // Доля бренда у РМ
                 if (brandShareRM > 0) {
                     const shareRatio = brandShareAvg / brandShareRM;
-                    // Use tanh for smooth, bounded [-1, 1] scoring
+                    // Используем tanh для получения гладкого, ограниченного [-1, 1] значения
                     brandScore = Math.tanh(shareRatio - 1);
                 } else {
-                    // RM doesn't sell this brand at all, give a high score
+                    // Если РМ вообще не продает этот бренд, даем максимальный стимул
                     brandScore = 1; 
                 }
             }
             
-            // 3. Combine scores into a single, capped dynamic growth factor
+            // --- Этап 3: Комбинирование факторов и финальный расчет ---
+            // Суммируем базовый рост и динамический рост (с учетом весов)
             const dynamicGrowth = maxDynamicGrowth * (w_coverage * coverageScore + w_brand * brandScore);
-            
-            // 4. Calculate final multiplier and the new plan
             const totalMultiplier = 1 + baseInc + dynamicGrowth;
-            const newPlan = Math.max(fact, fact * totalMultiplier);
+            const newPlan = Math.max(fact, fact * totalMultiplier); // План не может быть меньше факта
 
             return { ...row, newPlan };
         });
 
         setDataWithPlan(calculatedData);
-    }, [baseAggregatedData, baseIncreasePercent]);
+
+        // Финальное обновление статуса после завершения всех расчетов
+        setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
+        addNotification('Анализ рынка и расчет планов завершен!', 'success');
+
+        const resetTimer = setTimeout(() => {
+            setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
+        }, 3000);
+
+        return () => clearTimeout(resetTimer);
+
+    }, [baseAggregatedData, baseIncreasePercent, addNotification]);
 
 
-    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
-        const id = Date.now();
-        setNotifications(prev => [...prev, { id, message, type }]);
-        setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 4000);
-    }, []);
-    
     const cleanupWorker = () => {
         if (workerRef.current) {
             workerRef.current.terminate();
@@ -524,14 +207,13 @@ export default function App() {
         cleanupWorker();
         setBaseAggregatedData([]);
         setDataWithPlan([]);
-        setAiInsights(null);
-        setFilters({ rm: '', brand: [], city: [] });
+        setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
         
         try {
-            setLoadingState({ status: 'reading', progress: 10, text: 'Чтение и разбор файла...', etr: '' });
-            const { processedData, uniqueLocations, existingClientsByRegion } = await parseFileAndExtractData(file);
-            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Файл успешно разобран. Инициализация AI-аналитика...' }));
+            setLoadingState({ status: 'reading', progress: 10, text: 'Анализ структуры файла...', etr: '' });
+            const { processedData, uniqueLocations, existingClientsByRegion } = await parseFile(file);
+            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Структура файла корректна. Запускаю фоновый анализ...' }));
 
             const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             workerRef.current = worker;
@@ -541,7 +223,8 @@ export default function App() {
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    setBaseAggregatedData(payload); // This will trigger the calculation & AI analysis useEffect
+                    setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет новых планов...', etr: '' });
+                    setBaseAggregatedData(payload); // This triggers the plan calculation useEffect
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
@@ -579,7 +262,7 @@ export default function App() {
     }, []);
 
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], city: [] });
+        setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
         addNotification('Фильтры сброшены.', 'success');
     }, [addNotification]);
@@ -597,15 +280,44 @@ export default function App() {
     }, []);
 
     const filterOptions = useMemo(() => {
-        const rms = [...new Set(baseAggregatedData.map(d => d.rm))].sort();
-        const brands = [...new Set(baseAggregatedData.map(d => d.brand))].sort();
-        const cities = [...new Set(baseAggregatedData.map(d => d.city))].sort();
+        let availableData = baseAggregatedData;
+
+        // Фильтруем данные для получения доступных РМ
+        let rmsData = availableData;
+        if (filters.brand.length > 0) {
+            rmsData = rmsData.filter(d => filters.brand.includes(d.brand));
+        }
+        if (filters.city.length > 0) {
+            rmsData = rmsData.filter(d => filters.city.includes(d.city));
+        }
+        const rms = [...new Set(rmsData.map(d => d.rm))].sort();
+
+        // Фильтруем данные для получения доступных Брендов
+        let brandsData = availableData;
+        if (filters.rm.length > 0) {
+            brandsData = brandsData.filter(d => filters.rm.includes(d.rm));
+        }
+        if (filters.city.length > 0) {
+            brandsData = brandsData.filter(d => filters.city.includes(d.city));
+        }
+        const brands = [...new Set(brandsData.map(d => d.brand))].sort();
+
+        // Фильтруем данные для получения доступных Городов
+        let citiesData = availableData;
+        if (filters.rm.length > 0) {
+            citiesData = citiesData.filter(d => filters.rm.includes(d.rm));
+        }
+        if (filters.brand.length > 0) {
+            citiesData = citiesData.filter(d => filters.brand.includes(d.brand));
+        }
+        const cities = [...new Set(citiesData.map(d => d.city))].sort();
+
         return { rms, brands, cities };
-    }, [baseAggregatedData]);
+    }, [baseAggregatedData, filters]);
 
     const filteredAndSortedData = useMemo(() => {
         let processedData = dataWithPlan.filter(item => 
-            (!filters.rm || item.rm === filters.rm) &&
+            (filters.rm.length === 0 || filters.rm.includes(item.rm)) &&
             (filters.brand.length === 0 || filters.brand.includes(item.brand)) &&
             (filters.city.length === 0 || filters.city.includes(item.city))
         );
@@ -665,6 +377,10 @@ export default function App() {
         return Array.from(cityTTs.values()).reduce((sum, count) => sum + count, 0);
     }, [filteredAndSortedData]);
 
+    const totalActiveTTs = useMemo(() => {
+        return filteredAndSortedData.reduce((sum, item) => sum + (item.activeTT || 0), 0);
+    }, [filteredAndSortedData]);
+
 
     return (
         <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
@@ -695,11 +411,11 @@ export default function App() {
                         onReset={resetFilters}
                         disabled={baseAggregatedData.length === 0}
                     />
-                     <AiInsights 
-                        data={aiInsights} 
-                        isLoading={loadingState.status === 'analyzing'}
+                    <MetricsSummary 
+                        metrics={metrics} 
+                        totalPotentialTTs={totalPotentialTTs} 
+                        totalActiveTTs={totalActiveTTs}
                     />
-                    <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
                 </aside>
 
                 <div className="lg:col-span-9 space-y-6">

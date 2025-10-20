@@ -1,3 +1,4 @@
+
 /// <reference lib="webworker" />
 
 // NOTE: Types are self-contained here to avoid complex worker bundling configurations.
@@ -26,30 +27,44 @@ interface ProcessedDataRow {
 }
 
 // --- START timeUtils ---
+let smoothedTimePerItem = 0;
+const SMOOTHING_FACTOR = 0.1; // Smaller value = smoother but slower to react
+
 function formatTime(seconds: number) {
-    if (isNaN(seconds) || seconds <= 0 || !isFinite(seconds)) {
-        return '';
+    if (isNaN(seconds) || !isFinite(seconds) || seconds <= 1) {
+        return 'расчет времени...';
     }
-    if (seconds < 1) {
-        return 'Осталось менее секунды';
+    if (seconds < 2) {
+        return 'осталось менее пары секунд';
     }
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.round(seconds % 60);
+    
     let result = '~';
     if (minutes > 0) {
-        result += ' ' + minutes + ' мин';
+        result += ` ${minutes} мин`;
     }
-    if (remainingSeconds > 0) {
-        result += ' ' + remainingSeconds + ' сек';
+    if (remainingSeconds > 0 || minutes === 0) {
+        result += ` ${remainingSeconds} сек`;
     }
-    return 'Осталось ' + result.trim();
+    return `Осталось ${result}`;
 }
+
 function calculateEtr(startTime: number, done: number, total: number) {
-    if (done === 0) return Infinity;
+    if (done < 1) return Infinity;
+    
     const elapsedTime = (Date.now() - startTime) / 1000;
-    const timePerItem = elapsedTime / done;
+    const currentTimePerItem = elapsedTime / done;
+
+    // Initialize or update the smoothed average time per item
+    if (smoothedTimePerItem === 0) {
+        smoothedTimePerItem = currentTimePerItem;
+    } else {
+        smoothedTimePerItem = (SMOOTHING_FACTOR * currentTimePerItem) + ((1 - SMOOTHING_FACTOR) * smoothedTimePerItem);
+    }
+
     const remainingItems = total - done;
-    return timePerItem * remainingItems;
+    return smoothedTimePerItem * remainingItems;
 }
 // --- END timeUtils ---
 
@@ -253,8 +268,9 @@ const calculateRealisticPotential = async (
     const totalLocations = locationArray.length;
     let processedCount = 0;
     const startTime = Date.now();
+    smoothedTimePerItem = 0; // Reset ETR smoother
     
-    onProgress(30, 'Этап 1: Запрос данных из OpenStreetMap...', NaN);
+    onProgress(30, 'Шаг 1 из 2: Сбор данных о точках продаж...', NaN);
 
     const enqueue = createRequestQueue(4); // Increased concurrency for fast OSM API
     const potentialMap = new Map();
@@ -284,7 +300,8 @@ const calculateRealisticPotential = async (
 
         processedCount++;
         const etr = calculateEtr(startTime, processedCount, totalLocations);
-        onProgress(30 + (processedCount / totalLocations) * 65, `Анализ регионов... (${processedCount}/${totalLocations})`, etr);
+        const locationShortName = locationName.split(',')[0];
+        onProgress(30 + (processedCount / totalLocations) * 65, `Анализ: ${locationShortName} (${processedCount}/${totalLocations})`, etr);
     }));
 
     await Promise.all(promises);
@@ -324,7 +341,7 @@ self.onmessage = async (e: MessageEvent<{
 
     try {
         const locationCount = uniqueLocations.length;
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: `Найдено ${locationCount} уникальных регионов. Запрос данных...`, etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: `Найдено ${locationCount} регионов. Запрашиваю данные о рынках...`, etr: '' } });
         
         if (locationCount === 0) {
             self.postMessage({ type: 'error', payload: "В файле не найдено локаций для анализа. Проверьте данные." });
@@ -337,7 +354,7 @@ self.onmessage = async (e: MessageEvent<{
         
         const dataWithPotential = await calculateRealisticPotential(processedData, uniqueLocations, existingClientsByRegion, onProgress);
         
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Агрегация результатов...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Шаг 2 из 2: Сведение данных и расчет потенциала...', etr: '' } });
         const finalAggregatedData = aggregateData(dataWithPotential);
         self.postMessage({ type: 'result', payload: finalAggregatedData });
 

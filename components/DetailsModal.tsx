@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow } from '../types';
-import { formatLargeNumber } from '../services/utils/dataUtils';
+import { formatLargeNumber } from '../utils/dataUtils';
 import { generateAiSummaryStream } from '../services/aiService';
 import Modal from './Modal';
 import InteractiveMap from './InteractiveMap';

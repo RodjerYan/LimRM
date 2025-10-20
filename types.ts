@@ -40,7 +40,7 @@ export interface AggregatedDataRow {
 }
 
 export interface LoadingState {
-    status: 'idle' | 'reading' | 'fetching' | 'aggregating' | 'analyzing' | 'done' | 'error';
+    status: 'idle' | 'reading' | 'fetching' | 'aggregating' | 'done' | 'error';
     progress: number;
     text: string;
     etr: string;
@@ -53,7 +53,7 @@ export interface FilterOptions {
 }
 
 export interface FilterState {
-    rm: string;
+    rm: string[];
     brand: string[];
     city: string[];
 }
@@ -77,19 +77,3 @@ export type SortConfig = {
     key: keyof AggregatedDataRow;
     direction: 'ascending' | 'descending';
 } | null;
-
-export interface AiAnalysisResult {
-    summary: {
-        total_sales_kg: string;
-        total_sales_amount?: string; 
-        unique_rms: number;
-        unique_brands: number;
-        unique_regions: number;
-    };
-    leaders: {
-        top_managers: { name: string; value: string }[];
-        top_brands: { name: string; value: string }[];
-        top_regions: { name: string; value: string }[];
-    };
-    insights: string[];
-}

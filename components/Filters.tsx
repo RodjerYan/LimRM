@@ -1,106 +1,31 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FilterOptions, FilterState } from '../types';
+import { UserIcon, TagIcon, MapPinIcon, ResetIcon } from './icons';
 
-// Single-select component for RM
-const FilterSelect: React.FC<{
-    label: string;
-    value: string;
-    options: string[];
-    onChange: (value: string) => void;
-}> = ({ label, value, options, onChange }) => {
-    const [inputValue, setInputValue] = useState(value);
-    const [isOpen, setIsOpen] = useState(false);
-    const wrapperRef = useRef<HTMLDivElement>(null);
+// A small component to display selected filter items as pills
+const FilterPill: React.FC<{ label: string; onRemove: () => void }> = ({ label, onRemove }) => (
+    <div className="bg-accent/80 text-white text-xs font-medium flex items-center rounded-full pl-2.5 pr-1 py-0.5 animate-scale-in">
+        <span className="truncate max-w-[100px]">{label}</span>
+        <button
+            onClick={(e) => {
+                e.stopPropagation(); // Prevent dropdown from opening
+                onRemove();
+            }}
+            className="ml-1.5 flex-shrink-0 rounded-full hover:bg-white/20 transition-colors p-0.5"
+            aria-label={`Удалить ${label}`}
+        >
+            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd"></path></svg>
+        </button>
+    </div>
+);
 
-    useEffect(() => {
-        if (!isOpen) {
-            setInputValue(value);
-        }
-    }, [value, isOpen]);
-
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, [wrapperRef]);
-
-    const filteredOptions = useMemo(() => {
-        if (!inputValue) return options;
-        return options.filter(opt => opt.toLowerCase().includes(inputValue.toLowerCase()));
-    }, [options, inputValue]);
-
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
-        if (!isOpen) setIsOpen(true);
-        if (e.target.value === '') {
-            onChange('');
-        }
-    };
-
-    const handleOptionClick = (optionValue: string) => {
-        onChange(optionValue);
-        setInputValue(optionValue);
-        setIsOpen(false);
-    };
-
-    return (
-        <div className="relative" ref={wrapperRef}>
-            <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
-            <div className="relative">
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={handleInputChange}
-                    onFocus={() => setIsOpen(true)}
-                    placeholder={`Поиск и выбор (${label})...`}
-                    className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500 transition"
-                />
-                 <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                     <svg className="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                        <path fillRule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                </div>
-            </div>
-
-            {isOpen && (
-                <ul className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
-                    <li
-                        onClick={() => handleOptionClick('')}
-                        className="px-4 py-2 text-gray-300 cursor-pointer hover:bg-accent/20"
-                    >
-                        Все РМ
-                    </li>
-                    {filteredOptions.length > 0 ? filteredOptions.map(opt => (
-                        <li
-                            key={opt}
-                            onClick={() => handleOptionClick(opt)}
-                            className="px-4 py-2 text-white cursor-pointer hover:bg-accent/20"
-                        >
-                            {opt}
-                        </li>
-                    )) : (
-                         <li className="px-4 py-2 text-gray-500 italic">Ничего не найдено</li>
-                    )}
-                </ul>
-            )}
-        </div>
-    );
-};
-
-
-// NEW Multi-select component for Brand and City
 const MultiFilterSelect: React.FC<{
     label: string;
+    icon: React.ReactNode;
     selectedOptions: string[];
     options: string[];
     onChange: (selected: string[]) => void;
-}> = ({ label, selectedOptions, options, onChange }) => {
+}> = ({ label, icon, selectedOptions, options, onChange }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const wrapperRef = useRef<HTMLDivElement>(null);
@@ -116,6 +41,13 @@ const MultiFilterSelect: React.FC<{
             document.removeEventListener("mousedown", handleClickOutside);
         };
     }, [wrapperRef]);
+    
+    // Reset search term when dropdown opens/closes
+    useEffect(() => {
+        if (!isOpen) {
+            setSearchTerm('');
+        }
+    }, [isOpen]);
 
     const filteredOptions = useMemo(() => {
         return options.filter(opt => opt.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -131,29 +63,36 @@ const MultiFilterSelect: React.FC<{
     const handleSelectAll = () => onChange(options);
     const handleDeselectAll = () => onChange([]);
 
-    const getDisplayValue = () => {
-        if (selectedOptions.length === 0) return `Поиск и выбор (${label})...`;
-        if (selectedOptions.length === 1) return selectedOptions[0];
-        if (selectedOptions.length === options.length) return `Выбраны все (${selectedOptions.length})`;
-        return `Выбрано: ${selectedOptions.length}`;
+    const renderDisplayValue = () => {
+        if (selectedOptions.length === 0) return <span className="text-gray-400">Поиск и выбор ({label})...</span>;
+        if (selectedOptions.length > 0 && selectedOptions.length <= 2) {
+            return (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    {selectedOptions.map(opt => (
+                        <FilterPill key={opt} label={opt} onRemove={() => handleToggleOption(opt)} />
+                    ))}
+                </div>
+            );
+        }
+        if (selectedOptions.length === options.length && options.length > 0) return <span className="font-medium text-white">Выбраны все ({selectedOptions.length})</span>;
+        return <span className="font-medium text-white">Выбрано: {selectedOptions.length}</span>;
     };
 
     return (
         <div className="relative" ref={wrapperRef}>
-            <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
-            <button
-                type="button"
+            <div
                 onClick={() => setIsOpen(!isOpen)}
-                className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white text-left flex justify-between items-center transition"
+                className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus-within:ring-2 focus-within:ring-accent-focus focus-within:border-accent text-white flex items-center gap-3 transition cursor-pointer"
             >
-                <span className="truncate pr-1">{getDisplayValue()}</span>
-                <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                    <path fillRule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                <div className="text-gray-400 flex-shrink-0">{icon}</div>
+                <div className="flex-grow min-w-0">{renderDisplayValue()}</div>
+                <svg className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
                 </svg>
-            </button>
+            </div>
 
             {isOpen && (
-                <div className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg">
+                <div className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg animate-fade-in">
                     <div className="p-2 border-b border-border-color">
                          <input
                             type="text"
@@ -174,12 +113,9 @@ const MultiFilterSelect: React.FC<{
                                 onClick={() => handleToggleOption(opt)}
                                 className="px-3 py-2 text-white cursor-pointer hover:bg-accent/20 flex items-center select-none"
                             >
-                               <input
-                                    type="checkbox"
-                                    readOnly
-                                    checked={selectedOptions.includes(opt)}
-                                    className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-accent focus:ring-accent focus:ring-offset-0 mr-3 pointer-events-none"
-                                />
+                               <div className={`w-4 h-4 rounded border-2 flex-shrink-0 mr-3 flex items-center justify-center ${selectedOptions.includes(opt) ? 'bg-accent border-accent' : 'border-gray-500 bg-gray-700'}`}>
+                                    {selectedOptions.includes(opt) && <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 16 16"><path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/></svg>}
+                               </div>
                                 <span className="truncate">{opt}</span>
                             </li>
                         )) : (
@@ -205,23 +141,24 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
     const handleFilterUpdate = (key: keyof FilterState, value: string | string[]) => {
         onFilterChange({ ...currentFilters, [key]: value });
     };
+    
+    const areFiltersActive = currentFilters.rm.length > 0 || currentFilters.brand.length > 0 || currentFilters.city.length > 0;
 
     return (
         <div className={`relative z-20 bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color transition-opacity ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-3">
-                <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">2</span>
-                Фильтры
-            </h2>
+            <h2 className="text-xl font-bold mb-5 text-white">Фильтры</h2>
             <fieldset disabled={disabled} className="space-y-4">
-                <FilterSelect label="РМ" value={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
-                <MultiFilterSelect label="Бренд" selectedOptions={currentFilters.brand} options={options.brands} onChange={(val) => handleFilterUpdate('brand', val)} />
-                <MultiFilterSelect label="Регион" selectedOptions={currentFilters.city} options={options.cities} onChange={(val) => handleFilterUpdate('city', val)} />
+                <MultiFilterSelect label="РМ" icon={<UserIcon />} selectedOptions={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
+                <MultiFilterSelect label="Бренд" icon={<TagIcon />} selectedOptions={currentFilters.brand} options={options.brands} onChange={(val) => handleFilterUpdate('brand', val)} />
+                <MultiFilterSelect label="Регион" icon={<MapPinIcon />} selectedOptions={currentFilters.city} options={options.cities} onChange={(val) => handleFilterUpdate('city', val)} />
                 
                 <button
                     onClick={onReset}
-                    className="w-full mt-5 bg-transparent hover:bg-accent/20 text-gray-300 border border-border-color font-bold py-2.5 px-4 rounded-lg transition-colors duration-200"
+                    disabled={!areFiltersActive}
+                    className="w-full mt-5 bg-gradient-to-r from-accent to-purple-600 hover:from-accent-hover hover:to-purple-500 text-white font-bold py-2.5 px-4 rounded-lg transition-all duration-300 shadow-lg shadow-accent/20 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-500 disabled:to-gray-600 disabled:shadow-none"
                 >
-                    Сбросить фильтры
+                    <ResetIcon />
+                    Сбросить все фильтры
                 </button>
             </fieldset>
         </div>
