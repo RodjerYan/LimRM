@@ -25,6 +25,7 @@ interface ProcessedDataRow {
     potentialClients?: PotentialClient[];
     cityCenter?: { lat: number; lon: number; };
     activeTT?: number; // Added for aggregation
+    activeAddresses?: string[];
 }
 
 // --- START timeUtils ---

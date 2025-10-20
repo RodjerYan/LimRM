@@ -1,12 +1,23 @@
-import { defineConfig } from 'vite';
+import path from 'path';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'url';
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    // @ts-ignore - Vite supports `https: true` for self-signed certificates, but TS types may not reflect this.
-    https: true, // Включаем HTTPS для локального сервера
-    port: 3000 // Явно указываем порт для консистентности
-  }
+// FIX: `__dirname` is not available in ES modules, so we define it manually
+// using `import.meta.url` which is the ES module equivalent.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+export default defineConfig(({ mode }) => {
+    return {
+      server: {
+        port: 3000,
+        host: '0.0.0.0',
+      },
+      plugins: [react()],
+      resolve: {
+        alias: {
+          '@': path.resolve(__dirname, '.'),
+        }
+      }
+    };
 });

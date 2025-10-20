@@ -1,4 +1,4 @@
-import { AggregatedDataRow, GeminiAnalysisResult } from "../types";
+import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
 /**
@@ -60,98 +60,5 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     } catch (error: any) {
         console.error("AI summary generation failed:", error);
         yield `### Ошибка AI-Аналитика\n\nНе удалось получить результат анализа. Ошибка: ${error.message}`;
-    }
-}
-
-
-/**
- * Sends raw CSV data to the backend for a full sales analysis by Gemini.
- * @param csvData The raw string content of the uploaded CSV file.
- * @returns A promise that resolves to the structured Gemini analysis result.
- */
-export async function getGeminiSalesAnalysis(csvData: string): Promise<GeminiAnalysisResult> {
-    const response = await fetch('/api/gemini-task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csvData }),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ 
-            error: `Сервер анализа продаж ответил со статусом ${response.status}` 
-        }));
-        throw new Error(errorData.error || errorData.details || 'Неизвестная ошибка от сервера анализа');
-    }
-
-    return response.json();
-}
-
-/**
- * Generates a conversational AI response based on a user prompt and current data context.
- * @param userPrompt The user's question.
- * @param dataContext The currently filtered data from the main table.
- * @returns An async generator that yields the response text in chunks.
- */
-export async function* getAiChatResponseStream(userPrompt: string, dataContext: AggregatedDataRow[]): AsyncGenerator<string> {
-    if (dataContext.length === 0) {
-        yield "Нет данных для анализа. Пожалуйста, сначала загрузите файл и убедитесь, что фильтры не пусты.";
-        return;
-    }
-
-    // Convert data to a simplified CSV string to use as context
-    const headers = "РМ,Бренд,Регион,Факт (кг),Новый План (кг),Рост (кг),Рост (%)\n";
-    const csvContext = dataContext.slice(0, 100).map(d => { // Limit to 100 rows to save tokens
-        const growthPotential = (d.newPlan || d.fact) - d.fact;
-        const growthRate = d.fact > 0 ? (growthPotential / d.fact) * 100 : 0;
-        return [
-            `"${d.rm}"`,
-            `"${d.brand}"`,
-            `"${d.city}"`,
-            d.fact.toFixed(1),
-            (d.newPlan || 0).toFixed(1),
-            growthPotential.toFixed(1),
-            growthRate.toFixed(1)
-        ].join(',');
-    }).join('\n');
-
-    const fullPrompt = `
-    Ты — AI-ассистент-аналитик в компании Limkorm. Тебе предоставлен срез данных о продажах.
-    Твоя задача — кратко и по делу отвечать на вопросы пользователя, основываясь **только на предоставленных данных**.
-    
-    Правила:
-    - Будь кратким и четким.
-    - Не придумывай данные, которых нет в таблице.
-    - Если вопрос нельзя beantworten на основе данных, вежливо сообщи об этом.
-    - Ответ должен быть на русском языке.
-
-    Вот данные (в формате CSV):
-    ---
-    ${headers}${csvContext}
-    ---
-
-    Вопрос пользователя: "${userPrompt}"
-    `;
-
-    try {
-        const response = await fetch('/api/gemini-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents: fullPrompt }),
-        });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: "Ошибка сервера" }));
-            throw new Error(errorData.error || errorData.details);
-        }
-
-        const fullText = await response.text();
-        const chunkSize = 10;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 15));
-        }
-    } catch (error: any) {
-        console.error("AI chat failed:", error);
-        yield `Произошла ошибка при обращении к AI: ${error.message}`;
     }
 }

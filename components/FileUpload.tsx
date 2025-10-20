@@ -1,108 +1,99 @@
-import React, { useState, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import * as XLSX from 'xlsx';
-import { LargeSuccessIcon, LargeErrorIcon } from './icons';
+import React, { useRef } from 'react';
+import { LoadingState } from '../types';
+import { PulsingLoader, LargeSuccessIcon, LargeErrorIcon } from './icons';
 
 interface FileUploadProps {
-    onFileUpload: (data: any[], fileName: string, rawCsv: string) => void;
-    onProcessingStart: () => void;
-    disabled: boolean;
-    uploadError: string | null;
+    onFileSelect: (file: File) => void;
+    loadingState: LoadingState;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileUpload, onProcessingStart, disabled, uploadError }) => {
-    const [fileName, setFileName] = useState<string | null>(null);
+const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, loadingState }) => {
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const { status, progress, text, etr } = loadingState;
+    const isProcessing = status === 'reading' || status === 'fetching' || status === 'aggregating';
 
-    const onDrop = useCallback((acceptedFiles: File[]) => {
-        if (disabled || acceptedFiles.length === 0) return;
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            onFileSelect(file);
+        }
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
 
-        onProcessingStart();
-        setFileName(acceptedFiles[0].name);
-
-        const file = acceptedFiles[0];
-        const reader = new FileReader();
-
-        reader.onload = (e) => {
-            try {
-                const data = e.target?.result;
-                if (!data) throw new Error("Не удалось прочитать файл.");
-
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-                    defval: "" // Ensure empty cells are handled gracefully
-                });
-                
-                // Also get raw CSV for Gemini analysis
-                const rawCsv = XLSX.utils.sheet_to_csv(worksheet);
-
-                onFileUpload(jsonData, file.name, rawCsv);
-
-            } catch (error: any) {
-                onFileUpload([], file.name, ''); // Trigger error state in parent
-            }
-        };
-        
-        reader.onerror = () => {
-             onFileUpload([], file.name, ''); // Trigger error state in parent
-        };
-
-        reader.readAsBinaryString(file);
-    }, [onFileUpload, onProcessingStart, disabled]);
-
-    const { getRootProps, getInputProps, isDragActive, isDragAccept, isDragReject } = useDropzone({
-        onDrop,
-        accept: {
-            'application/vnd.ms-excel': ['.xls'],
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
-            'text/csv': ['.csv'],
-        },
-        multiple: false,
-        disabled
-    });
-
-    const getBorderColor = () => {
-        if (uploadError) return 'border-danger';
-        if (fileName && !uploadError) return 'border-success';
-        if (isDragAccept) return 'border-accent';
-        if (isDragReject) return 'border-danger';
-        if (isDragActive) return 'border-accent-hover';
-        return 'border-border-color';
+    const renderContent = () => {
+        switch (status) {
+            case 'done':
+                return (
+                    <div className="text-center animate-scale-in">
+                        <LargeSuccessIcon className="mx-auto h-14 w-14 text-success" />
+                        <p className="mt-2 text-lg font-semibold text-white">Анализ завершен!</p>
+                    </div>
+                );
+            case 'error':
+                return (
+                    <div className="text-center animate-scale-in">
+                        <LargeErrorIcon className="mx-auto h-14 w-14 text-danger" />
+                        <p className="mt-2 text-lg font-semibold text-danger">Ошибка</p>
+                        <p className="text-xs text-gray-400 mt-1 px-2 line-clamp-2">{text}</p>
+                    </div>
+                );
+            case 'reading':
+            case 'fetching':
+            case 'aggregating':
+                return (
+                    <div className="w-full animate-fade-in">
+                        <div className="flex justify-between text-xs text-gray-300 mb-1">
+                            <span className="truncate pr-2">{text}</span>
+                            <span>{Math.round(progress)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-900/50 rounded-full h-2.5 overflow-hidden">
+                            <div
+                                className="bg-gradient-to-r from-accent to-purple-500 h-2.5 rounded-full transition-all duration-300"
+                                style={{ width: `${progress}%` }}
+                            ></div>
+                        </div>
+                        <div className="flex justify-center items-center mt-3">
+                            {etr ? (
+                                <p className="text-center text-xs text-accent-hover animate-pulse">{etr}</p>
+                            ) : (
+                                <PulsingLoader />
+                            )}
+                        </div>
+                    </div>
+                );
+            case 'idle':
+            default:
+                return (
+                    <div className="relative animate-fade-in">
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isProcessing}
+                            className="w-full bg-gradient-to-r from-accent to-purple-600 hover:from-accent-hover hover:to-purple-500 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 shadow-lg shadow-accent/20 flex items-center justify-center"
+                        >
+                            <span>Выбрать файл (.xlsx, .csv)</span>
+                        </button>
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            accept=".xlsx, .xls, .csv"
+                            className="hidden"
+                            disabled={isProcessing}
+                        />
+                    </div>
+                );
+        }
     };
 
     return (
-        <div 
-            {...getRootProps()} 
-            className={`relative p-6 rounded-2xl shadow-lg border-2 border-dashed transition-all duration-300 cursor-pointer text-center group ${getBorderColor()} ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-accent'}`}
-        >
-            <input {...getInputProps()} />
-            
-            <div className="flex flex-col items-center justify-center">
-                {uploadError ? (
-                    <>
-                        <div className="w-16 h-16 text-danger mb-3"><LargeErrorIcon className="w-full h-full" /></div>
-                        <p className="text-lg font-semibold text-danger">Ошибка при обработке файла</p>
-                        <p className="text-sm text-red-400/80">{uploadError}</p>
-                    </>
-                ) : fileName ? (
-                     <>
-                        <div className="w-16 h-16 text-success mb-3"><LargeSuccessIcon className="w-full h-full" /></div>
-                        <p className="text-lg font-semibold text-success">Файл успешно загружен!</p>
-                        <p className="text-sm text-gray-400 truncate max-w-xs">{fileName}</p>
-                     </>
-                ) : (
-                    <>
-                        <svg className="w-12 h-12 text-gray-400 mb-3 transition-transform group-hover:scale-110" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-                        </svg>
-                        <p className="text-lg font-semibold text-white">
-                            {isDragActive ? "Отпустите файл..." : "Перетащите файл сюда"}
-                        </p>
-                        <p className="text-sm text-gray-500">или кликните для выбора</p>
-                        <p className="text-xs text-gray-600 mt-2">Поддерживаются форматы: XLSX, XLS, CSV</p>
-                    </>
-                )}
+        <div className="bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color">
+            <h2 className="text-xl font-bold mb-4 text-white">
+                Загрузка данных
+            </h2>
+            <div className="relative h-[84px] flex flex-col justify-center items-center transition-all duration-300">
+                {renderContent()}
             </div>
         </div>
     );

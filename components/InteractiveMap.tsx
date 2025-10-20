@@ -7,26 +7,77 @@ interface InteractiveMapProps {
     city: string;
     clients: PotentialClient[];
     selectedClientKey: string | null;
-    cityCenter?: { lat: number; lon: number };
+    cityCenter?: { lat: number, lon: number };
 }
 
 const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selectedClientKey, cityCenter }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<any>(null);
-    const markersRef = useRef<any>({});
+    const markerRefs = useRef<Map<string, any>>(new Map());
 
     useEffect(() => {
-        if (!mapContainer.current || mapInstance.current) return;
+        if (!mapContainer.current) return;
 
-        mapInstance.current = L.map(mapContainer.current, {
-            scrollWheelZoom: true,
-        });
+        // Initialize map only once
+        if (mapInstance.current === null) {
+            mapInstance.current = L.map(mapContainer.current, {
+                scrollWheelZoom: true,
+            });
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            maxZoom: 19
-        }).addTo(mapInstance.current);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(mapInstance.current);
+        }
 
+        const map = mapInstance.current;
+
+        // Clear existing markers from the map AND the refs map
+        markerRefs.current.forEach(marker => map.removeLayer(marker));
+        markerRefs.current.clear();
+
+        const clientsWithCoords = clients.filter(c => typeof c.lat === 'number' && typeof c.lon === 'number');
+
+        if (clientsWithCoords.length > 0) {
+            const markersForBounds: any[] = [];
+            clientsWithCoords.forEach((client) => {
+                if (client.lat && client.lon) {
+                    const clientKey = `${client.lat},${client.lon}`;
+                    const marker = L.marker([client.lat, client.lon]);
+                    marker.bindPopup(`<b>${client.name}</b><br>${client.type}<br><small>${client.address}</small>`);
+                    marker.addTo(map);
+                    markerRefs.current.set(clientKey, marker);
+                    markersForBounds.push(marker);
+                }
+            });
+            
+            const featureGroup = L.featureGroup(markersForBounds);
+            if (markersForBounds.length > 0) {
+                 map.fitBounds(featureGroup.getBounds().pad(0.1));
+            }
+
+        } else if (cityCenter) {
+             // If no clients have coords, but we have a city center, focus on it
+             map.setView([cityCenter.lat, cityCenter.lon], 12);
+        } else {
+            // Fallback if no coordinates are available at all
+            map.setView([55.75, 37.61], 5); // Default to a wide view of Russia
+        }
+
+    }, [city, clients, cityCenter]);
+
+    // Handle selection changes
+    useEffect(() => {
+        if (selectedClientKey && markerRefs.current.has(selectedClientKey) && mapInstance.current) {
+            const marker = markerRefs.current.get(selectedClientKey);
+            if (marker) {
+                mapInstance.current.flyTo(marker.getLatLng(), 16, { animate: true, duration: 0.5 });
+                marker.openPopup();
+            }
+        }
+    }, [selectedClientKey]);
+    
+    // Cleanup on unmount
+    useEffect(() => {
         return () => {
             if (mapInstance.current) {
                 mapInstance.current.remove();
@@ -35,53 +86,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selected
         };
     }, []);
 
-    useEffect(() => {
-        if (!mapInstance.current) return;
-        const map = mapInstance.current;
-
-        // Clear existing markers
-        Object.values(markersRef.current).forEach((marker: any) => map.removeLayer(marker));
-        markersRef.current = {};
-
-        const validClients = clients.filter(c => c.lat && c.lon);
-
-        if (validClients.length > 0) {
-            const bounds = L.latLngBounds();
-            validClients.forEach(client => {
-                const key = `${client.lat},${client.lon}`;
-                const marker = L.marker([client.lat!, client.lon!], {
-                    title: client.name,
-                }).addTo(map);
-
-                marker.bindPopup(`<b>${client.name}</b><br>${client.address}`);
-                markersRef.current[key] = marker;
-                bounds.extend([client.lat!, client.lon!]);
-            });
-
-            if (bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-            }
-        } else if (cityCenter && cityCenter.lat && cityCenter.lon) {
-            map.setView([cityCenter.lat, cityCenter.lon], 12);
-        } else {
-             // Fallback if no clients and no city center
-            map.setView([55.75, 37.61], 10); // Default to Moscow
-        }
-
-    }, [clients, cityCenter]);
-    
-    useEffect(() => {
-        if (!mapInstance.current || !selectedClientKey) return;
-
-        const selectedMarker = markersRef.current[selectedClientKey];
-        if (selectedMarker) {
-             mapInstance.current.flyTo(selectedMarker.getLatLng(), 16);
-             selectedMarker.openPopup();
-        }
-    }, [selectedClientKey]);
-
-
-    return <div ref={mapContainer} className="w-full h-full" />;
+    return <div ref={mapContainer} className="h-full w-full" />;
 };
 
 export default InteractiveMap;
