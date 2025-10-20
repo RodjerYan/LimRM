@@ -1,26 +1,25 @@
 {
-  "version": 2,
   "builds": [
     {
-      "src": "vite.config.ts",
-      "use": "@vercel/static-build"
-    },
-    {
-      "src": "api/**/*.ts",
+      "src": "api/gemini-proxy.ts",
       "use": "@vercel/node",
-      "config": {
-        "maxDuration": 58
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
+      "config": { "maxDuration": 30 }
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "src": "api/gemini-task.ts",
+      "use": "@vercel/node",
+      "config": { "maxDuration": 60 }
+    },
+    {
+      "src": "api/osm-proxy.ts",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
     }
   ]
 }

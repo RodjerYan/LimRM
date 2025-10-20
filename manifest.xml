@@ -1,17 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="TaskPaneApp">
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0" xsi:type="TaskPaneApp">
+  <!-- ❗️ВАЖНО: Этот ID должен быть уникальным для вашей надстройки. Можно сгенерировать новый GUID. -->
   <Id>d23253b8-333e-4f34-9d10-a6125a0a38f4</Id>
-  <Version>1.0.0.0</Version>
-  <ProviderName>Limkorm</ProviderName>
+  <Version>1.0.3.0</Version>
+  <ProviderName>Limkorm Debug</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="Limkorm AI Analytics"/>
-  <Description DefaultValue="Инструмент для анализа рыночного потенциала и планирования продаж."/>
+  <DisplayName DefaultValue="Limkorm AI (Test)"/>
+  <Description DefaultValue="Тестовая надстройка для отладки загрузки."/>
   <IconUrl DefaultValue="https://localhost:3000/favicon.svg"/>
-  <HighResolutionIconUrl DefaultValue="https://localhost:3000/limkorm-logo.svg"/>
   <SupportUrl DefaultValue="https://limkorm.ru/"/>
-  <AppDomains>
-    <AppDomain>https://localhost:3000</AppDomain>
-  </AppDomains>
   <Hosts>
     <Host Name="Workbook"/>
   </Hosts>
@@ -19,38 +16,28 @@
     <SourceLocation DefaultValue="https://localhost:3000/index.html"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
+  
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
     <Hosts>
       <Host xsi:type="Workbook">
         <DesktopFormFactor>
-          <GetStarted>
-            <Title resid="GetStarted.Title"/>
-            <Description resid="GetStarted.Description"/>
-            <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
-          </GetStarted>
-          <FunctionFile resid="Commands.Url"/>
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <!-- Добавляем кнопку на стандартную вкладку "Главная" -->
             <OfficeTab id="TabHome">
-              <Group id="CommandsGroup">
-                <Label resid="CommandsGroup.Label"/>
-                <Icon>
-                  <bt:Image size="16" resid="Icon.16x16"/>
-                  <bt:Image size="32" resid="Icon.32x32"/>
-                  <bt:Image size="80" resid="Icon.80x80"/>
-                </Icon>
-                <Control xsi:type="Button" id="TaskpaneButton">
-                  <Label resid="TaskpaneButton.Label"/>
+              <Group id="Group1.1">
+                <Label resid="Group.Label"/>
+                <Control xsi:type="Button" id="Button1.1">
+                  <Label resid="Button.Label"/>
                   <Supertip>
-                    <Title resid="TaskpaneButton.Label"/>
-                    <Description resid="TaskpaneButton.Tooltip"/>
+                    <Title resid="Button.Label"/>
+                    <Description resid="Button.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="Icon.16"/>
+                    <bt:Image size="32" resid="Icon.32"/>
+                    <bt:Image size="80" resid="Icon.80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
                     <SourceLocation resid="Taskpane.Url"/>
                   </Action>
                 </Control>
@@ -62,23 +49,19 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Icon.16x16" DefaultValue="https://localhost:3000/favicon.svg"/>
-        <bt:Image id="Icon.32x32" DefaultValue="https://localhost:3000/limkorm-logo.svg"/>
-        <bt:Image id="Icon.80x80" DefaultValue="https://localhost:3000/limkorm-logo.svg"/>
+        <bt:Image id="Icon.16" DefaultValue="https://localhost:3000/favicon.svg"/>
+        <bt:Image id="Icon.32" DefaultValue="https://localhost:3000/limkorm-logo.svg"/>
+        <bt:Image id="Icon.80" DefaultValue="https://localhost:3000/limkorm-logo.svg"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://docs.microsoft.com/office/dev/add-ins/overview/office-add-ins"/>
-        <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/index.html"/>
         <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/index.html"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="GetStarted.Title" DefaultValue="Limkorm AI Аналитика"/>
-        <bt:String id="CommandsGroup.Label" DefaultValue="Limkorm AI"/>
-        <bt:String id="TaskpaneButton.Label" DefaultValue="Анализ Данных"/>
+        <bt:String id="Group.Label" DefaultValue="Limkorm AI"/>
+        <bt:String id="Button.Label" DefaultValue="Запустить Анализ"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="Надстройка успешно загружена. Выделите таблицу и нажмите кнопку 'Анализ Данных' на ленте."/>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Выделите таблицу с данными и нажмите, чтобы запустить AI-анализ."/>
+        <bt:String id="Button.Tooltip" DefaultValue="Нажмите, чтобы открыть панель анализа Limkorm AI."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
