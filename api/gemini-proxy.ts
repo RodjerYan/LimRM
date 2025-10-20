@@ -78,7 +78,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log(`${colors.blue}🚀 Попытка #${attempts}${colors.reset} — ${colors.gray}ключ ...${shortKey}${colors.reset}`);
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      // Явно указываем глобальный эндпоинт для стабильности
+      // FIX: The 'clientOptions' property is not a valid property for GoogleGenAIOptions.
+      // The SDK uses the correct endpoint by default, so this is not needed.
+      const ai = new GoogleGenAI({ 
+        apiKey
+      });
       const isJsonRequest = config?.responseMimeType === 'application/json';
 
       // Для стабильности на Vercel, всегда получаем полный ответ от Gemini, избегая прямого стриминга клиенту.
@@ -120,15 +125,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         msg.includes('429') ||
         msg.includes('resource_exhausted') ||
         msg.includes('quota') ||
-        msg.includes('too many requests') ||
-        msg.includes('failed to fetch') ||
-        msg.includes('connection') // Catches connection errors like ERR_CONNECTION_CLOSED
+        msg.includes('too many requests')
       ) {
-        if(msg.includes('failed to fetch') || msg.includes('connection')) {
-          console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий.${colors.reset}`);
-        } else {
-          console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит. Переключаюсь на следующий.${colors.reset}`);
-        }
+         console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит (ошибка квоты). Переключаюсь на следующий.${colors.reset}`);
+         continue;
+      }
+      
+      if (
+        msg.includes('failed to fetch') ||
+        msg.includes('connection')
+      ) {
+        console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Пробую следующий. (Детали: ${err.message})${colors.reset}`);
         continue;
       }
 

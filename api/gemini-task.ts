@@ -74,7 +74,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const apiKey of apiKeys) {
       const shortKey = apiKey.slice(-6);
       try {
-        const ai = new GoogleGenAI({ apiKey });
+        // Явно указываем глобальный эндпоинт для стабильности
+        // FIX: The 'clientOptions' property is not a valid property for GoogleGenAIOptions.
+        // The SDK uses the correct endpoint by default, so this is not needed.
+        const ai = new GoogleGenAI({ 
+            apiKey
+        });
         
         const response = await ai.models.generateContent({
           model: 'gemini-2.5-pro',
@@ -101,10 +106,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } catch (err: any) {
         lastError = err;
         const msg = (err.message || '').toLowerCase();
-        if (msg.includes('429') || msg.includes('quota') || msg.includes('too many requests') || msg.includes('failed to fetch')) {
-            console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит или имеет сетевую проблему. Переключаюсь.${colors.reset}`);
+        
+        if (msg.includes('429') || msg.includes('quota') || msg.includes('too many requests')) {
+            console.warn(`${colors.yellow}⛔ Ключ ...${shortKey} исчерпал лимит (ошибка квоты). Переключаюсь.${colors.reset}`);
             continue;
         }
+
+        if (msg.includes('failed to fetch')) {
+            console.warn(`${colors.yellow}🌐 Сетевая ошибка с ключом ...${shortKey}. Переключаюсь.${colors.reset}`);
+            continue;
+        }
+
         console.error(`${colors.red}❌ Неперехватываемая ошибка при ключе ...${shortKey}:${colors.reset} ${err.message}`);
         break;
       }
