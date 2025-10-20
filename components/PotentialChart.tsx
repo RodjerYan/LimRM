@@ -86,8 +86,8 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                                 generateLabels: (chart: Chart) => {
                                     const originalLabels = Chart.defaults.plugins.legend.labels.generateLabels(chart);
                                     originalLabels.forEach(label => {
-                                        // Add spacing (approx. 4mm) between the legend point and the text
-                                        label.text = '    ' + label.text;
+                                        // Add spacing (approx. 2mm) between the legend point and the text
+                                        label.text = '  ' + label.text;
                                     });
                                     return originalLabels;
                                 }
