@@ -1,3 +1,6 @@
+// FIX: Add a triple-slash directive to include Vite's client types,
+// which provides type definitions for `import.meta.env`.
+/// <reference types="vite/client" />
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import FileUpload from '../components/FileUpload';
 import Filters from '../components/Filters';
@@ -16,7 +19,10 @@ import { formatETR } from '../utils/timeUtils';
 const initialFilterState: FilterState = { rm: '', brand: [], city: [] };
 
 // Проверка ключей API на клиенте
-const checkApiKeyConfig = () => {
+// FIX: Add an explicit return type to the function. This allows TypeScript
+// to correctly infer the type of `apiKeyStatus` and narrow it down in
+// conditional checks, resolving the assignment error for the `errorType` prop.
+const checkApiKeyConfig = (): 'missing' | 'swapped' | 'ok' => {
     const keyVar = import.meta.env.VITE_GEMINI_API_KEY;
     const proxyVar = import.meta.env.VITE_GEMINI_PROXY_URL;
     const osmProxyVar = import.meta.env.VITE_OSM_PROXY_URL;

@@ -1,11 +1,17 @@
 import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'crypto';
+import { kv } from '@vercel/kv';
 
-// --- Простое "in-memory" хранилище для статусов задач ---
-// ВНИМАНИЕ: Это подходит только для демонстрационных целей.
-// В реальном продакшене следует использовать персистентное хранилище (Redis, Vercel KV, DB).
-const tasks = new Map<string, { status: 'pending' | 'done' | 'error', result?: string, error?: string }>();
+// --- Хранилище задач теперь работает на Vercel KV ---
+// Это персистентное хранилище, которое гарантирует сохранность
+// статуса задач между вызовами serverless-функций.
+
+interface Task {
+  status: 'pending' | 'done' | 'error';
+  result?: string;
+  error?: string;
+}
 
 // --- Получение ключей API (аналогично gemini-proxy) ---
 const getApiKeys = (): string[] => {
@@ -41,13 +47,11 @@ const runGeminiTask = async (prompt: string) => {
     for (const apiKey of apiKeys) {
         try {
             const ai = new GoogleGenAI({ apiKey });
-            // FIX: Using correct generateContent call as per guidelines
             const response: GenerateContentResponse = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: prompt,
             });
             
-            // FIX: Using response.text to extract text as per guidelines
             const text = response.text;
             if (!text || text.trim() === '') throw new Error('Модель вернула пустой ответ.');
 
@@ -56,18 +60,14 @@ const runGeminiTask = async (prompt: string) => {
         } catch (err: any) {
             lastError = err;
             const msg = (err.message || '').toLowerCase();
-            // Если ошибка связана с квотой, пробуем следующий ключ
             if (msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota')) {
                 console.warn(`Ключ ...${apiKey.slice(-4)} исчерпал лимит, пробую следующий.`);
                 continue;
             }
-            // Для других ошибок прекращаем попытки
             console.error(`Неперехватываемая ошибка с ключом ...${apiKey.slice(-4)}: ${err.message}`);
             break;
         }
     }
-
-    // Если все ключи не сработали
     throw lastError || new Error('Не удалось выполнить запрос ко всем доступным ключам Gemini API.');
 };
 
@@ -85,10 +85,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // --- GET: Проверка статуса задачи ---
   if (req.method === 'GET') {
     const { taskId } = req.query;
-    if (typeof taskId !== 'string' || !tasks.has(taskId)) {
-        return res.status(404).json({ error: 'Задача не найдена.' });
+    if (typeof taskId !== 'string') {
+        return res.status(400).json({ error: 'Некорректный taskId.' });
     }
-    const task = tasks.get(taskId);
+    const task: Task | null = await kv.get(taskId);
+    if (!task) {
+        return res.status(404).json({ error: 'Задача не найдена или срок ее хранения истек.' });
+    }
     return res.status(200).json(task);
   }
 
@@ -100,19 +103,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const taskId = randomUUID();
-    tasks.set(taskId, { status: 'pending' });
+    // Устанавливаем начальный статус с временем жизни 5 минут
+    await kv.set(taskId, { status: 'pending' }, { ex: 300 });
 
     // Запускаем асинхронную задачу без `await`
     runGeminiTask(prompt)
         .then(result => {
-            tasks.set(taskId, { status: 'done', result });
+            // Обновляем задачу с результатом и тем же временем жизни
+            kv.set(taskId, { status: 'done', result }, { ex: 300 });
         })
         .catch(error => {
-            tasks.set(taskId, { status: 'error', error: error.message || 'Неизвестная ошибка выполнения задачи.' });
-        })
-        .finally(() => {
-            // Очищаем старые задачи, чтобы избежать утечки памяти
-            setTimeout(() => tasks.delete(taskId), 5 * 60 * 1000); // Удаляем через 5 минут
+            // Обновляем задачу с ошибкой
+            kv.set(taskId, { status: 'error', error: error.message || 'Неизвестная ошибка выполнения задачи.' }, { ex: 300 });
         });
 
     return res.status(202).json({ taskId });

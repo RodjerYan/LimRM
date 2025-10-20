@@ -109,10 +109,13 @@ async function processData(rawData: RawDataRow[]) {
         group.clients.forEach(client => {
             fact += client.salesFact;
             potential += client.salesPotential;
+            // FIX: Explicitly cast properties to string to match PotentialClient type.
+            // The source `normalizeRow` function ensures these are strings, but the broad
+            // return type `Record<..., string | number>` requires this for type safety.
             potentialClients.push({
-                name: client.clientName,
-                address: client.clientAddress,
-                type: client.clientType,
+                name: String(client.clientName),
+                address: String(client.clientAddress),
+                type: String(client.clientType),
             });
         });
 
