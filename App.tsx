@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
 import ResultsTable from './components/ResultsTable';
@@ -34,6 +34,7 @@ const App: React.FC = () => {
     const [baseIncreasePercent, setBaseIncreasePercent] = useState(15.0);
     
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
+    // FIX: useRef was used but not imported. Adding it to the React import statement on line 1.
     const workerRef = useRef<Worker>();
 
     // --- Gemini Full Analysis State ---
