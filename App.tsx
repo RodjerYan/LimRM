@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
+import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig, GeminiAnalysisResult } from './types';
 import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
 import { parseFile } from './services/fileParser';
+import { getGeminiSalesAnalysis } from './services/aiService';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
@@ -10,6 +11,7 @@ import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import ChoroplethMap from './components/ChoroplethMap';
+import InsightCard from './components/InsightCard';
 
 
 // FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
@@ -42,6 +44,7 @@ export default function App() {
     const [dataWithPlan, setDataWithPlan] = useState<AggregatedDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
+    const [geminiAnalysis, setGeminiAnalysis] = useState<{ loading: boolean; data?: GeminiAnalysisResult | null; error?: string | null; }>({ loading: false, data: null, error: null });
     
     const [filters, setFilters] = useState<FilterState>(() => {
         try {
@@ -95,7 +98,6 @@ export default function App() {
         }
 
         // --- Этап 1: Предварительный расчет общих сумм ---
-        // Собираем агрегированные данные по РМ, брендам и их комбинациям для быстрого доступа.
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
@@ -105,13 +107,10 @@ export default function App() {
         baseAggregatedData.forEach(row => {
             const rmKey = row.rm;
             rmTotals.set(rmKey, { fact: (rmTotals.get(rmKey)?.fact || 0) + row.fact });
-            
             const brandKey = row.brand;
             brandTotals.set(brandKey, { fact: (brandTotals.get(brandKey)?.fact || 0) + row.fact });
-
             const rmBrandKey = `${row.rm}|${row.brand}`;
             rmBrandTotals.set(rmBrandKey, { fact: (rmBrandTotals.get(rmBrandKey)?.fact || 0) + row.fact });
-
             totalFactAll += row.fact;
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
         });
@@ -119,10 +118,6 @@ export default function App() {
         // --- Этап 2: Основной расчет нового плана для каждой строки ---
         const calculatedData = baseAggregatedData.map(row => {
             const { fact, rm, brand, activeTT, totalMarketTTs } = row;
-            
-            // --- Сценарий 1: Нулевой факт ---
-            // Если текущих продаж нет, устанавливаем небольшой стартовый план,
-            // основанный на средних продажах по бренду.
             if (fact === 0) {
                 const brandTotalFact = brandTotals.get(brand)?.fact || 0;
                 const brandCount = brandRowCounts.get(brand) || 1;
@@ -131,64 +126,41 @@ export default function App() {
                 return { ...row, newPlan };
             }
 
-            // --- Сценарий 2: Есть фактические продажи ---
             const baseInc = baseIncreasePercent / 100;
-            
-            // Определяем веса и максимальный порог для динамического роста
-            const maxDynamicGrowth = 0.15; // Максимальный дополнительный рост: 15%
-            const w_coverage = 0.6; // 60% влияния от показателя покрытия рынка
-            const w_brand = 0.4;    // 40% влияния от показателя баланса брендов
-
-            // --- Фактор 1: Охват рынка (Coverage Score) ---
-            // Оценивает, насколько полно мы представлены на рынке.
-            // Score -> 1: низкое покрытие (большой потенциал). Score -> 0: высокое покрытие.
+            const maxDynamicGrowth = 0.15;
+            const w_coverage = 0.6;
+            const w_brand = 0.4;
             const effectiveTotalMarket = Math.max(activeTT, totalMarketTTs) + Math.ceil(activeTT * 0.10);
             const penetration = Math.min(1.0, activeTT > 0 ? (activeTT / effectiveTotalMarket) : 0);
-            const coverageScore = Math.sqrt(1 - penetration); // sqrt для нелинейного поощрения низкого охвата
+            const coverageScore = Math.sqrt(1 - penetration);
 
-            // --- Фактор 2: Баланс брендов (Brand Balance Score) ---
-            // Сравнивает долю продаж бренда у конкретного РМ с долей этого же бренда в целом по компании.
-            // Score > 0: РМ недорабатывает по бренду (план будет увеличен).
-            // Score < 0: РМ перевыполняет по бренду (динамический рост будет уменьшен).
             const brandTotalFact = brandTotals.get(brand)?.fact || 0;
             const rmTotalFact = rmTotals.get(rm)?.fact || 0;
             const rmBrandTotalFact = rmBrandTotals.get(`${rm}|${brand}`)?.fact || 0;
             
             let brandScore = 0;
             if (rmTotalFact > 0 && brandTotalFact > 0 && totalFactAll > 0) {
-                const brandShareAvg = brandTotalFact / totalFactAll; // Доля бренда в компании
-                const brandShareRM = rmBrandTotalFact / rmTotalFact; // Доля бренда у РМ
+                const brandShareAvg = brandTotalFact / totalFactAll;
+                const brandShareRM = rmBrandTotalFact / rmTotalFact;
                 if (brandShareRM > 0) {
-                    const shareRatio = brandShareAvg / brandShareRM;
-                    // Используем tanh для получения гладкого, ограниченного [-1, 1] значения
-                    brandScore = Math.tanh(shareRatio - 1);
+                    brandScore = Math.tanh((brandShareAvg / brandShareRM) - 1);
                 } else {
-                    // Если РМ вообще не продает этот бренд, даем максимальный стимул
                     brandScore = 1; 
                 }
             }
             
-            // --- Этап 3: Комбинирование факторов и финальный расчет ---
-            // Суммируем базовый рост и динамический рост (с учетом весов)
             const dynamicGrowth = maxDynamicGrowth * (w_coverage * coverageScore + w_brand * brandScore);
-            const totalMultiplier = 1 + baseInc + dynamicGrowth;
-            const newPlan = Math.max(fact, fact * totalMultiplier); // План не может быть меньше факта
-
+            const newPlan = Math.max(fact, fact * (1 + baseInc + dynamicGrowth));
             return { ...row, newPlan };
         });
 
         setDataWithPlan(calculatedData);
-
-        // Финальное обновление статуса после завершения всех расчетов
         setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
         addNotification('Анализ рынка и расчет планов завершен!', 'success');
-
         const resetTimer = setTimeout(() => {
             setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
         }, 3000);
-
         return () => clearTimeout(resetTimer);
-
     }, [baseAggregatedData, baseIncreasePercent, addNotification]);
 
 
@@ -210,7 +182,32 @@ export default function App() {
         setDataWithPlan([]);
         setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
-        
+        setGeminiAnalysis({ loading: false, data: null, error: null });
+
+        // Start Gemini Analysis (runs in parallel)
+        const runGeminiAnalysis = async (file: File) => {
+            setGeminiAnalysis({ loading: true, data: null, error: null });
+            try {
+                // Read file as text to get CSV data
+                const fileText = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => resolve(event.target?.result as string);
+                    reader.onerror = (error) => reject(error);
+                    reader.readAsText(file);
+                });
+
+                const analysisResult = await getGeminiSalesAnalysis(fileText);
+                setGeminiAnalysis({ loading: false, data: analysisResult, error: null });
+                addNotification('AI-анализ продаж успешно завершен!', 'info');
+            } catch (error: any) {
+                const errorMessage = error.message || "Неизвестная ошибка AI-анализа";
+                setGeminiAnalysis({ loading: false, data: null, error: errorMessage });
+                addNotification(`Ошибка AI-анализа: ${errorMessage}`, 'error');
+            }
+        };
+        runGeminiAnalysis(file);
+
+        // Start Worker-based Analysis
         try {
             setLoadingState({ status: 'reading', progress: 10, text: 'Анализ структуры файла...', etr: '' });
             const { processedData, uniqueLocations, existingClientsByRegion } = await parseFile(file);
@@ -221,11 +218,10 @@ export default function App() {
             
             worker.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
                 const { type, payload } = e.data;
-                if (type === 'progress') {
-                    setLoadingState(payload);
-                } else if (type === 'result') {
+                if (type === 'progress') setLoadingState(payload);
+                else if (type === 'result') {
                     setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет новых планов...', etr: '' });
-                    setBaseAggregatedData(payload); // This triggers the plan calculation useEffect
+                    setBaseAggregatedData(payload);
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
@@ -234,21 +230,14 @@ export default function App() {
                     cleanupWorker();
                 }
             };
-
             worker.onerror = (e) => {
                  console.error("Unhandled worker error:", e);
-                 const errorMessage = "Произошла критическая ошибка в фоновом обработчике.";
+                 const errorMessage = "Критическая ошибка в фоновом обработчике.";
                  addNotification('Ошибка: ' + errorMessage, 'error');
                  setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
                  cleanupWorker();
             };
-            
-            worker.postMessage({ 
-                processedData, 
-                uniqueLocations: Array.from(uniqueLocations),
-                existingClientsByRegion,
-            });
-
+            worker.postMessage({ processedData, uniqueLocations: Array.from(uniqueLocations), existingClientsByRegion });
         } catch(error) {
             console.error("Failed to parse file or start worker:", error);
             const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка при обработке файла.";
@@ -257,77 +246,41 @@ export default function App() {
         }
     };
 
-
-    const handleFilterChange = useCallback((newFilters: FilterState) => {
-        setFilters(newFilters);
-    }, []);
-
+    const handleFilterChange = useCallback((newFilters: FilterState) => setFilters(newFilters), []);
     const resetFilters = useCallback(() => {
         setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
         addNotification('Фильтры сброшены.', 'success');
     }, [addNotification]);
-
     const requestSort = useCallback((key: keyof AggregatedDataRow) => {
         let direction: 'ascending' | 'descending' = 'ascending';
-        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
-        }
+        if (sortConfig?.key === key && sortConfig.direction === 'ascending') direction = 'descending';
         setSortConfig({ key, direction });
     }, [sortConfig]);
-    
-    const handleBaseIncreaseChange = useCallback((value: number) => {
-        setBaseIncreasePercent(value);
-    }, []);
+    const handleBaseIncreaseChange = useCallback((value: number) => setBaseIncreasePercent(value), []);
 
     const filterOptions = useMemo(() => {
         let availableData = baseAggregatedData;
-
-        // Фильтруем данные для получения доступных РМ
         let rmsData = availableData;
-        if (filters.brand.length > 0) {
-            rmsData = rmsData.filter(d => filters.brand.includes(d.brand));
-        }
-        if (filters.city.length > 0) {
-            rmsData = rmsData.filter(d => filters.city.includes(d.city));
-        }
+        if (filters.brand.length > 0) rmsData = rmsData.filter(d => filters.brand.includes(d.brand));
+        if (filters.city.length > 0) rmsData = rmsData.filter(d => filters.city.includes(d.city));
         const rms = [...new Set(rmsData.map(d => d.rm))].sort();
-
-        // Фильтруем данные для получения доступных Брендов
         let brandsData = availableData;
-        if (filters.rm.length > 0) {
-            brandsData = brandsData.filter(d => filters.rm.includes(d.rm));
-        }
-        if (filters.city.length > 0) {
-            brandsData = brandsData.filter(d => filters.city.includes(d.city));
-        }
+        if (filters.rm.length > 0) brandsData = brandsData.filter(d => filters.rm.includes(d.rm));
+        if (filters.city.length > 0) brandsData = brandsData.filter(d => filters.city.includes(d.city));
         const brands = [...new Set(brandsData.map(d => d.brand))].sort();
-
-        // Фильтруем данные для получения доступных Городов
         let citiesData = availableData;
-        if (filters.rm.length > 0) {
-            citiesData = citiesData.filter(d => filters.rm.includes(d.rm));
-        }
-        if (filters.brand.length > 0) {
-            citiesData = citiesData.filter(d => filters.brand.includes(d.brand));
-        }
+        if (filters.rm.length > 0) citiesData = citiesData.filter(d => filters.rm.includes(d.rm));
+        if (filters.brand.length > 0) citiesData = citiesData.filter(d => filters.brand.includes(d.brand));
         const cities = [...new Set(citiesData.map(d => d.city))].sort();
-
         return { rms, brands, cities };
     }, [baseAggregatedData, filters]);
     
     const handleRegionClick = useCallback((regionName: string) => {
         setFilters(prevFilters => {
-            const currentCities = prevFilters.city;
-            const isSelected = currentCities.length === 1 && currentCities[0] === regionName;
+            const isSelected = prevFilters.city.length === 1 && prevFilters.city[0] === regionName;
             const newCities = isSelected ? [] : [regionName];
-            
-            if (!isSelected) {
-                addNotification(`Отфильтровано по региону: ${regionName}`, 'info');
-            } else {
-                 addNotification('Фильтр по регионам сброшен', 'info');
-            }
-
+            addNotification(isSelected ? 'Фильтр по регионам сброшен' : `Отфильтровано по региону: ${regionName}`, 'info');
             return { ...prevFilters, city: newCities };
         });
     }, [addNotification]);
@@ -342,26 +295,17 @@ export default function App() {
 
     const filteredAndSortedData = useMemo(() => {
         let processedData = filteredByDropdownsData;
-
         if (searchTerm) {
-            const lowercasedTerm = searchTerm.toLowerCase();
+            const term = searchTerm.toLowerCase();
             processedData = processedData.filter(item =>
-                item.rm.toLowerCase().includes(lowercasedTerm) ||
-                item.brand.toLowerCase().includes(lowercasedTerm) ||
-                item.city.toLowerCase().includes(lowercasedTerm) ||
-                String(item.potentialTTs).includes(lowercasedTerm) ||
-                formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
-                (item.newPlan && formatLargeNumber(item.newPlan).toLowerCase().includes(lowercasedTerm)) ||
-                item.growthRate.toFixed(2).includes(lowercasedTerm)
+                Object.values(item).some(val => 
+                    String(val).toLowerCase().includes(term)
+                )
             );
         }
-
         if (sortConfig !== null) {
-            processedData = [...processedData].sort((a, b) => {
-                let aVal, bVal;
-
+            processedData.sort((a, b) => {
+                let aVal: any, bVal: any;
                 if (sortConfig.key === 'growthPotential') {
                     aVal = (a.newPlan || a.fact) - a.fact;
                     bVal = (b.newPlan || b.fact) - b.fact;
@@ -372,42 +316,25 @@ export default function App() {
                     aVal = a[sortConfig.key] ?? -Infinity;
                     bVal = b[sortConfig.key] ?? -Infinity;
                 }
-
-                if (aVal < bVal) {
-                    return sortConfig.direction === 'ascending' ? -1 : 1;
-                }
-                if (aVal > bVal) {
-                    return sortConfig.direction === 'ascending' ? 1 : -1;
-                }
+                if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
+                if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                 return 0;
             });
         }
-        
         return processedData;
     }, [filteredByDropdownsData, searchTerm, sortConfig]);
 
     const metrics = useMemo(() => calculateMetrics(filteredAndSortedData), [filteredAndSortedData]);
-
     const totalPotentialTTs = useMemo(() => {
         const cityTTs = new Map<string, number>();
-        filteredAndSortedData.forEach(item => {
-            if (!cityTTs.has(item.city)) {
-                cityTTs.set(item.city, item.totalMarketTTs || 0);
-            }
-        });
+        filteredAndSortedData.forEach(item => { cityTTs.set(item.city, item.totalMarketTTs || 0); });
         return Array.from(cityTTs.values()).reduce((sum, count) => sum + count, 0);
     }, [filteredAndSortedData]);
-
     const totalActiveTTs = useMemo(() => {
         const uniqueAddresses = new Set<string>();
-        filteredAndSortedData.forEach(item => {
-            item.activeAddresses?.forEach(address => {
-                uniqueAddresses.add(address);
-            });
-        });
+        filteredAndSortedData.forEach(item => { item.activeAddresses?.forEach(address => uniqueAddresses.add(address)); });
         return uniqueAddresses.size;
     }, [filteredAndSortedData]);
-
 
     return (
         <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
@@ -423,9 +350,7 @@ export default function App() {
             </header>
 
             <div id="notification-area" className="fixed top-4 right-4 z-[100] space-y-2 w-full max-w-sm">
-                {notifications.map(n => (
-                    <Notification key={n.id} message={n.message} type={n.type} />
-                ))}
+                {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
             </div>
 
             <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -438,20 +363,13 @@ export default function App() {
                         onReset={resetFilters}
                         disabled={baseAggregatedData.length === 0}
                     />
-                    <MetricsSummary 
-                        metrics={metrics} 
-                        totalPotentialTTs={totalPotentialTTs} 
-                        totalActiveTTs={totalActiveTTs}
-                    />
+                    {baseAggregatedData.length > 0 && <InsightCard analysisState={geminiAnalysis} />}
+                    <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} totalActiveTTs={totalActiveTTs} />
                 </aside>
 
                 <div className="lg:col-span-9 space-y-6">
                     <PotentialChart data={filteredByDropdownsData} />
-                    <ChoroplethMap 
-                        data={filteredByDropdownsData} 
-                        onRegionClick={handleRegionClick}
-                        selectedRegions={filters.city} 
-                    />
+                    <ChoroplethMap data={filteredByDropdownsData} onRegionClick={handleRegionClick} selectedRegions={filters.city} />
                     <ResultsTable 
                         data={filteredAndSortedData} 
                         isLoading={loadingState.status !== 'idle' && loadingState.status !== 'done'}

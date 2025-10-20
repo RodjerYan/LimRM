@@ -78,3 +78,19 @@ export type SortConfig = {
     key: keyof AggregatedDataRow;
     direction: 'ascending' | 'descending';
 } | null;
+
+export interface GeminiAnalysisResult {
+  summary: {
+    total_sales_kg: number;
+    total_sales_amount: number;
+    avg_by_manager: { name: string; avg_kg: number; avg_amount: number }[];
+    avg_by_region: { name: string; avg_kg: number; avg_amount: number }[];
+    avg_by_city: { name: string; avg_kg: number; avg_amount: number }[];
+    avg_by_brand: { name: string; avg_kg: number; avg_amount: number }[];
+  };
+  top_managers: { name: string; value: number; metric: string }[];
+  top_brands: { name: string; value: number; metric: string }[];
+  top_cities: { name: string; value: number; metric: string }[];
+  top_regions: { name: string; value: number; metric: string }[];
+  insights: string[];
+}

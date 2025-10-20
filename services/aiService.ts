@@ -1,4 +1,4 @@
-import { AggregatedDataRow } from "../types";
+import { AggregatedDataRow, GeminiAnalysisResult } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
 /**
@@ -61,4 +61,27 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
         console.error("AI summary generation failed:", error);
         yield `### Ошибка AI-Аналитика\n\nНе удалось получить результат анализа. Ошибка: ${error.message}`;
     }
+}
+
+
+/**
+ * Sends raw CSV data to the backend for a full sales analysis by Gemini.
+ * @param csvData The raw string content of the uploaded CSV file.
+ * @returns A promise that resolves to the structured Gemini analysis result.
+ */
+export async function getGeminiSalesAnalysis(csvData: string): Promise<GeminiAnalysisResult> {
+    const response = await fetch('/api/gemini-task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csvData }),
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ 
+            error: `Сервер анализа продаж ответил со статусом ${response.status}` 
+        }));
+        throw new Error(errorData.error || errorData.details || 'Неизвестная ошибка от сервера анализа');
+    }
+
+    return response.json();
 }

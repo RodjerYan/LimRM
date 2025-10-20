@@ -98,11 +98,12 @@ const ChoroplethMap: React.FC<ChoroplethMapProps> = ({ data, onRegionClick, sele
             };
 
             const style = (feature: any) => {
-                const regionName = normalizeRegionName(feature.properties.name || '');
+                const originalRegionName = feature.properties.name || '';
+                const regionName = normalizeRegionName(originalRegionName);
                 const regionData = aggregatedData.get(regionName);
                 const growth = regionData ? regionData.growthPotential : 0;
                 
-                const isSelected = selectedRegions.length > 0 && selectedRegions.includes(feature.properties.name);
+                const isSelected = selectedRegions.length > 0 && selectedRegions.includes(originalRegionName);
 
                 return {
                     fillColor: getColor(growth),
@@ -148,12 +149,16 @@ const ChoroplethMap: React.FC<ChoroplethMapProps> = ({ data, onRegionClick, sele
                     const grades = [0, maxGrowth * 0.2, maxGrowth * 0.4, maxGrowth * 0.6, maxGrowth * 0.8];
                     div.innerHTML = '<h4 class="font-bold mb-1 text-white">Потенциал роста</h4>';
                     
-                    for (let i = 0; i < grades.length; i++) {
-                        const from = grades[i];
-                        const to = grades[i + 1];
-                        div.innerHTML +=
-                            `<i style="background:${getColor(from + 1)}" class="w-4 h-4 inline-block mr-1 opacity-70 align-middle"></i> ` +
-                            formatLargeNumber(from) + (to ? '&ndash;' + formatLargeNumber(to) + '<br>' : '+');
+                    if (maxGrowth > 0) {
+                        for (let i = 0; i < grades.length; i++) {
+                            const from = grades[i];
+                            const to = grades[i + 1];
+                            div.innerHTML +=
+                                `<i style="background:${getColor(from + 1)}" class="w-4 h-4 inline-block mr-1 opacity-70 align-middle"></i> ` +
+                                formatLargeNumber(from) + (to ? '&ndash;' + formatLargeNumber(to) + '<br>' : '+');
+                        }
+                    } else {
+                         div.innerHTML += `<i style="background:#4b5563" class="w-4 h-4 inline-block mr-1 opacity-70 align-middle"></i> Нет данных`;
                     }
                     return div;
                 },
