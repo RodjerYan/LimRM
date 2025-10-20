@@ -89,8 +89,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, loadingState }) =
 
     return (
         <div className="bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color">
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-3">
-                <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">1</span>
+            <h2 className="text-xl font-bold mb-4 text-white">
                 Загрузка данных
             </h2>
             <div className="relative h-[84px] flex flex-col justify-center items-center transition-all duration-300">
