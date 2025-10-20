@@ -351,13 +351,13 @@ export default function App() {
             const savedFilters = localStorage.getItem('geoAnalysisFilters');
             const parsed = savedFilters ? JSON.parse(savedFilters) : null;
             return {
-                rm: parsed?.rm || '',
+                rm: Array.isArray(parsed?.rm) ? parsed.rm : [],
                 brand: Array.isArray(parsed?.brand) ? parsed.brand : [],
                 city: Array.isArray(parsed?.city) ? parsed.city : [],
             };
         } catch (error) {
             console.error("Failed to parse filters from localStorage", error);
-            return { rm: '', brand: [], city: [] };
+            return { rm: [], brand: [], city: [] };
         }
     });
     const [searchTerm, setSearchTerm] = useState<string>(() => localStorage.getItem('geoAnalysisSearchTerm') || '');
@@ -511,7 +511,7 @@ export default function App() {
         cleanupWorker();
         setBaseAggregatedData([]);
         setDataWithPlan([]);
-        setFilters({ rm: '', brand: [], city: [] });
+        setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
         
         try {
@@ -566,7 +566,7 @@ export default function App() {
     }, []);
 
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], city: [] });
+        setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
         addNotification('Фильтры сброшены.', 'success');
     }, [addNotification]);
@@ -592,7 +592,7 @@ export default function App() {
 
     const filteredAndSortedData = useMemo(() => {
         let processedData = dataWithPlan.filter(item => 
-            (!filters.rm || item.rm === filters.rm) &&
+            (filters.rm.length === 0 || filters.rm.includes(item.rm)) &&
             (filters.brand.length === 0 || filters.brand.includes(item.brand)) &&
             (filters.city.length === 0 || filters.city.includes(item.city))
         );
@@ -621,7 +621,7 @@ export default function App() {
                     bVal = (b.newPlan || b.fact) - b.fact;
                 } else if (sortConfig.key === 'growthRate') {
                     aVal = a.fact > 0 ? ((a.newPlan || a.fact) - a.fact) / a.fact : 0;
-                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - a.fact) / b.fact : 0;
+                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - b.fact) / b.fact : 0;
                 } else {
                     aVal = a[sortConfig.key] ?? -Infinity;
                     bVal = b[sortConfig.key] ?? -Infinity;

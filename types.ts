@@ -53,7 +53,7 @@ export interface FilterOptions {
 }
 
 export interface FilterState {
-    rm: string;
+    rm: string[];
     brand: string[];
     city: string[];
 }

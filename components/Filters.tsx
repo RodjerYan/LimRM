@@ -1,99 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FilterOptions, FilterState } from '../types';
 
-// Single-select component for RM
-const FilterSelect: React.FC<{
-    label: string;
-    value: string;
-    options: string[];
-    onChange: (value: string) => void;
-}> = ({ label, value, options, onChange }) => {
-    const [inputValue, setInputValue] = useState(value);
-    const [isOpen, setIsOpen] = useState(false);
-    const wrapperRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!isOpen) {
-            setInputValue(value);
-        }
-    }, [value, isOpen]);
-
-    useEffect(() => {
-        function handleClickOutside(event: MouseEvent) {
-            if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
-        }
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-        };
-    }, [wrapperRef]);
-
-    const filteredOptions = useMemo(() => {
-        if (!inputValue) return options;
-        return options.filter(opt => opt.toLowerCase().includes(inputValue.toLowerCase()));
-    }, [options, inputValue]);
-
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue(e.target.value);
-        if (!isOpen) setIsOpen(true);
-        if (e.target.value === '') {
-            onChange('');
-        }
-    };
-
-    const handleOptionClick = (optionValue: string) => {
-        onChange(optionValue);
-        setInputValue(optionValue);
-        setIsOpen(false);
-    };
-
-    return (
-        <div className="relative" ref={wrapperRef}>
-            <label className="block text-sm font-medium text-gray-300 mb-1">{label}</label>
-            <div className="relative">
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={handleInputChange}
-                    onFocus={() => setIsOpen(true)}
-                    placeholder={`Поиск и выбор (${label})...`}
-                    className="w-full p-2.5 bg-gray-900/50 border border-border-color rounded-lg focus:ring-2 focus:ring-accent-focus focus:border-accent text-white placeholder-gray-500 transition"
-                />
-                 <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                     <svg className="w-5 h-5 text-gray-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                        <path fillRule="evenodd" d="M10 3a1 1 0 01.707.293l3 3a1 1 0 01-1.414 1.414L10 5.414 7.707 7.707a1 1 0 01-1.414-1.414l3-3A1 1 0 0110 3zm-3.707 9.293a1 1 0 011.414 0L10 14.586l2.293-2.293a1 1 0 011.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                </div>
-            </div>
-
-            {isOpen && (
-                <ul className="absolute z-50 w-full mt-1 bg-card-bg/95 backdrop-blur-md border border-border-color rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
-                    <li
-                        onClick={() => handleOptionClick('')}
-                        className="px-4 py-2 text-gray-300 cursor-pointer hover:bg-accent/20"
-                    >
-                        Все РМ
-                    </li>
-                    {filteredOptions.length > 0 ? filteredOptions.map(opt => (
-                        <li
-                            key={opt}
-                            onClick={() => handleOptionClick(opt)}
-                            className="px-4 py-2 text-white cursor-pointer hover:bg-accent/20"
-                        >
-                            {opt}
-                        </li>
-                    )) : (
-                         <li className="px-4 py-2 text-gray-500 italic">Ничего не найдено</li>
-                    )}
-                </ul>
-            )}
-        </div>
-    );
-};
-
-
 // NEW Multi-select component for Brand and City
 const MultiFilterSelect: React.FC<{
     label: string;
@@ -213,7 +120,7 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
                 Фильтры
             </h2>
             <fieldset disabled={disabled} className="space-y-4">
-                <FilterSelect label="РМ" value={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
+                <MultiFilterSelect label="РМ" selectedOptions={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
                 <MultiFilterSelect label="Бренд" selectedOptions={currentFilters.brand} options={options.brands} onChange={(val) => handleFilterUpdate('brand', val)} />
                 <MultiFilterSelect label="Регион" selectedOptions={currentFilters.city} options={options.cities} onChange={(val) => handleFilterUpdate('city', val)} />
                 
