@@ -1,18 +1,11 @@
 import { AggregatedDataRow } from "../types";
 import { formatLargeNumber } from "../utils/dataUtils";
 
+const POLLING_INTERVAL = 1500; // ms
+const MAX_POLLING_ATTEMPTS = 40; // 1500ms * 40 = 60 seconds timeout
+
 /**
- * Generates an AI-powered summary for a given data row by making a direct,
- * synchronous call to the backend proxy.
- *
- * This function was refactored to eliminate the use of the stateful, polling-based
- * `/api/gemini-task` endpoint, which is incompatible with a stateless serverless
- * environment and was the root cause of 404 errors. It now uses the robust
- * `/api/gemini-proxy` endpoint.
- *
- * The function remains an async generator to provide a "typing" effect on the
- * client-side for a better user experience, yielding the complete response
- * from the AI in small chunks.
+ * Generates an AI-powered summary for a given data row using an async task queue.
  *
  * @param data The aggregated data row for which to generate the summary.
  * @returns An async generator that yields the summary text in chunks.
@@ -44,37 +37,67 @@ export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGe
     Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
     `;
 
+    let taskId: string;
+
     try {
-        const response = await fetch('/api/gemini-proxy', {
+        const initialResponse = await fetch('/api/gemini-task', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: prompt,
-            }),
+            body: JSON.stringify({ prompt }),
         });
 
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: 'Не удалось прочитать ответ сервера.' }));
-            const errorMessage = errorData.details || errorData.error || `Сервер ответил со статусом ${response.status}`;
-            yield `### Ошибка AI-Аналитика\n\nНе удалось получить аналитическую справку. ${errorMessage}`;
-            return;
-        }
-
-        const fullText = await response.text();
-
-        if (!fullText.trim()) {
-            yield "### Ошибка\n\nМодель вернула пустой ответ. Попробуйте снова.";
-            return;
+        if (!initialResponse.ok) {
+            const errorData = await initialResponse.json().catch(() => ({ error: 'Не удалось создать задачу.' }));
+            throw new Error(errorData.error || `Сервер ответил со статусом ${initialResponse.status}`);
         }
         
-        // Simulate "typing" effect on the client side
-        const chunkSize = 15;
-        for (let i = 0; i < fullText.length; i += chunkSize) {
-            yield fullText.substring(i, i + chunkSize);
-            await new Promise(r => setTimeout(r, 20)); // Small delay for typing effect
+        const { taskId: newTaskId } = await initialResponse.json();
+        if (!newTaskId) {
+            throw new Error("Не удалось получить ID задачи от сервера.");
         }
+        taskId = newTaskId;
 
-    } catch (err: any) {
-        yield `### Критическая ошибка\n\nНе удалось подключиться к сервису аналитики. Проверьте ваше интернет-соединение или настройки прокси. Ошибка: ${err.message}`;
+    } catch (error: any) {
+        yield `### Критическая ошибка\n\nНе удалось запустить задачу аналитики. Проверьте ваше интернет-соединение или настройки прокси. Ошибка: ${error.message}`;
+        return;
     }
+
+    // Polling for the result
+    for (let i = 0; i < MAX_POLLING_ATTEMPTS; i++) {
+        await new Promise(r => setTimeout(r, POLLING_INTERVAL));
+
+        try {
+            const statusResponse = await fetch(`/api/gemini-task?taskId=${taskId}`);
+            if (!statusResponse.ok) {
+                if (statusResponse.status === 404) {
+                    throw new Error("Задача не найдена на сервере. Возможно, сервер был перезапущен.");
+                }
+                const errorData = await statusResponse.json().catch(() => ({ error: 'Не удалось проверить статус задачи.' }));
+                throw new Error(errorData.error || `Ошибка при проверке статуса: ${statusResponse.status}`);
+            }
+
+            const taskStatus = await statusResponse.json();
+
+            if (taskStatus.status === 'done') {
+                const fullText = taskStatus.result || "";
+                 // Simulate "typing" effect on the client side
+                const chunkSize = 15;
+                for (let i = 0; i < fullText.length; i += chunkSize) {
+                    yield fullText.substring(i, i + chunkSize);
+                    await new Promise(r => setTimeout(r, 20)); // Small delay for typing effect
+                }
+                return; // Success
+            }
+
+            if (taskStatus.status === 'error') {
+                throw new Error(taskStatus.error || 'Неизвестная ошибка при обработке задачи.');
+            }
+            // If status is 'pending', continue polling
+        } catch (error: any) {
+            yield `### Ошибка AI-Аналитика\n\nНе удалось получить результат анализа. ${error.message}`;
+            return;
+        }
+    }
+
+    yield `### Ошибка: Превышено время ожидания\n\nАналитический сервис не ответил в течение ${MAX_POLLING_ATTEMPTS * POLLING_INTERVAL / 1000} секунд. Попробуйте снова.`;
 }
