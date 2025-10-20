@@ -8,7 +8,7 @@ interface PlanningModuleProps {
     data: AggregatedDataRow[];
 }
 
-const BASE_PLAN_INCREASE = 15; // Базовый % повышения плана
+const BASE_PLAN_INCREASE = 15; // Базовый годовой ориентир по росту
 
 const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[] => {
     const rmData = new Map<string, { fact: number, potential: number, growth: number }>();
@@ -24,24 +24,29 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
     const analysisResults: RMPerformanceAnalysis[] = [];
     
     rmData.forEach((metrics, rmName) => {
-        const realizationRate = metrics.potential > 0 ? (metrics.fact / metrics.potential) * 100 : 100;
+        if (metrics.potential <= 0) return; // Исключаем РМ без данных о потенциале
+
+        const realizationRate = (metrics.fact / metrics.potential) * 100;
 
         let category: RMPerformanceAnalysis['category'];
         let recommendedIncrease: number;
         let justification: string;
 
-        if (realizationRate > 70) {
-            category = 'Звезда';
-            recommendedIncrease = BASE_PLAN_INCREASE + 2.5; // Небольшой бонус за удержание
-            justification = `Высокая эффективность на освоенном рынке (${realizationRate.toFixed(0)}%). Основная задача — удержание лидерских позиций и точечный рост.`;
-        } else if (realizationRate > 30) {
-            category = 'Рабочая лошадка';
-            recommendedIncrease = BASE_PLAN_INCREASE + 5.0; // Максимальный бонус за потенциал
-            justification = `Стабильный результат (${realizationRate.toFixed(0)}%) и высокий потенциал для роста. Рекомендуется агрессивная экспансия на неохваченных территориях.`;
+        if (realizationRate > 75) {
+            category = 'Лидер рынка';
+            // Цель ниже базовой, т.к. рынок почти освоен. Рост сложный.
+            recommendedIncrease = Math.max(5, BASE_PLAN_INCREASE - (realizationRate - 75) / 4); 
+            justification = `Высочайшая эффективность на зрелом рынке (${realizationRate.toFixed(0)}%). Цель скорректирована для удержания доли и органического роста в сложных условиях.`;
+        } else if (realizationRate > 35) {
+            category = 'Стабильный рост';
+            // Цель близка к базовой. Есть баланс между текущими продажами и потенциалом.
+            recommendedIncrease = BASE_PLAN_INCREASE;
+            justification = `Хороший баланс между освоенной долей (${realizationRate.toFixed(0)}%) и потенциалом. Стандартная цель в ${BASE_PLAN_INCREASE}% является достижимой при планомерной работе.`;
         } else {
-            category = 'Зона Роста';
-            recommendedIncrease = BASE_PLAN_INCREASE + 3.5; // Амбициозный, но достижимый рост
-            justification = `Огромный неиспользованный потенциал рынка (${(100 - realizationRate).toFixed(0)}% свободно). Фокус на агрессивном наборе клиентской базы.`;
+            category = 'Высокий потенциал';
+            // Цель выше базовой, т.к. есть огромный неосвоенный рынок.
+            recommendedIncrease = BASE_PLAN_INCREASE + (100 - realizationRate) / 10;
+            justification = `Огромный неосвоенный потенциал (${(100 - realizationRate).toFixed(0)}% свободно). Повышенная цель отражает возможность взрывного роста за счет активного захвата рынка.`;
         }
         
         analysisResults.push({
@@ -49,7 +54,8 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
             ...metrics,
             realizationRate,
             category,
-            recommendedIncrease,
+            // Округляем до одного знака после запятой для аккуратности
+            recommendedIncrease: parseFloat(recommendedIncrease.toFixed(1)),
             justification
         });
     });
@@ -60,12 +66,14 @@ const analyzeRMPerformance = (data: AggregatedDataRow[]): RMPerformanceAnalysis[
 
 const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysis }) => {
     const categoryStyles = {
-        'Звезда': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30', icon: <StarIcon /> },
-        'Рабочая лошадка': { bg: 'bg-sky-500/10', text: 'text-sky-400', border: 'border-sky-500/30', icon: <BriefcaseIcon /> },
-        'Зона Роста': { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/30', icon: <RocketIcon /> }
+        'Лидер рынка': { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/30', icon: <StarIcon /> },
+        'Стабильный рост': { bg: 'bg-sky-500/10', text: 'text-sky-400', border: 'border-sky-500/30', icon: <BriefcaseIcon /> },
+        'Высокий потенциал': { bg: 'bg-green-500/10', text: 'text-green-400', border: 'border-green-500/30', icon: <RocketIcon /> }
     };
 
     const styles = categoryStyles[analysis.category];
+    const isPlanIncreased = analysis.recommendedIncrease > BASE_PLAN_INCREASE;
+    const isPlanDecreased = analysis.recommendedIncrease < BASE_PLAN_INCREASE;
 
     return (
         <div className={`p-4 rounded-lg border ${styles.border} ${styles.bg} flex flex-col md:flex-row gap-4`}>
@@ -83,8 +91,12 @@ const RMAnalysisCard: React.FC<{ analysis: RMPerformanceAnalysis }> = ({ analysi
                 
                 <div className="my-4">
                     <p className="text-gray-400 text-sm">Рекомендуемый рост плана:</p>
-                    <p className="text-4xl font-bold text-white my-1">{formatPercentage(analysis.recommendedIncrease)}</p>
-                    <p className="text-xs text-gray-500">Базовый план {BASE_PLAN_INCREASE}% + персональная надбавка</p>
+                    <p className="text-4xl font-bold text-white my-1 flex items-center gap-2">
+                        {formatPercentage(analysis.recommendedIncrease)}
+                        {isPlanIncreased && <span className="text-xs font-semibold bg-green-500/20 text-success px-2 py-1 rounded-full">ПОВЫШЕН</span>}
+                        {isPlanDecreased && <span className="text-xs font-semibold bg-amber-500/20 text-warning px-2 py-1 rounded-full">СКОРРЕКТИРОВАН</span>}
+                    </p>
+                    <p className="text-xs text-gray-500">Ориентир компании: {BASE_PLAN_INCREASE}%</p>
                 </div>
 
                 <div className="bg-gray-900/40 p-3 rounded-md">
@@ -127,7 +139,7 @@ const PlanningModule: React.FC<PlanningModuleProps> = ({ data }) => {
                 ))}
             </div>
              <div className="text-xs text-gray-600 pt-4 border-t border-gray-700 mt-6">
-                <p><strong>Как это работает:</strong> Система анализирует освоение рынка (Факт/Потенциал) для каждого РМ и предлагает индивидуальную цель роста, добавляя бонус к базовому плану ({BASE_PLAN_INCREASE}%) в зависимости от потенциала и текущей эффективности.</p>
+                <p><strong>Как это работает:</strong> Система анализирует освоение рынка (Факт/Потенциал) для каждого РМ и предлагает индивидуальную цель роста, адаптируя базовый ориентир ({BASE_PLAN_INCREASE}%) в зависимости от потенциала и текущей эффективности.</p>
             </div>
         </div>
     );

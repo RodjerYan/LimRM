@@ -67,7 +67,7 @@ export interface RMPerformanceAnalysis {
   potential: number;
   growth: number;
   realizationRate: number;
-  category: 'Звезда' | 'Рабочая лошадка' | 'Зона Роста';
+  category: 'Лидер рынка' | 'Стабильный рост' | 'Высокий потенциал';
   recommendedIncrease: number;
   justification: string;
 }

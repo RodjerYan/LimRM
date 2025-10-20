@@ -1,6 +1,3 @@
-// FIX: Add reference to vite/client to resolve TypeScript error for `import.meta.env`.
-/// <reference types="vite/client" />
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import FileUpload from './components/FileUpload';
 import Filters from './components/Filters';
