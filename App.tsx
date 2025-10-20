@@ -1,4 +1,5 @@
 
+
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -365,6 +366,14 @@ export default function App() {
 
     const workerRef = useRef<Worker | null>(null);
 
+    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
+        const id = Date.now();
+        setNotifications(prev => [...prev, { id, message, type }]);
+        setTimeout(() => {
+            setNotifications(prev => prev.filter(n => n.id !== id));
+        }, 4000);
+    }, []);
+
     useEffect(() => {
         try {
             localStorage.setItem('geoAnalysisFilters', JSON.stringify(filters));
@@ -387,8 +396,6 @@ export default function App() {
             setDataWithPlan([]);
             return;
         }
-
-        setLoadingState(prev => ({ ...prev, status: 'aggregating', text: 'Расчет новых планов...', progress: 98 }));
 
         // --- PRE-COMPUTATION ---
         const rmTotals = new Map<string, { fact: number }>();
@@ -467,17 +474,21 @@ export default function App() {
         });
 
         setDataWithPlan(calculatedData);
-    }, [baseAggregatedData, baseIncreasePercent]);
+
+        // Final state update after all calculations are complete.
+        setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
+        addNotification('Анализ рынка и расчет планов завершен!', 'success');
+
+        const resetTimer = setTimeout(() => {
+            setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
+        }, 3000);
+
+        // Cleanup the timer if the component unmounts or if the effect re-runs.
+        return () => clearTimeout(resetTimer);
+
+    }, [baseAggregatedData, baseIncreasePercent, addNotification]);
 
 
-    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
-        const id = Date.now();
-        setNotifications(prev => [...prev, { id, message, type }]);
-        setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 4000);
-    }, []);
-    
     const cleanupWorker = () => {
         if (workerRef.current) {
             workerRef.current.terminate();
@@ -510,12 +521,8 @@ export default function App() {
                 if (type === 'progress') {
                     setLoadingState(payload);
                 } else if (type === 'result') {
-                    setBaseAggregatedData(payload); // This will trigger the calculation useEffect
-                    setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-                    addNotification('Анализ рынка и расчет планов завершен!', 'success');
-                    setTimeout(() => {
-                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
-                    }, 3000);
+                    setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет новых планов...', etr: '' });
+                    setBaseAggregatedData(payload); // This triggers the plan calculation useEffect
                     cleanupWorker();
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
@@ -608,7 +615,7 @@ export default function App() {
                     bVal = (b.newPlan || b.fact) - b.fact;
                 } else if (sortConfig.key === 'growthRate') {
                     aVal = a.fact > 0 ? ((a.newPlan || a.fact) - a.fact) / a.fact : 0;
-                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - b.fact) / b.fact : 0;
+                    bVal = b.fact > 0 ? ((b.newPlan || b.fact) - a.fact) / b.fact : 0;
                 } else {
                     aVal = a[sortConfig.key] ?? -Infinity;
                     bVal = b[sortConfig.key] ?? -Infinity;
