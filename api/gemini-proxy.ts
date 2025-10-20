@@ -78,9 +78,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log(`${colors.blue}🚀 Попытка #${attempts}${colors.reset} — ${colors.gray}ключ ...${shortKey}${colors.reset}`);
 
     try {
-      // Явно указываем глобальный эндпоинт для стабильности
-      // FIX: The 'clientOptions' property is not a valid property for GoogleGenAIOptions.
-      // The SDK uses the correct endpoint by default, so this is not needed.
       const ai = new GoogleGenAI({ 
         apiKey
       });

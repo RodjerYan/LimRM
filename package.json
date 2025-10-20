@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Advanced tool for sales planning and market potential analysis for Limkorm.",
   "scripts": {
-    "dev": "vercel dev",
+    "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },

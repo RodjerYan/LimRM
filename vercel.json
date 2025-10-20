@@ -7,14 +7,12 @@
     },
     {
       "src": "api/**/*.ts",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "maxDuration": 58
+      }
     }
   ],
-  "functions": {
-    "api/*.ts": {
-      "maxDuration": 58
-    }
-  },
   "routes": [
     {
       "src": "/api/(.*)",

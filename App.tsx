@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig, GeminiAnalysisResult } from './types';
-import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
-import { parseFile } from './services/fileParser';
+import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig, GeminiAnalysisResult, RawDataRow } from './types';
+import { calculateMetrics } from './utils/dataUtils';
 import { getGeminiSalesAnalysis } from './services/aiService';
-import FileUpload from './components/FileUpload';
+import ExcelAnalysisController from './components/ExcelAnalysisController';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import PotentialChart from './components/PotentialChart';
@@ -13,11 +12,9 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import ChoroplethMap from './components/ChoroplethMap';
 import InsightCard from './components/InsightCard';
 import AiAssistant from './components/AiAssistant';
+import Papa from 'papaparse';
 
 
-// FIX: Augment the global ImportMetaEnv interface to correctly define Vite environment variables.
-// This resolves the "Subsequent property declarations must have the same type" error by
-// augmenting the existing `ImportMetaEnv` type instead of re-declaring `import.meta.env`.
 declare global {
   interface ImportMetaEnv {
     readonly VITE_GEMINI_API_KEY: string;
@@ -35,8 +32,6 @@ export default function App() {
     if (!clientApiKey || !import.meta.env.VITE_OSM_PROXY_URL || !import.meta.env.VITE_GEMINI_PROXY_URL) {
         return <ApiKeyErrorDisplay errorType="missing" />;
     }
-    // NEW: Add a specific check to prevent a common user error where the actual API key
-    // is placed in the client-side variable, which is both a security risk and incorrect.
     if (clientApiKey.startsWith('AIza')) {
         return <ApiKeyErrorDisplay errorType="swapped" />;
     }
@@ -47,21 +42,8 @@ export default function App() {
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [geminiAnalysis, setGeminiAnalysis] = useState<{ loading: boolean; data?: GeminiAnalysisResult | null; error?: string | null; }>({ loading: false, data: null, error: null });
     
-    const [filters, setFilters] = useState<FilterState>(() => {
-        try {
-            const savedFilters = localStorage.getItem('geoAnalysisFilters');
-            const parsed = savedFilters ? JSON.parse(savedFilters) : null;
-            return {
-                rm: Array.isArray(parsed?.rm) ? parsed.rm : [],
-                brand: Array.isArray(parsed?.brand) ? parsed.brand : [],
-                city: Array.isArray(parsed?.city) ? parsed.city : [],
-            };
-        } catch (error) {
-            console.error("Failed to parse filters from localStorage", error);
-            return { rm: [], brand: [], city: [] };
-        }
-    });
-    const [searchTerm, setSearchTerm] = useState<string>(() => localStorage.getItem('geoAnalysisSearchTerm') || '');
+    const [filters, setFilters] = useState<FilterState>({ rm: [], brand: [], city: [] });
+    const [searchTerm, setSearchTerm] = useState<string>('');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'growthPotential', direction: 'descending' });
     const [baseIncreasePercent, setBaseIncreasePercent] = useState<number>(15);
 
@@ -76,29 +58,11 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        try {
-            localStorage.setItem('geoAnalysisFilters', JSON.stringify(filters));
-        } catch (error) {
-            console.error("Could not save filters to localStorage", error);
-        }
-    }, [filters]);
-
-    useEffect(() => {
-        try {
-            localStorage.setItem('geoAnalysisSearchTerm', searchTerm);
-        } catch (error) {
-            console.error("Could not save search term to localStorage", error);
-        }
-    }, [searchTerm]);
-
-    // --- New Plan Calculation Effect ---
-    useEffect(() => {
         if (baseAggregatedData.length === 0) {
             setDataWithPlan([]);
             return;
         }
 
-        // --- Этап 1: Предварительный расчет общих сумм ---
         const rmTotals = new Map<string, { fact: number }>();
         const brandTotals = new Map<string, { fact: number }>();
         const rmBrandTotals = new Map<string, { fact: number }>();
@@ -116,7 +80,6 @@ export default function App() {
             brandRowCounts.set(row.brand, (brandRowCounts.get(row.brand) || 0) + 1);
         });
         
-        // --- Этап 2: Основной расчет нового плана для каждой строки ---
         const calculatedData = baseAggregatedData.map(row => {
             const { fact, rm, brand, activeTT, totalMarketTTs } = row;
             if (fact === 0) {
@@ -173,78 +136,67 @@ export default function App() {
     };
 
     useEffect(() => {
-        addNotification('Система готова! Пожалуйста, загрузите файл Excel/CSV.', 'success');
+        addNotification('Надстройка готова! Выделите данные и нажмите "Анализировать".', 'success');
         return () => cleanupWorker();
     }, [addNotification]);
     
-    const handleFileSelect = async (file: File) => {
+    const handleAnalysisStart = (rawJsonData: any[], csvString: string) => {
+        setGeminiAnalysis({ loading: true, data: null, error: null });
+        getGeminiSalesAnalysis(csvString)
+            .then(analysisResult => {
+                setGeminiAnalysis({ loading: false, data: analysisResult, error: null });
+                addNotification('AI-анализ продаж успешно завершен!', 'info');
+            })
+            .catch(error => {
+                const errorMessage = error.message || "Неизвестная ошибка AI-анализа";
+                setGeminiAnalysis({ loading: false, data: null, error: errorMessage });
+                addNotification(`Ошибка AI-анализа: ${errorMessage}`, 'error');
+            });
+    };
+
+    const handleDataProcessed = (result: { processedData: RawDataRow[], uniqueLocations: Set<string>, existingClientsByRegion: Record<string, string[]> }) => {
         cleanupWorker();
         setBaseAggregatedData([]);
         setDataWithPlan([]);
         setFilters({ rm: [], brand: [], city: [] });
         setSearchTerm('');
-        setGeminiAnalysis({ loading: false, data: null, error: null });
+        
+        setLoadingState({ status: 'reading', progress: 25, text: 'Структура корректна. Запускаю фоновый анализ...', etr: '' });
 
-        // Start Gemini Analysis (runs in parallel)
-        const runGeminiAnalysis = async (file: File) => {
-            setGeminiAnalysis({ loading: true, data: null, error: null });
-            try {
-                // Read file as text to get CSV data
-                const fileText = await new Promise<string>((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = (event) => resolve(event.target?.result as string);
-                    reader.onerror = (error) => reject(error);
-                    reader.readAsText(file);
-                });
-
-                const analysisResult = await getGeminiSalesAnalysis(fileText);
-                setGeminiAnalysis({ loading: false, data: analysisResult, error: null });
-                addNotification('AI-анализ продаж успешно завершен!', 'info');
-            } catch (error: any) {
-                const errorMessage = error.message || "Неизвестная ошибка AI-анализа";
-                setGeminiAnalysis({ loading: false, data: null, error: errorMessage });
-                addNotification(`Ошибка AI-анализа: ${errorMessage}`, 'error');
+        const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        workerRef.current = worker;
+        
+        worker.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
+            const { type, payload } = e.data;
+            if (type === 'progress') setLoadingState(payload);
+            else if (type === 'result') {
+                setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет планов...', etr: '' });
+                setBaseAggregatedData(payload);
+                cleanupWorker();
+            } else if (type === 'error') {
+                console.error("Error from worker:", payload);
+                addNotification('Ошибка: ' + payload, 'error');
+                setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + payload, etr: '' });
+                cleanupWorker();
             }
         };
-        runGeminiAnalysis(file);
-
-        // Start Worker-based Analysis
-        try {
-            setLoadingState({ status: 'reading', progress: 10, text: 'Анализ структуры файла...', etr: '' });
-            const { processedData, uniqueLocations, existingClientsByRegion } = await parseFile(file);
-            setLoadingState(prev => ({ ...prev, progress: 25, text: 'Структура файла корректна. Запускаю фоновый анализ...' }));
-
-            const worker = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
-            workerRef.current = worker;
-            
-            worker.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
-                const { type, payload } = e.data;
-                if (type === 'progress') setLoadingState(payload);
-                else if (type === 'result') {
-                    setLoadingState({ status: 'aggregating', progress: 98, text: 'Завершение: Расчет новых планов...', etr: '' });
-                    setBaseAggregatedData(payload);
-                    cleanupWorker();
-                } else if (type === 'error') {
-                    console.error("Error from worker:", payload);
-                    addNotification('Ошибка: ' + payload, 'error');
-                    setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + payload, etr: '' });
-                    cleanupWorker();
-                }
-            };
-            worker.onerror = (e) => {
-                 console.error("Unhandled worker error:", e);
-                 const errorMessage = "Критическая ошибка в фоновом обработчике.";
-                 addNotification('Ошибка: ' + errorMessage, 'error');
-                 setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
-                 cleanupWorker();
-            };
-            worker.postMessage({ processedData, uniqueLocations: Array.from(uniqueLocations), existingClientsByRegion });
-        } catch(error) {
-            console.error("Failed to parse file or start worker:", error);
-            const errorMessage = error instanceof Error ? error.message : "Неизвестная ошибка при обработке файла.";
-            addNotification(errorMessage, 'error');
-            setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
-        }
+        worker.onerror = (e) => {
+             console.error("Unhandled worker error:", e);
+             const errorMessage = "Критическая ошибка в фоновом обработчике.";
+             addNotification('Ошибка: ' + errorMessage, 'error');
+             setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
+             cleanupWorker();
+        };
+        worker.postMessage({ 
+            processedData: result.processedData, 
+            uniqueLocations: Array.from(result.uniqueLocations), 
+            existingClientsByRegion: result.existingClientsByRegion 
+        });
+    };
+    
+    const handleAnalysisError = (error: Error) => {
+        addNotification(error.message, 'error');
+        setLoadingState({ status: 'error', progress: 0, text: error.message, etr: '' });
     };
 
     const handleFilterChange = useCallback((newFilters: FilterState) => setFilters(newFilters), []);
@@ -262,20 +214,11 @@ export default function App() {
 
     const filterOptions = useMemo(() => {
         let availableData = baseAggregatedData;
-        let rmsData = availableData;
-        if (filters.brand.length > 0) rmsData = rmsData.filter(d => filters.brand.includes(d.brand));
-        if (filters.city.length > 0) rmsData = rmsData.filter(d => filters.city.includes(d.city));
-        const rms = [...new Set(rmsData.map(d => d.rm))].sort();
-        let brandsData = availableData;
-        if (filters.rm.length > 0) brandsData = brandsData.filter(d => filters.rm.includes(d.rm));
-        if (filters.city.length > 0) brandsData = brandsData.filter(d => filters.city.includes(d.city));
-        const brands = [...new Set(brandsData.map(d => d.brand))].sort();
-        let citiesData = availableData;
-        if (filters.rm.length > 0) citiesData = citiesData.filter(d => filters.rm.includes(d.rm));
-        if (filters.brand.length > 0) citiesData = citiesData.filter(d => filters.brand.includes(d.brand));
-        const cities = [...new Set(citiesData.map(d => d.city))].sort();
+        const rms = [...new Set(availableData.map(d => d.rm))].sort();
+        const brands = [...new Set(availableData.map(d => d.brand))].sort();
+        const cities = [...new Set(availableData.map(d => d.city))].sort();
         return { rms, brands, cities };
-    }, [baseAggregatedData, filters]);
+    }, [baseAggregatedData]);
     
     const handleRegionClick = useCallback((regionName: string) => {
         setFilters(prevFilters => {
@@ -336,57 +279,55 @@ export default function App() {
         filteredAndSortedData.forEach(item => { item.activeAddresses?.forEach(address => uniqueAddresses.add(address)); });
         return uniqueAddresses.size;
     }, [filteredAndSortedData]);
+    
+    const isBusy = loadingState.status !== 'idle' && loadingState.status !== 'done' && loadingState.status !== 'error';
 
     return (
-        <div className="container mx-auto p-4 sm:p-6 lg:p-8 min-h-screen">
-            <header className="mb-8 md:mb-12">
-                <div>
-                    <h1 className="text-3xl md:text-4xl font-extrabold text-white tracking-tight">
-                        Limkorm <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-hover">Analytics</span>
-                    </h1>
-                    <p className="text-gray-400 text-sm md:text-base mt-1">
-                        Инструмент для планирования продаж и анализа рыночного потенциала
-                    </p>
-                </div>
+        <div className="flex flex-col gap-6 p-2 sm:p-4">
+            <header>
+                <h1 className="text-2xl font-extrabold text-white tracking-tight">
+                    Limkorm <span className="text-transparent bg-clip-text bg-gradient-to-r from-accent to-accent-hover">AI</span>
+                </h1>
             </header>
 
             <div id="notification-area" className="fixed top-4 right-4 z-[100] space-y-2 w-full max-w-sm">
                 {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
             </div>
 
-            <main className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <aside className="lg:col-span-3 space-y-6">
-                    <FileUpload onFileSelect={handleFileSelect} loadingState={loadingState} />
-                    <Filters 
-                        options={filterOptions}
-                        currentFilters={filters}
-                        onFilterChange={handleFilterChange}
-                        onReset={resetFilters}
-                        disabled={baseAggregatedData.length === 0}
-                    />
-                    {baseAggregatedData.length > 0 && (
-                        <>
-                            <InsightCard analysisState={geminiAnalysis} />
-                            <AiAssistant dataContext={filteredAndSortedData} />
-                        </>
-                    )}
-                    <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} totalActiveTTs={totalActiveTTs} />
-                </aside>
-
-                <div className="lg:col-span-9 space-y-6">
-                    <PotentialChart data={filteredByDropdownsData} />
-                    <ChoroplethMap data={filteredByDropdownsData} onRegionClick={handleRegionClick} selectedRegions={filters.city} />
-                    <ResultsTable 
-                        data={filteredAndSortedData} 
-                        isLoading={loadingState.status !== 'idle' && loadingState.status !== 'done'}
-                        sortConfig={sortConfig}
-                        requestSort={requestSort}
-                        searchTerm={searchTerm}
-                        onSearchChange={setSearchTerm}
-                        baseIncreasePercent={baseIncreasePercent}
-                        onBaseIncreaseChange={handleBaseIncreaseChange}
-                    />
-                </div>
+            <main className="flex flex-col gap-6">
+                <ExcelAnalysisController 
+                    onAnalysisStart={handleAnalysisStart}
+                    onDataProcessed={handleDataProcessed}
+                    onAnalysisError={handleAnalysisError}
+                    isBusy={isBusy}
+                />
+                
+                {dataWithPlan.length > 0 && (
+                    <>
+                        <Filters 
+                            options={filterOptions}
+                            currentFilters={filters}
+                            onFilterChange={handleFilterChange}
+                            onReset={resetFilters}
+                            disabled={baseAggregatedData.length === 0}
+                        />
+                        <InsightCard analysisState={geminiAnalysis} />
+                        <AiAssistant dataContext={filteredAndSortedData} />
+                        <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} totalActiveTTs={totalActiveTTs} />
+                        <PotentialChart data={filteredByDropdownsData} />
+                        <ChoroplethMap data={filteredByDropdownsData} onRegionClick={handleRegionClick} selectedRegions={filters.city} />
+                        <ResultsTable 
+                            data={filteredAndSortedData} 
+                            isLoading={isBusy}
+                            sortConfig={sortConfig}
+                            requestSort={requestSort}
+                            searchTerm={searchTerm}
+                            onSearchChange={setSearchTerm}
+                            baseIncreasePercent={baseIncreasePercent}
+                            onBaseIncreaseChange={handleBaseIncreaseChange}
+                        />
+                    </>
+                )}
             </main>
         </div>
     );
