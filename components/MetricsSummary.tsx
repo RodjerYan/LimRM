@@ -1,7 +1,7 @@
 import React from 'react';
 import { Metrics } from '../types';
 import { formatLargeNumber } from '../utils/dataUtils';
-import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon } from './icons';
+import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CurrencyRubleIcon } from './icons';
 
 interface MetricsSummaryProps {
     metrics: Metrics;
@@ -30,11 +30,14 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, totalPotential
             </h2>
             <div className="grid grid-cols-2 gap-3">
                 <MetricItem label="Общий Факт" value={formatLargeNumber(metrics.totalFact)} color="text-success" icon={<FactIcon small />} />
-                <MetricItem label="Суммарный Новый План" value={formatLargeNumber(metrics.totalNewPlan)} color="text-purple-400" icon={<TargetIcon small />} />
+                <MetricItem label="Общая Сумма" value={`${formatLargeNumber(metrics.totalAmount)} ₽`} color="text-cyan-400" icon={<CurrencyRubleIcon small />} />
                 <MetricItem label="Общий Потенциал" value={formatLargeNumber(metrics.totalPotential)} color="text-blue-400" icon={<PotentialIcon small />} />
                 <MetricItem label="Потенциал Роста" value={formatLargeNumber(metrics.totalGrowthPotential)} color="text-warning" icon={<GrowthIcon small />} />
+                <MetricItem label="Суммарный Новый План" value={formatLargeNumber(metrics.totalNewPlan)} color="text-purple-400" icon={<TargetIcon small />} />
                 <MetricItem label="Общая Клиентская База" value={`${totalPotentialTTs} шт.`} color="text-teal-400" icon={<UsersIcon />} />
-                <MetricItem label="Средний Рост к Факту" value={`${metrics.totalGrowthRate.toFixed(2)}%`} color="text-danger" icon={<TrendingUpIcon />} />
+                <div className="col-span-2">
+                    <MetricItem label="Средний Рост к Факту" value={`${metrics.totalGrowthRate.toFixed(2)}%`} color="text-danger" icon={<TrendingUpIcon />} />
+                </div>
             </div>
              <p className="text-xs text-gray-500 mt-4">
                 Потенциал рассчитывается на основе открытых данных OpenStreetMap.
