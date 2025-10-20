@@ -1,21 +1,3 @@
-
-
-/*
----
-title: fix(worker): Refactor file parsing to prevent critical errors
-description: >
-  Overhauls the data processing pipeline to resolve a persistent 'Unhandled
-  worker error'. The root cause was the worker's dependency on `importScripts`
-  to fetch the XLSX library from a CDN, which could fail silently in certain
-  environments. The fix moves the file parsing logic (using XLSX) to the main
-  thread, ensuring the library is reliably available. The worker is now
-  dramatically simplified: it no longer parses files but receives pre-parsed
-  JSON data. Its sole responsibility is to perform the long-running Gemini API
-  calls, thus preventing UI blocking without the risk of script-loading
-  failures.
----
-*/
-// FIX: Corrected React import for hooks
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, RawDataRow, SortConfig } from './types';
@@ -584,11 +566,40 @@ export default function App() {
     }, []);
 
     const filterOptions = useMemo(() => {
-        const rms = [...new Set(baseAggregatedData.map(d => d.rm))].sort();
-        const brands = [...new Set(baseAggregatedData.map(d => d.brand))].sort();
-        const cities = [...new Set(baseAggregatedData.map(d => d.city))].sort();
+        let availableData = baseAggregatedData;
+
+        // Фильтруем данные для получения доступных РМ
+        let rmsData = availableData;
+        if (filters.brand.length > 0) {
+            rmsData = rmsData.filter(d => filters.brand.includes(d.brand));
+        }
+        if (filters.city.length > 0) {
+            rmsData = rmsData.filter(d => filters.city.includes(d.city));
+        }
+        const rms = [...new Set(rmsData.map(d => d.rm))].sort();
+
+        // Фильтруем данные для получения доступных Брендов
+        let brandsData = availableData;
+        if (filters.rm.length > 0) {
+            brandsData = brandsData.filter(d => filters.rm.includes(d.rm));
+        }
+        if (filters.city.length > 0) {
+            brandsData = brandsData.filter(d => filters.city.includes(d.city));
+        }
+        const brands = [...new Set(brandsData.map(d => d.brand))].sort();
+
+        // Фильтруем данные для получения доступных Городов
+        let citiesData = availableData;
+        if (filters.rm.length > 0) {
+            citiesData = citiesData.filter(d => filters.rm.includes(d.rm));
+        }
+        if (filters.brand.length > 0) {
+            citiesData = citiesData.filter(d => filters.brand.includes(d.brand));
+        }
+        const cities = [...new Set(citiesData.map(d => d.city))].sort();
+
         return { rms, brands, cities };
-    }, [baseAggregatedData]);
+    }, [baseAggregatedData, filters]);
 
     const filteredAndSortedData = useMemo(() => {
         let processedData = dataWithPlan.filter(item => 
