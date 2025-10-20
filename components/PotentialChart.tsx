@@ -77,7 +77,8 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: { 
-                        legend: { labels: { color: '#e2e8f0', usePointStyle: true, boxWidth: 8 } },
+                        // FIX: Changed invalid Chart.js property 'boxPadding' to 'padding' to resolve type error.
+                        legend: { labels: { color: '#e2e8f0', usePointStyle: true, boxWidth: 8, padding: 10 } },
                         tooltip: {
                             mode: 'index',
                             intersect: false,
