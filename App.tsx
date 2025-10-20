@@ -1,5 +1,4 @@
 
-
 /*
 ---
 title: fix(worker): Refactor file parsing to prevent critical errors
@@ -231,7 +230,6 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
                     brand: ['бренд', 'brand', 'торговая марка'],
                     city: ['адрес тт limkorm', 'город', 'city', 'адрес поставки', 'адрес'],
                     fact: ['вес, кг', 'факт (кг/ед)', 'факт', 'fact', 'факт (кг)'],
-                    amount: ['сумма', 'сумма продаж', 'amount', 'sales', 'руб'],
                 };
 
                 const findHeaderKey = (headers: string[], aliases: string[]) => {
@@ -246,7 +244,6 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
                     brand: findHeaderKey(fileHeaders, HEADER_ALIASES.brand),
                     city: findHeaderKey(fileHeaders, HEADER_ALIASES.city),
                     fact: findHeaderKey(fileHeaders, HEADER_ALIASES.fact),
-                    amount: findHeaderKey(fileHeaders, HEADER_ALIASES.amount),
                 };
 
                 const requiredHeaders = { rm: "'РМ'", city: "'Адрес' или 'Город'", fact: "'Факт' или 'Вес, кг'" };
@@ -267,9 +264,6 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
                     const brand = String(row[headerMap.brand!] || 'Не указан').trim();
                     const factValue = String(row[headerMap.fact!] || '0').replace(',', '.');
                     const fact = parseFloat(factValue) || 0;
-                    
-                    const amountValue = headerMap.amount ? String(row[headerMap.amount] || '0').replace(/[^0-9,.]/g, '').replace(',', '.') : '0';
-                    const amount = parseFloat(amountValue) || 0;
                     
                     const fullAddress = String(row[headerMap.city!] || '').trim();
                     
@@ -312,7 +306,7 @@ const parseFileAndExtractData = (file: File): Promise<{ processedData: RawDataRo
                         if (fullAddress && !existingClientsByRegion[location].includes(fullAddress)) {
                             existingClientsByRegion[location].push(fullAddress);
                         }
-                         return { rm, brand, city: location, fact, amount, fullAddress };
+                         return { rm, brand, city: location, fact, fullAddress };
                     }
                     return null;
 
@@ -598,7 +592,6 @@ export default function App() {
                 item.city.toLowerCase().includes(lowercasedTerm) ||
                 String(item.potentialTTs).includes(lowercasedTerm) ||
                 formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.amount).toLowerCase().includes(lowercasedTerm) ||
                 formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
                 formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
                 (item.newPlan && formatLargeNumber(item.newPlan).toLowerCase().includes(lowercasedTerm)) ||

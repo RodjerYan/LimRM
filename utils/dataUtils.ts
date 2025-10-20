@@ -12,7 +12,6 @@ export function getUniqueFilterOptions(data: AggregatedDataRow[]): FilterOptions
 
 export function calculateMetrics(data: AggregatedDataRow[]): Metrics {
     const totalFact = data.reduce((sum, item) => sum + item.fact, 0);
-    const totalAmount = data.reduce((sum, item) => sum + item.amount, 0);
     const totalPotential = data.reduce((sum, item) => sum + item.potential, 0);
     const totalGrowthPotential = totalPotential - totalFact;
     const totalGrowthRate = totalFact > 0 ? (totalGrowthPotential / totalFact) * 100 : 0;
@@ -21,7 +20,7 @@ export function calculateMetrics(data: AggregatedDataRow[]): Metrics {
         ? data.reduce((sum, item) => sum + item.growthRate, 0) / data.length
         : 0;
 
-    return { totalFact, totalAmount, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease, totalNewPlan };
+    return { totalFact, totalPotential, totalGrowthPotential, totalGrowthRate, avgPlanIncrease, totalNewPlan };
 }
 
 export function formatLargeNumber(num: number): string {

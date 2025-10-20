@@ -14,7 +14,6 @@ interface ProcessedDataRow {
     brand: string;
     city: string; // This is now the region
     fact: number;
-    amount: number;
     fullAddress: string;
     potential?: number;
     growthPotential?: number;
@@ -97,7 +96,6 @@ function aggregateData(data: ProcessedDataRow[]) {
                 brand: item.brand,
                 city: item.city,
                 fact: 0,
-                amount: 0,
                 potential: 0,
                 growthPotential: 0,
                 growthRateSum: 0,
@@ -111,7 +109,6 @@ function aggregateData(data: ProcessedDataRow[]) {
         }
         const current = aggregationMap.get(key);
         current.fact += item.fact;
-        current.amount += item.amount;
         current.potential += item.potential;
         current.growthPotential += item.growthPotential;
         current.growthRateSum += item.growthRate;
@@ -132,7 +129,6 @@ function aggregateData(data: ProcessedDataRow[]) {
             brand: item.brand,
             city: item.city,
             fact: item.fact,
-            amount: item.amount,
             potential: item.potential,
             growthPotential: item.growthPotential,
             potentialTTs: item.potentialTTs,

@@ -4,7 +4,6 @@ export interface RawDataRow {
     fullAddress: string;
     city: string;
     fact: number;
-    amount: number;
 }
 
 export interface PotentialClient {
@@ -29,7 +28,6 @@ export interface AggregatedDataRow {
     brand: string;
     city: string;
     fact: number;
-    amount: number;
     potential: number;
     growthPotential: number;
     growthRate: number;
@@ -62,7 +60,6 @@ export interface FilterState {
 
 export interface Metrics {
     totalFact: number;
-    totalAmount: number;
     totalPotential: number;
     totalGrowthPotential: number;
     totalGrowthRate: number;

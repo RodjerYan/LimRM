@@ -5,7 +5,7 @@ import { formatLargeNumber } from '../utils/dataUtils';
 import { generateAiSummaryStream } from '../services/aiService';
 import Modal from './Modal';
 import InteractiveMap from './InteractiveMap';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, CopyIcon, CheckIcon, ExportIcon, CurrencyRubleIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, CopyIcon, CheckIcon, ExportIcon } from './icons';
 
 
 const CodeCopyButton: React.FC<{ code: string }> = ({ code }) => {
@@ -235,7 +235,7 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
         <Modal isOpen={isOpen} onClose={onClose} title={`Аналитический дашборд: ${data.city}`}>
             <div className="flex flex-col gap-4">
                 {/* TOP ROW: Header + Key Metrics */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-stretch">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
                     <div className="bg-gray-900/50 p-3 rounded-lg border border-gray-700 flex flex-col justify-center lg:col-span-1 md:col-span-2">
                         <h4 className="text-base font-semibold text-white truncate" title={data.rm}>
                             {data.rm}
@@ -248,12 +248,6 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
                         value={formatLargeNumber(data.fact)}
                         icon={<FactIcon />}
                         valueColor="text-green-400"
-                    />
-                    <MetricCard 
-                        title="Общая Сумма"
-                        value={`${formatLargeNumber(data.amount)} ₽`}
-                        icon={<CurrencyRubleIcon />}
-                        valueColor="text-cyan-400"
                     />
                     <MetricCard 
                         title="Прогнозный Потенциал"

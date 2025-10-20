@@ -20,15 +20,12 @@ const TableHeader: React.FC<{
     sortConfig: SortConfig;
     requestSort: (key: keyof AggregatedDataRow) => void;
 }> = ({ sortConfig, requestSort }) => {
-    const headers: { key: keyof AggregatedDataRow | null, label: string, align: 'text-left' | 'text-center' | 'text-right' }[] = [
+    const headers: { key: keyof AggregatedDataRow, label: string, align: 'text-left' | 'text-center' | 'text-right' }[] = [
         { key: 'rm', label: 'РМ', align: 'text-left' },
         { key: 'brand', label: 'Бренд', align: 'text-left' },
         { key: 'city', label: 'Регион', align: 'text-left' },
         { key: 'potentialTTs', label: 'ОКБ (шт)', align: 'text-center' },
         { key: 'fact', label: 'Факт (кг/ед)', align: 'text-right' },
-        { key: 'amount', label: 'Сумма (руб)', align: 'text-right' },
-        { key: null, label: 'Ср. чек (руб)', align: 'text-right' },
-        { key: null, label: 'Ср. факт/ТТ', align: 'text-right' },
         { key: 'newPlan', label: 'Новый План', align: 'text-right' },
         { key: 'growthPotential', label: 'Рост (кг/ед)', align: 'text-right' },
         { key: 'growthRate', label: 'Рост (%)', align: 'text-right' },
@@ -56,12 +53,12 @@ const TableHeader: React.FC<{
                 {headers.map(({ key, label, align }) => (
                     <th 
                         key={label} 
-                        className={`px-4 py-3 ${align} text-xs font-medium text-gray-300 uppercase tracking-wider select-none ${key ? 'cursor-pointer' : 'cursor-default'}`}
-                        onClick={() => key && requestSort(key)}
+                        className={`px-4 py-3 ${align} text-xs font-medium text-gray-300 uppercase tracking-wider select-none cursor-pointer`}
+                        onClick={() => requestSort(key)}
                     >
                         <div className={`flex items-center ${getJustifyClass(align)}`}>
                             <span>{label}</span>
-                            {key && <span className="ml-1.5 w-4 h-4">{getSortIcon(key)}</span>}
+                            <span className="ml-1.5 w-4 h-4">{getSortIcon(key)}</span>
                         </div>
                     </th>
                 ))}
@@ -74,9 +71,6 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
     const newPlanGrowthKg = item.newPlan && item.fact ? item.newPlan - item.fact : 0;
     const newPlanGrowthPercent = item.newPlan && item.fact > 0 ? (newPlanGrowthKg / item.fact) * 100 : 0;
 
-    const avgAmountPerTT = item.activeTT > 0 ? item.amount / item.activeTT : 0;
-    const avgFactPerTT = item.activeTT > 0 ? item.fact / item.activeTT : 0;
-
     return (
         <tr onClick={() => onRowClick(item)} className="hover:bg-gray-700/50 transition duration-150 cursor-pointer border-l-2 border-transparent hover:border-accent">
             <td className="px-4 py-3 text-sm font-medium text-white text-left">{item.rm}</td>
@@ -84,9 +78,6 @@ const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: Aggregate
             <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.city}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-300 font-mono">{item.potentialTTs}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.fact)}</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-cyan-300 text-right">{formatLargeNumber(item.amount)} ₽</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-400 text-right">{formatLargeNumber(avgAmountPerTT)} ₽</td>
-            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-400 text-right">{formatLargeNumber(avgFactPerTT)}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-purple-400 font-bold text-right">
                 {item.newPlan ? (
                     <div className="flex flex-col items-end leading-tight">
@@ -124,9 +115,6 @@ const SkeletonRow: React.FC = () => (
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
-        <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
-        <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
-        <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/2 ml-auto"></div></td>
         <td className="px-4 py-3"><div className="h-4 bg-gray-700/50 rounded w-1/4 ml-auto"></div></td>
     </tr>
 );
@@ -145,7 +133,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             activeTT: 'Активные ТТ (шт)',
             potentialTTs: 'Общая Клиентская База (ОКБ, шт.)',
             fact: 'Факт (кг/ед)',
-            amount: 'Сумма (руб)',
             newPlan: 'Новый План (кг/ед)',
             potential: 'Потенциал (кг/ед)',
             growthPotential: 'Потенциал Роста (кг/ед)',
@@ -159,7 +146,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             [headers.activeTT]: row.activeTT,
             [headers.potentialTTs]: row.potentialTTs,
             [headers.fact]: Number(row.fact.toFixed(2)),
-            [headers.amount]: Number(row.amount.toFixed(2)),
             [headers.newPlan]: row.newPlan ? Number(row.newPlan.toFixed(2)) : 0,
             [headers.potential]: Number(row.potential.toFixed(2)),
             [headers.growthPotential]: Number(row.growthPotential.toFixed(2)),
@@ -172,7 +158,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
 
         ws['!cols'] = [
             { wch: 30 }, { wch: 25 }, { wch: 25 }, { wch: 18 }, { wch: 35 },
-            { wch: 18 }, { wch: 20 }, { wch: 22 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
+            { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
         ];
 
         const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');

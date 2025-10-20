@@ -8,13 +8,11 @@ const normalizeHeader = (header: string): string => {
 };
 
 // Define all possible aliases for our required headers
-// FIX: Added 'amount' to satisfy the `Record<keyof Omit<RawDataRow, 'fullAddress'>, string[]>` type, resolving a type error.
 const HEADER_ALIASES: Record<keyof Omit<RawDataRow, 'fullAddress'>, string[]> = {
     rm: ['рм', 'региональный менеджер', 'rm', 'regional manager'],
     brand: ['бренд', 'brand', 'торговая марка'],
     city: ['город', 'city', 'адрес тт limkorm', 'адрес поставки', 'адрес'],
     fact: ['вес, кг', 'факт (кг/ед)', 'факт', 'fact', 'факт (кг)'],
-    amount: ['сумма', 'сумма продаж', 'amount', 'sales', 'руб'],
 };
 
 // This function finds the actual header name in the file (e.g., "Региональный менеджер")
@@ -45,15 +43,11 @@ export const parseFile = (file: File): Promise<RawDataRow[]> => {
                 brand: findHeaderKey(fileHeaders, HEADER_ALIASES.brand),
                 city: findHeaderKey(fileHeaders, HEADER_ALIASES.city),
                 fact: findHeaderKey(fileHeaders, HEADER_ALIASES.fact),
-                amount: findHeaderKey(fileHeaders, HEADER_ALIASES.amount),
             };
 
             const parsedData = json.map((row: any): RawDataRow | null => {
                 const factValue = headerMap.fact ? String(row[headerMap.fact] || '0').replace(',', '.') : '0';
                 const fact = parseFloat(factValue);
-                // FIX: Added parsing for the 'amount' field to ensure the returned object matches the RawDataRow type.
-                const amountValue = headerMap.amount ? String(row[headerMap.amount] || '0').replace(/[^0-9,.]/g, '').replace(',', '.') : '0';
-                const amount = parseFloat(amountValue) || 0;
                 const city = headerMap.city ? String(row[headerMap.city] || '').trim() : '';
                 const rm = headerMap.rm ? String(row[headerMap.rm] || '').trim() : '';
                 
@@ -67,7 +61,6 @@ export const parseFile = (file: File): Promise<RawDataRow[]> => {
                     fullAddress: city,
                     city,
                     fact,
-                    amount,
                 };
             }).filter((row): row is RawDataRow => row !== null && row.fact >= 0);
 
