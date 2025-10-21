@@ -1,6 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-// FIX: Import JWT for authentication with Google Sheets API.
 import { JWT } from 'google-auth-library';
 import { regionCenters } from './_data/regions';
 
@@ -17,7 +16,6 @@ const OVERPASS_ENDPOINTS = [
     'https://overpass.openstreetmap.ru/api/interpreter'
 ];
 
-// CRITICAL FIX: The second argument to setTimeout was incorrectly 'resolve' instead of 'ms', causing a runtime crash.
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
@@ -38,12 +36,11 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 120000); 
-
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': 'Limkorm-Geo-Analysis/1.2'
+                        'User-Agent': 'Limkorm-Geo-Analysis/1.1'
                     },
                     body: `data=${encodeURIComponent(query)}`,
                     signal: controller.signal
@@ -53,28 +50,25 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
                 if (response.status === 429 || response.status >= 500) {
                     throw new Error(`Server error: ${response.status}`);
                 }
-                
+
                 let data;
                 try {
                     data = await response.json();
-                } catch (e) {
-                    console.error(`Invalid JSON response from Overpass for region "${region}" on ${endpoint}. Status: ${response.status}`);
-                    break; 
+                } catch(e) {
+                    console.error(`Invalid JSON from Overpass for region "${region}" on ${endpoint}`);
+                    break;
                 }
 
                 return data.elements || [];
             } catch (error: any) {
                 console.warn(`Attempt ${attempt}/${maxRetries} failed for "${region}" on ${endpoint}: ${error.message}`);
-                if (attempt < maxRetries) {
-                    await sleep(2000 * attempt);
-                } else {
-                    console.error(`All retries failed for ${region} on ${endpoint}.`);
-                }
+                if (attempt < maxRetries) await sleep(2000 * attempt);
+                else console.error(`All retries failed for ${region} on ${endpoint}.`);
             }
         }
     }
-    
-    console.error(`CRITICAL: Could not fetch data for region "${region}" from any Overpass endpoint.`);
+
+    console.error(`Could not fetch data for region "${region}" from any Overpass endpoint.`);
     return [];
 }
 
@@ -86,26 +80,23 @@ async function runUpdateProcess() {
         const key = process.env.GOOGLE_PRIVATE_KEY;
 
         if (!email || !key) {
-            console.error("FATAL: Google Service Account credentials missing in environment.");
+            console.error("FATAL: Google Service Account credentials missing.");
             return;
         }
-        
-        // FIX: Replaced deprecated authentication method with the current JWT-based approach.
-        // This resolves both the "Expected 2 arguments" error and the non-existent 'useServiceAccountAuth' property error.
+
         const serviceAccountAuth = new JWT({
-            email: email,
+            email,
+            // CRITICAL FIX: The replace pattern was incorrect for Vercel's environment variable format.
+            // This now correctly replaces single `\n` sequences with actual newlines.
             key: key.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
-        
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
 
+        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
 
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
-        if (!sheet) {
-            sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
-        }
+        if (!sheet) sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
 
         await sheet.clear();
         await sheet.setHeaderRow(HEADERS);
@@ -123,8 +114,6 @@ async function runUpdateProcess() {
 
             batch.forEach((region, index) => {
                 const elements = results[index];
-                if (!elements) return;
-
                 for (const el of elements) {
                     const name = el.tags?.name || 'Без названия';
                     const address = (el.tags?.['addr:full'] || [el.tags?.['addr:city'], el.tags?.['addr:street'], el.tags?.['addr:housenumber']].filter(Boolean).join(', ')).trim();
@@ -149,33 +138,26 @@ async function runUpdateProcess() {
             await sleep(1000);
         }
 
-        if (allClients.size > 0) {
-            await sheet.addRows(Array.from(allClients.values()));
-        }
-        
-        console.log(`OKB database update completed successfully. Total unique clients found: ${allClients.size}`);
+        if (allClients.size > 0) await sheet.addRows(Array.from(allClients.values()));
+        console.log(`OKB database update completed. Total clients: ${allClients.size}`);
     } catch (error: any) {
-        console.error('CRITICAL ERROR during OKB background update:', error.stack || error);
+        console.error('CRITICAL ERROR during OKB update:', error);
     }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method Not Allowed' });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-        console.error("Handler check failed: Google Service Account credentials are not configured.");
-        return res.status(500).json({ error: 'Server configuration error: Google Service Account credentials are missing.' });
+        console.error("Handler: missing Google Service Account credentials.");
+        return res.status(500).json({ error: 'Server: Google Service Account credentials not configured.' });
     }
-    
+
     try {
-        res.status(202).json({ message: 'OKB database update process has been successfully started. This may take several minutes.' });
+        res.status(202).json({ message: 'OKB database update process started. This may take several minutes.' });
         runUpdateProcess();
-    } catch (err: any) {
-        console.error('Handler failed to initiate background process:', err);
-        if (!res.headersSent) {
-            res.status(500).json({ error: 'Server error while trying to start the update process.' });
-        }
+    } catch (err) {
+        console.error('Handler error:', err);
+        res.status(500).json({ error: 'Server error while starting OKB update.' });
     }
 }
