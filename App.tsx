@@ -1,15 +1,13 @@
 /*
 ---
-title: fix(geocoding): Implement region vs. capital differentiation in search logic
+title: fix(parser): Implement flexible header parsing with aliases
 description: >
-  Fundamentally overhauls the geocoding and data fetching logic within the
-  web worker to correctly differentiate between a region's capital city and the
-  region itself. The system now performs mutually exclusive searches: city-boundary
-  searches for capitals, and region-wide searches that explicitly EXCLUDE the
-  capital's area. This solves the core issue of duplicated client counts. The
-  location identification algorithm has also been enhanced to correctly aggregate
-  smaller towns into their parent region and is more robust against geocoding failures,
-  eliminating the zero-OKB issue.
+  Replaces the rigid file parsing logic in the web worker with a more robust,
+  alias-based system. The new parser can now recognize alternative but valid
+  column headers (e.g., 'Торговая марка' for 'Бренд', 'Адрес ТТ LimKorm' for 'Город',
+  and 'Вес, кг' for 'Факт (кг/ед)'). This resolves the core issue where user-provided
+  files with slightly different column names were being rejected, making the file
+  upload process significantly more user-friendly and resilient.
 ---
 */
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -362,18 +360,71 @@ const parseFileAndExtractData = (file) => {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const sheetName = workbook.SheetNames[0];
+                if (!sheetName) throw new Error("В файле .xlsx не найдено листов.");
+                
                 const worksheet = workbook.Sheets[sheetName];
                 const json = XLSX.utils.sheet_to_json(worksheet);
+                if (json.length === 0) throw new Error("Файл пуст или имеет неверный формат.");
+
+                // --- START Flexible Header Parsing ---
+                const normalizeHeader = (header) => String(header || '').toLowerCase().trim().replace(/\\s+/g, ' ');
+
+                const HEADER_ALIASES = {
+                    rm: ['рм', 'региональный менеджер'],
+                    brand: ['бренд', 'торговая марка'],
+                    city: ['город', 'адрес тт limkorm'],
+                    fact: ['факт (кг/ед)', 'факт', 'вес, кг', 'факт (кг)'],
+                };
+
+                const fileHeaders = Object.keys(json[0]);
+
+                const findHeaderKey = (aliases) => {
+                    for (const header of fileHeaders) {
+                        if (aliases.includes(normalizeHeader(header))) {
+                            return header; // Return original header name
+                        }
+                    }
+                    return null;
+                };
+
+                const headerMap = {
+                    rm: findHeaderKey(HEADER_ALIASES.rm),
+                    brand: findHeaderKey(HEADER_ALIASES.brand),
+                    city: findHeaderKey(HEADER_ALIASES.city),
+                    fact: findHeaderKey(HEADER_ALIASES.fact),
+                };
+                
+                const missingHeaders = Object.entries(headerMap)
+                    .filter(([key, value]) => !value)
+                    .map(([key]) => key);
+
+                if (missingHeaders.length > 0) {
+                    const missingRussian = missingHeaders.map(h => {
+                        if (h === 'rm') return "'РМ'/'Региональный менеджер'";
+                        if (h === 'brand') return "'Бренд'/'Торговая марка'";
+                        if (h === 'city') return "'Город'/'Адрес ТТ LimKorm'";
+                        if (h === 'fact') return "'Факт (кг/ед)'/'Вес, кг'";
+                        return h;
+                    }).join(', ');
+                    throw new Error(\`В файле отсутствуют обязательные столбцы: \${missingRussian}. Пожалуйста, проверьте названия столбцов.\`);
+                }
+                // --- END Flexible Header Parsing ---
+
                 const processedData = json.map((row) => {
-                    const brand = String(row['Бренд'] || '').trim();
-                    const fact = Number(String(row['Факт (кг/ед)'] || '0').replace(',', '.')) || 0;
-                    const fullAddress = String(row['Город'] || '').trim();
-                    const rm = String(row['РМ'] || '').trim();
+                    const brand = String(row[headerMap.brand] || '').trim();
+                    // Handle both comma and dot as decimal separators
+                    const factValue = String(row[headerMap.fact] || '0').replace(',', '.');
+                    const fact = parseFloat(factValue) || 0;
+                    const fullAddress = String(row[headerMap.city] || '').trim();
+                    const rm = String(row[headerMap.rm] || '').trim();
+                    
+                    if (!rm || !brand || !fullAddress) return null; // Skip rows with essential missing data
+
                     const queryInfo = determineQueryInfo(fullAddress);
                     return { rm, brand, fact, locationKey: queryInfo.locationKey, queryInfo };
-                }).filter(item => item.rm && item.locationKey !== 'Не определен' && item.brand);
+                }).filter(Boolean); // Filter out null items
 
-                if (processedData.length === 0) throw new Error("В файле не найдено корректных данных. Проверьте названия и содержимое столбцов: 'РМ', 'Бренд', 'Город', 'Факт (кг/ед)'.");
+                if (processedData.length === 0) throw new Error("В файле не найдено корректных строк с данными. Убедитесь, что столбцы 'РМ', 'Бренд' и 'Город'/'Адрес' заполнены для всех строк.");
                 resolve(processedData);
             } catch (error) {
                 console.error('File parsing error:', error);
