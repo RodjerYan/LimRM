@@ -7,17 +7,15 @@ const SHEET_NAME = 'Лист1';
 const getAuth = () => {
     const client_email = process.env.GOOGLE_CLIENT_EMAIL;
     const private_key = process.env.GOOGLE_PRIVATE_KEY;
+
     if (!client_email || !private_key) {
-        throw new Error('Google credentials environment variables (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY) are not set.');
+        throw new Error('Переменные окружения GOOGLE_CLIENT_EMAIL и GOOGLE_PRIVATE_KEY не установлены.');
     }
     
     return new JWT({
         email: client_email,
         key: private_key.replace(/\\n/g, '\n'),
-        scopes: [
-            'https://www.googleapis.com/auth/spreadsheets.readonly',
-            'https://www.googleapis.com/auth/drive.metadata.readonly'
-        ],
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
 };
 
@@ -29,67 +27,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
         if (!SPREADSHEET_ID) {
-            throw new Error("GOOGLE_SHEET_ID environment variable is not set.");
+            throw new Error("Переменная окружения GOOGLE_SHEET_ID не установлена.");
         }
 
         const serviceAccountAuth = getAuth();
-        
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        
         await doc.loadInfo();
-        let sheet = doc.sheetsByTitle[SHEET_NAME];
+        const sheet = doc.sheetsByTitle[SHEET_NAME];
         
-        // --- 2. Get modified time from Google Drive API ---
-        const tokenResponse = await serviceAccountAuth.getAccessToken();
-        const token = tokenResponse.token;
-        if (!token) {
-            throw new Error('Failed to retrieve access token for Google Drive API.');
-        }
-
-        const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${SPREADSHEET_ID}?fields=modifiedTime`;
-        const driveResponse = await fetch(driveApiUrl, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (!driveResponse.ok) {
-            const errorText = await driveResponse.text();
-            throw new Error(`Google Drive API error: ${driveResponse.status} ${errorText}`);
+        if (!sheet) {
+            console.warn(`Sheet "${SHEET_NAME}" not found in spreadsheet.`);
+            return res.status(404).json({ 
+                error: 'Лист с данными не найден.',
+                details: `В таблице Google отсутствует лист с названием "${SHEET_NAME}".`
+            });
         }
         
-        const fileMeta = await driveResponse.json();
-        const modifiedTime = fileMeta.modifiedTime;
-
-        // Per user suggestion: if sheet doesn't exist, or has 0/1 rows (header only), there are no data entries.
-        if (!sheet || !sheet.rowCount || sheet.rowCount < 2) {
-             res.setHeader('Cache-Control', 'no-cache');
-             return res.status(200).json({ rowCount: 0, modifiedTime });
+        // Строгая проверка наличия заголовков
+        await sheet.loadHeaderRow();
+        if (!sheet.headerValues || sheet.headerValues.length === 0) {
+            console.error('CRITICAL: Header row is missing in the Google Sheet.');
+            return res.status(500).json({ 
+                error: 'Ошибка конфигурации таблицы.',
+                details: 'В таблице отсутствуют обязательные заголовки. Пожалуйста, заполните первую строку названиями колонок.'
+            });
         }
-        
-        // Assuming rowCount > 1 implies a header row exists.
-        const rowCount = sheet.rowCount - 1;
+
+        const rows = await sheet.getRows();
+        const data = rows.map(row => row.toObject());
 
         res.setHeader('Cache-Control', 'no-cache');
-        res.status(200).json({ rowCount, modifiedTime });
+        res.status(200).json(data);
 
     } catch (error: any) {
         console.error('CRITICAL Error in get-okb-status:', error);
         
-        let details = 'Failed to fetch sheet status.';
-        // Check for specific Google API error structures
-        const googleError = error.response?.data?.error;
-        if (googleError) {
-            if (googleError.code === 404) {
-                details = `Google Sheet with the specified ID was not found. Please verify the GOOGLE_SHEET_ID environment variable.`;
-            } else if (googleError.code === 403) {
-                details = `Permission denied. The service account (${process.env.GOOGLE_CLIENT_EMAIL}) does not have 'Viewer' access to the Google Sheet.`;
-            } else {
-                details = `Google API Error: ${googleError.message}`;
-            }
-        } else if (error.message) {
-             details = error.message;
+        let details = 'Не удалось получить данные из таблицы.';
+        let statusCode = 500;
+        
+        const message = error.message || '';
+
+        if (message.includes('403')) {
+            statusCode = 403;
+            const serviceAccountEmail = process.env.GOOGLE_CLIENT_EMAIL || '[email не найден]';
+            details = `Доступ запрещен. У сервисного аккаунта ('${serviceAccountEmail}') нет прав на просмотр таблицы. Пожалуйста, поделитесь таблицей с этим email.`;
+        } else if (message.includes('404')) {
+            statusCode = 404;
+            details = `Таблица Google не найдена. Убедитесь, что переменная окружения GOOGLE_SHEET_ID указана верно.`;
+        } else if (message.includes('permission denied')) {
+            statusCode = 403;
+            const serviceAccountEmail = process.env.GOOGLE_CLIENT_EMAIL || '[email не найден]';
+            details = `Доступ запрещен. У сервисного аккаунта ('${serviceAccountEmail}') нет прав на просмотр таблицы.`;
         }
 
-        res.status(500).json({ 
-            error: 'Failed to fetch sheet status.', 
+        res.status(statusCode).json({ 
+            error: 'Не удалось получить данные из Google Sheets.', 
             details: details 
         });
     }
