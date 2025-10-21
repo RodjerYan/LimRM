@@ -130,9 +130,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sendProgress(res, 10, "Получение существующих записей для дедупликации...");
         const existingRows = await sheet.getRows();
         const existingEntries = new Set(
-            existingRows.map((row: GoogleSpreadsheetRow<Record<string, any>>) => 
-                `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
-            )
+            existingRows
+                // FIX: Add filter to address TS18047 build error. This ensures `row` cannot be null.
+                .filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => Boolean(row))
+                .map((row) => 
+                    `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
+                )
         );
         
         const allUniqueNewRows: any[] = [];
@@ -165,14 +168,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (allUniqueNewRows.length > 0) {
             sendProgress(res, 90, `Запись ${allUniqueNewRows.length} новых строк в таблицу...`);
             
-            // ИСПРАВЛЕНИЕ: Метод `addRows` может вернуть массив, содержащий null, что вызывает ошибку TypeScript
-            // при сборке, если результат используется. Мы отфильтровываем любые потенциальные null значения
-            // для обеспечения типобезопасности. Это решает ошибку TS18047.
-            const addedRows = await sheet.addRows(allUniqueNewRows);
-            const actualAdded = addedRows.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null);
+            // FIX: Refactor to use filter for safer handling and cleaner code, per user suggestion.
+            const addedRows = (await sheet.addRows(allUniqueNewRows))
+                 .filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => Boolean(row));
 
-            // Логируем фактическое количество добавленных строк для отладки
-            console.log(`Фактически добавлено ${actualAdded.length} из ${allUniqueNewRows.length} новых строк.`);
+            console.log(`Фактически добавлено ${addedRows.length} из ${allUniqueNewRows.length} новых строк.`);
         }
 
         sendProgress(res, 100, `Обновление завершено! Найдено ${allUniqueNewRows.length} новых записей.`);
