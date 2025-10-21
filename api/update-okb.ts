@@ -72,31 +72,17 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     return [];
 }
 
-async function runUpdateProcess() {
+/**
+ * The long-running background process. It assumes the 'doc' object is already authenticated.
+ */
+async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
     try {
-        console.log("Starting OKB update process in background...");
-
-        const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-        const key = process.env.GOOGLE_PRIVATE_KEY;
-
-        if (!email || !key) {
-            console.error("FATAL: Google Service Account credentials missing.");
-            return;
-        }
-
-        const serviceAccountAuth = new JWT({
-            email,
-            // CRITICAL FIX: The replace pattern was incorrect for Vercel's environment variable format.
-            // This now correctly replaces single `\n` sequences with actual newlines.
-            key: key.replace(/\\n/g, '\n'),
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        await doc.loadInfo();
+        console.log("Background process started: Fetching data and updating sheet...");
 
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
-        if (!sheet) sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
+        if (!sheet) {
+            sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
+        }
 
         await sheet.clear();
         await sheet.setHeaderRow(HEADERS);
@@ -138,26 +124,56 @@ async function runUpdateProcess() {
             await sleep(1000);
         }
 
-        if (allClients.size > 0) await sheet.addRows(Array.from(allClients.values()));
+        if (allClients.size > 0) {
+            await sheet.addRows(Array.from(allClients.values()));
+        }
         console.log(`OKB database update completed. Total clients: ${allClients.size}`);
+
     } catch (error: any) {
-        console.error('CRITICAL ERROR during OKB update:', error);
+        console.error('CRITICAL ERROR during background OKB update:', error);
     }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
+    }
 
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    const key = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!email || !key) {
         console.error("Handler: missing Google Service Account credentials.");
         return res.status(500).json({ error: 'Server: Google Service Account credentials not configured.' });
     }
 
+    // --- STEP 1: Synchronous Authentication Check ---
+    let doc;
     try {
-        res.status(202).json({ message: 'OKB database update process started. This may take several minutes.' });
-        runUpdateProcess();
+        const serviceAccountAuth = new JWT({
+            email,
+            key: key.replace(/\\n/g, '\n'),
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+
+        doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        await doc.loadInfo(); // This is the crucial, immediate check.
+
+    } catch (error: any) {
+        console.error("CRITICAL: Failed to authenticate with Google Sheets:", error);
+        return res.status(500).json({ 
+            error: 'Failed to connect to Google Sheets.',
+            details: 'Please check that the Service Account has "Editor" permissions on the sheet and that the environment variables are correct.'
+        });
+    }
+
+    // --- STEP 2: If authentication is successful, respond and run background task ---
+    try {
+        res.status(202).json({ message: 'Authentication successful. Background update process started.' });
+        // Fire and forget the long-running process
+        runDataFetchingAndUpdate(doc);
     } catch (err) {
-        console.error('Handler error:', err);
-        res.status(500).json({ error: 'Server error while starting OKB update.' });
+        // This catch is a fallback, but the main error handling is now the authentication block above.
+        console.error('Handler error after authentication:', err);
     }
 }
