@@ -18,21 +18,16 @@ const getAuth = () => {
     return new JWT({
         email: client_email,
         key: private_key,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
     });
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'POST') {
+    if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
     try {
-        const data = req.body;
-        if (!Array.isArray(data) || data.length === 0) {
-            return res.status(400).json({ error: 'Request body must be a non-empty array.' });
-        }
-
         const serviceAccountAuth = getAuth();
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         
@@ -40,25 +35,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         const sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
-             throw new Error(`Sheet with name "${SHEET_NAME}" not found.`);
+            return res.status(200).json({ rowCount: 0, lastUpdated: null, message: `Sheet "${SHEET_NAME}" not found.` });
         }
+        
+        const lastUpdated = doc.properties.modifiedTime;
 
-        // Clear the sheet first
-        await sheet.clear();
+        // rowCount includes the header row, so subtract 1 for the actual data row count.
+        const dataRowCount = sheet.rowCount > 0 ? sheet.rowCount - 1 : 0;
         
-        // Set headers from the first object's keys
-        const headers = Object.keys(data[0]);
-        await sheet.setHeaderRow(headers);
-        
-        // Add all rows in bulk
-        await sheet.addRows(data);
-        
-        res.status(200).json({ success: true, message: `Successfully updated ${data.length} rows.` });
+        res.setHeader('Cache-Control', 'no-cache');
+        res.status(200).json({ 
+            rowCount: dataRowCount,
+            lastUpdated: lastUpdated
+        });
 
     } catch (error: any) {
-        console.error('CRITICAL API ERROR in update-okb:', error);
+        console.error('CRITICAL API ERROR in get-okb-status:', error);
         res.status(500).json({ 
-            error: 'Failed to update Google Sheet.', 
+            error: 'Failed to fetch sheet status.', 
             details: error.message 
         });
     }
