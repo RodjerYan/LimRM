@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { GoogleSpreadsheet, GoogleSpreadsheetRow } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
 const SHEET_NAME = 'Лист1';
@@ -22,22 +22,45 @@ const getAuth = () => {
     });
 };
 
+/**
+ * Функция для геокодирования адреса через Nominatim (OpenStreetMap).
+ * @param address - Адрес для поиска.
+ * @returns Объект с lat и lon или null.
+ */
+const geocodeAddress = async (address: string): Promise<{ lat: number; lon: number } | null> => {
+    // Политика Nominatim требует осмысленный User-Agent
+    const userAgent = 'Geo-Analiz-Rynka-Limkorm/1.0 (https://ai.studio)';
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&countrycodes=ru&limit=1`;
+    try {
+        const response = await fetch(url, { headers: { 'User-Agent': userAgent } });
+        if (!response.ok) return null;
+        const data = await response.json();
+        if (data && data.length > 0 && data[0].lat && data[0].lon) {
+            return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+        }
+        return null;
+    } catch (error) {
+        console.error(`Ошибка геокодирования для адреса: ${address}`, error);
+        return null;
+    }
+};
+
+/**
+ * Основной обработчик API, который запускает фоновый процесс обновления координат.
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
+    // --- ШАГ 1: Немедленно отвечаем клиенту ---
+    // Это критически важно для Vercel, чтобы избежать таймаута запроса.
+    // Клиент получит этот ответ, а сервер продолжит выполнение кода ниже.
+    res.status(202).json({ message: 'Процесс обновления координат запущен в фоновом режиме.' });
+
+    // --- ШАГ 2: Запускаем фоновую обработку ---
     try {
-        const { rows: rowsToAdd } = req.body;
-
-        if (!Array.isArray(rowsToAdd) || rowsToAdd.length === 0) {
-            console.warn('Update attempt with no data.');
-            return res.status(400).json({ 
-                error: 'Некорректный запрос.',
-                details: 'Тело запроса должно содержать непустой массив "rows".'
-            });
-        }
-
+        console.log('Starting background geocoding process...');
         const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
         if (!SPREADSHEET_ID) {
             throw new Error("Переменная окружения GOOGLE_SHEET_ID не установлена.");
@@ -49,60 +72,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
-            return res.status(404).json({ 
-                error: `Лист "${SHEET_NAME}" не найден.`,
-                details: `В таблице Google отсутствует лист с названием "${SHEET_NAME}". Создайте его и убедитесь, что есть заголовки.` 
-            });
+            throw new Error(`Лист "${SHEET_NAME}" не найден.`);
         }
-
-        // Загружаем заголовки
+        
         await sheet.loadHeaderRow();
-        if (!sheet.headerValues || sheet.headerValues.length === 0) {
-            return res.status(500).json({
-                error: 'Ошибка конфигурации таблицы.',
-                details: `В листе "${SHEET_NAME}" отсутствуют заголовки в первой строке. Добавьте их.`
-            });
+        if(!sheet.headerValues.includes('Широта') || !sheet.headerValues.includes('Долгота')) {
+             throw new Error(`В таблице отсутствуют необходимые колонки 'Широта' и/или 'Долгота'.`);
         }
 
-        // Логируем текущие заголовки и ключи данных
-        console.log('Sheet headers:', sheet.headerValues);
-        console.log('Keys in incoming rows:', rowsToAdd.map(r => Object.keys(r)));
+        const rows = await sheet.getRows();
 
-        // Проверяем, что все ключи есть в заголовках
-        const invalidKeys = rowsToAdd.flatMap(r => Object.keys(r)).filter(k => !sheet.headerValues.includes(k));
-        if (invalidKeys.length > 0) {
-            return res.status(400).json({
-                error: 'Ошибка соответствия ключей заголовкам.',
-                details: `Некоторые ключи данных отсутствуют в заголовках листа: ${[...new Set(invalidKeys)].join(', ')}`
-            });
-        }
-
-        // Пакетное добавление строк
-        const addedRows = await sheet.addRows(rowsToAdd);
-        console.log(`Successfully added ${addedRows.length} rows.`);
-
-        res.status(200).json({ 
-            message: `База ОКБ успешно обновлена. Добавлено ${addedRows.length} строк.`,
-            count: addedRows.length 
+        // Находим строки, где есть адрес, но нет координат
+        const rowsToUpdate = rows.filter(row => {
+            const address = row.get('Адрес');
+            const lat = row.get('Широта');
+            return address && !lat; // Проверяем только широту, т.к. они должны быть вместе
         });
+        
+        console.log(`Найдено ${rowsToUpdate.length} записей для обновления координат.`);
+        if (rowsToUpdate.length === 0) {
+             console.log('Нет записей для обновления. Фоновый процесс завершен.');
+             return;
+        }
+
+        // Обрабатываем ограниченное количество записей за один запуск, чтобы не превысить лимиты Vercel
+        const BATCH_SIZE = 20; 
+        for (let i = 0; i < Math.min(rowsToUpdate.length, BATCH_SIZE); i++) {
+            const row = rowsToUpdate[i] as GoogleSpreadsheetRow<any>;
+            const address = row.get('Адрес');
+            if (!address) continue;
+            
+            console.log(`[${i+1}/${BATCH_SIZE}] Геокодирование адреса: "${address}"`);
+            
+            const coords = await geocodeAddress(address);
+            if (coords) {
+                row.set('Широта', coords.lat);
+                row.set('Долгота', coords.lon);
+                row.set('Дата обновления базы', new Date().toISOString());
+                await row.save();
+                console.log(`Успешно обновлена строка ${row.rowNumber} с координатами:`, coords);
+            } else {
+                 console.warn(`Не удалось найти координаты для адреса: "${address}"`);
+                 row.set('Широта', 'FAILED'); // Помечаем как неуспешную попытку
+                 row.set('Долгота', 'FAILED');
+                 await row.save();
+            }
+            // Задержка для соблюдения политики Nominatim (не более 1 запроса в секунду)
+            await new Promise(resolve => setTimeout(resolve, 1100)); 
+        }
+        
+        console.log('Фоновый процесс геокодирования для этой пачки завершен.');
 
     } catch (error: any) {
-        console.error('CRITICAL Error in update-okb:', error);
-
-        let statusCode = 500;
-        let details = error.message || 'Не удалось обновить данные в таблице.';
-
-        if (error.message.includes('403') || error.message.includes('permission denied')) {
-            statusCode = 403;
-            details = `Доступ запрещен. Убедитесь, что сервисный аккаунт имеет права "Редактора" для этой таблицы.`;
-        } else if (error.message.includes('404') || error.message.includes('Requested entity was not found')) {
-            statusCode = 404;
-            details = `Таблица Google не найдена. Проверьте значение GOOGLE_SHEET_ID.`;
-        } else if (error.message.includes('header')) {
-            statusCode = 500;
-            details = `Проблема с заголовками в таблице. Возможно, лист пуст или имеет неверный формат.`;
-        }
-
-        res.status(statusCode).json({ error: 'Не удалось записать данные в Google Sheets.', details });
+        // Этот лог появится в Vercel уже после того, как ответ был отправлен клиенту
+        console.error('КРИТИЧЕСКАЯ ОШИБКА в фоновом процессе update-okb:', error);
     }
 }
