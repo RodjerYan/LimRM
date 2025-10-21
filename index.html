@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     
     <style>
         body {
@@ -66,29 +67,27 @@
 <script type="importmap">
 {
   "imports": {
+    "google-spreadsheet": "https://aistudiocdn.com/google-spreadsheet@^5.0.2",
+    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.1",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.25.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.0/",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
     "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^0.14.0",
-    "papaparse": "https://aistudiocdn.com/papaparse@^5.4.1",
-    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.3.26",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "vite": "https://aistudiocdn.com/vite@^7.1.9",
+    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.4.1",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
+    "vite": "https://aistudiocdn.com/vite@^7.1.11",
     "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
     "url": "https://aistudiocdn.com/url@^0.11.4",
-    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.1",
-    "google-spreadsheet": "https://aistudiocdn.com/google-spreadsheet@^5.0.2"
+    "path": "https://aistudiocdn.com/path@^0.12.7"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-primary-dark text-slate-200 font-sans">
     <div id="root"></div>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script type="module" src="/index.tsx"></script>
 </body>
 </html>

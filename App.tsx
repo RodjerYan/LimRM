@@ -1,15 +1,3 @@
-/*
----
-title: fix(geocoding): Implement IndexedDB cache to dramatically speed up processing
-description: >
-  Radically accelerates the geocoding process by introducing a persistent
-  local cache using IndexedDB. On file upload, the application now instantly
-  checks the local cache and only queries the network for locations it sees
-  for the first time. This significantly speeds up the processing of repeated
-  and large files, solving the core performance bottleneck. The loading status
-  messages have also been improved to inform the user about the caching process.
----
-*/
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
 import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
@@ -23,201 +11,15 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import { regionCenters } from './utils/regionCenters';
 import OKBManagement from './components/OKBManagement';
 
-// FIX: Augment the global ImportMeta interface to include Vite environment variables.
-// This ensures TypeScript recognizes `import.meta.env`.
 declare global {
   interface ImportMeta {
     readonly env: {
-      // FIX: Renamed to VITE_GEMINI_API_KEY to reflect the switch to Google Gemini.
       readonly VITE_GEMINI_API_KEY: string;
-      // FIX: Added VITE_GEMINI_PROXY_URL to match the declaration in aiService.ts and resolve the type conflict.
       readonly VITE_GEMINI_PROXY_URL?: string;
     };
   }
 }
 
-
-// --- START Inlined Worker Code ---
-// The worker code is inlined here as a string and created via a Blob URL
-// to bypass CORS issues in the sandboxed execution environment.
-const workerScript = `
-// Load external library immediately at the top level of the worker
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
-
-// --- START dataUtils ---
-const cityCorrections = {
-    'анкт-петербур': 'Санкт-Петербург', 'анктпетербург': 'Санкт-Петербург', 'санктпетербург': 'Санкт-Петербург', 'спб': 'Санкт-Петербург', 'питер': 'Санкт-Петербург',
-    'мосвка': 'Москва', 'моква': 'Москва', 'мск': 'Москва',
-    'нновгород': 'Нижний Новгород', 'нижнийновгород': 'Нижний Новгород', 'н.новгород': 'Нижний Новгород', 'н. новгород': 'Нижний Новгород',
-    'екатеринбур': 'Екатеринбург', 'ростовнадону': 'Ростов-на-Дону', 'ростов-на-дону': 'Ростов-на-Дону',
-    'йошкар-ола': 'Йошкар-Ола', 'набережные челны': 'Набережные Челны', 'улан-удэ': 'Улан-Удэ', 'комсомольск-на-амуре': 'Комсомольск-на-Амуре'
-};
-
-function determineCityFromAddress(fullAddress) {
-    if (!fullAddress) return 'Не определен';
-    
-    const parts = fullAddress.split(/[,;]/).map(p => p.trim());
-    const addressWithoutIndex = parts.filter(p => !/^\\d{6}$/.test(p));
-
-    for (const part of addressWithoutIndex) {
-        if (part.toLowerCase().startsWith('г.') || part.toLowerCase().startsWith('город')) {
-            return part.replace(/^(г\\.?|город)\\s*/i, '').trim();
-        }
-    }
-
-    if (addressWithoutIndex.length > 1) {
-        const potentialCity = addressWithoutIndex[1];
-        if (potentialCity && isNaN(parseInt(potentialCity, 10))) {
-            return potentialCity;
-        }
-    }
-    
-    return addressWithoutIndex[0] || 'Не определен';
-}
-
-function normalizeAddress(str) {
-    if (!str) return '';
-    return str.toLowerCase()
-        .replace(/ё/g, 'е')
-        .replace(/[^а-яa-z0-9]/g, '');
-}
-
-const MIN_GROWTH_RATE = 0.05;
-const MAX_GROWTH_RATE = 0.80;
-const BASE_GROWTH_RATE = 0.15;
-function calculateRealisticGrowthRate(fact, potentialTTs) {
-    let growthRate = BASE_GROWTH_RATE;
-    const saturationFactor = Math.max(0.1, 1 - (fact / 10000));
-    growthRate *= saturationFactor;
-    let cityMultiplier = 1.0;
-    if (potentialTTs <= 10) cityMultiplier = 1.0;
-    else if (potentialTTs <= 30) cityMultiplier = 1.3;
-    else if (potentialTTs <= 100) cityMultiplier = 1.6;
-    else cityMultiplier = 2.0;
-    growthRate *= cityMultiplier;
-    const randomVariation = 0.8 + (Math.random() * 0.4);
-    growthRate *= randomVariation;
-    return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
-}
-// --- END dataUtils ---
-
-// --- START fileParser for User's File (АКБ) ---
-const parseUserFile = (file) => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                if (!e.target?.result) throw new Error("Не удалось прочитать файл АКБ.");
-                const data = new Uint8Array(e.target.result);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(worksheet);
-
-                const akbAddressSet = new Set();
-                const akbDataMap = new Map();
-
-                json.forEach((row) => {
-                    const brand = String(row['Бренд'] || row['brand'] || 'Не указан').trim();
-                    const fact = Number(String(row['Факт (кг/ед)'] || row['fact'] || 0).replace(',', '.'));
-                    const fullAddress = String(row['Адрес'] || row['address'] || '').trim();
-                    const rm = String(row['РМ'] || row['rm'] || 'Не указан').trim();
-                    const city = String(row['Город'] || row['city'] || determineCityFromAddress(fullAddress)).trim();
-                    
-                    if(fullAddress) {
-                        akbAddressSet.add(normalizeAddress(fullAddress));
-                    }
-
-                    if (rm !== 'Не указан' && city && brand !== 'Не указан') {
-                        const key = \`\${rm}|\${brand}|\${city}\`;
-                        const existing = akbDataMap.get(key) || { rm, brand, city, fact: 0, fullAddress: city };
-                        existing.fact += fact;
-                        akbDataMap.set(key, existing);
-                    }
-                });
-                
-                const processedData = Array.from(akbDataMap.values());
-
-                if (processedData.length === 0) throw new Error("В файле АКБ не найдено корректных данных. Проверьте названия колонок: 'РМ', 'Бренд', 'Город', 'Факт (кг/ед)'.");
-                
-                resolve({ processedData, akbAddressSet });
-
-            } catch (error) {
-                reject(error instanceof Error ? error : new Error("Не удалось разобрать файл АКБ."));
-            }
-        };
-        reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(file);
-    });
-};
-// --- END fileParser ---
-
-
-// --- NEW WORKER MAIN LOGIC ---
-self.onmessage = async (e) => {
-    const { file, okbData } = e.data; // Expecting user file and OKB data from Google Sheets
-
-    try {
-        self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение и агрегация файла АКБ...', etr: '' } });
-        const { processedData: akbData, akbAddressSet } = await parseUserFile(file);
-
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: 'Поиск потенциальных клиентов...', etr: '' } });
-        
-        const potentialClients = okbData.filter(okbClient => 
-            !akbAddressSet.has(normalizeAddress(okbClient['Адрес']))
-        );
-
-        const potentialClientsByCity = new Map();
-        for (const client of potentialClients) {
-            const city = client['Регион']; // Using the region from OKB as the city key
-            if (!potentialClientsByCity.has(city)) {
-                potentialClientsByCity.set(city, []);
-            }
-            potentialClientsByCity.get(city).push({
-                name: client['Название'],
-                address: client['Адрес'],
-                phone: client['Телефон'],
-                type: client['Тип'],
-                lat: parseFloat(client['Широта']),
-                lon: parseFloat(client['Долгота']),
-            });
-        }
-
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 60, text: 'Расчет рыночного потенциала...', etr: '' } });
-        
-        const dataWithPotential = akbData.map(item => {
-            const clientsForCity = potentialClientsByCity.get(item.city) || [];
-            const potentialTTs = clientsForCity.length;
-            
-            const growthRate = calculateRealisticGrowthRate(item.fact, potentialTTs);
-            const potential = item.fact * (1 + growthRate);
-            const growthPotential = potential - item.fact;
-
-            return { 
-                ...item, 
-                potential, 
-                growthPotential, 
-                growthRate: growthRate * 100, 
-                potentialTTs, 
-                potentialClients: clientsForCity 
-            };
-        });
-        
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Финализация результатов...', etr: '' } });
-        
-        self.postMessage({ type: 'result', payload: dataWithPotential });
-
-    } catch (error) {
-        self.postMessage({ type: 'error', payload: error instanceof Error ? error.message : "Произошла неизвестная ошибка в фоновом обработчике." });
-    }
-};
-`;
-// --- END Inlined Worker Code ---
-
-
-// FIX: Extracted filter initialization to a separate function for clarity and robustness.
-// This prevents potential scoping issues within the `useState` lazy initializer that could lead to
-// "Cannot find name" errors if the `catch` block contained a typo.
 const getInitialFilters = (): FilterState => {
     try {
         const savedFilters = localStorage.getItem('geoAnalysisFilters');
@@ -252,7 +54,6 @@ export default function App() {
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'growthPotential', direction: 'descending' });
 
     const workerRef = useRef<Worker | null>(null);
-    const workerUrlRef = useRef<string | null>(null);
 
     useEffect(() => {
         try {
@@ -283,10 +84,6 @@ export default function App() {
             workerRef.current.terminate();
             workerRef.current = null;
         }
-        if (workerUrlRef.current) {
-            URL.revokeObjectURL(workerUrlRef.current);
-            workerUrlRef.current = null;
-        }
     };
 
     useEffect(() => {
@@ -303,7 +100,6 @@ export default function App() {
         setFailedRegions(new Set());
         
         try {
-            // Step 1: Fetch the master OKB data from our fast API endpoint
             setLoadingState({ status: 'fetching', progress: 5, text: 'Загрузка мастер-базы ОКБ...', etr: '' });
             const okbResponse = await fetch('/api/get-okb');
             if (!okbResponse.ok) {
@@ -318,15 +114,10 @@ export default function App() {
                  return;
             }
             
-            // Step 2: Create and start the worker with BOTH the user file and the fetched OKB data
-            const blob = new Blob([workerScript], { type: 'application/javascript' });
-            const workerUrl = URL.createObjectURL(blob);
-            workerUrlRef.current = workerUrl;
-
-            const worker = new Worker(workerUrl);
-            workerRef.current = worker;
+            // Modern and robust way to instantiate a worker with Vite
+            workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             
-            worker.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
+            workerRef.current.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
                 const { type, payload } = e.data;
 
                 if (type === 'progress') {
@@ -347,7 +138,7 @@ export default function App() {
                 }
             };
 
-            worker.onerror = (e) => {
+            workerRef.current.onerror = (e) => {
                  console.error("Unhandled worker error:", e);
                  const errorMessage = "Произошла критическая ошибка в фоновом обработчике.";
                  addNotification('Ошибка: ' + errorMessage, 'error');
@@ -356,7 +147,7 @@ export default function App() {
             };
             
             setLoadingState({ status: 'reading', progress: 15, text: 'Отправка данных в анализатор...', etr: '' });
-            worker.postMessage({ file, okbData });
+            workerRef.current.postMessage({ file, okbData });
 
         } catch(error: any) {
             console.error("Failed during file select process:", error);
@@ -409,12 +200,12 @@ export default function App() {
             return true;
         }
 
-        const regionForQuery = regionCenters[normQuery];
+        const regionForQuery = regionCenters[normQuery as keyof typeof regionCenters];
         if (regionForQuery && normalize(regionForQuery).includes(normItemCity)) {
             return true;
         }
 
-        const regionForItem = regionCenters[normItemCity];
+        const regionForItem = Object.keys(regionCenters).find(key => normalize(regionCenters[key as keyof typeof regionCenters]) === normItemCity);
         if (regionForItem && normalize(regionForItem).includes(normQuery)) {
             return true;
         }

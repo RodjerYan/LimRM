@@ -72,20 +72,24 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     return [];
 }
 
-/**
- * The long-running background process. It assumes the 'doc' object is already authenticated.
- */
 async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
     try {
-        console.log("Background process started: Fetching data and updating sheet...");
+        console.log("BG_PROCESS: Background process started...");
 
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
         if (!sheet) {
+            console.log(`BG_PROCESS: Sheet '${SHEET_NAME}' not found, creating it...`);
             sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
+            console.log("BG_PROCESS: Sheet created successfully.");
+        } else {
+             console.log(`BG_PROCESS: Found sheet '${SHEET_NAME}'.`);
         }
 
+        console.log("BG_PROCESS: Clearing old data from sheet...");
         await sheet.clear();
+        console.log("BG_PROCESS: Setting new headers...");
         await sheet.setHeaderRow(HEADERS);
+        console.log("BG_PROCESS: Sheet prepared. Starting data fetch from Overpass...");
 
         const uniqueRegions = [...new Set(Object.values(regionCenters))];
         const allClients = new Map<string, any>();
@@ -94,12 +98,13 @@ async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
         const concurrencyLimit = 8;
         for (let i = 0; i < uniqueRegions.length; i += concurrencyLimit) {
             const batch = uniqueRegions.slice(i, i + concurrencyLimit);
-            console.log(`Processing batch ${Math.floor(i / concurrencyLimit) + 1}/${Math.ceil(uniqueRegions.length / concurrencyLimit)}: [${batch.join(', ')}]`);
+            console.log(`BG_PROCESS: Processing batch ${Math.floor(i / concurrencyLimit) + 1}/${Math.ceil(uniqueRegions.length / concurrencyLimit)}: [${batch.join(', ')}]`);
 
             const results = await Promise.all(batch.map(region => fetchFromOverpassWithRetry(region)));
 
             batch.forEach((region, index) => {
                 const elements = results[index];
+                if (!elements) return;
                 for (const el of elements) {
                     const name = el.tags?.name || 'Без названия';
                     const address = (el.tags?.['addr:full'] || [el.tags?.['addr:city'], el.tags?.['addr:street'], el.tags?.['addr:housenumber']].filter(Boolean).join(', ')).trim();
@@ -124,13 +129,14 @@ async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
             await sleep(1000);
         }
 
+        console.log(`BG_PROCESS: Data fetching complete. Found ${allClients.size} unique clients. Writing to sheet...`);
         if (allClients.size > 0) {
             await sheet.addRows(Array.from(allClients.values()));
         }
-        console.log(`OKB database update completed. Total clients: ${allClients.size}`);
+        console.log(`BG_PROCESS: OKB database update completed successfully.`);
 
     } catch (error: any) {
-        console.error('CRITICAL ERROR during background OKB update:', error);
+        console.error('BG_PROCESS_CRITICAL_ERROR:', error);
     }
 }
 
@@ -138,42 +144,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
+    console.log("HANDLER: Received POST request to /api/update-okb.");
 
     const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     const key = process.env.GOOGLE_PRIVATE_KEY;
 
     if (!email || !key) {
-        console.error("Handler: missing Google Service Account credentials.");
+        console.error("HANDLER_FATAL: Google Service Account credentials missing in environment variables.");
         return res.status(500).json({ error: 'Server: Google Service Account credentials not configured.' });
     }
+     console.log("HANDLER: Found Google credentials in environment.");
 
-    // --- STEP 1: Synchronous Authentication Check ---
     let doc;
     try {
+        console.log("HANDLER: Attempting to create JWT auth client...");
         const serviceAccountAuth = new JWT({
             email,
             key: key.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
+         console.log("HANDLER: JWT client created. Initializing GoogleSpreadsheet object...");
 
         doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        await doc.loadInfo(); // This is the crucial, immediate check.
+        
+        console.log("HANDLER: Authenticating and loading sheet info (doc.loadInfo)...");
+        await doc.loadInfo(); 
+        console.log("HANDLER: Successfully authenticated with Google Sheets and loaded document info.");
 
     } catch (error: any) {
-        console.error("CRITICAL: Failed to authenticate with Google Sheets:", error);
+        console.error("HANDLER_CRITICAL_AUTH_ERROR:", error);
+        let details = 'An unknown error occurred during authentication.';
+        if (error.message) {
+            if (error.message.includes('permission denied')) {
+                details = 'The Service Account does not have "Editor" permissions on the Google Sheet. Please share the sheet with the service account email and grant "Editor" access.';
+            } else if (error.message.includes('invalid_grant')) {
+                details = 'The private key is invalid or the service account may be misconfigured. Please verify the private key in your environment variables.';
+            } else {
+                details = error.message;
+            }
+        }
         return res.status(500).json({ 
             error: 'Failed to connect to Google Sheets.',
-            details: 'Please check that the Service Account has "Editor" permissions on the sheet and that the environment variables are correct.'
+            details: details
         });
     }
 
-    // --- STEP 2: If authentication is successful, respond and run background task ---
     try {
         res.status(202).json({ message: 'Authentication successful. Background update process started.' });
-        // Fire and forget the long-running process
+        console.log("HANDLER: Responded 202 to client. Starting background process...");
         runDataFetchingAndUpdate(doc);
     } catch (err) {
-        // This catch is a fallback, but the main error handling is now the authentication block above.
-        console.error('Handler error after authentication:', err);
+        console.error('HANDLER_FALLBACK_ERROR: Error after authentication:', err);
     }
 }
