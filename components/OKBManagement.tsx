@@ -1,123 +1,157 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { LoaderIcon } from './icons';
 
+interface OKBStatus {
+    lastUpdated: string | null;
+    isUpdating: boolean;
+    rowCount: number;
+}
+
+interface UpdateProgress {
+    progress: number;
+    status: string;
+}
+
 interface OKBManagementProps {
     addNotification: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-interface OkbStatus {
-    rowCount: number;
-    modifiedTime: string;
-}
-
 const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
-    const [status, setStatus] = useState<OkbStatus | null>(null);
+    const [status, setStatus] = useState<OKBStatus | null>(null);
+    const [progress, setProgress] = useState<UpdateProgress | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [isUpdating, setIsUpdating] = useState(false);
 
-    const fetchStatus = useCallback(async () => {
-        setIsLoading(true);
+    const fetchStatus = useCallback(async (isInitial = false) => {
+        if (isInitial) setIsLoading(true);
         try {
-            const response = await fetch('/api/get-okb-status');
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.details || 'Failed to fetch OKB status.');
+            const res = await fetch('/api/get-okb-status');
+            if (!res.ok) {
+                throw new Error('Не удалось получить статус ОКБ');
             }
-            const data: OkbStatus = await response.json();
+            const data: OKBStatus = await res.json();
             setStatus(data);
+            if (!data.isUpdating) {
+                setProgress(null);
+            }
         } catch (error: any) {
             console.error(error);
-            addNotification(`Ошибка загрузки статуса ОКБ: ${error.message}`, 'error');
-            setStatus(null); // Reset status on error
+            if (isInitial) addNotification(error.message, 'error');
         } finally {
-            setIsLoading(false);
+            if (isInitial) setIsLoading(false);
         }
     }, [addNotification]);
 
+    const fetchProgress = useCallback(async () => {
+        if (!status?.isUpdating) return;
+        try {
+            const res = await fetch('/api/get-okb-update-progress');
+            if (res.status === 404) { // Update finished between polls
+                fetchStatus();
+                return;
+            }
+            if (!res.ok) {
+                 throw new Error('Ошибка при получении прогресса');
+            }
+            const data: UpdateProgress = await res.json();
+            setProgress(data);
+        } catch (error) {
+            console.error(error);
+            // Stop polling on error by fetching final status
+            fetchStatus();
+        }
+    }, [status?.isUpdating, fetchStatus]);
+
     useEffect(() => {
-        fetchStatus();
+        fetchStatus(true);
     }, [fetchStatus]);
 
+    useEffect(() => {
+        if (status?.isUpdating) {
+            const intervalId = setInterval(fetchProgress, 2500); // Poll every 2.5 seconds
+            return () => clearInterval(intervalId);
+        }
+    }, [status?.isUpdating, fetchProgress]);
+
     const handleUpdate = async () => {
-        if (!confirm('Это действие полностью перезапишет базу данных ОКБ данными из OpenStreetMap. Это может занять несколько минут. Продолжить?')) {
+        if (status?.isUpdating || isLoading) {
+            addNotification('Обновление уже запущено.', 'info');
             return;
         }
-        setIsUpdating(true);
-        addNotification('Запущен процесс обновления базы ОКБ. Это может занять до 5 минут...', 'info');
+
+        const confirmation = window.confirm(
+            'Вы уверены, что хотите запустить обновление базы ОКБ? Этот процесс может занять несколько минут и перезапишет текущие данные.'
+        );
+
+        if (!confirmation) return;
+
+        setStatus(prev => prev ? { ...prev, isUpdating: true } : { lastUpdated: null, isUpdating: true, rowCount: 0 });
+        setProgress({ progress: 0, status: 'Запуск процесса...' });
+
         try {
-            const response = await fetch('/api/update-okb', { method: 'POST' });
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.details || 'An unknown error occurred during the update process.');
+            const res = await fetch('/api/update-okb', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Не удалось запустить обновление');
             }
-            
-            addNotification('Процесс запущен в фоновом режиме. Данные появятся в таблице через несколько минут.', 'success');
-            // Schedule a status refresh to see updated info later
-            setTimeout(() => {
-                fetchStatus();
-            }, 10000); // Refresh after 10 seconds
-
+            addNotification('Процесс обновления базы ОКБ запущен.', 'success');
+            // Status will be updated via polling
         } catch (error: any) {
             console.error(error);
-            addNotification(`Ошибка запуска обновления ОКБ: ${error.message}`, 'error');
-        } finally {
-            setIsUpdating(false);
+            addNotification(`Ошибка при запуске обновления: ${error.message}`, 'error');
+            fetchStatus(); // Reset status from server on failure
         }
     };
-    
-    const formatDate = (dateString: string) => {
-        if (!dateString) return 'N/A';
-        try {
-            return new Intl.DateTimeFormat('ru-RU', {
-                dateStyle: 'medium',
-                timeStyle: 'short',
-            }).format(new Date(dateString));
-        } catch {
-            return dateString;
-        }
-    };
+
+    const isUpdating = status?.isUpdating || false;
+    const lastUpdatedDate = status?.lastUpdated ? new Date(status.lastUpdated).toLocaleString('ru-RU') : 'Никогда';
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <h2 className="text-xl font-bold mb-4 text-white">Управление базой ОКБ</h2>
-            <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 space-y-3 mb-4">
-                {isLoading ? (
-                    <div className="flex items-center text-gray-400">
-                        <LoaderIcon /> <span className="ml-2">Загрузка статуса...</span>
+            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">0</span>
+                Управление базой ОКБ
+            </h2>
+            <div className="space-y-4">
+                <div>
+                    <button
+                        onClick={handleUpdate}
+                        disabled={isUpdating || isLoading}
+                        className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:opacity-90 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-indigo-500/20 flex items-center justify-center"
+                    >
+                        {isUpdating || isLoading ? (
+                            <>
+                                <LoaderIcon />
+                                <span className="ml-2">Обновление...</span>
+                            </>
+                        ) : (
+                            <span>Обновить базу ОКБ</span>
+                        )}
+                    </button>
+                </div>
+
+                {isUpdating && progress && (
+                     <div>
+                        <div className="flex justify-between text-xs text-gray-400 mb-1">
+                            <span className="truncate pr-2">{progress.status}</span>
+                            <span>{Math.round(progress.progress)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-900/50 rounded-full h-2">
+                            <div
+                                className="bg-gradient-to-r from-purple-500 to-indigo-600 h-2 rounded-full transition-all duration-300"
+                                style={{ width: `${progress.progress}%` }}
+                            ></div>
+                        </div>
                     </div>
-                ) : status ? (
-                    <>
-                        <div>
-                            <p className="text-sm text-gray-400">Всего записей в базе</p>
-                            <p className="text-lg font-bold text-accent">{status.rowCount.toLocaleString('ru-RU')} шт.</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-400">Последнее обновление</p>
-                            <p className="text-lg font-bold text-gray-300">{formatDate(status.modifiedTime)}</p>
-                        </div>
-                    </>
-                ) : (
-                    <p className="text-danger text-center">Не удалось загрузить статус базы.</p>
                 )}
+                
+                <div className="text-sm text-gray-400 text-center pt-2">
+                    <p>Последнее обновление: <span className="font-semibold text-accent">{isLoading ? 'Загрузка...' : lastUpdatedDate}</span></p>
+                    <p>Количество записей: <span className="font-semibold text-white">{isLoading ? '...' : (status?.rowCount ?? 0)}</span></p>
+                </div>
+                 <p className="text-xs text-gray-500 mt-2">
+                    Данные для ОКБ (Общая Клиентская База) загружаются из Google Sheets после сканирования OpenStreetMap. Обновление может занять несколько минут.
+                </p>
             </div>
-            <button
-                onClick={handleUpdate}
-                disabled={isUpdating || isLoading}
-                className="w-full bg-gradient-to-r from-yellow-600 to-amber-500 hover:opacity-90 disabled:from-gray-600 disabled:to-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-amber-500/20 flex items-center justify-center"
-            >
-                {isUpdating ? (
-                    <>
-                        <LoaderIcon />
-                        <span className="ml-2">Обновление...</span>
-                    </>
-                ) : (
-                    <span>Обновить базу из OpenStreetMap</span>
-                )}
-            </button>
-            <p className="text-xs text-gray-500 mt-3 text-center">
-                Обновление заменяет все данные в Google-таблице. Это может занять несколько минут.
-            </p>
         </div>
     );
 };
