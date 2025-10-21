@@ -128,16 +128,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
     
-    // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Фильтруем массив ДО цикла с использованием type predicate.
-    // Это создает новый массив, в котором TypeScript на 100% уверен, что нет null элементов.
+    // ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ: Фильтруем массив ДО цикла с использованием type predicate, который проверяет не только null, но и наличие метода .get()
     const existingRows = existingRowsRaw.filter(
-      (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
+      (row): row is GoogleSpreadsheetRow<Record<string, any>> => !!row && typeof row.get === 'function'
     );
 
     const existingEntries = new Set<string>();
-    // Теперь итерация идет по 100% чистому массиву `existingRows`, что решает ошибку сборки.
+    // Теперь итерация идет по 100% чистому массиву `existingRows`, а доступ к данным безопасен через `?? ''`
     for (const row of existingRows) {
-      const key = `${normalize(row.get('Наименование'))}|${normalize(row.get('Город или населенный пункт'))}`;
+      const name = row.get('Наименование') ?? '';
+      const city = row.get('Город или населенный пункт') ?? '';
+      const key = `${normalize(name)}|${normalize(city)}`;
       existingEntries.add(key);
     }
 
@@ -174,7 +175,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const addedRowsRaw = await sheet.addRows(batch);
         
         // Применяем тот же надежный паттерн для безопасного подсчета добавленных строк.
-        const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
+        const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => !!row);
         totalAddedCount += addedRows.length;
       }
       console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
