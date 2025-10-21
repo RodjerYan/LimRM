@@ -10,7 +10,7 @@ description: >
   messages have also been improved to inform the user about the caching process.
 ---
 */
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
 import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
 import FileUpload from './components/FileUpload';
@@ -20,6 +20,7 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import { regionCenters } from './utils/regionCenters';
 
 // FIX: Augment the global ImportMeta interface to include Vite environment variables.
 // This ensures TypeScript recognizes `import.meta.env`.
@@ -778,6 +779,44 @@ export default function App() {
         return { rms, brands, cities };
     }, [aggregatedData]);
 
+    const normalize = useCallback((str: string): string =>
+        str
+        ?.toLowerCase()
+        .replace(/(город федерального значения|автономный округ|республика|область|край|ао|г\.|обл\.|респ\.)/gi, '')
+        .trim()
+        .replace(/\s+/g, ' '),
+    []);
+
+    const matchesRegionOrCity = useCallback((item: AggregatedDataRow, query: string): boolean => {
+        const normQuery = normalize(query);
+        if (!normQuery) return false;
+
+        const normItemCity = normalize(item.city);
+
+        // Case 1: Direct substring match on normalized names. Handles partial search.
+        if (normItemCity.includes(normQuery)) {
+            return true;
+        }
+
+        // Case 2: Query is a city, check if its associated region matches the item's location.
+        // E.g., query "брянск" -> norm "брянск" -> region "брянская область" -> norm "брянская"
+        // Then check if item's location "брянская" (from "Брянская область") matches
+        const regionForQuery = regionCenters[normQuery];
+        if (regionForQuery && normalize(regionForQuery).includes(normItemCity)) {
+            return true;
+        }
+
+        // Case 3: Item's city is a capital, check if its associated region matches the query.
+        // E.g., item location "брянск" -> norm "брянск" -> region "брянская область" -> norm "брянская"
+        // Then check if "брянская" includes the query (e.g., "брянск" or "брянская")
+        const regionForItem = regionCenters[normItemCity];
+        if (regionForItem && normalize(regionForItem).includes(normQuery)) {
+            return true;
+        }
+        
+        return false;
+    }, [normalize]);
+
     const filteredAndSortedData = useMemo(() => {
         let processedData = aggregatedData.filter(item => 
             (!filters.rm || item.rm === filters.rm) &&
@@ -790,7 +829,7 @@ export default function App() {
             processedData = processedData.filter(item =>
                 item.rm.toLowerCase().includes(lowercasedTerm) ||
                 item.brand.toLowerCase().includes(lowercasedTerm) ||
-                item.city.toLowerCase().includes(lowercasedTerm) ||
+                matchesRegionOrCity(item, searchTerm) ||
                 String(item.potentialTTs).includes(lowercasedTerm) ||
                 formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
                 formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
@@ -814,7 +853,7 @@ export default function App() {
         }
         
         return processedData;
-    }, [aggregatedData, filters, searchTerm, sortConfig]);
+    }, [aggregatedData, filters, searchTerm, sortConfig, matchesRegionOrCity]);
 
     const metrics = useMemo(() => calculateMetrics(filteredAndSortedData), [filteredAndSortedData]);
 
