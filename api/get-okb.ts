@@ -2,33 +2,24 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
-// Data is self-contained to prevent Vercel build issues.
-const regionCenters: Record<string, string> = {
-  "москва": "город федерального значения москва", "санкт-петербург": "город федерального значения санкт-петербург", "севастополь": "город федерального значения севастополь",
-  "майкоп": "республика адыгея", "горно-алтайск": "республика алтай", "уфа": "республика башкортостан", "улан-удэ": "республика бурятия", "махачкала": "республика дагестан", "магас": "республика ингушетия", "нальчик": "кабардино-балкарская республика", "элиста": "республика калмыкия", "черкесск": "карачаево-черкесская республика", "петрозаводск": "республика карелия", "сыктывкар": "республика коми", "йошкар-ола": "республика марий эл", "саранск": "республика мордовия", "якутск": "республика саха (якутия)", "владикавказ": "республика северная осетия — алания", "казань": "республика татарстан", "кызыл": "республика тыва", "ижевск": "удмуртская республика", "абакан": "республика хакасия", "грозный": "чеченская республика", "чебоксары": "чувашская республика", "симферополь": "республика крым",
-  "барнаул": "алтайский край", "чита": "забайкальский край", "петропавловск-камчатский": "камчатский край", "краснодар": "краснодарский край", "красноярск": "красноярский край", "пермь": "пермский край", "владивосток": "приморский край", "ставрополь": "ставропольский край", "хабаровск": "хабаровский край",
-  "благовещенск": "амурская область", "архангельск": "архангельская область", "астрахань": "астраханская область", "белгород": "белгородская область", "брянск": "брянская область", "владимир": "владимирская область", "волгоград": "волгоградская область", "вологда": "вологодская область", "воронеж": "воронежская область", "иваново": "ивановская область", "иркутск": "иркутская область", "калининград": "калининградская область", "калуга": "калужская область", "кемерово": "кемеровская область — кузбасс", "киров": "кировская область", "кострома": "костромская область", "курган": "курганская область", "курск": "курская область", "липецк": "липецкая область", "магадан": "магаданская область", "мурманск": "мурманская область", "нижний новгород": "нижегородская область", "великий новгород": "новгородская область", "новгород": "новгородская область", "новосибирск": "новосибирская область", "омск": "омская область", "оренбург": "оренбургская область", "орёл": "орловская область", "пенза": "пензенская область", "псков": "псковская область", "ростов-на-дону": "ростовская область", "рязань": "рязанская область", "самара": "самарская область", "саратов": "саратовская область", "южно-сахалинск": "сахалинская область", "екатеринбург": "свердловская область", "смоленск": "смоленская область", "тамбов": "тамбовская область", "тверь": "тверская область", "томск": "томская область", "тула": "тульская область", "тюмень": "тюменская область", "ульяновск": "ульяновская область", "челябинск": "челябинская область", "ярославль": "ярославская область",
-  "биробиджан": "еврейская автономная область",
-  "нарьян-мар": "ненецкий автономный округ", "ханты-мансийск": "ханты-мансийский автономный округ — югра", "анадырь": "чукотский автономный округ", "салехард": "ямало-ненецкий автономный округ",
-  "минск": "республика беларусь", "астана": "республика казахстан", "нур-султан": "республика казахстан", "алматы": "республика казахстан", "бишкек": "киргизская республика", "душанбе": "республика таджикистан", "ашхабад": "туркменистан", "ташкент": "республика узбекистан", "ереван": "республика армения", "баку": "азербайджанская республика", "кишинёв": "республика молдова",
-  "тбилиси": "грузия",
-};
-
-const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'Лист1'; 
+const HEADERS = [
+    "Страна", "Субъект", "Город или населенный пункт",
+    "Категория (вет. клиника или вет. магазин)", "Наименование",
+    "Адрес", "Контакты", "Дата обновления базы"
+];
 
 const getAuth = () => {
-    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
-    if (!credsBase64) {
-        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
+    const client_email = process.env.GOOGLE_CLIENT_EMAIL;
+    const private_key = process.env.GOOGLE_PRIVATE_KEY;
+
+    if (!client_email || !private_key) {
+        throw new Error('Google credentials environment variables (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY) are not set.');
     }
-    
-    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
-    const { client_email, private_key } = JSON.parse(credsJson);
 
     return new JWT({
         email: client_email,
-        key: private_key,
+        key: private_key.replace(/\\n/g, '\n'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 };
@@ -40,6 +31,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+        if (!SPREADSHEET_ID) {
+            throw new Error("GOOGLE_SHEET_ID environment variable is not set.");
+        }
+
         const serviceAccountAuth = getAuth();
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         
@@ -47,11 +43,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         let sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
-            console.warn(`Sheet "${SHEET_NAME}" not found. Falling back to the first available sheet.`);
-            sheet = doc.sheetsByIndex[0];
+            console.log(`Sheet "${SHEET_NAME}" not found, creating it.`);
+            sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
+            return res.status(200).json([]);
         }
 
-        if (!sheet) {
+        // Ensure headers exist even if the sheet was created manually but is empty
+        await sheet.loadHeaderRow().catch(() => {});
+        if (!sheet.headerValues || sheet.headerValues.length === 0) {
+            console.log("Sheet exists but has no headers. Setting headers now.");
+            await sheet.setHeaderRow(HEADERS);
             return res.status(200).json([]);
         }
 
@@ -62,7 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(200).json(data);
 
     } catch (error: any) {
-        console.error('CRITICAL AUTH/API ERROR in get-okb:', error);
+        console.error('CRITICAL API ERROR in get-okb:', error);
         res.status(500).json({ 
             error: 'Failed to fetch data from Google Sheets.', 
             details: error.message 

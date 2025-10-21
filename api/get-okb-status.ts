@@ -2,23 +2,18 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
-const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'Лист1'; 
 
-// This auth function is specific to this endpoint, requesting readonly access
-// to both Sheets and Drive metadata.
 const getAuth = () => {
-    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
-    if (!credsBase64) {
-        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
+    const client_email = process.env.GOOGLE_CLIENT_EMAIL;
+    const private_key = process.env.GOOGLE_PRIVATE_KEY;
+    if (!client_email || !private_key) {
+        throw new Error('Google credentials environment variables (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY) are not set.');
     }
     
-    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
-    const { client_email, private_key } = JSON.parse(credsJson);
-
     return new JWT({
         email: client_email,
-        key: private_key,
+        key: private_key.replace(/\\n/g, '\n'),
         scopes: [
             'https://www.googleapis.com/auth/spreadsheets.readonly',
             'https://www.googleapis.com/auth/drive.metadata.readonly'
@@ -32,22 +27,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+        if (!SPREADSHEET_ID) {
+            throw new Error("GOOGLE_SHEET_ID environment variable is not set.");
+        }
+
         const serviceAccountAuth = getAuth();
         
-        // --- 1. Get row count from Google Sheets API ---
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
         let sheet = doc.sheetsByTitle[SHEET_NAME];
+        
         if (!sheet) {
-            sheet = doc.sheetsByIndex[0];
+            // If the sheet doesn't exist, we can't get status. Return a default state.
+            return res.status(200).json({ rowCount: 0, modifiedTime: new Date(0).toISOString() });
         }
 
+        // --- 1. Get row count from Google Sheets API ---
         let rowCount = 0;
-        if (sheet) {
-            const rows = await sheet.getRows();
-            rowCount = rows.length;
+        // This is an efficient way to check for data rows without calling getRows()
+        // which would fail on an empty sheet without headers.
+        if (sheet.rowCount > 0) {
+            await sheet.loadHeaderRow().catch(() => {}); // Attempt to load headers
+            if (sheet.headerValues && sheet.headerValues.length > 0) {
+                // If headers exist, data rows are total rows minus header row
+                rowCount = sheet.rowCount - 1;
+            }
         }
-
+        
         // --- 2. Get modified time from Google Drive API ---
         const tokenResponse = await serviceAccountAuth.getAccessToken();
         const token = tokenResponse.token;

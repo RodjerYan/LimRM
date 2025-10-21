@@ -16,9 +16,12 @@ const regionCenters: Record<string, string> = {
 
 export const maxDuration = 300; 
 
-const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'Лист1';
-const HEADERS = ['ID', 'Название', 'Тип', 'Адрес', 'Регион', 'Страна', 'Телефон', 'Email', 'Сайт', 'Широта', 'Долгота'];
+const HEADERS = [
+    "Страна", "Субъект", "Город или населенный пункт",
+    "Категория (вет. клиника или вет. магазин)", "Наименование",
+    "Адрес", "Контакты", "Дата обновления базы"
+];
 
 const OVERPASS_ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',
@@ -28,17 +31,15 @@ const OVERPASS_ENDPOINTS = [
 ];
 
 const getAuth = () => {
-    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
-    if (!credsBase64) {
-        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
+    const client_email = process.env.GOOGLE_CLIENT_EMAIL;
+    const private_key = process.env.GOOGLE_PRIVATE_KEY;
+    if (!client_email || !private_key) {
+        throw new Error('Google credentials environment variables (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY) are not set.');
     }
     
-    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
-    const { client_email, private_key } = JSON.parse(credsJson);
-
     return new JWT({
         email: client_email,
-        key: private_key,
+        key: private_key.replace(/\\n/g, '\n'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 };
@@ -67,7 +68,7 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': 'Limkorm-Geo-Analysis/1.1'
+                        'User-Agent': 'Limkorm-Geo-Analysis/1.2'
                     },
                     body: `data=${encodeURIComponent(query)}`,
                     signal: controller.signal
@@ -99,29 +100,39 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     return [];
 }
 
+const normalizeAddressForDedupe = (str: string | undefined): string => {
+    if (!str) return '';
+    return str.toLowerCase().replace(/[^а-яa-z0-9]/g, '').trim();
+};
+
+
 async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
     try {
         console.log("BG_PROCESS: Background process started...");
 
-        let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
+        let sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
             console.log(`BG_PROCESS: Sheet '${SHEET_NAME}' not found, creating it...`);
             sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
             console.log("BG_PROCESS: Sheet created successfully.");
         } else {
-             console.log(`BG_PROCESS: Found sheet '${SHEET_NAME}'.`);
+            console.log(`BG_PROCESS: Found sheet '${SHEET_NAME}'. Checking headers...`);
+            await sheet.loadHeaderRow().catch(() => {});
+            if (!sheet.headerValues || sheet.headerValues.length === 0) {
+                console.log("BG_PROCESS: Headers not found. Setting headers...");
+                await sheet.setHeaderRow(HEADERS);
+            }
         }
 
-        console.log("BG_PROCESS: Clearing old data from sheet...");
-        await sheet.clear();
-        console.log("BG_PROCESS: Setting new headers...");
-        await sheet.setHeaderRow(HEADERS);
-        console.log("BG_PROCESS: Sheet prepared. Starting data fetch from Overpass...");
+        console.log("BG_PROCESS: Fetching existing data for deduplication...");
+        const existingRows = await sheet.getRows();
+        const existingAddresses = new Set(existingRows.map(row => normalizeAddressForDedupe(row.get('Адрес'))));
+        console.log(`BG_PROCESS: Found ${existingAddresses.size} existing unique addresses.`);
+
 
         const uniqueRegions = [...new Set(Object.values(regionCenters))];
-        const allClients = new Map<string, any>();
-        let idCounter = 1;
-
+        const allNewClients = new Map<string, any>();
+        
         const concurrencyLimit = 8;
         for (let i = 0; i < uniqueRegions.length; i += concurrencyLimit) {
             const batch = uniqueRegions.slice(i, i + concurrencyLimit);
@@ -135,20 +146,25 @@ async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
                 for (const el of elements) {
                     const name = el.tags?.name || 'Без названия';
                     const address = (el.tags?.['addr:full'] || [el.tags?.['addr:city'], el.tags?.['addr:street'], el.tags?.['addr:housenumber']].filter(Boolean).join(', ')).trim();
-                    const key = `${name}|${address}`.toLowerCase();
+                    
+                    const normalizedAddress = normalizeAddressForDedupe(address);
+                    const key = `${name}|${address}`.toLowerCase(); // Unique key for this run
 
-                    if (address && !allClients.has(key)) {
-                        let type = 'Другое';
-                        if (el.tags?.amenity === 'veterinary' || el.tags?.healthcare === 'veterinary') type = 'Ветклиника';
-                        else if (el.tags?.shop?.includes('pet')) type = 'Зоомагазин';
-                        else if (el.tags?.shop?.includes('veterinary')) type = 'Ветаптека';
+                    if (address && !existingAddresses.has(normalizedAddress) && !allNewClients.has(key)) {
+                        let category = 'Другое';
+                        if (el.tags?.amenity === 'veterinary' || el.tags?.healthcare === 'veterinary') category = 'Ветклиника';
+                        else if (el.tags?.shop?.includes('pet')) category = 'Зоомагазин';
+                        else if (el.tags?.shop?.includes('veterinary')) category = 'Ветаптека';
 
-                        allClients.set(key, {
-                            ID: idCounter++,
-                            Название: name, Тип: type, Адрес: address, Регион: region,
-                            Страна: el.tags?.['addr:country'] || 'RU',
-                            Телефон: el.tags?.phone || '', Email: el.tags?.email || '', Сайт: el.tags?.website || '',
-                            Широта: el.lat || el.center?.lat || '', Долгота: el.lon || el.center?.lon || '',
+                        allNewClients.set(key, {
+                            'Страна': el.tags?.['addr:country'] || 'RU',
+                            'Субъект': region,
+                            'Город или населенный пункт': el.tags?.['addr:city'] || 'Не указан',
+                            'Категория (вет. клиника или вет. магазин)': category,
+                            'Наименование': name,
+                            'Адрес': address,
+                            'Контакты': [el.tags?.phone, el.tags?.email, el.tags?.website].filter(Boolean).join('; '),
+                            'Дата обновления базы': new Date().toISOString()
                         });
                     }
                 }
@@ -156,9 +172,12 @@ async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
             await sleep(1000);
         }
 
-        console.log(`BG_PROCESS: Data fetching complete. Found ${allClients.size} unique clients. Writing to sheet...`);
-        if (allClients.size > 0) {
-            await sheet.addRows(Array.from(allClients.values()));
+        console.log(`BG_PROCESS: Data fetching complete. Found ${allNewClients.size} new unique clients. Writing to sheet...`);
+        if (allNewClients.size > 0) {
+            await sheet.addRows(Array.from(allNewClients.values()));
+            console.log(`BG_PROCESS: Successfully added ${allNewClients.size} new rows.`);
+        } else {
+             console.log(`BG_PROCESS: No new clients found to add.`);
         }
         console.log(`BG_PROCESS: OKB database update completed successfully.`);
 
@@ -174,12 +193,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     let doc;
     try {
+        const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
+        if (!SPREADSHEET_ID) {
+            throw new Error("GOOGLE_SHEET_ID environment variable is not set.");
+        }
+
         const serviceAccountAuth = getAuth();
         doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         
         await doc.loadInfo(); 
 
         res.status(202).json({ message: 'Authentication successful. Background update process started.' });
+        
+        // Do not await this call, let it run in the background
         runDataFetchingAndUpdate(doc);
 
     } catch (error: any) {
@@ -189,7 +215,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (error.message.includes('permission denied')) {
                 details = 'The Service Account does not have "Editor" permissions on the Google Sheet. Please share the sheet with the service account email and grant "Editor" access.';
             } else if (error.message.includes('invalid_grant') || error.message.includes('unsupported')) {
-                details = 'The private key is invalid or corrupted. Please verify the GOOGLE_CREDENTIALS_BASE64 variable in Vercel. Ensure the entire JSON file was encoded.';
+                details = 'The private key is invalid or corrupted. Please verify the GOOGLE_PRIVATE_KEY variable in Vercel. Ensure the entire key was copied correctly.';
             } else {
                 details = error.message;
             }
