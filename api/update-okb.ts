@@ -64,7 +64,7 @@ async function fetchFromOverpass(region: string, retries = 2): Promise<any[]> {
   return [];
 }
 
-function normalize(str: string) {
+function normalize(str: any): string {
   if (typeof str !== 'string') return '';
   return str.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -128,14 +128,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
     
-    // САМОЕ НАДЕЖНОЕ РЕШЕНИЕ: Фильтруем массив ДО цикла.
-    const existingRows = existingRowsRaw.filter(
-      (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
-    );
-
     const existingEntries = new Set<string>();
-    // Теперь итерируем по 100% чистому массиву `existingRows`.
-    for (const row of existingRows) {
+    // ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ: итерация с явным приведением типа.
+    for (const rowRaw of existingRowsRaw) {
+      if (!rowRaw) continue; // 1. Проверяем на null
+      // 2. Явно приводим тип, чтобы TypeScript был уверен.
+      const row = rowRaw as GoogleSpreadsheetRow<Record<string, any>>; 
       const key = `${normalize(row.get('Наименование'))}|${normalize(row.get('Город или населенный пункт'))}`;
       existingEntries.add(key);
     }
