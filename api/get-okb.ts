@@ -3,7 +3,8 @@ import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
 const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
-const SHEET_NAME = 'ОКБ'; 
+// ИСПРАВЛЕНО: Целевой лист изменен на 'Лист1' в соответствии со скриншотом.
+const SHEET_NAME = 'Лист1'; 
 
 const serviceAccountAuth = new JWT({
     email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -23,11 +24,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
-        const sheet = doc.sheetsByTitle[SHEET_NAME];
+        
+        // УЛУЧШЕНО: Более надежный поиск листа
+        let sheet = doc.sheetsByTitle[SHEET_NAME];
+        if (!sheet) {
+            console.warn(`Sheet "${SHEET_NAME}" not found. Falling back to the first available sheet.`);
+            sheet = doc.sheetsByIndex[0]; // Пытаемся взять первый лист, если по имени не найден
+        }
 
         if (!sheet) {
-            // If the sheet doesn't exist, it means the database hasn't been built yet.
-            // Returning an empty array is expected behavior in this case.
+            // Если листов нет вообще, значит база еще не создана.
+            // Возвращаем пустой массив, это ожидаемое поведение.
             return res.status(200).json([]);
         }
 
