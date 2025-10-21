@@ -17,7 +17,8 @@ const OVERPASS_ENDPOINTS = [
     'https://overpass.openstreetmap.ru/api/interpreter'
 ];
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, resolve));
+// CRITICAL FIX: The second argument to setTimeout was incorrectly 'resolve' instead of 'ms', causing a runtime crash.
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     const query = `
