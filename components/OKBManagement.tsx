@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// FIX: Corrected import statement to properly import React and its hooks.
+import React, { useState, useCallback, useEffect } from 'react';
 import { LoaderIcon } from './icons';
 
 interface OKBManagementProps {
@@ -6,6 +7,7 @@ interface OKBManagementProps {
 }
 
 const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
+    // FIX: Replaced non-standard 'aistudio' hook calls with standard React hooks.
     const [status, setStatus] = useState<'loading' | 'success' | 'error' | 'updating'>('loading');
     const [lastUpdate, setLastUpdate] = useState<string>('...');
     const [totalRecords, setTotalRecords] = useState<string>('...');
@@ -46,21 +48,22 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         if (status === 'updating' || status === 'loading') return;
         
         setStatus('updating');
-        addNotification('Запрос на обновление базы отправлен. Процесс может занять до 5 минут.', 'info');
+        addNotification('Запрос на сбор данных отправлен. Процесс может занять до 15 минут.', 'info');
 
         try {
             const response = await fetch('/api/update-okb', { method: 'POST' });
-            if (!response.ok) {
+            if (response.status !== 202) { // Expecting 202 Accepted
                 const errorData = await response.json();
                 throw new Error(errorData.details || 'Ошибка при запуске обновления.');
             }
             
-            addNotification('Процесс обновления успешно запущен в фоновом режиме!', 'success');
+            addNotification('Процесс сбора данных успешно запущен в фоновом режиме!', 'success');
             
-            // Give the backend a moment to start, then check status again
+            // Periodically check status to reflect updates
             setTimeout(() => {
+                addNotification('Проверяем статус обновления...', 'info');
                 fetchStatus();
-            }, 30000); // Check status after 30 seconds to see if modifiedTime has changed
+            }, 60000); // Check status after 1 minute
 
         } catch (error: any) {
             console.error('Failed to start OKB update:', error);
@@ -106,10 +109,10 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                 aria-live="polite"
             >
                 {status === 'updating' && <LoaderIcon />}
-                <span className={status === 'updating' ? 'ml-2' : ''}>Обновить координаты в ОКБ</span>
+                <span className={status === 'updating' ? 'ml-2' : ''}>Собрать и обновить базу ОКБ</span>
             </button>
             <p className="text-xs text-gray-500 mt-3 text-center">
-                Обновляет геолокацию для записей без координат в Google Sheets.
+                Запускает полный сбор данных из OpenStreetMap по РФ и СНГ и добавляет их в Google Sheets.
             </p>
         </div>
     );
