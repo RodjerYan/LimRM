@@ -1,13 +1,15 @@
 /*
 ---
-title: fix(geocoding): Implement IndexedDB cache to dramatically speed up processing
+title: fix(geocoding): Implement region vs. capital differentiation in search logic
 description: >
-  Radically accelerates the geocoding process by introducing a persistent
-  local cache using IndexedDB. On file upload, the application now instantly
-  checks the local cache and only queries the network for locations it sees
-  for the first time. This significantly speeds up the processing of repeated
-  and large files, solving the core performance bottleneck. The loading status
-  messages have also been improved to inform the user about the caching process.
+  Fundamentally overhauls the geocoding and data fetching logic within the
+  web worker to correctly differentiate between a region's capital city and the
+  region itself. The system now performs mutually exclusive searches: city-boundary
+  searches for capitals, and region-wide searches that explicitly EXCLUDE the
+  capital's area. This solves the core issue of duplicated client counts. The
+  location identification algorithm has also been enhanced to correctly aggregate
+  smaller towns into their parent region and is more robust against geocoding failures,
+  eliminating the zero-OKB issue.
 ---
 */
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -62,7 +64,7 @@ function formatTime(seconds) {
     return 'Осталось ' + result.trim();
 }
 function calculateEtr(startTime, done, total) {
-    if (done === 0) return Infinity;
+    if (done === 0 || total === 0) return Infinity;
     const elapsedTime = (Date.now() - startTime) / 1000;
     const timePerItem = elapsedTime / done;
     const remainingItems = total - done;
@@ -142,7 +144,6 @@ const GeoCache = (() => {
                     }
                 };
                  request.onerror = () => {
-                    // Log error but continue
                     console.error('Ошибка при чтении из кеша для:', name);
                     completed++;
                     if (completed === locationNames.length) {
@@ -160,146 +161,130 @@ const GeoCache = (() => {
 
 
 // --- START dataUtils ---
-const cityCorrections = {
-    'анкт-петербур': 'Санкт-Петербург', 'анктпетербург': 'Санкт-Петербург', 'санктпетербург': 'Санкт-Петербург', 'спб': 'Санкт-Петербург', 'питер': 'Санкт-Петербург',
-    'мосвка': 'Москва', 'моква': 'Москва', 'мск': 'Москва',
-    'нновгород': 'Нижний Новгород', 'нижнийновгород': 'Нижний Новгород', 'н.новгород': 'Нижний Новгород', 'н. новгород': 'Нижний Новгород',
-    'екатеринбур': 'Екатеринбург', 'ростовнадону': 'Ростов-на-Дону', 'ростов-на-дону': 'Ростов-на-Дону',
-    'йошкар-ола': 'Йошкар-Ола', 'набережные челны': 'Набережные Челны', 'улан-удэ': 'Улан-Удэ', 'комсомольск-на-амуре': 'Комсомольск-на-Амуре'
+const regionToCenterMap = {
+    'москва': 'Москва', 'санкт-петербург': 'Санкт-Петербург', 'севастополь': 'Севастополь',
+    'адыгея': 'Майкоп', 'алтай': 'Горно-Алтайск', 'башкортостан': 'Уфа', 'бурятия': 'Улан-Удэ',
+    'дагестан': 'Махачкала', 'ингушетия': 'Магас', 'кабардино-балкарская': 'Нальчик',
+    'калмыкия': 'Элиста', 'карачаево-черкесская': 'Черкесск', 'карелия': 'Петрозаводск',
+    'коми': 'Сыктывкар', 'крым': 'Симферополь', 'марий эл': 'Йошкар-Ола', 'мордовия': 'Саранск',
+    'саха (якутия)': 'Якутск', 'северная осетия - алания': 'Владикавказ', 'татарстан': 'Казань',
+    'тыва': 'Кызыл', 'удмуртская': 'Ижевск', 'хакасия': 'Абакан', 'чеченская': 'Грозный', 'чувашская': 'Чебоксары',
+    'алтайский край': 'Барнаул', 'забайкальский край': 'Чита', 'камчатский край': 'Петропавловск-Камчатский',
+    'краснодарский край': 'Краснодар', 'красноярский край': 'Красноярск', 'пермский край': 'Пермь',
+    'приморский край': 'Владивосток', 'ставропольский край': 'Ставрополь', 'хабаровский край': 'Хабаровск',
+    'амурская область': 'Благовещенск', 'архангельская область': 'Архангельск', 'астраханская область': 'Астрахань',
+    'белгородская область': 'Белгород', 'брянская область': 'Брянск', 'владимирская область': 'Владимир', 'волгоградская область': 'Волгоград',
+    'вологодская область': 'Вологда', 'воронежская область': 'Воронеж', 'ивановская область': 'Иваново', 'иркутская область': 'Иркутск',
+    'калининградская область': 'Калининград', 'калужская область': 'Калуга', 'кемеровская область': 'Кемерово',
+    'кировская область': 'Киров', 'костромская область': 'Кострома', 'курганская область': 'Курган', 'курская область': 'Курск',
+    'ленинградская область': 'Санкт-Петербург', 'липецкая область': 'Липецк', 'магаданская область': 'Магадан', 'московская область': 'Москва',
+    'мурманская область': 'Мурманск', 'нижегородская область': 'Нижний Новгород', 'новгородская область': 'Великий Новгород',
+    'новосибирская область': 'Новосибирск', 'омская область': 'Омск', 'оренбургская область': 'Оренбург', 'орловская область': 'Орёл',
+    'пензенская область': 'Пенза', 'псковская область': 'Псков', 'ростовская область': 'Ростов-на-Дону', 'рязанская область': 'Рязань',
+    'самарская область': 'Самара', 'саратовская область': 'Саратов', 'сахалинская область': 'Южно-Сахалинск', 'свердловская область': 'Екатеринбург',
+    'смоленская область': 'Смоленск', 'тамбовская область': 'Тамбов', 'тверская область': 'Тверь', 'томская область': 'Томск',
+    'тульская область': 'Тула', 'тюменская область': 'Тюмень', 'ульяновская область': 'Ульяновск', 'челябинская область': 'Челябинск', 'ярославская область': 'Ярославль',
+    'еврейская': 'Биробиджан', 'ненецкий': 'Нарьян-Мар', 'ханты-мансийский - югра': 'Ханты-Мансийск',
+    'чукотский': 'Анадырь', 'ямало-ненецкий': 'Салехард'
 };
+const capitalCities = new Set(Object.values(regionToCenterMap));
 
-function sanitizeForOverpass(name) {
-    if (!name) return '';
-    let sanitized = name.trim();
-    sanitized = sanitized.replace(/р-н\\.?/i, 'район');
-    sanitized = sanitized.replace(/^(г|город)\\.?\\s+/i, ''); 
-    sanitized = sanitized.replace(/\\s+(г|город)\\.?$/i, '');
-    sanitized = sanitized.replace(/ё/g, 'е').replace(/Ё/g, 'Е');
-    return sanitized.trim();
-}
+function determineQueryInfo(fullAddress) {
+    let cleanAddress = String(fullAddress || '').trim().toLowerCase().replace(/ё/g, 'е');
+    if (!cleanAddress) return { locationKey: 'Не определен', queryLocation: null, capitalToExclude: null, isCapital: false };
 
+    // Standardize region types
+    cleanAddress = cleanAddress.replace(/\\s*обл\\.?/, ' область').replace(/\\s*р-н\\.?/, ' район');
 
-function correctCityTypos(cityName) {
-    if (!cityName) return '';
-    const lowerCity = cityName.toLowerCase().trim().replace(/\\./g, '');
-    for (const [typo, correction] of Object.entries(cityCorrections)) {
-        if (lowerCity === typo.toLowerCase()) return correction;
-    }
-    return cityName;
-}
-function determineLocationAndKey(fullAddress) {
-    if (!fullAddress) return { locationKey: 'Не определен', overpassQuery: 'Не определен' };
+    let identifiedRegion = null;
+    let identifiedSettlement = null;
     
-    // FIX: Radically expanded map of regions to their administrative centers for reliable searching.
-    const regionToCenterMap = {
-        'москва': 'Москва', 'санкт-петербург': 'Санкт-Петербург', 'севастополь': 'Севастополь',
-        'адыгея': 'Майкоп', 'алтай': 'Горно-Алтайск', 'башкортостан': 'Уфа', 'бурятия': 'Улан-Удэ',
-        'дагестан': 'Махачкала', 'ингушетия': 'Магас', 'кабардино-балкарская': 'Нальчик',
-        'калмыкия': 'Элиста', 'карачаево-черкесская': 'Черкесск', 'карелия': 'Петрозаводск',
-        'коми': 'Сыктывкар', 'крым': 'Симферополь', 'марий эл': 'Йошкар-Ола', 'мордовия': 'Саранск',
-        'саха (якутия)': 'Якутск', 'северная осетия - алания': 'Владикавказ', 'татарстан': 'Казань',
-        'тыва': 'Кызыл', 'удмуртская': 'Ижевск', 'хакасия': 'Абакан', 'чеченская': 'Грозный', 'чувашская': 'Чебоксары',
-        'алтайский': 'Барнаул', 'забайкальский': 'Чита', 'камчатский': 'Петропавловск-Камчатский',
-        'краснодарский': 'Краснодар', 'красноярский': 'Красноярск', 'пермский': 'Пермь',
-        'приморский': 'Владивосток', 'ставропольский': 'Ставрополь', 'хабаровский': 'Хабаровск',
-        'амурская': 'Благовещенск', 'архангельская': 'Архангельск', 'астраханская': 'Астрахань',
-        'белгородская': 'Белгород', 'брянская': 'Брянск', 'владимирская': 'Владимир', 'волгоградская': 'Волгоград',
-        'вологодская': 'Вологда', 'воронежская': 'Воронеж', 'ивановская': 'Иваново', 'иркутская': 'Иркутск',
-        'калининградская': 'Калининград', 'калужская': 'Калуга', 'кемеровская': 'Кемерово',
-        'кировская': 'Киров', 'костромская': 'Кострома', 'курганская': 'Курган', 'курская': 'Курск',
-        'ленинградская': 'Санкт-Петербург', 'липецкая': 'Липецк', 'магаданская': 'Магадан', 'московская': 'Москва',
-        'мурманская': 'Мурманск', 'нижегородская': 'Нижний Новгород', 'новгородская': 'Великий Новгород',
-        'новосибирская': 'Новосибирск', 'омская': 'Омск', 'оренбургская': 'Оренбург', 'орловская': 'Орёл',
-        'пензенская': 'Пенза', 'псковская': 'Псков', 'ростовская': 'Ростов-на-Дону', 'рязанская': 'Рязань',
-        'самарская': 'Самара', 'саратовская': 'Саратов', 'сахалинская': 'Южно-Сахалинск', 'свердловская': 'Екатеринбург',
-        'смоленская': 'Смоленск', 'тамбовская': 'Тамбов', 'тверская': 'Тверь', 'томская': 'Томск',
-        'тульская': 'Тула', 'тюменская': 'Тюмень', 'ульяновская': 'Ульяновск', 'челябинская': 'Челябинск', 'ярославская': 'Ярославль',
-        'еврейская': 'Биробиджан', 'ненецкий': 'Нарьян-Мар', 'ханты-мансийский - югра': 'Ханты-Мансийск',
-        'чукотский': 'Анадырь', 'ямало-ненецкий': 'Салехард'
-    };
-
-    const cityKeywords = ['г', 'город'];
-    const settlementKeywords = ['с', 'село', 'пгт', 'поселок', 'деревня', 'станица', 'ст-ца', 'аул', 'х', 'хутор'];
-    const allSettlementKeywords = [...cityKeywords, ...settlementKeywords];
-    const regionKeywords = ['область', 'обл', 'край', 'республика', 'респ', 'округ', 'ао', 'автономная'];
-    const streetKeywords = ['ул', 'улица', 'пр', 'проспект', 'пр-кт', 'пер', 'переулок', 'ш', 'шоссе', 'проезд', 'бульвар', 'б-р', 'наб', 'набережная', 'пл', 'площадь', 'аллея', 'мкр', 'микрорайон', 'квартал', 'территория', 'тер'];
-    const buildingKeywords = ['дом', 'д', 'корпус', 'корп', 'к', 'стр', 'строение', 'лит', 'литера', 'кв', 'квартира', 'пом', 'помещение', 'офис', 'здание'];
-    const countryStopWords = ['россия', 'российская федерация'];
-    let cleanAddress = fullAddress.replace(/^\\d{6},\\s*/, '').trim();
-    const parts = cleanAddress.split(/[,;]|\\s-\\s/).map(p => p.trim()).filter(p => p.length > 1);
-    let region = null;
-    let settlement = null;
-    let settlementType = 'unknown';
-    for (const part of parts) {
-        const lowerPart = part.toLowerCase();
-        if (!region && regionKeywords.some(kw => lowerPart.includes(kw) && !streetKeywords.some(skw => lowerPart.startsWith(skw)))) {
-            region = part;
+    // Attempt to find a known region first
+    for (const region of Object.keys(regionToCenterMap)) {
+        if (cleanAddress.includes(region)) {
+            identifiedRegion = region;
+            break;
         }
-        const prefixMatch = lowerPart.match(new RegExp('^(' + allSettlementKeywords.join('|') + ')[.\\\\s]+(.+)'));
-        if (prefixMatch && prefixMatch[2]) {
-            const typePrefix = prefixMatch[1];
-            const name = prefixMatch[2].trim();
-            if (!/^\\d+([а-яА-ЯёЁ]|\\/)?$/.test(name)) {
-                settlement = name.charAt(0).toUpperCase() + name.slice(1);
-                settlementType = cityKeywords.includes(typePrefix) ? 'city' : 'settlement';
-                break;
+    }
+
+    // Find the most likely settlement
+    const parts = cleanAddress.split(/[,;]/).map(p => p.replace(/^(г|город|поселок|пгт|село|деревня|д)\\.?\\s*/, '').trim()).filter(Boolean);
+    if (parts.length > 0) {
+        // A part is a settlement candidate if it's not the region itself and doesn't look like a street address
+        const settlementCandidates = parts.filter(p => p !== identifiedRegion && !/\\d/.test(p) && p.length > 2);
+        if (settlementCandidates.length > 0) {
+            // Prefer the first candidate, as it's often the city/town
+            identifiedSettlement = settlementCandidates[0];
+        }
+    }
+    
+    // Capitalize for display
+    const capitalize = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+    
+    // Case 1: A specific settlement is identified
+    if (identifiedSettlement) {
+        const capitalSettlement = capitalize(identifiedSettlement);
+        // Is this settlement a capital city?
+        if (capitalCities.has(capitalSettlement)) {
+             return {
+                locationKey: capitalSettlement,
+                queryLocation: capitalSettlement,
+                capitalToExclude: null,
+                isCapital: true
+            };
+        } else {
+            // It's a smaller settlement, so it belongs to a region. Find that region.
+            if (identifiedRegion) {
+                const regionName = capitalize(identifiedRegion);
+                const capital = regionToCenterMap[identifiedRegion];
+                 return {
+                    locationKey: regionName,
+                    queryLocation: regionName,
+                    capitalToExclude: capital,
+                    isCapital: false
+                };
             }
         }
     }
-    if (!settlement) {
-        const candidates = [];
-        for (const part of parts) {
-            const lowerPart = part.toLowerCase();
-            if (!/[а-яА-ЯёЁ]/.test(part)) continue;
-            const hasRegionKeyword = regionKeywords.some(kw => lowerPart.includes(kw));
-            const hasStreetKeyword = streetKeywords.some(kw => lowerPart.includes(kw));
-            const hasBuildingKeyword = buildingKeywords.some(kw => lowerPart.includes(kw));
-            const hasCountryKeyword = countryStopWords.some(kw => lowerPart.includes(kw));
-            if (hasRegionKeyword || hasStreetKeyword || hasCountryKeyword) continue;
-            if (hasBuildingKeyword && /\\d/.test(lowerPart)) continue;
-            const letters = (part.match(/[а-яА-ЯёЁ]/g) || []).length;
-            const digits = (part.match(/\\d/g) || []).length;
-            if (digits > letters) continue;
-            candidates.push(part);
+    
+    // Case 2: Only a region was found (or a non-capital settlement without a clear region)
+    if (identifiedRegion) {
+        const regionName = capitalize(identifiedRegion);
+        const capital = regionToCenterMap[identifiedRegion];
+         // Special handling for Moscow and St. Petersburg regions
+        if (regionName === 'Московская область' && capital === 'Москва') {
+             // Search Moscow Oblast, exclude Moscow city
+             return { locationKey: 'Московская область', queryLocation: 'Московская область', capitalToExclude: 'Москва', isCapital: false };
         }
-        if (candidates.length > 0) {
-            settlement = candidates[0].charAt(0).toUpperCase() + candidates[0].slice(1);
+        if (regionName === 'Ленинградская область' && capital === 'Санкт-Петербург') {
+             return { locationKey: 'Ленинградская область', queryLocation: 'Ленинградская область', capitalToExclude: 'Санкт-Петербург', isCapital: false };
         }
+        
+        // If the region name itself IS a capital (e.g., "Москва", "Санкт-Петербург")
+        if (capitalCities.has(regionName)) {
+             return { locationKey: regionName, queryLocation: regionName, capitalToExclude: null, isCapital: true };
+        }
+
+        return {
+            locationKey: regionName,
+            queryLocation: regionName,
+            capitalToExclude: capital,
+            isCapital: false
+        };
     }
     
-    if (!settlement && region) {
-        const lowerRegion = region.toLowerCase()
-            .replace(/\\s*(обл|область|край|республика|респ)\\.?/g, '')
-            .replace(/\\s*-\\s*алания/g, ' - алания')
-            .trim();
-        const center = regionToCenterMap[lowerRegion];
-        if (center) {
-            settlement = center;
-        } else {
-            settlement = region;
-        }
+    // Fallback: if we only have a single part, treat it as a potential city/region name
+    if (parts.length === 1) {
+       const singleName = capitalize(parts[0]);
+       if(capitalCities.has(singleName)){
+           return { locationKey: singleName, queryLocation: singleName, capitalToExclude: null, isCapital: true };
+       }
     }
 
-    if (!settlement) {
-        return { locationKey: 'Не определен', overpassQuery: 'Не определен' };
-    }
-    const correctedSettlement = correctCityTypos(settlement);
-    let locationKey;
-    if (settlementType === 'city' || ['Москва', 'Санкт-Петербург'].includes(correctedSettlement)) {
-        locationKey = correctedSettlement;
-    } else if (region) {
-        locationKey = region;
-    } else {
-        locationKey = correctedSettlement;
-    }
-    
-    if (locationKey && locationKey.toLowerCase().replace(/ё/g, 'е') === 'орел') {
-        locationKey = 'Орёл';
-    }
-    
-    const overpassQuery = sanitizeForOverpass(correctedSettlement);
-    return { locationKey, overpassQuery };
+    return { locationKey: capitalize(fullAddress), queryLocation: capitalize(fullAddress), capitalToExclude: null, isCapital: false };
 }
+
+
 const MIN_GROWTH_RATE = 0.05;
 const MAX_GROWTH_RATE = 0.80;
 const BASE_GROWTH_RATE = 0.15;
@@ -320,31 +305,22 @@ function calculateRealisticGrowthRate(fact, potentialTTs) {
 
 function aggregateData(data) {
     const aggregationMap = new Map();
-    const queryToPotentialMap = new Map();
-    data.forEach(item => {
-        if (item.cityForOverpass && !queryToPotentialMap.has(item.cityForOverpass)) {
-            queryToPotentialMap.set(item.cityForOverpass, {
-                potentialTTs: item.potentialTTs || 0,
-                potentialClients: item.potentialClients || []
-            });
-        }
-    });
 
     data.forEach(item => {
-        const key = \`\${item.rm}|\${item.brand}|\${item.city}\`;
+        const key = \`\${item.rm}|\${item.brand}|\${item.locationKey}\`;
         if (!aggregationMap.has(key)) {
-            const potentials = queryToPotentialMap.get(item.cityForOverpass) || { potentialTTs: 0, potentialClients: [] };
             aggregationMap.set(key, {
                 rm: item.rm,
                 brand: item.brand,
-                city: item.city,
+                city: item.locationKey,
                 fact: 0,
                 potential: 0,
                 growthPotential: 0,
                 growthRateSum: 0,
                 count: 0,
-                potentialTTs: potentials.potentialTTs,
-                potentialClients: potentials.potentialClients,
+                // These will be set from the first item, as they are consistent per locationKey
+                potentialTTs: item.potentialTTs || 0,
+                potentialClients: item.potentialClients || [],
             });
         }
         const current = aggregationMap.get(key);
@@ -377,7 +353,7 @@ function aggregateData(data) {
 // --- END dataUtils ---
 
 // --- START fileParser ---
-const parseFileAndExtractCities = (file) => {
+const parseFileAndExtractData = (file) => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -387,25 +363,21 @@ const parseFileAndExtractCities = (file) => {
                 const workbook = XLSX.read(data, { type: 'array' });
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-                const rawData = json.slice(1);
-                const uniqueLocations = new Set();
-                const processedData = rawData.map((row) => {
-                    const brand = String(row[1] || '').trim();
-                    const fact = Number(row[4]) || 0;
-                    const fullAddress = String(row[6] || '').trim();
-                    const rm = String(row[8] || '').trim();
-                    const { locationKey, overpassQuery } = determineLocationAndKey(fullAddress);
-                    if (overpassQuery && overpassQuery !== 'Не определен') {
-                        uniqueLocations.add(overpassQuery);
-                    }
-                    return { rm, brand, fullAddress, city: locationKey, cityForOverpass: overpassQuery, fact };
-                }).filter(item => item.rm && item.city !== 'Не определен' && item.brand);
-                if (processedData.length === 0) throw new Error("В файле не найдено корректных данных. Проверьте порядок и содержимое столбцов.");
-                resolve({ processedData, uniqueLocations });
+                const json = XLSX.utils.sheet_to_json(worksheet);
+                const processedData = json.map((row) => {
+                    const brand = String(row['Бренд'] || '').trim();
+                    const fact = Number(String(row['Факт (кг/ед)'] || '0').replace(',', '.')) || 0;
+                    const fullAddress = String(row['Город'] || '').trim();
+                    const rm = String(row['РМ'] || '').trim();
+                    const queryInfo = determineQueryInfo(fullAddress);
+                    return { rm, brand, fact, locationKey: queryInfo.locationKey, queryInfo };
+                }).filter(item => item.rm && item.locationKey !== 'Не определен' && item.brand);
+
+                if (processedData.length === 0) throw new Error("В файле не найдено корректных данных. Проверьте названия и содержимое столбцов: 'РМ', 'Бренд', 'Город', 'Факт (кг/ед)'.");
+                resolve(processedData);
             } catch (error) {
                 console.error('File parsing error:', error);
-                reject(error instanceof Error ? error : new Error("Не удалось разобрать файл."));
+                reject(error instanceof Error ? error : new Error("Не удалось разобрать файл. Убедитесь, что он имеет правильный формат и названия столбцов."));
             }
         };
         reader.onerror = (error) => reject(error);
@@ -440,6 +412,7 @@ function createRateLimiter(minInterval) {
 const nominatimRateLimiter = createRateLimiter(1001);
 
 async function getAreaIdForLocation(locationName) {
+    if (!locationName) return null;
     const url = baseUrl + '/api/nominatim-proxy?q=' + encodeURIComponent(locationName);
     try {
         const response = await fetch(url);
@@ -458,13 +431,22 @@ async function getAreaIdForLocation(locationName) {
 }
 const throttledGetAreaIdForLocation = nominatimRateLimiter(getAreaIdForLocation);
 
-// FIX: Implemented a robust retry mechanism with exponential backoff for Overpass API calls.
-// This handles rate limiting (429) and gateway timeouts (504) to prevent data loss.
-async function getMarketPotentialForArea(areaId) {
-    if (areaMarketPotentialCache.has(areaId)) {
-        return areaMarketPotentialCache.get(areaId);
+async function getMarketPotentialForArea(queryInfo) {
+    const cacheKey = \`\${queryInfo.regionAreaId}|\${queryInfo.capitalAreaId || ''}\`;
+    if (areaMarketPotentialCache.has(cacheKey)) {
+        return areaMarketPotentialCache.get(cacheKey);
     }
-    const query = '[out:json][timeout:90];area(' + areaId + ')->.searchArea;(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;';
+    if (!queryInfo.regionAreaId) return { count: 0, clients: [] };
+
+    let areaQueryPart;
+    if (queryInfo.capitalAreaId && queryInfo.regionAreaId !== queryInfo.capitalAreaId) {
+        areaQueryPart = \`(area(\${queryInfo.regionAreaId}); - area(\${queryInfo.capitalAreaId});)->.searchArea;\`;
+    } else {
+        areaQueryPart = \`area(\${queryInfo.regionAreaId})->.searchArea;\`;
+    }
+
+    const query = \`[out:json][timeout:120];\${areaQueryPart}(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;\`;
+    
     const maxRetries = 3;
     let attempt = 0;
     while (attempt < maxRetries) {
@@ -485,7 +467,7 @@ async function getMarketPotentialForArea(areaId) {
                     lat: el.lat || el.center?.lat, lon: el.lon || el.center?.lon,
                 }));
                 const result = { count: data.elements.length, clients };
-                areaMarketPotentialCache.set(areaId, result);
+                areaMarketPotentialCache.set(cacheKey, result);
                 return result;
             }
 
@@ -499,7 +481,7 @@ async function getMarketPotentialForArea(areaId) {
             
             throw new Error('Network response was not ok. Status: ' + response.status);
         } catch (error) {
-             console.error('Overpass fetch error for area ' + areaId + ' on attempt ' + (attempt + 1) + ':', error);
+             console.error('Overpass fetch error on attempt ' + (attempt + 1) + ':', error);
              attempt++;
              if (attempt >= maxRetries) return { count: 0, clients: [], error: 'fetch_error' };
              const delay = Math.pow(2, attempt) * 1000;
@@ -527,22 +509,24 @@ function createRequestQueue(concurrency) {
 }
 // --- END overpassService ---
 
-const calculateRealisticPotential = async (initialData, uniqueLocations, onProgress) => {
-    const dataWithPotential = [];
-    const locationArray = Array.from(uniqueLocations);
-    const totalLocations = locationArray.length;
-    let processedCount = 0;
+const calculateRealisticPotential = async (initialData, onProgress) => {
+    // 1. Identify unique geocoding tasks
+    const locationsToGeocode = new Set();
+    initialData.forEach(item => {
+        if (item.queryInfo.queryLocation) locationsToGeocode.add(item.queryInfo.queryLocation);
+        if (item.queryInfo.capitalToExclude) locationsToGeocode.add(item.queryInfo.capitalToExclude);
+    });
+    const locationArray = Array.from(locationsToGeocode);
+    const totalGeocodingTasks = locationArray.length;
+    let geocodedCount = 0;
     const startTime = Date.now();
     
-    onProgress(30, 'Этап 1: Проверка локального кеша...', '');
+    // 2. Check cache and fetch missing area IDs
+    onProgress(30, \`Этап 1: Проверка кеша для \${totalGeocodingTasks} локаций...\`, '');
     const cachedAreaIds = await GeoCache.batchGetAreaIds(locationArray);
     const locationsToFetch = locationArray.filter(name => !cachedAreaIds.has(name));
-    
     const locationToAreaIdMap = new Map(cachedAreaIds);
-    onProgress(40, 'Найдено в кеше: ' + cachedAreaIds.size + '. Запрос ' + locationsToFetch.length + ' новых локаций...', '');
-
-    const totalGeocodingSteps = locationsToFetch.length;
-    let geocodedCount = 0;
+    onProgress(40, \`Найдено в кеше: \${cachedAreaIds.size}. Запрос \${locationsToFetch.length} новых...\`, '');
 
     const geocodingPromises = locationsToFetch.map(async (locationName) => {
         const areaId = await throttledGetAreaIdForLocation(locationName);
@@ -551,44 +535,55 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
             await GeoCache.setAreaId(locationName, areaId);
         }
         geocodedCount++;
-        const etr = calculateEtr(startTime, geocodedCount, totalGeocodingSteps);
-        onProgress(40 + (geocodedCount / (totalGeocodingSteps || 1)) * 20, 'Геокодирование... (' + geocodedCount + '/' + totalGeocodingSteps + ')', etr);
+        const etr = calculateEtr(startTime, geocodedCount, totalGeocodingTasks);
+        onProgress(40 + (geocodedCount / totalGeocodingTasks) * 20, \`Геокодирование... (\${geocodedCount}/\${totalGeocodingTasks})\`, etr);
     });
-    
     await Promise.all(geocodingPromises);
-    
-    onProgress(60, 'Этап 2: Сбор данных о точках продаж...', '');
-    const enqueue = createRequestQueue(4);
-    const potentialMap = new Map();
-    
-    const locationsWithIds = Array.from(locationToAreaIdMap.entries()).filter(([_, areaId]) => areaId !== null);
-    
-    const promises = locationsWithIds.map(([locationName, areaId]) => enqueue(async () => {
-        const potential = await getMarketPotentialForArea(areaId);
-        potentialMap.set(locationName, potential);
 
-        processedCount++;
-        const etr = calculateEtr(startTime, processedCount + totalGeocodingSteps, locationsWithIds.length + totalGeocodingSteps);
-        onProgress(60 + (processedCount / (locationsWithIds.length || 1)) * 35, 'Сбор данных... (' + processedCount + '/' + locationsWithIds.length + ')', etr);
-    }));
-
-    await Promise.all(promises);
-    
-    locationArray.forEach(locationName => {
-        if (!potentialMap.has(locationName)) {
-             potentialMap.set(locationName, { count: 0, clients: [] });
+    // 3. Identify unique Overpass queries
+    const uniqueOverpassQueries = new Map();
+    initialData.forEach(item => {
+        const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
+        const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
+        if (regionAreaId) {
+            const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
+            if (!uniqueOverpassQueries.has(queryKey)) {
+                uniqueOverpassQueries.set(queryKey, { regionAreaId, capitalAreaId });
+            }
         }
     });
 
-    for (const item of initialData) {
-        const cityPotential = potentialMap.get(item.cityForOverpass) || { count: 0, clients: [] };
+    // 4. Execute Overpass queries
+    onProgress(60, \`Этап 2: Выполнение \${uniqueOverpassQueries.size} уникальных запросов к рынку...\`, '');
+    const enqueue = createRequestQueue(4);
+    const potentialMap = new Map();
+    let queriesProcessed = 0;
+    const totalQueries = uniqueOverpassQueries.size;
+
+    const overpassPromises = Array.from(uniqueOverpassQueries.entries()).map(([key, query]) => enqueue(async () => {
+        const potential = await getMarketPotentialForArea(query);
+        potentialMap.set(key, potential);
+        queriesProcessed++;
+        const etr = calculateEtr(startTime, geocodedCount + queriesProcessed, totalGeocodingTasks + totalQueries);
+        onProgress(60 + (queriesProcessed / totalQueries) * 35, \`Сбор данных... (\${queriesProcessed}/\${totalQueries})\`, etr);
+    }));
+    await Promise.all(overpassPromises);
+
+    // 5. Map results back and calculate potential for each row
+    const dataWithPotential = initialData.map(item => {
+        const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
+        const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
+        const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
+        const cityPotential = potentialMap.get(queryKey) || { count: 0, clients: [] };
+        
         const potentialTTs = cityPotential.count;
         const potentialClients = cityPotential.clients;
         const growthRate = calculateRealisticGrowthRate(item.fact, potentialTTs);
         const potential = item.fact * (1 + growthRate);
         const growthPotential = potential - item.fact;
-        dataWithPotential.push({ ...item, potential, growthPotential, growthRate: growthRate * 100, potentialTTs, potentialClients });
-    }
+
+        return { ...item, potential, growthPotential, growthRate: growthRate * 100, potentialTTs, potentialClients };
+    });
     
     return dataWithPotential;
 };
@@ -601,19 +596,19 @@ self.onmessage = async (e) => {
 
     try {
         self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение файла...', etr: '' } });
-        const { processedData, uniqueLocations } = await parseFileAndExtractCities(file);
-        const locationCount = uniqueLocations.size;
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: 'Найдено ' + locationCount + ' уникальных локаций. Запрос данных...', etr: '' } });
-        if (locationCount === 0) {
-            self.postMessage({ type: 'error', payload: "В файле не найдено локаций для анализа. Проверьте данные." });
-            return;
-        }
+        const processedData = await parseFileAndExtractData(file);
+        
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: \`Найдено \${processedData.length} строк. Запрос данных...\`, etr: '' } });
+        
         const onProgress = (progress, text, etr) => {
             self.postMessage({ type: 'progress', payload: { status: 'fetching', progress, text, etr: formatTime(etr) } });
         };
-        const dataWithPotential = await calculateRealisticPotential(processedData, uniqueLocations, onProgress);
+
+        const dataWithPotential = await calculateRealisticPotential(processedData, onProgress);
+
         self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Агрегация результатов...', etr: '' } });
         const finalAggregatedData = aggregateData(dataWithPotential);
+        
         self.postMessage({ type: 'result', payload: finalAggregatedData });
     } catch (error) {
         self.postMessage({ type: 'error', payload: error instanceof Error ? error.message : "Произошла неизвестная ошибка в фоновом обработчике." });
@@ -780,7 +775,7 @@ export default function App() {
     const filterOptions = useMemo(() => {
         const rms = [...new Set(aggregatedData.map(d => d.rm))].sort();
         const brands = [...new Set(aggregatedData.map(d => d.brand))].sort();
-        const cities = [...new Set(aggregatedData.map(d => d.city))].sort();
+        const cities = [...new Set(aggregatedData.map(d => d.city))].sort((a, b) => a.localeCompare(b, 'ru'));
         return { rms, brands, cities };
     }, [aggregatedData]);
 
@@ -809,6 +804,13 @@ export default function App() {
             processedData.sort((a, b) => {
                 const aVal = a[sortConfig.key];
                 const bVal = b[sortConfig.key];
+
+                if (typeof aVal === 'string' && typeof bVal === 'string') {
+                    return sortConfig.direction === 'ascending' 
+                        ? aVal.localeCompare(bVal, 'ru') 
+                        : bVal.localeCompare(aVal, 'ru');
+                }
+                
                 if (aVal < bVal) {
                     return sortConfig.direction === 'ascending' ? -1 : 1;
                 }
