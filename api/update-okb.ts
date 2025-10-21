@@ -62,7 +62,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        console.log(`Attempting to add ${rowsToAdd.length} new rows to the sheet.`);
+        console.log(`Attempting to add ${rowsToAdd.length} new rows to the sheet in a single batch.`);
+        // Используем пакетное добавление для максимальной производительности
         const addedRows = await sheet.addRows(rowsToAdd);
         console.log(`Successfully added ${addedRows.length} rows.`);
 

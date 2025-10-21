@@ -15,7 +15,10 @@ const getAuth = () => {
     return new JWT({
         email: client_email,
         key: private_key.replace(/\\n/g, '\n'),
-        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+        scopes: [
+            'https://www.googleapis.com/auth/spreadsheets.readonly',
+            'https://www.googleapis.com/auth/drive.metadata.readonly' // Scope для получения метаданных файла
+        ],
     });
 };
 
@@ -31,58 +34,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const serviceAccountAuth = getAuth();
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         
+        // --- 1. Получаем информацию о листе ---
+        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         await doc.loadInfo();
         const sheet = doc.sheetsByTitle[SHEET_NAME];
         
-        if (!sheet) {
-            console.warn(`Sheet "${SHEET_NAME}" not found in spreadsheet.`);
-            return res.status(404).json({ 
-                error: 'Лист с данными не найден.',
-                details: `В таблице Google отсутствует лист с названием "${SHEET_NAME}".`
-            });
+        let rowCount = 0;
+        if (sheet) {
+            // sheet.rowCount включает строку заголовка, поэтому вычитаем 1, если она есть
+            const headers = await sheet.headerValues;
+            rowCount = headers && headers.length > 0 ? sheet.rowCount - 1 : sheet.rowCount;
+        }
+
+        // --- 2. Получаем дату изменения файла через Google Drive API ---
+        const tokenResponse = await serviceAccountAuth.getAccessToken();
+        const token = tokenResponse.token;
+        if (!token) {
+            throw new Error('Не удалось получить токен доступа для Google Drive API.');
+        }
+
+        const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${SPREADSHEET_ID}?fields=modifiedTime`;
+        const driveResponse = await fetch(driveApiUrl, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!driveResponse.ok) {
+            const errorText = await driveResponse.text();
+            throw new Error(`Ошибка Google Drive API: ${driveResponse.status} ${errorText}`);
         }
         
-        // Строгая проверка наличия заголовков
-        await sheet.loadHeaderRow();
-        if (!sheet.headerValues || sheet.headerValues.length === 0) {
-            console.error('CRITICAL: Header row is missing in the Google Sheet.');
-            return res.status(500).json({ 
-                error: 'Ошибка конфигурации таблицы.',
-                details: 'В таблице отсутствуют обязательные заголовки. Пожалуйста, заполните первую строку названиями колонок.'
-            });
-        }
+        const fileMeta = await driveResponse.json();
+        const modifiedTime = fileMeta.modifiedTime;
 
-        const rows = await sheet.getRows();
-        const data = rows.map(row => row.toObject());
-
+        // --- 3. Отправляем ответ ---
         res.setHeader('Cache-Control', 'no-cache');
-        res.status(200).json(data);
+        res.status(200).json({ rowCount, modifiedTime });
 
     } catch (error: any) {
         console.error('CRITICAL Error in get-okb-status:', error);
         
-        let details = 'Не удалось получить данные из таблицы.';
+        let details = 'Не удалось получить статус таблицы.';
         let statusCode = 500;
-        
         const message = error.message || '';
 
-        if (message.includes('403')) {
+        if (message.includes('403') || message.includes('permission denied')) {
             statusCode = 403;
             const serviceAccountEmail = process.env.GOOGLE_CLIENT_EMAIL || '[email не найден]';
-            details = `Доступ запрещен. У сервисного аккаунта ('${serviceAccountEmail}') нет прав на просмотр таблицы. Пожалуйста, поделитесь таблицей с этим email.`;
+            details = `Доступ запрещен. У сервисного аккаунта ('${serviceAccountEmail}') нет прав на просмотр таблицы/файла.`;
         } else if (message.includes('404')) {
             statusCode = 404;
-            details = `Таблица Google не найдена. Убедитесь, что переменная окружения GOOGLE_SHEET_ID указана верно.`;
-        } else if (message.includes('permission denied')) {
-            statusCode = 403;
-            const serviceAccountEmail = process.env.GOOGLE_CLIENT_EMAIL || '[email не найден]';
-            details = `Доступ запрещен. У сервисного аккаунта ('${serviceAccountEmail}') нет прав на просмотр таблицы.`;
+            details = `Таблица Google не найдена. Убедитесь, что GOOGLE_SHEET_ID указан верно.`;
         }
 
         res.status(statusCode).json({ 
-            error: 'Не удалось получить данные из Google Sheets.', 
+            error: 'Не удалось получить статус из Google Sheets.', 
             details: details 
         });
     }
