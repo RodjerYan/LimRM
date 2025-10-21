@@ -130,15 +130,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         sendProgress(res, 10, "Получение существующих записей для дедупликации...");
         const existingRowsRaw = await sheet.getRows();
         
-        const existingRows = existingRowsRaw.filter(
-            (row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null
-        );
-
-        const existingEntries = new Set(
-            existingRows.map((row) => 
-                `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
-            )
-        );
+        // ИСПРАВЛЕНО: Явный цикл for...of с проверкой на null для устранения ошибки TS18047
+        const existingEntries = new Set<string>();
+        for (const row of existingRowsRaw) {
+            if (!row) continue; // Эта проверка гарантирует TypeScript, что row не null
+            const key = `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase();
+            existingEntries.add(key);
+        }
         
         const allUniqueNewRows: any[] = [];
         const totalRegions = regions.length;
@@ -178,10 +176,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 sendProgress(res, progress, `Запись строк: ${i + batch.length} из ${allUniqueNewRows.length}...`);
 
                 const addedRowsRaw = await sheet.addRows(batch);
-                const addedRows = addedRowsRaw.filter(
-                    (row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null
-                );
-                totalAddedCount += addedRows.length;
+                
+                // ИСПРАВЛЕНО: Аналогичный надежный цикл для подсчета фактически добавленных строк
+                for (const row of addedRowsRaw) {
+                    if (row) {
+                        totalAddedCount++;
+                    }
+                }
             }
             console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
         }
