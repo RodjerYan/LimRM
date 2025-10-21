@@ -16,7 +16,8 @@
     "@google/genai": "^0.14.0",
     "papaparse": "^5.4.1",
     "@vercel/node": "^5.3.26",
-    "google-spreadsheet": "^4.1.2"
+    "google-spreadsheet": "^4.1.2",
+    "google-auth-library": "^9.11.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
