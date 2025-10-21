@@ -6,9 +6,9 @@ type NotificationProps = Omit<NotificationMessage, 'id'>;
 
 const Notification: React.FC<NotificationProps> = ({ message, type }) => {
     const config = {
-        success: { border: 'border-success/30', bg: 'bg-green-500/10', text: 'text-success', icon: <SuccessIcon /> },
-        error: { border: 'border-danger/30', bg: 'bg-red-500/10', text: 'text-danger', icon: <ErrorIcon /> },
-        info: { border: 'border-info/30', bg: 'bg-blue-500/10', text: 'text-info', icon: <InfoIcon /> },
+        success: { bg: 'bg-green-500/20', border: 'border-green-500/30', text: 'text-success', icon: <SuccessIcon /> },
+        error: { bg: 'bg-red-500/20', border: 'border-red-500/30', text: 'text-danger', icon: <ErrorIcon /> },
+        info: { bg: 'bg-yellow-500/20', border: 'border-yellow-500/30', text: 'text-warning', icon: <InfoIcon /> },
     };
 
     const { bg, border, text, icon } = config[type];

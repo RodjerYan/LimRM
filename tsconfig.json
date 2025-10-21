@@ -6,7 +6,7 @@
     "module": "esnext",
     "esModuleInterop": true,
     "moduleResolution": "node",
-    "lib": ["es2022", "dom", "webworker"],
+    "lib": ["es2022", "dom"],
     "jsx": "react-jsx",
     "strict": true,
     "sourceMap": true,

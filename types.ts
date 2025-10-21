@@ -1,3 +1,5 @@
+
+
 export interface RawDataRow {
     rm: string;
     brand: string;
@@ -9,6 +11,7 @@ export interface RawDataRow {
 export interface PotentialClient {
     name: string;
     address: string;
+    phone: string;
     type: string;
     lat?: number;
     lon?: number;
@@ -20,7 +23,6 @@ export interface ProcessedDataRow extends RawDataRow {
     growthRate: number;
     potentialTTs: number;
     potentialClients: PotentialClient[];
-    cityCenter?: { lat: number; lon: number; };
 }
 
 export interface AggregatedDataRow {
@@ -32,11 +34,7 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthRate: number;
     potentialTTs: number;
-    totalMarketTTs: number;
     potentialClients: PotentialClient[];
-    cityCenter?: { lat: number; lon: number; };
-    activeTT: number;
-    newPlan?: number;
 }
 
 export interface LoadingState {
@@ -64,7 +62,6 @@ export interface Metrics {
     totalGrowthPotential: number;
     totalGrowthRate: number;
     avgPlanIncrease: number;
-    totalNewPlan: number;
 }
 
 export interface NotificationMessage {

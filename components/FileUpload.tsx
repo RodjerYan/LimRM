@@ -23,8 +23,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, loadingState }) =
     };
 
     return (
-        <div className="bg-card-bg/80 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-border-color">
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-3">
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
                 <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">1</span>
                 Загрузка данных
             </h2>
@@ -32,7 +32,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, loadingState }) =
                 <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isLoading}
-                    className="w-full bg-gradient-to-r from-accent to-purple-600 hover:from-accent-hover hover:to-purple-500 disabled:bg-gray-600 disabled:from-gray-600 disabled:to-gray-700 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 shadow-lg shadow-accent/20 flex items-center justify-center"
+                    className="w-full bg-gradient-to-r from-accent to-accent-dark hover:opacity-90 disabled:bg-gray-500 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-indigo-500/20 flex items-center justify-center"
                 >
                     {isLoading ? (
                         <>
@@ -58,14 +58,14 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, loadingState }) =
                         <span className="truncate pr-2">{loadingState.text}</span>
                         <span>{Math.round(loadingState.progress)}%</span>
                     </div>
-                    <div className="w-full bg-gray-900/50 rounded-full h-2.5">
+                    <div className="w-full bg-gray-900/50 rounded-full h-2">
                         <div
-                            className="bg-gradient-to-r from-accent to-purple-500 h-2.5 rounded-full transition-all duration-300"
+                            className="bg-gradient-to-r from-accent to-accent-dark h-2 rounded-full transition-all duration-300"
                             style={{ width: `${loadingState.progress}%` }}
                         ></div>
                     </div>
                     {loadingState.etr && (
-                        <p className="text-center text-xs text-accent-hover mt-2 animate-pulse">
+                        <p className="text-center text-xs text-accent mt-2 animate-pulse">
                             {loadingState.etr}
                         </p>
                     )}

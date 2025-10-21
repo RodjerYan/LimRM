@@ -1,3 +1,1 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* This file is intentionally left blank to prevent a 404 error from the link tag in index.html. All styling is currently handled by the Tailwind CDN and inline styles. */

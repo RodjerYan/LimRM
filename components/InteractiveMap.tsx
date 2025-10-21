@@ -1,6 +1,5 @@
 
 
-
 import React, { useEffect, useRef } from 'react';
 import { PotentialClient } from '../types';
 
@@ -9,13 +8,14 @@ declare const L: any; // Using Leaflet from CDN
 interface InteractiveMapProps {
     city: string;
     clients: PotentialClient[];
+    // FIX: Prop name changed from selectedIndex to selectedClientKey for a more robust key-based selection
     selectedClientKey: string | null;
-    cityCenter?: { lat: number, lon: number };
 }
 
-const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selectedClientKey, cityCenter }) => {
+const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selectedClientKey }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<any>(null);
+    // FIX: Use a Map to store marker references with a stable key (e.g., "lat,lon") instead of a sparse array.
     const markerRefs = useRef<Map<string, any>>(new Map());
 
     useEffect(() => {
@@ -38,16 +38,18 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selected
         markerRefs.current.forEach(marker => map.removeLayer(marker));
         markerRefs.current.clear();
 
-        const clientsWithCoords = clients.filter(c => typeof c.lat === 'number' && typeof c.lon === 'number');
+        const clientsWithCoords = clients.filter(c => c.lat && c.lon);
 
         if (clientsWithCoords.length > 0) {
             const markersForBounds: any[] = [];
             clientsWithCoords.forEach((client) => {
+                // This check is redundant due to filter, but safe
                 if (client.lat && client.lon) {
                     const clientKey = `${client.lat},${client.lon}`;
                     const marker = L.marker([client.lat, client.lon]);
                     marker.bindPopup(`<b>${client.name}</b><br>${client.type}<br><small>${client.address}</small>`);
                     marker.addTo(map);
+                    // Store the marker in the Map with its unique key
                     markerRefs.current.set(clientKey, marker);
                     markersForBounds.push(marker);
                 }
@@ -58,18 +60,16 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selected
                  map.fitBounds(featureGroup.getBounds().pad(0.1));
             }
 
-        } else if (cityCenter) {
-             // If no clients have coords, but we have a city center, focus on it
-             map.setView([cityCenter.lat, cityCenter.lon], 12);
         } else {
-            // Fallback if no coordinates are available at all
-            map.setView([55.75, 37.61], 5); // Default to a wide view of Russia
+            // Fallback if no coordinates are available
+            map.setView([55.75, 37.61], 9); // Default to Moscow
         }
 
-    }, [city, clients, cityCenter]);
+    }, [city, clients]);
 
     // Handle selection changes
     useEffect(() => {
+        // FIX: Find the marker using the key and highlight it. This is now robust and independent of list order.
         if (selectedClientKey && markerRefs.current.has(selectedClientKey) && mapInstance.current) {
             const marker = markerRefs.current.get(selectedClientKey);
             if (marker) {
