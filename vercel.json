@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/gemini-proxy",
+      "destination": "/api/gemini-proxy"
+    },
+    {
+      "source": "/api/nominatim-proxy",
+      "destination": "/api/nominatim-proxy"
+    }
+  ]
+}
