@@ -190,24 +190,32 @@ function correctCityTypos(cityName) {
 function determineLocationAndKey(fullAddress) {
     if (!fullAddress) return { locationKey: 'Не определен', overpassQuery: 'Не определен' };
     
-    // FIX: Map of regions to their administrative centers for more reliable searching.
+    // FIX: Radically expanded map of regions to their administrative centers for reliable searching.
     const regionToCenterMap = {
-        'орловская': 'Орёл',
-        'брянская': 'Брянск',
-        'смоленская': 'Смоленск',
-        'калужская': 'Калуга',
-        'тульская': 'Тула',
-        'курская': 'Курск',
-        'липецкая': 'Липецк',
-        'московская': 'Москва',
-        'ленинградская': 'Санкт-Петербург',
-        'воронежская': 'Воронеж',
-        'рязанская': 'Рязань',
-        'владимирская': 'Владимир',
-        'ярославская': 'Ярославль',
-        'ивановская': 'Иваново',
-        'костромская': 'Кострома',
-        'тверская': 'Тверь',
+        'москва': 'Москва', 'санкт-петербург': 'Санкт-Петербург', 'севастополь': 'Севастополь',
+        'адыгея': 'Майкоп', 'алтай': 'Горно-Алтайск', 'башкортостан': 'Уфа', 'бурятия': 'Улан-Удэ',
+        'дагестан': 'Махачкала', 'ингушетия': 'Магас', 'кабардино-балкарская': 'Нальчик',
+        'калмыкия': 'Элиста', 'карачаево-черкесская': 'Черкесск', 'карелия': 'Петрозаводск',
+        'коми': 'Сыктывкар', 'крым': 'Симферополь', 'марий эл': 'Йошкар-Ола', 'мордовия': 'Саранск',
+        'саха (якутия)': 'Якутск', 'северная осетия - алания': 'Владикавказ', 'татарстан': 'Казань',
+        'тыва': 'Кызыл', 'удмуртская': 'Ижевск', 'хакасия': 'Абакан', 'чеченская': 'Грозный', 'чувашская': 'Чебоксары',
+        'алтайский': 'Барнаул', 'забайкальский': 'Чита', 'камчатский': 'Петропавловск-Камчатский',
+        'краснодарский': 'Краснодар', 'красноярский': 'Красноярск', 'пермский': 'Пермь',
+        'приморский': 'Владивосток', 'ставропольский': 'Ставрополь', 'хабаровский': 'Хабаровск',
+        'амурская': 'Благовещенск', 'архангельская': 'Архангельск', 'астраханская': 'Астрахань',
+        'белгородская': 'Белгород', 'брянская': 'Брянск', 'владимирская': 'Владимир', 'волгоградская': 'Волгоград',
+        'вологодская': 'Вологда', 'воронежская': 'Воронеж', 'ивановская': 'Иваново', 'иркутская': 'Иркутск',
+        'калининградская': 'Калининград', 'калужская': 'Калуга', 'кемеровская': 'Кемерово',
+        'кировская': 'Киров', 'костромская': 'Кострома', 'курганская': 'Курган', 'курская': 'Курск',
+        'ленинградская': 'Санкт-Петербург', 'липецкая': 'Липецк', 'магаданская': 'Магадан', 'московская': 'Москва',
+        'мурманская': 'Мурманск', 'нижегородская': 'Нижний Новгород', 'новгородская': 'Великий Новгород',
+        'новосибирская': 'Новосибирск', 'омская': 'Омск', 'оренбургская': 'Оренбург', 'орловская': 'Орёл',
+        'пензенская': 'Пенза', 'псковская': 'Псков', 'ростовская': 'Ростов-на-Дону', 'рязанская': 'Рязань',
+        'самарская': 'Самара', 'саратовская': 'Саратов', 'сахалинская': 'Южно-Сахалинск', 'свердловская': 'Екатеринбург',
+        'смоленская': 'Смоленск', 'тамбовская': 'Тамбов', 'тверская': 'Тверь', 'томская': 'Томск',
+        'тульская': 'Тула', 'тюменская': 'Тюмень', 'ульяновская': 'Ульяновск', 'челябинская': 'Челябинск', 'ярославская': 'Ярославль',
+        'еврейская': 'Биробиджан', 'ненецкий': 'Нарьян-Мар', 'ханты-мансийский - югра': 'Ханты-Мансийск',
+        'чукотский': 'Анадырь', 'ямало-ненецкий': 'Салехард'
     };
 
     const cityKeywords = ['г', 'город'];
@@ -259,14 +267,16 @@ function determineLocationAndKey(fullAddress) {
         }
     }
     
-    // FIX: If only a region is found, use its administrative center for the query.
     if (!settlement && region) {
-        const lowerRegion = region.toLowerCase().replace(/\\s*(обл|область|край|республика|респ)\\.?$/g, '').trim();
+        const lowerRegion = region.toLowerCase()
+            .replace(/\\s*(обл|область|край|республика|респ)\\.?/g, '')
+            .replace(/\\s*-\\s*алания/g, ' - алания')
+            .trim();
         const center = regionToCenterMap[lowerRegion];
         if (center) {
-            settlement = center; // Use the admin center for the query, but keep the region for display.
+            settlement = center;
         } else {
-            settlement = region; // Fallback to old (less reliable) behavior if center is not in our map.
+            settlement = region;
         }
     }
 
@@ -283,7 +293,6 @@ function determineLocationAndKey(fullAddress) {
         locationKey = correctedSettlement;
     }
     
-    // Treat "Орел" and "Орёл" as the same city, displaying "Орёл".
     if (locationKey && locationKey.toLowerCase().replace(/ё/g, 'е') === 'орел') {
         locationKey = 'Орёл';
     }
@@ -309,14 +318,8 @@ function calculateRealisticGrowthRate(fact, potentialTTs) {
     return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
 }
 
-// FIX: Corrected aggregation logic to properly handle cases where multiple display names 
-// (e.g., "Орловская обл", "Орёл") map to the same query location ("Орёл"). This ensures
-// potential client data (ОКБ) is correctly assigned to all relevant groups.
 function aggregateData(data) {
     const aggregationMap = new Map();
-    
-    // Step 1: Create a map from the query name (e.g., 'Орёл') to its potential data.
-    // This correctly collects the potential for each unique geographical location once.
     const queryToPotentialMap = new Map();
     data.forEach(item => {
         if (item.cityForOverpass && !queryToPotentialMap.has(item.cityForOverpass)) {
@@ -327,17 +330,14 @@ function aggregateData(data) {
         }
     });
 
-    // Step 2: Aggregate sales data, grouping by the display name (e.g., "Орловская обл").
     data.forEach(item => {
-        const key = \`\${item.rm}|\${item.brand}|\${item.city}\`; // Group by display city
+        const key = \`\${item.rm}|\${item.brand}|\${item.city}\`;
         if (!aggregationMap.has(key)) {
-            // On first sight of a group, create it.
-            // Look up the potential using the item's unique query name.
             const potentials = queryToPotentialMap.get(item.cityForOverpass) || { potentialTTs: 0, potentialClients: [] };
             aggregationMap.set(key, {
                 rm: item.rm,
                 brand: item.brand,
-                city: item.city, // The display name
+                city: item.city,
                 fact: 0,
                 potential: 0,
                 growthPotential: 0,
@@ -347,7 +347,6 @@ function aggregateData(data) {
                 potentialClients: potentials.potentialClients,
             });
         }
-        // Add the current item's sales data to the aggregate.
         const current = aggregationMap.get(key);
         current.fact += item.fact;
         current.potential += item.potential;
@@ -356,9 +355,7 @@ function aggregateData(data) {
         current.count += 1;
     });
 
-    // Step 3: Finalize the aggregated data (calculate averages and de-duplicate clients).
     return Array.from(aggregationMap.values()).map(item => {
-        // Ensure client list is unique for display purposes.
         const uniqueClients = Array.from(new Map(item.potentialClients.map(c => [
             c.lat && c.lon ? \`\${c.lat},\${c.lon}\` : c.name, 
             c
@@ -418,7 +415,7 @@ const parseFileAndExtractCities = (file) => {
 // --- END fileParser ---
 
 // --- START overpassService ---
-let baseUrl = ''; // Will be set by the main thread
+let baseUrl = ''; 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 const areaMarketPotentialCache = new Map();
 
@@ -440,10 +437,9 @@ function createRateLimiter(minInterval) {
     };
 }
 
-const nominatimRateLimiter = createRateLimiter(1001); // 1 req/sec + 1ms buffer
+const nominatimRateLimiter = createRateLimiter(1001);
 
 async function getAreaIdForLocation(locationName) {
-    // FIX: Web workers cannot resolve relative URLs. Prepend the baseUrl passed from the main thread.
     const url = baseUrl + '/api/nominatim-proxy?q=' + encodeURIComponent(locationName);
     try {
         const response = await fetch(url);
@@ -451,12 +447,8 @@ async function getAreaIdForLocation(locationName) {
         const data = await response.json();
         if (data && data.length > 0) {
             const result = data[0];
-            if (result.osm_type === 'relation') {
-                return 3600000000 + parseInt(result.osm_id, 10);
-            }
-            if (result.osm_type === 'way') {
-                return 2400000000 + parseInt(result.osm_id, 10);
-            }
+            if (result.osm_type === 'relation') return 3600000000 + parseInt(result.osm_id, 10);
+            if (result.osm_type === 'way') return 2400000000 + parseInt(result.osm_id, 10);
         }
         return null;
     } catch (error) {
@@ -466,39 +458,57 @@ async function getAreaIdForLocation(locationName) {
 }
 const throttledGetAreaIdForLocation = nominatimRateLimiter(getAreaIdForLocation);
 
+// FIX: Implemented a robust retry mechanism with exponential backoff for Overpass API calls.
+// This handles rate limiting (429) and gateway timeouts (504) to prevent data loss.
 async function getMarketPotentialForArea(areaId) {
     if (areaMarketPotentialCache.has(areaId)) {
         return areaMarketPotentialCache.get(areaId);
     }
-    // FIX: Replaced template literal with standard string concatenation to fix Vercel build error.
-    // FIX: Increased timeout to 60s for better reliability with large areas.
-    const query = '[out:json][timeout:60];area(' + areaId + ')->.searchArea;(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;';
-    try {
-        const response = await fetch(OVERPASS_URL, {
-            method: 'POST',
-            body: 'data=' + encodeURIComponent(query),
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-        if (!response.ok) {
-            if (response.status === 429) return { error: 'rate_limit' };
+    const query = '[out:json][timeout:90];area(' + areaId + ')->.searchArea;(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;';
+    const maxRetries = 3;
+    let attempt = 0;
+    while (attempt < maxRetries) {
+        try {
+            const response = await fetch(OVERPASS_URL, {
+                method: 'POST',
+                body: 'data=' + encodeURIComponent(query),
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                const clients = data.elements.map((el) => ({
+                    name: el.tags?.name || 'Без названия',
+                    address: ((el.tags?.['addr:street'] || '') + ' ' + (el.tags?.['addr:housenumber'] || '')).trim(),
+                    phone: el.tags?.phone || '',
+                    type: el.tags?.shop === 'pet' ? 'Зоомагазин' : 'Ветклиника/Аптека',
+                    lat: el.lat || el.center?.lat, lon: el.lon || el.center?.lon,
+                }));
+                const result = { count: data.elements.length, clients };
+                areaMarketPotentialCache.set(areaId, result);
+                return result;
+            }
+
+            if (response.status === 429 || response.status === 504) {
+                attempt++;
+                if (attempt >= maxRetries) throw new Error('Overpass API failed after ' + maxRetries + ' attempts with status ' + response.status + '.');
+                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+            
             throw new Error('Network response was not ok. Status: ' + response.status);
+        } catch (error) {
+             console.error('Overpass fetch error for area ' + areaId + ' on attempt ' + (attempt + 1) + ':', error);
+             attempt++;
+             if (attempt >= maxRetries) return { count: 0, clients: [], error: 'fetch_error' };
+             const delay = Math.pow(2, attempt) * 1000;
+             await new Promise(resolve => setTimeout(resolve, delay));
         }
-        const data = await response.json();
-        const clients = data.elements.map((el) => ({
-            name: el.tags?.name || 'Без названия',
-            address: ((el.tags?.['addr:street'] || '') + ' ' + (el.tags?.['addr:housenumber'] || '')).trim(),
-            phone: el.tags?.phone || '',
-            type: el.tags?.shop === 'pet' ? 'Зоомагазин' : 'Ветклиника/Аптека',
-            lat: el.lat || el.center?.lat, lon: el.lon || el.center?.lon,
-        }));
-        const result = { count: data.elements.length, clients };
-        areaMarketPotentialCache.set(areaId, result);
-        return result;
-    } catch (error) {
-        console.error('There has been a problem with your fetch operation for area ' + areaId + ':', error);
-        return { count: 0, clients: [], error: 'fetch_error' };
     }
+    return { count: 0, clients: [], error: 'fetch_error_unhandled' };
 }
+
 function createRequestQueue(concurrency) {
     const queue = []; let activeRequests = 0;
     function processQueue() {
@@ -524,7 +534,6 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
     let processedCount = 0;
     const startTime = Date.now();
     
-    // --- STAGE 1: Geocoding (with caching) ---
     onProgress(30, 'Этап 1: Проверка локального кеша...', '');
     const cachedAreaIds = await GeoCache.batchGetAreaIds(locationArray);
     const locationsToFetch = locationArray.filter(name => !cachedAreaIds.has(name));
@@ -548,7 +557,6 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
     
     await Promise.all(geocodingPromises);
     
-    // --- STAGE 2: Fetching market data from Overpass ---
     onProgress(60, 'Этап 2: Сбор данных о точках продаж...', '');
     const enqueue = createRequestQueue(4);
     const potentialMap = new Map();
@@ -572,7 +580,6 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
         }
     });
 
-    // --- STAGE 3: Merging data ---
     for (const item of initialData) {
         const cityPotential = potentialMap.get(item.cityForOverpass) || { count: 0, clients: [] };
         const potentialTTs = cityPotential.count;
@@ -589,9 +596,8 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
 
 // --- WORKER MAIN LOGIC ---
 self.onmessage = async (e) => {
-    // FIX: The message now contains both the file and the application's base URL.
     const { file, baseUrl: newBaseUrl } = e.data;
-    baseUrl = newBaseUrl; // Set the global baseUrl for the worker's fetch calls.
+    baseUrl = newBaseUrl; 
 
     try {
         self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение файла...', etr: '' } });
