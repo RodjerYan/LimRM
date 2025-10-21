@@ -128,14 +128,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         
         sendProgress(res, 10, "Получение существующих записей для дедупликации...");
-        const existingRows = await sheet.getRows();
+        const existingRowsRaw = await sheet.getRows();
+        
+        const existingRows = existingRowsRaw.filter(
+            (row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null
+        );
+
         const existingEntries = new Set(
-            existingRows
-                // FIX: Add filter to address TS18047 build error. This ensures `row` cannot be null.
-                .filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => Boolean(row))
-                .map((row) => 
-                    `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
-                )
+            existingRows.map((row) => 
+                `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
+            )
         );
         
         const allUniqueNewRows: any[] = [];
@@ -143,7 +145,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         for (let i = 0; i < totalRegions; i++) {
             const region = regions[i];
-            const progress = 15 + Math.round((i / totalRegions) * 70);
+            const progress = 15 + Math.round((i / totalRegions) * 75);
             sendProgress(res, progress, `Сбор данных...`, region);
 
             const elements = await fetchFromOverpass(region);
@@ -166,16 +168,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         
         if (allUniqueNewRows.length > 0) {
-            sendProgress(res, 90, `Запись ${allUniqueNewRows.length} новых строк в таблицу...`);
-            
-            // FIX: Refactor to use filter for safer handling and cleaner code, per user suggestion.
-            const addedRows = (await sheet.addRows(allUniqueNewRows))
-                 .filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => Boolean(row));
+            const BATCH_SIZE = 500;
+            let totalAddedCount = 0;
 
-            console.log(`Фактически добавлено ${addedRows.length} из ${allUniqueNewRows.length} новых строк.`);
+            for (let i = 0; i < allUniqueNewRows.length; i += BATCH_SIZE) {
+                const batch = allUniqueNewRows.slice(i, i + BATCH_SIZE);
+                // Прогресс от 90% до 99% во время записи
+                const progress = 90 + Math.round((i / allUniqueNewRows.length) * 9); 
+                sendProgress(res, progress, `Запись строк: ${i + batch.length} из ${allUniqueNewRows.length}...`);
+
+                const addedRowsRaw = await sheet.addRows(batch);
+                const addedRows = addedRowsRaw.filter(
+                    (row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null
+                );
+                totalAddedCount += addedRows.length;
+            }
+            console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
         }
 
-        sendProgress(res, 100, `Обновление завершено! Найдено ${allUniqueNewRows.length} новых записей.`);
+        sendProgress(res, 100, `Обновление завершено! Найдено и обработано ${allUniqueNewRows.length} новых записей.`);
 
     } catch (error: any) {
         console.error('CRITICAL Error in update-okb stream:', error);
