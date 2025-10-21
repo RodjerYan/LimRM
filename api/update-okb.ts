@@ -104,7 +104,7 @@ function processOverpassElements(elements: any[], region: string) {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Content-Type', 'text-event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
@@ -128,16 +128,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
     
-    // ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ: Фильтруем массив ДО цикла с использованием type predicate, который проверяет не только null, но и наличие метода .get()
+    // ИСПРАВЛЕНИЕ TS18047: Фильтруем массив ДО цикла с использованием type predicate.
+    // Это создает новый массив `existingRows`, в котором TypeScript уверен, что нет `null` элементов.
     const existingRows = existingRowsRaw.filter(
-      (row): row is GoogleSpreadsheetRow<Record<string, any>> => !!row && typeof row.get === 'function'
+      (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
     );
 
     const existingEntries = new Set<string>();
-    // Теперь итерация идет по 100% чистому массиву `existingRows`, а доступ к данным безопасен через `?? ''`
+    // Теперь итерация идет по 100% чистому массиву `existingRows`.
     for (const row of existingRows) {
-      const name = row.get('Наименование') ?? '';
-      const city = row.get('Город или населенный пункт') ?? '';
+      // ИСПРАВЛЕНИЕ TS18047: Используем `|| ''` для безопасного доступа к данным,
+      // даже если ячейка пуста и .get() вернет undefined.
+      const name = row.get('Наименование') || '';
+      const city = row.get('Город или населенный пункт') || '';
       const key = `${normalize(name)}|${normalize(city)}`;
       existingEntries.add(key);
     }
@@ -174,8 +177,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         const addedRowsRaw = await sheet.addRows(batch);
         
-        // Применяем тот же надежный паттерн для безопасного подсчета добавленных строк.
-        const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => !!row);
+        // Применяем тот же надежный паттерн фильтрации для безопасного подсчета.
+        const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
         totalAddedCount += addedRows.length;
       }
       console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
