@@ -115,26 +115,23 @@ self.onmessage = async (e: MessageEvent<{ file: File; okbData: any[] }>) => {
 
         const potentialClientsByCity = new Map<string, any[]>();
         for (const client of potentialClients) {
-            // Group potential clients by 'Субъект' (region), which is the primary geographical unit for analysis
-            const cityKey = client['Субъект']; 
-            if (!potentialClientsByCity.has(cityKey)) {
-                potentialClientsByCity.set(cityKey, []);
+            const city = client['Регион']; // Using the region from OKB as the city key
+            if (!potentialClientsByCity.has(city)) {
+                potentialClientsByCity.set(city, []);
             }
-            potentialClientsByCity.get(cityKey)!.push({
+            potentialClientsByCity.get(city)!.push({
                 name: client['Название'],
                 address: client['Адрес'],
-                phone: client['Контакты'], // Contacts field contains phone, email, etc.
+                phone: client['Телефон'],
                 type: client['Тип'],
-                // No lat/lon in this sheet version yet, so we omit them
-                lat: undefined, 
-                lon: undefined,
+                lat: parseFloat(client['Широта']),
+                lon: parseFloat(client['Долгота']),
             });
         }
 
         self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 60, text: 'Расчет рыночного потенциала...', etr: '' } });
         
         const dataWithPotential = akbData.map(item => {
-            // Match AKB data city (which is the subject/region) with the grouped potential clients
             const clientsForCity = potentialClientsByCity.get(item.city) || [];
             const potentialTTs = clientsForCity.length;
             
