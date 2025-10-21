@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
-// Data is now self-contained to prevent Vercel build issues.
+// Data is self-contained to prevent Vercel build issues.
 const regionCenters: Record<string, string> = {
   "москва": "город федерального значения москва", "санкт-петербург": "город федерального значения санкт-петербург", "севастополь": "город федерального значения севастополь",
   "майкоп": "республика адыгея", "горно-алтайск": "республика алтай", "уфа": "республика башкортостан", "улан-удэ": "республика бурятия", "махачкала": "республика дагестан", "магас": "республика ингушетия", "нальчик": "кабардино-балкарская республика", "элиста": "республика калмыкия", "черкесск": "карачаево-черкесская республика", "петрозаводск": "республика карелия", "сыктывкар": "республика коми", "йошкар-ола": "республика марий эл", "саранск": "республика мордовия", "якутск": "республика саха (якутия)", "владикавказ": "республика северная осетия — алания", "казань": "республика татарстан", "кызыл": "республика тыва", "ижевск": "удмуртская республика", "абакан": "республика хакасия", "грозный": "чеченская республика", "чебоксары": "чувашская республика", "симферополь": "республика крым",
@@ -17,27 +17,32 @@ const regionCenters: Record<string, string> = {
 const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'Лист1'; 
 
+const getAuth = () => {
+    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
+    if (!credsBase64) {
+        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
+    }
+    
+    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
+    const { client_email, private_key } = JSON.parse(credsJson);
+
+    return new JWT({
+        email: client_email,
+        key: private_key,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+};
+
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
-    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const key = process.env.GOOGLE_PRIVATE_KEY;
-
-    if (!email || !key) {
-        console.error("Handler failed: Google Service Account credentials are not configured.");
-        return res.status(500).json({ error: 'Google Service Account credentials are not configured on the server.' });
-    }
-
     try {
-        const serviceAccountAuth = new JWT({
-            email: email,
-            key: key.replace(/\\n/g, '\n'),
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-
+        const serviceAccountAuth = getAuth();
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        
         await doc.loadInfo();
         
         let sheet = doc.sheetsByTitle[SHEET_NAME];
@@ -57,7 +62,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(200).json(data);
 
     } catch (error: any) {
-        console.error('Error fetching from Google Sheets:', error);
-        res.status(500).json({ error: 'Failed to fetch data from Google Sheets.', details: error.message });
+        console.error('CRITICAL AUTH/API ERROR in get-okb:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch data from Google Sheets.', 
+            details: error.message 
+        });
     }
 }

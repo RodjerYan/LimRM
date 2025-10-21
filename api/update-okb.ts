@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
-// Data is now self-contained to prevent Vercel build issues.
+// Data is self-contained to prevent Vercel build issues.
 const regionCenters: Record<string, string> = {
   "москва": "город федерального значения москва", "санкт-петербург": "город федерального значения санкт-петербург", "севастополь": "город федерального значения севастополь",
   "майкоп": "республика адыгея", "горно-алтайск": "республика алтай", "уфа": "республика башкортостан", "улан-удэ": "республика бурятия", "махачкала": "республика дагестан", "магас": "республика ингушетия", "нальчик": "кабардино-балкарская республика", "элиста": "республика калмыкия", "черкесск": "карачаево-черкесская республика", "петрозаводск": "республика карелия", "сыктывкар": "республика коми", "йошкар-ола": "республика марий эл", "саранск": "республика мордовия", "якутск": "республика саха (якутия)", "владикавказ": "республика северная осетия — алания", "казань": "республика татарстан", "кызыл": "республика тыва", "ижевск": "удмуртская республика", "абакан": "республика хакасия", "грозный": "чеченская республика", "чебоксары": "чувашская республика", "симферополь": "республика крым",
@@ -26,6 +26,22 @@ const OVERPASS_ENDPOINTS = [
     'https://overpass.kumi.systems/api/interpreter',
     'https://overpass.openstreetmap.ru/api/interpreter'
 ];
+
+const getAuth = () => {
+    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
+    if (!credsBase64) {
+        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
+    }
+    
+    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
+    const { client_email, private_key } = JSON.parse(credsJson);
+
+    return new JWT({
+        email: client_email,
+        key: private_key,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+};
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -155,32 +171,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
-    console.log("HANDLER: Received POST request to /api/update-okb.");
-
-    const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    const key = process.env.GOOGLE_PRIVATE_KEY;
-
-    if (!email || !key) {
-        console.error("HANDLER_FATAL: Google Service Account credentials missing in environment variables.");
-        return res.status(500).json({ error: 'Server: Google Service Account credentials not configured.' });
-    }
-     console.log("HANDLER: Found Google credentials in environment.");
-
+    
     let doc;
     try {
-        console.log("HANDLER: Attempting to create JWT auth client...");
-        const serviceAccountAuth = new JWT({
-            email,
-            key: key.replace(/\\n/g, '\n'),
-            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-        });
-         console.log("HANDLER: JWT client created. Initializing GoogleSpreadsheet object...");
-
+        const serviceAccountAuth = getAuth();
         doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
         
-        console.log("HANDLER: Authenticating and loading sheet info (doc.loadInfo)...");
         await doc.loadInfo(); 
-        console.log("HANDLER: Successfully authenticated with Google Sheets and loaded document info.");
+
+        res.status(202).json({ message: 'Authentication successful. Background update process started.' });
+        runDataFetchingAndUpdate(doc);
 
     } catch (error: any) {
         console.error("HANDLER_CRITICAL_AUTH_ERROR:", error);
@@ -188,8 +188,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (error.message) {
             if (error.message.includes('permission denied')) {
                 details = 'The Service Account does not have "Editor" permissions on the Google Sheet. Please share the sheet with the service account email and grant "Editor" access.';
-            } else if (error.message.includes('invalid_grant')) {
-                details = 'The private key is invalid or the service account may be misconfigured. Please verify the private key in your environment variables.';
+            } else if (error.message.includes('invalid_grant') || error.message.includes('unsupported')) {
+                details = 'The private key is invalid or corrupted. Please verify the GOOGLE_CREDENTIALS_BASE64 variable in Vercel. Ensure the entire JSON file was encoded.';
             } else {
                 details = error.message;
             }
@@ -198,13 +198,5 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             error: 'Failed to connect to Google Sheets.',
             details: details
         });
-    }
-
-    try {
-        res.status(202).json({ message: 'Authentication successful. Background update process started.' });
-        console.log("HANDLER: Responded 202 to client. Starting background process...");
-        runDataFetchingAndUpdate(doc);
-    } catch (err) {
-        console.error('HANDLER_FALLBACK_ERROR: Error after authentication:', err);
     }
 }
