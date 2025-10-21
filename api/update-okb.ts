@@ -1,33 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet, GoogleSpreadsheetRow } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
+import { regions } from './_data/regions';
 
 const SHEET_NAME = 'Лист1';
-// FIX: Added coordinate columns to align with get-okb.ts and application needs.
 const HEADERS = [
     "Страна", "Субъект", "Город или населенный пункт",
     "Категория (вет. клиника или вет. магазин)", "Наименование",
     "Адрес", "Контакты", "Широта", "Долгота", "Дата обновления базы"
 ];
 
-// Определяем интерфейс для данных из OSM для строгой типизации
-interface OsmDataRow {
-    // FIX: Add index signature to be compatible with google-spreadsheet's `addRows` method,
-    // which expects an object that can be indexed by any string. This also fixes the TS error.
-    [key: string]: string;
-    "Страна": string;
-    "Субъект": string;
-    "Город или населенный пункт": string;
-    "Категория (вет. клиника или вет. магазин)": string;
-    "Наименование": string;
-    "Адрес": string;
-    "Контакты": string;
-    "Широта": string;
-    "Долгота": string;
-    "Дата обновления базы": string;
-}
+// --- Утилиты ---
 
-// --- Аутентификация и работа с Google Sheets ---
+// Функция для отправки прогресса клиенту через Server-Sent Events
+const sendProgress = (res: VercelResponse, progress: number, text: string, region: string = '') => {
+    res.write(`data: ${JSON.stringify({ progress, text, region })}\n\n`);
+};
+
+// --- Аутентификация ---
 const getAuth = () => {
     const client_email = process.env.GOOGLE_CLIENT_EMAIL;
     const private_key = process.env.GOOGLE_PRIVATE_KEY;
@@ -41,62 +31,39 @@ const getAuth = () => {
     });
 };
 
-// --- Сбор данных из OpenStreetMap (Overpass API) ---
-
-// FIX: Switched from "out body" to "out center" to efficiently get coordinates for all element types.
-const OVERPASS_QUERY = `
-[out:json][timeout:900];
+// --- Логика работы с OpenStreetMap ---
+const buildOverpassQuery = (region: string) => `
+[out:json][timeout:180];
+area[name="${region}"]->.searchArea;
 (
-  node["amenity"="veterinary"](40.9, 19.9, 78.2, 180.0);
-  way["amenity"="veterinary"](40.9, 19.9, 78.2, 180.0);
-  relation["amenity"="veterinary"](40.9, 19.9, 78.2, 180.0);
-  node["shop"~"pet|animal"](40.9, 19.9, 78.2, 180.0);
-  way["shop"~"pet|animal"](40.9, 19.9, 78.2, 180.0);
-  relation["shop"~"pet|animal"](40.9, 19.9, 78.2, 180.0);
+  node["amenity"="veterinary"](area.searchArea);
+  way["amenity"="veterinary"](area.searchArea);
+  relation["amenity"="veterinary"](area.searchArea);
+  node["shop"~"pet|animal"](area.searchArea);
+  way["shop"~"pet|animal"](area.searchArea);
+  relation["shop"~"pet|animal"](area.searchArea);
 );
 out center;
 `;
 
-// Несколько публичных эндпоинтов Overpass API для надежности
-const OVERPASS_ENDPOINTS = [
-    'https://overpass-api.de/api/interpreter',
-    'https://z.overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter'
-];
-
-/**
- * Отправляет запрос к Overpass API
- */
-async function fetchFromOverpass() {
-    for (const endpoint of OVERPASS_ENDPOINTS) {
-        try {
-            console.log(`Trying Overpass endpoint: ${endpoint}`);
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `data=${encodeURIComponent(OVERPASS_QUERY)}`,
-            });
-            if (response.ok) {
-                console.log('Successfully fetched data from Overpass.');
-                return await response.json();
-            }
-            console.warn(`Endpoint ${endpoint} failed with status: ${response.status}`);
-        } catch (error) {
-            console.error(`Error with endpoint ${endpoint}:`, error);
-        }
+async function fetchFromOverpass(region: string) {
+    const query = buildOverpassQuery(region);
+    const endpoint = 'https://overpass-api.de/api/interpreter';
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(query)}`,
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`Overpass API error for region "${region}": ${errorText}`);
+        return []; // Возвращаем пустой массив в случае ошибки, чтобы не прерывать весь процесс
     }
-    throw new Error('All Overpass API endpoints failed.');
+    const data = await response.json();
+    return data.elements || [];
 }
 
-/**
- * Обрабатывает и форматирует данные, полученные от Overpass.
- * @param overpassData - JSON ответ от Overpass API.
- * @returns - Массив объектов, готовых для записи в Google Sheet.
- */
-function processOverpassData(overpassData: any): OsmDataRow[] {
-    const elements = overpassData.elements;
-    if (!elements) return [];
-
+function processOverpassElements(elements: any[], region: string) {
     return elements.map((el: any) => {
         const tags = el.tags;
         if (!tags) return null;
@@ -106,16 +73,14 @@ function processOverpassData(overpassData: any): OsmDataRow[] {
         const phone = tags.phone || tags.contact?.phone || '';
 
         const addressParts = {
-            country: tags['addr:country'] || 'РФ', // Default to РФ
-            state: tags['addr:state'] || tags['addr:region'] || '',
+            country: tags['addr:country'] || 'РФ',
+            state: tags['addr:state'] || tags['addr:region'] || region,
             city: tags['addr:city'] || tags['addr:place'] || '',
             street: tags['addr:street'] || '',
             housenumber: tags['addr:housenumber'] || '',
         };
-        
         const fullAddress = `${addressParts.street}, ${addressParts.housenumber}`.trim().replace(/^,|,$/g, '').trim();
 
-        // FIX: Extract coordinates from Overpass response.
         const lat = el.lat || el.center?.lat || '';
         const lon = el.lon || el.center?.lon || '';
 
@@ -131,89 +96,84 @@ function processOverpassData(overpassData: any): OsmDataRow[] {
             "Долгота": String(lon),
             "Дата обновления базы": new Date().toISOString().split('T')[0],
         };
-    }).filter((item: any): item is OsmDataRow => item && item['Наименование'] && item['Город или населенный пункт']);
+    }).filter(item => item && item['Наименование'] && item['Город или населенный пункт']);
 }
 
+// --- Основной обработчик ---
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // Настраиваем заголовки для Server-Sent Events
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    // Необходимо для Vercel, чтобы соединение не обрывалось
+    res.flushHeaders(); 
 
-/**
- * Основной фоновый процесс, который выполняет всю работу.
- */
-async function runBackgroundUpdate() {
     try {
-        console.log('Starting background OKB update process...');
-        
-        // 1. Получаем данные из OpenStreetMap
-        console.log('Fetching data from OSM via Overpass API...');
-        const osmData = await fetchFromOverpass();
-        const newRows = processOverpassData(osmData);
-        console.log(`Found ${newRows.length} potential clients in OSM.`);
+        sendProgress(res, 5, "Подключение к Google Sheets...");
 
-        if (newRows.length === 0) {
-            console.log('No new data from OSM. Exiting.');
-            return;
-        }
-
-        // 2. Подключаемся к Google Sheets и выполняем дедупликацию
-        console.log('Connecting to Google Sheets...');
         const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-        if (!SPREADSHEET_ID) throw new Error("GOOGLE_SHEET_ID is not set.");
+        if (!SPREADSHEET_ID) throw new Error("GOOGLE_SHEET_ID не установлен.");
         
-        const serviceAccountAuth = getAuth();
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, getAuth());
         await doc.loadInfo();
 
         let sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
-            console.log(`Sheet "${SHEET_NAME}" not found, creating it.`);
             sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
         } else {
-             await sheet.loadHeaderRow();
-             if (!sheet.headerValues || sheet.headerValues.length === 0) {
-                 await sheet.setHeaderRow(HEADERS);
-             }
+            await sheet.loadHeaderRow();
+            if (!sheet.headerValues || sheet.headerValues.length === 0) {
+                await sheet.setHeaderRow(HEADERS);
+            }
         }
-
-        console.log('Fetching existing rows for deduplication...');
-        const existingRows = await sheet.getRows();
         
-        // ИСПРАВЛЕНО: Добавлен явный тип для параметра 'row', чтобы избежать ошибки TS7006.
+        sendProgress(res, 10, "Получение существующих записей для дедупликации...");
+        const existingRows = await sheet.getRows();
         const existingEntries = new Set(
-            existingRows.map((row: GoogleSpreadsheetRow<Record<string, any>>) => `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase())
+            existingRows.map((row: GoogleSpreadsheetRow<Record<string, any>>) => 
+                `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase()
+            )
         );
         
-        // ИСПРАВЛЕНО: Тип 'row' теперь корректно определяется из типизированного массива 'newRows'.
-        const uniqueNewRows = newRows.filter(row => {
-            const key = `${row['Наименование']}|${row['Город или населенный пункт']}`.toLowerCase();
-            return !existingEntries.has(key);
-        });
+        const allUniqueNewRows: any[] = [];
+        const totalRegions = regions.length;
 
-        console.log(`After deduplication, ${uniqueNewRows.length} new unique rows will be added.`);
+        for (let i = 0; i < totalRegions; i++) {
+            const region = regions[i];
+            const progress = 15 + Math.round((i / totalRegions) * 70);
+            sendProgress(res, progress, `Сбор данных...`, region);
 
-        // 3. Добавляем новые уникальные строки пакетом
-        if (uniqueNewRows.length > 0) {
-            console.log(`Adding ${uniqueNewRows.length} new rows to the sheet...`);
-            await sheet.addRows(uniqueNewRows);
-            console.log('Successfully added new rows to Google Sheets.');
+            const elements = await fetchFromOverpass(region);
+            if (elements.length === 0) continue;
+
+            const processedRows = processOverpassElements(elements, region);
+            
+            const uniqueNewRowsInRegion = processedRows.filter(row => {
+                const key = `${row['Наименование']}|${row['Город или населенный пункт']}`.toLowerCase();
+                if (!existingEntries.has(key)) {
+                    existingEntries.add(key); // Добавляем в сет, чтобы избежать дублей внутри одной сессии
+                    return true;
+                }
+                return false;
+            });
+            
+            if (uniqueNewRowsInRegion.length > 0) {
+                allUniqueNewRows.push(...uniqueNewRowsInRegion);
+            }
+        }
+        
+        if (allUniqueNewRows.length > 0) {
+            sendProgress(res, 90, `Запись ${allUniqueNewRows.length} новых строк в таблицу...`);
+            await sheet.addRows(allUniqueNewRows);
         }
 
-        console.log('Background OKB update process finished successfully.');
+        sendProgress(res, 100, `Обновление завершено! Найдено ${allUniqueNewRows.length} новых записей.`);
 
-    } catch (error) {
-        console.error('CRITICAL ERROR in background OKB update:', error);
+    } catch (error: any) {
+        console.error('CRITICAL Error in update-okb stream:', error);
+        const errorMessage = `Ошибка: ${error.message}`;
+        sendProgress(res, 100, errorMessage);
+    } finally {
+        res.end(); // Завершаем соединение
     }
-}
-
-/**
- * Основной обработчик API, который запускает фоновый процесс.
- */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method Not Allowed' });
-    }
-
-    // Немедленно отвечаем клиенту, чтобы избежать таймаута.
-    res.status(202).json({ message: 'Процесс сбора и обновления базы ОКБ запущен в фоновом режиме.' });
-
-    // Запускаем длительный процесс без ожидания его завершения.
-    runBackgroundUpdate();
 }
