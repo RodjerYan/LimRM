@@ -125,12 +125,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         sendProgress(res, 10, "Получение существующих записей для дедупликации...");
         const existingRowsRaw = await sheet.getRows();
-        const existingEntries = new Set<string>();
+        
+        // Надежная фильтрация `null` с использованием type predicate
+        const existingRows = existingRowsRaw.filter(
+            (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
+        );
 
-        // Явная проверка на null и приведение типа
-        for (const rowRaw of existingRowsRaw) {
-            if (!rowRaw) continue;
-            const row = rowRaw as GoogleSpreadsheetRow<Record<string, any>>;
+        const existingEntries = new Set<string>();
+        for (const row of existingRows) {
             const key = `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase();
             existingEntries.add(key);
         }
@@ -171,10 +173,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 sendProgress(res, progress, `Запись строк: ${i + batch.length} из ${allUniqueNewRows.length}...`);
 
                 const addedRowsRaw = await sheet.addRows(batch);
-                for (const rowRaw of addedRowsRaw) {
-                    if (!rowRaw) continue;
-                    totalAddedCount++;
-                }
+                
+                // Аналогичная надежная фильтрация для подсчета добавленных строк
+                const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
+                totalAddedCount += addedRows.length;
             }
             console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
         }
