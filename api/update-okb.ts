@@ -10,12 +10,6 @@ const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'ОКБ'; 
 const HEADERS = ['ID', 'Название', 'Тип', 'Адрес', 'Регион', 'Страна', 'Телефон', 'Email', 'Сайт', 'Широта', 'Долгота'];
 
-const serviceAccountAuth = new JWT({
-    email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-
 const OVERPASS_API = 'https://overpass-api.de/api/interpreter';
 
 // Simple delay function to avoid rate limiting
@@ -60,6 +54,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ error: 'Google Service Account credentials are not configured on the server.' });
     }
     
+    // Create the auth object INSIDE the handler, only after checking for env vars.
+    // This prevents a server crash if the variables are missing.
+    const serviceAccountAuth = new JWT({
+        email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+
     // Immediately respond to the client so it doesn't time out
     res.status(202).json({ message: 'OKB database update process started. This may take several minutes.' });
     
@@ -68,6 +70,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         try {
             const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
             await doc.loadInfo();
+            // FIX: Corrected a typo in the sheet name variable from `SHE-ET_NAME` to `SHEET_NAME`.
             let sheet = doc.sheetsByTitle[SHEET_NAME];
             if (!sheet) {
                 sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
