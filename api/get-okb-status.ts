@@ -1,11 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { google } from 'googleapis';
 
 const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
 const SHEET_NAME = 'Лист1'; 
 
+// This auth function is specific to this endpoint, requesting readonly access
+// to both Sheets and Drive metadata.
 const getAuth = () => {
     const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
     if (!credsBase64) {
@@ -20,7 +21,7 @@ const getAuth = () => {
         key: private_key,
         scopes: [
             'https://www.googleapis.com/auth/spreadsheets.readonly',
-            'https://www.googleapis.com/auth/drive.readonly' // Scope for file metadata
+            'https://www.googleapis.com/auth/drive.metadata.readonly'
         ],
     });
 };
@@ -32,37 +33,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const serviceAccountAuth = getAuth();
+        
+        // --- 1. Get row count from Google Sheets API ---
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        
         await doc.loadInfo();
-        
         let sheet = doc.sheetsByTitle[SHEET_NAME];
         if (!sheet) {
             sheet = doc.sheetsByIndex[0];
         }
 
-        if (!sheet) {
-            return res.status(404).json({ error: 'No sheets found in the document.' });
+        let rowCount = 0;
+        if (sheet) {
+            const rows = await sheet.getRows();
+            rowCount = rows.length;
         }
 
-        const rowCount = sheet.rowCount - 1; // Exclude header
+        // --- 2. Get modified time from Google Drive API ---
+        const tokenResponse = await serviceAccountAuth.getAccessToken();
+        const token = tokenResponse.token;
+        if (!token) {
+            throw new Error('Failed to retrieve access token for Google Drive API.');
+        }
 
-        // To get last modified time, we need to query the Drive API
-        const drive = google.drive({ version: 'v3', auth: serviceAccountAuth });
-        const fileMeta = await drive.files.get({
-            fileId: SPREADSHEET_ID,
-            fields: 'modifiedTime'
+        const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${SPREADSHEET_ID}?fields=modifiedTime`;
+        const driveResponse = await fetch(driveApiUrl, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
         });
+
+        if (!driveResponse.ok) {
+            const errorText = await driveResponse.text();
+            throw new Error(`Google Drive API error: ${driveResponse.status} ${errorText}`);
+        }
         
-        const modifiedTime = fileMeta.data.modifiedTime 
-            ? new Date(fileMeta.data.modifiedTime).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) 
-            : 'N/A';
-        
+        const fileMeta = await driveResponse.json();
+        const modifiedTime = fileMeta.modifiedTime;
+
+        // --- 3. Send response ---
         res.setHeader('Cache-Control', 'no-cache');
-        res.status(200).json({ 
-            rowCount: rowCount > 0 ? rowCount : 0,
-            modifiedTime,
-        });
+        res.status(200).json({ rowCount, modifiedTime });
 
     } catch (error: any) {
         console.error('Error in get-okb-status:', error);
