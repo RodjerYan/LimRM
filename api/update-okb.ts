@@ -129,6 +129,15 @@ async function runDataFetchingAndUpdate(doc: GoogleSpreadsheet) {
         const existingAddresses = new Set(existingRows.map(row => normalizeAddressForDedupe(row.get('Адрес'))));
         console.log(`BG_PROCESS: Found ${existingAddresses.size} existing unique addresses.`);
 
+        // Per user suggestion: clear sheet if it grows too large to prevent performance issues.
+        const MAX_ROWS_BEFORE_CLEAR = 100000;
+        if (existingRows.length > MAX_ROWS_BEFORE_CLEAR) {
+            console.warn(`BG_PROCESS: Sheet has over ${MAX_ROWS_BEFORE_CLEAR} rows. Clearing all rows before update to maintain performance.`);
+            await sheet.clear();
+            await sheet.setHeaderRow(HEADERS);
+            existingAddresses.clear(); // Reset the dedupe set as the sheet is now empty.
+            console.log(`BG_PROCESS: Sheet cleared and headers restored.`);
+        }
 
         const uniqueRegions = [...new Set(Object.values(regionCenters))];
         const allNewClients = new Map<string, any>();

@@ -38,23 +38,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await doc.loadInfo();
         let sheet = doc.sheetsByTitle[SHEET_NAME];
         
-        if (!sheet) {
-            // If the sheet doesn't exist, we can't get status. Return a default state.
-            return res.status(200).json({ rowCount: 0, modifiedTime: new Date(0).toISOString() });
-        }
-
-        // --- 1. Get row count from Google Sheets API ---
-        let rowCount = 0;
-        // This is an efficient way to check for data rows without calling getRows()
-        // which would fail on an empty sheet without headers.
-        if (sheet.rowCount > 0) {
-            await sheet.loadHeaderRow().catch(() => {}); // Attempt to load headers
-            if (sheet.headerValues && sheet.headerValues.length > 0) {
-                // If headers exist, data rows are total rows minus header row
-                rowCount = sheet.rowCount - 1;
-            }
-        }
-        
         // --- 2. Get modified time from Google Drive API ---
         const tokenResponse = await serviceAccountAuth.getAccessToken();
         const token = tokenResponse.token;
@@ -64,9 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${SPREADSHEET_ID}?fields=modifiedTime`;
         const driveResponse = await fetch(driveApiUrl, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
         });
 
         if (!driveResponse.ok) {
@@ -77,15 +58,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const fileMeta = await driveResponse.json();
         const modifiedTime = fileMeta.modifiedTime;
 
-        // --- 3. Send response ---
+        // Per user suggestion: if sheet doesn't exist, or has 0/1 rows (header only), there are no data entries.
+        if (!sheet || !sheet.rowCount || sheet.rowCount < 2) {
+             res.setHeader('Cache-Control', 'no-cache');
+             return res.status(200).json({ rowCount: 0, modifiedTime });
+        }
+        
+        // Assuming rowCount > 1 implies a header row exists.
+        const rowCount = sheet.rowCount - 1;
+
         res.setHeader('Cache-Control', 'no-cache');
         res.status(200).json({ rowCount, modifiedTime });
 
     } catch (error: any) {
-        console.error('Error in get-okb-status:', error);
+        console.error('CRITICAL Error in get-okb-status:', error);
+        
+        let details = 'Failed to fetch sheet status.';
+        // Check for specific Google API error structures
+        const googleError = error.response?.data?.error;
+        if (googleError) {
+            if (googleError.code === 404) {
+                details = `Google Sheet with the specified ID was not found. Please verify the GOOGLE_SHEET_ID environment variable.`;
+            } else if (googleError.code === 403) {
+                details = `Permission denied. The service account (${process.env.GOOGLE_CLIENT_EMAIL}) does not have 'Viewer' access to the Google Sheet.`;
+            } else {
+                details = `Google API Error: ${googleError.message}`;
+            }
+        } else if (error.message) {
+             details = error.message;
+        }
+
         res.status(500).json({ 
             error: 'Failed to fetch sheet status.', 
-            details: error.message 
+            details: details 
         });
     }
 }
