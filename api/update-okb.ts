@@ -39,7 +39,10 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Limkorm-Geo-Analysis/1.1' },
+                    headers: { 
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'User-Agent': 'Limkorm-Geo-Analysis/1.2'
+                    },
                     body: `data=${encodeURIComponent(query)}`,
                     signal: controller.signal
                 });
@@ -48,11 +51,17 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
                 if (response.status === 429 || response.status >= 500) {
                     throw new Error(`Server error: ${response.status}`);
                 }
-                if (!response.ok) {
-                    console.error(`Overpass API non-retriable error for ${region} on ${endpoint}: ${response.status} ${await response.text()}`);
+                
+                // УЛУЧШЕНО: Добавлена защита от невалидного JSON
+                let data;
+                try {
+                    data = await response.json();
+                } catch (e) {
+                    console.error(`Invalid JSON response from Overpass for region "${region}" on ${endpoint}. Status: ${response.status}`);
+                    // Прерываем попытки для этого эндпоинта, так как он может быть сломан
                     break; 
                 }
-                const data = await response.json();
+
                 return data.elements || [];
             } catch (error: any) {
                 console.warn(`Attempt ${attempt}/${maxRetries} failed for "${region}" on ${endpoint}: ${error.message}`);
@@ -73,23 +82,24 @@ async function runUpdateProcess() {
     try {
         console.log("Starting OKB update process in background...");
 
-        if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-            console.error("FATAL: Google Service Account credentials are not available in the environment.");
-            return; // Exit if credentials are not set
-        }
+        const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+        const key = process.env.GOOGLE_PRIVATE_KEY;
 
-        // **ИСПРАВЛЕНО: Инициализация JWT происходит здесь, внутри защищенного блока try/catch**
+        if (!email || !key) {
+            console.error("FATAL: Google Service Account credentials missing in environment.");
+            return;
+        }
+        
+        // ИСПРАВЛЕНО: Ключевое исправление для правильного форматирования приватного ключа
         const serviceAccountAuth = new JWT({
-            email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+            email,
+            key: key.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
 
-        // FIX: In google-spreadsheet v4+, the auth object is passed directly to the constructor, and the `useJWTAuth` method has been removed.
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        
         await doc.loadInfo();
-        
+
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
         if (!sheet) {
             sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
@@ -101,23 +111,18 @@ async function runUpdateProcess() {
         const uniqueRegions = [...new Set(Object.values(regionCenters))];
         const allClients = new Map<string, any>();
         let idCounter = 1;
-        
-        const concurrencyLimit = 8;
-        const regionBatches: string[][] = [];
-        for (let i = 0; i < uniqueRegions.length; i += concurrencyLimit) {
-            regionBatches.push(uniqueRegions.slice(i, i + concurrencyLimit));
-        }
 
-        for (let i = 0; i < regionBatches.length; i++) {
-            const batch = regionBatches[i];
-            console.log(`Processing batch ${i + 1}/${regionBatches.length}: [${batch.join(', ')}]`);
-            
-            const results = await Promise.all(
-                batch.map(region => fetchFromOverpassWithRetry(region))
-            );
+        const concurrencyLimit = 8;
+        for (let i = 0; i < uniqueRegions.length; i += concurrencyLimit) {
+            const batch = uniqueRegions.slice(i, i + concurrencyLimit);
+            console.log(`Processing batch ${Math.floor(i / concurrencyLimit) + 1}/${Math.ceil(uniqueRegions.length / concurrencyLimit)}: [${batch.join(', ')}]`);
+
+            const results = await Promise.all(batch.map(region => fetchFromOverpassWithRetry(region)));
 
             batch.forEach((region, index) => {
                 const elements = results[index];
+                if (!elements) return;
+
                 for (const el of elements) {
                     const name = el.tags?.name || 'Без названия';
                     const address = (el.tags?.['addr:full'] || [el.tags?.['addr:city'], el.tags?.['addr:street'], el.tags?.['addr:housenumber']].filter(Boolean).join(', ')).trim();
@@ -139,18 +144,16 @@ async function runUpdateProcess() {
                     }
                 }
             });
-             await sleep(1000); 
+            await sleep(1000);
+        }
+
+        if (allClients.size > 0) {
+            await sheet.addRows(Array.from(allClients.values()));
         }
         
-        const rows = Array.from(allClients.values());
-        if (rows.length > 0) {
-             await sheet.addRows(rows);
-        }
-       
-        console.log(`OKB database update completed successfully. Total clients: ${allClients.size}`);
-
+        console.log(`OKB database update completed successfully. Total unique clients found: ${allClients.size}`);
     } catch (error: any) {
-        console.error('CRITICAL ERROR during OKB background update:', error);
+        console.error('CRITICAL ERROR during OKB background update:', error.stack || error);
     }
 }
 
@@ -161,10 +164,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
         console.error("Handler check failed: Google Service Account credentials are not configured.");
-        return res.status(500).json({ error: 'Google Service Account credentials not configured on server.' });
+        return res.status(500).json({ error: 'Server configuration error: Google Service Account credentials are missing.' });
     }
     
-    res.status(202).json({ message: 'OKB database update process started. This may take several minutes.' });
-    
-    runUpdateProcess();
+    try {
+        res.status(202).json({ message: 'OKB database update process has been successfully started. This may take several minutes.' });
+        runUpdateProcess();
+    } catch (err: any) {
+        console.error('Handler failed to initiate background process:', err);
+        // This case is unlikely now, but as a fallback
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Server error while trying to start the update process.' });
+        }
+    }
 }
