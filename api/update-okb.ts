@@ -164,7 +164,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         if (allUniqueNewRows.length > 0) {
             sendProgress(res, 90, `Запись ${allUniqueNewRows.length} новых строк в таблицу...`);
-            await sheet.addRows(allUniqueNewRows);
+            
+            // ИСПРАВЛЕНИЕ: Метод `addRows` может вернуть массив, содержащий null, что вызывает ошибку TypeScript
+            // при сборке, если результат используется. Мы отфильтровываем любые потенциальные null значения
+            // для обеспечения типобезопасности. Это решает ошибку TS18047.
+            const addedRows = await sheet.addRows(allUniqueNewRows);
+            const actualAdded = addedRows.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row !== null);
+
+            // Логируем фактическое количество добавленных строк для отладки
+            console.log(`Фактически добавлено ${actualAdded.length} из ${allUniqueNewRows.length} новых строк.`);
         }
 
         sendProgress(res, 100, `Обновление завершено! Найдено ${allUniqueNewRows.length} новых записей.`);
