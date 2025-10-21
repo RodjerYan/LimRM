@@ -11,8 +11,6 @@ const HEADERS = [
 ];
 
 // --- Утилиты ---
-
-// Функция для отправки прогресса клиенту через Server-Sent Events
 const sendProgress = (res: VercelResponse, progress: number, text: string, region: string = '') => {
     res.write(`data: ${JSON.stringify({ progress, text, region })}\n\n`);
 };
@@ -31,7 +29,7 @@ const getAuth = () => {
     });
 };
 
-// --- Логика работы с OpenStreetMap ---
+// --- OpenStreetMap Overpass Query ---
 const buildOverpassQuery = (region: string) => `
 [out:json][timeout:180];
 area[name="${region}"]->.searchArea;
@@ -57,14 +55,14 @@ async function fetchFromOverpass(region: string) {
     if (!response.ok) {
         const errorText = await response.text();
         console.warn(`Overpass API error for region "${region}": ${errorText}`);
-        return []; // Возвращаем пустой массив в случае ошибки, чтобы не прерывать весь процесс
+        return [];
     }
     const data = await response.json();
     return data.elements || [];
 }
 
 function processOverpassElements(elements: any[], region: string) {
-    return elements.map((el: any) => {
+    return elements.map(el => {
         const tags = el.tags;
         if (!tags) return null;
 
@@ -101,19 +99,17 @@ function processOverpassElements(elements: any[], region: string) {
 
 // --- Основной обработчик ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Настраиваем заголовки для Server-Sent Events
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    // Необходимо для Vercel, чтобы соединение не обрывалось
-    res.flushHeaders(); 
+    res.flushHeaders();
 
     try {
         sendProgress(res, 5, "Подключение к Google Sheets...");
 
         const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
         if (!SPREADSHEET_ID) throw new Error("GOOGLE_SHEET_ID не установлен.");
-        
+
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, getAuth());
         await doc.loadInfo();
 
@@ -126,18 +122,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 await sheet.setHeaderRow(HEADERS);
             }
         }
-        
+
         sendProgress(res, 10, "Получение существующих записей для дедупликации...");
         const existingRowsRaw = await sheet.getRows();
-        
-        // ИСПРАВЛЕНО: Явный цикл for...of с проверкой на null для устранения ошибки TS18047
         const existingEntries = new Set<string>();
-        for (const row of existingRowsRaw) {
-            if (!row) continue; // Эта проверка гарантирует TypeScript, что row не null
+
+        // Явная проверка на null и приведение типа
+        for (const rowRaw of existingRowsRaw) {
+            if (!rowRaw) continue;
+            const row = rowRaw as GoogleSpreadsheetRow<Record<string, any>>;
             const key = `${row.get('Наименование')}|${row.get('Город или населенный пункт')}`.toLowerCase();
             existingEntries.add(key);
         }
-        
+
         const allUniqueNewRows: any[] = [];
         const totalRegions = regions.length;
 
@@ -150,38 +147,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (elements.length === 0) continue;
 
             const processedRows = processOverpassElements(elements, region);
-            
             const uniqueNewRowsInRegion = processedRows.filter(row => {
                 const key = `${row['Наименование']}|${row['Город или населенный пункт']}`.toLowerCase();
                 if (!existingEntries.has(key)) {
-                    existingEntries.add(key); // Добавляем в сет, чтобы избежать дублей внутри одной сессии
+                    existingEntries.add(key);
                     return true;
                 }
                 return false;
             });
-            
+
             if (uniqueNewRowsInRegion.length > 0) {
                 allUniqueNewRows.push(...uniqueNewRowsInRegion);
             }
         }
-        
+
         if (allUniqueNewRows.length > 0) {
             const BATCH_SIZE = 500;
             let totalAddedCount = 0;
 
             for (let i = 0; i < allUniqueNewRows.length; i += BATCH_SIZE) {
                 const batch = allUniqueNewRows.slice(i, i + BATCH_SIZE);
-                // Прогресс от 90% до 99% во время записи
-                const progress = 90 + Math.round((i / allUniqueNewRows.length) * 9); 
+                const progress = 90 + Math.round((i / allUniqueNewRows.length) * 9);
                 sendProgress(res, progress, `Запись строк: ${i + batch.length} из ${allUniqueNewRows.length}...`);
 
                 const addedRowsRaw = await sheet.addRows(batch);
-                
-                // ИСПРАВЛЕНО: Аналогичный надежный цикл для подсчета фактически добавленных строк
-                for (const row of addedRowsRaw) {
-                    if (row) {
-                        totalAddedCount++;
-                    }
+                for (const rowRaw of addedRowsRaw) {
+                    if (!rowRaw) continue;
+                    totalAddedCount++;
                 }
             }
             console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
@@ -191,9 +183,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error: any) {
         console.error('CRITICAL Error in update-okb stream:', error);
-        const errorMessage = `Ошибка: ${error.message}`;
-        sendProgress(res, 100, errorMessage);
+        sendProgress(res, 100, `Ошибка: ${error.message}`);
     } finally {
-        res.end(); // Завершаем соединение
+        res.end();
     }
 }
