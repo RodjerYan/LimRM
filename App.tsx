@@ -191,41 +191,56 @@ const capitalCities = new Set(Object.values(regionToCenterMap));
 function extractSettlementFromAddress(address) {
     if (!address) return null;
     let bestCandidate = null;
-    let hasCityPrefix = false;
 
     const parts = address.split(/[,;]/).map(p => p.trim()).filter(Boolean);
 
+    // Pass 1: Look for parts with explicit settlement indicators (e.g., "г. Орёл" or "Брянск г")
     for (const part of parts) {
         let cleanPart = part;
-        let isStrongCandidate = false;
-
-        // Check for prefixes like "г.", "город", "пгт", etc.
-        const prefixMatch = cleanPart.match(/^(г|город|пос|поселок|пгт|село|деревня|д|ст-ца|станица|аул|хутор)\\.?\\s*/i);
-        if (prefixMatch) {
-            cleanPart = cleanPart.substring(prefixMatch[0].length).trim();
-            isStrongCandidate = true;
-        }
-
-        // Ignore parts that are clearly not settlements
-        if (/^\\d{6}$/.test(cleanPart)) continue; // Postal code
-        if (/(ул|улица|пр-т|проспект|ш|шоссе|пер|переулок|пл|площадь|мкр|микрорайон|д|дом|зд|здание|стр|строение|корп|корпус|кв|квартира)/i.test(cleanPart)) continue;
-        if (/(р-н|район|обл|область|край|республика|округ)/i.test(cleanPart)) continue;
-
-        if (allRegions.has(cleanPart.toLowerCase())) continue; // It's a region, not a settlement
-
-        // If we found a part with a prefix (like "г. Орёл"), it's our best bet.
-        if (isStrongCandidate) {
-            return cleanPart;
-        }
+        const settlementTypes = ['г', 'город', 'пос', 'поселок', 'пгт', 'село', 'деревня', 'д', 'ст-ца', 'станица', 'аул', 'хутор', 'рп', 'кп'];
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
+        const typesRegex = new RegExp(`(?:^|\\s)(\\${settlementTypes.join('|')})\\.?\\s+|\\s*,?\\s*\\.?(\\${settlementTypes.join('|')})\\s*$`, 'i');
         
-        // Otherwise, keep the first plausible candidate.
-        if (!bestCandidate) {
-            bestCandidate = cleanPart;
+        const match = cleanPart.match(typesRegex);
+        if (match) {
+            // Remove the type indicator to get the clean name
+            const cleaned = cleanPart.replace(typesRegex, '').trim();
+            // Ensure we didn't just match noise from a street name like "ул. Городская"
+            const noiseWords = ['ул', 'улица', 'проспект', 'пр-т', 'шоссе', 'ш'];
+            // FIX: Escape template literals to prevent evaluation in the main script's scope.
+            const containsNoise = noiseWords.some(noise => new RegExp(`\\\\b\\${noise}\\\\.?\\\\b`, 'i').test(part));
+
+            if (cleaned && !containsNoise) {
+                 // Found a strong candidate, return it immediately.
+                return cleaned;
+            }
         }
     }
+
+    // Pass 2: If no explicit indicator was found, use heuristics on the parts
+    // Iterate backwards as settlement is often before street/house
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const part = parts[i];
+        
+        // Ignore postal codes and parts that are only digits (like house numbers)
+        // FIX: Escape backslashes in regex literal to ensure they are parsed correctly by the worker's JS engine.
+        if (/^\\\\d{5,6}$/.test(part) || /^\\\\d+$/.test(part)) continue;
+        
+        // Ignore parts that are clearly streets, regions, districts etc.
+        const ignoreRegex = /(ул|улица|пр-т|проспект|ш|шоссе|пер|переулок|пл|площадь|мкр|микрорайон|дом|зд|здание|стр|строение|корп|корпус|кв|квартира|р-н|район|обл|область|край|республика|округ)/i;
+        if (ignoreRegex.test(part)) continue;
+
+        // Ignore if it's a known region name
+        if (allRegions.has(part.toLowerCase())) continue;
+        
+        // The remaining part is our best guess
+        bestCandidate = part;
+        break; // Stop after finding the first likely candidate from the end
+    }
     
-    // Fallback to the first part if no better candidate was found
-    return bestCandidate || (parts.length > 0 ? parts[0] : null);
+    // Fallback to the very first part if nothing else was found
+    // FIX: Escape backslashes in regex literal to ensure they are parsed correctly by the worker's JS engine.
+    return bestCandidate || (parts.length > 0 && !/\\\\d{5,6}/.test(parts[0]) ? parts[0] : null);
 }
 
 function determineQueryInfo(fullAddress) {
@@ -234,7 +249,7 @@ function determineQueryInfo(fullAddress) {
 
     if (!cleanAddress) return { locationKey: 'Не определен', queryLocation: null, capitalToExclude: null, isCapital: false };
     
-    const settlement = extractSettlementFromAddress(cleanAddress);
+    const settlement = extractSettlementFromAddress(fullAddress); // Use original case address for better extraction
     const capitalizedSettlement = capitalize(settlement);
 
     let identifiedRegion = null;
@@ -320,6 +335,7 @@ function aggregateData(data) {
     const aggregationMap = new Map();
 
     data.forEach(item => {
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
         const key = \`\${item.rm}|\${item.brand}|\${item.locationKey}\`;
         if (!aggregationMap.has(key)) {
             aggregationMap.set(key, {
@@ -346,6 +362,7 @@ function aggregateData(data) {
 
     return Array.from(aggregationMap.values()).map(item => {
         const uniqueClients = Array.from(new Map(item.potentialClients.map(c => [
+            // FIX: Escape template literals to prevent evaluation in the main script's scope.
             c.lat && c.lon ? \`\${c.lat},\${c.lon}\` : c.name, 
             c
         ])).values());
@@ -421,6 +438,7 @@ const parseFileAndExtractData = (file) => {
                         if (h === 'fact') return "'Факт (кг/ед)'/'Вес, кг'";
                         return h;
                     }).join(', ');
+                    // FIX: Escape template literals to prevent evaluation in the main script's scope.
                     throw new Error(\`В файле отсутствуют обязательные столбцы: \${missingRussian}. Пожалуйста, проверьте названия столбцов.\`);
                 }
                 // --- END Flexible Header Parsing ---
@@ -498,6 +516,7 @@ async function getAreaIdForLocation(locationName) {
 const throttledGetAreaIdForLocation = nominatimRateLimiter(getAreaIdForLocation);
 
 async function getMarketPotentialForArea(queryInfo) {
+    // FIX: Escape template literals to prevent evaluation in the main script's scope.
     const cacheKey = \`\${queryInfo.regionAreaId}|\${queryInfo.capitalAreaId || ''}\`;
     if (areaMarketPotentialCache.has(cacheKey)) {
         return areaMarketPotentialCache.get(cacheKey);
@@ -506,12 +525,15 @@ async function getMarketPotentialForArea(queryInfo) {
 
     let areaQueryPart;
     if (queryInfo.capitalAreaId && queryInfo.regionAreaId !== queryInfo.capitalAreaId) {
-        areaQueryPart = \`(area(\${queryInfo.regionAreaId}); - area(\${queryInfo.capitalAreaId});)->.searchArea;\`;
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
+        areaQueryPart = \`(area(\\${queryInfo.regionAreaId}); - area(\\${queryInfo.capitalAreaId});)->.searchArea;\`;
     } else {
-        areaQueryPart = \`area(\${queryInfo.regionAreaId})->.searchArea;\`;
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
+        areaQueryPart = \`area(\\${queryInfo.regionAreaId})->.searchArea;\`;
     }
 
-    const query = \`[out:json][timeout:120];\${areaQueryPart}(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;\`;
+    // FIX: Escape template literals to prevent evaluation in the main script's scope.
+    const query = \`[out:json][timeout:120];\\${areaQueryPart}(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;\`;
     
     const maxRetries = 3;
     let attempt = 0;
@@ -588,10 +610,12 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     const startTime = Date.now();
     
     // 2. Check cache and fetch missing area IDs
+    // FIX: Escape template literals to prevent evaluation in the main script's scope.
     onProgress(30, \`Этап 1: Проверка кеша для \${totalGeocodingTasks} локаций...\`, '');
     const cachedAreaIds = await GeoCache.batchGetAreaIds(locationArray);
     const locationsToFetch = locationArray.filter(name => !cachedAreaIds.has(name));
     const locationToAreaIdMap = new Map(cachedAreaIds);
+    // FIX: Escape template literals to prevent evaluation in the main script's scope.
     onProgress(40, \`Найдено в кеше: \${cachedAreaIds.size}. Запрос \${locationsToFetch.length} новых...\`, '');
 
     const geocodingPromises = locationsToFetch.map(async (locationName) => {
@@ -602,6 +626,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         }
         geocodedCount++;
         const etr = calculateEtr(startTime, geocodedCount, totalGeocodingTasks);
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
         onProgress(40 + (geocodedCount / totalGeocodingTasks) * 20, \`Геокодирование... (\${geocodedCount}/\${totalGeocodingTasks})\`, etr);
     });
     await Promise.all(geocodingPromises);
@@ -612,6 +637,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
         const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
         if (regionAreaId) {
+            // FIX: Escape template literals to prevent evaluation in the main script's scope.
             const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
             if (!uniqueOverpassQueries.has(queryKey)) {
                 uniqueOverpassQueries.set(queryKey, { regionAreaId, capitalAreaId });
@@ -620,6 +646,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     });
 
     // 4. Execute Overpass queries
+    // FIX: Escape template literals to prevent evaluation in the main script's scope.
     onProgress(60, \`Этап 2: Выполнение \${uniqueOverpassQueries.size} уникальных запросов к рынку...\`, '');
     const enqueue = createRequestQueue(4);
     const potentialMap = new Map();
@@ -631,6 +658,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         potentialMap.set(key, potential);
         queriesProcessed++;
         const etr = calculateEtr(startTime, geocodedCount + queriesProcessed, totalGeocodingTasks + totalQueries);
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
         onProgress(60 + (queriesProcessed / totalQueries) * 35, \`Сбор данных... (\${queriesProcessed}/\${totalQueries})\`, etr);
     }));
     await Promise.all(overpassPromises);
@@ -639,6 +667,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     const dataWithPotential = initialData.map(item => {
         const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
         const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
         const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
         const cityPotential = potentialMap.get(queryKey) || { count: 0, clients: [] };
         
@@ -664,6 +693,7 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение файла...', etr: '' } });
         const processedData = await parseFileAndExtractData(file);
         
+        // FIX: Escape template literals to prevent evaluation in the main script's scope.
         self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: \`Найдено \${processedData.length} строк. Запрос данных...\`, etr: '' } });
         
         const onProgress = (progress, text, etr) => {
