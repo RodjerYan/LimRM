@@ -1,13 +1,13 @@
 /*
 ---
-title: fix(parser): Implement flexible header parsing with aliases
+title: fix(parser): Implement robust address parsing for accurate city extraction
 description: >
-  Replaces the rigid file parsing logic in the web worker with a more robust,
-  alias-based system. The new parser can now recognize alternative but valid
-  column headers (e.g., 'Торговая марка' for 'Бренд', 'Адрес ТТ LimKorm' for 'Город',
-  and 'Вес, кг' for 'Факт (кг/ед)'). This resolves the core issue where user-provided
-  files with slightly different column names were being rejected, making the file
-  upload process significantly more user-friendly and resilient.
+  Overhauls the address parsing logic within the web worker to correctly identify and
+  extract the primary settlement (city/town) from a full, complex address string.
+  The new, more intelligent parser effectively filters out postal codes, street names,
+  house numbers, and districts, resolving the critical bug where the entire address
+  was used as a location key. This ensures correct data aggregation, accurate
+  geocoding queries, and a clean, user-friendly display in the results table.
 ---
 */
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
@@ -185,19 +185,59 @@ const regionToCenterMap = {
     'еврейская': 'Биробиджан', 'ненецкий': 'Нарьян-Мар', 'ханты-мансийский - югра': 'Ханты-Мансийск',
     'чукотский': 'Анадырь', 'ямало-ненецкий': 'Салехард'
 };
+const allRegions = new Set(Object.keys(regionToCenterMap));
 const capitalCities = new Set(Object.values(regionToCenterMap));
+
+function extractSettlementFromAddress(address) {
+    if (!address) return null;
+    let bestCandidate = null;
+    let hasCityPrefix = false;
+
+    const parts = address.split(/[,;]/).map(p => p.trim()).filter(Boolean);
+
+    for (const part of parts) {
+        let cleanPart = part;
+        let isStrongCandidate = false;
+
+        // Check for prefixes like "г.", "город", "пгт", etc.
+        const prefixMatch = cleanPart.match(/^(г|город|пос|поселок|пгт|село|деревня|д|ст-ца|станица|аул|хутор)\\.?\\s*/i);
+        if (prefixMatch) {
+            cleanPart = cleanPart.substring(prefixMatch[0].length).trim();
+            isStrongCandidate = true;
+        }
+
+        // Ignore parts that are clearly not settlements
+        if (/^\\d{6}$/.test(cleanPart)) continue; // Postal code
+        if (/(ул|улица|пр-т|проспект|ш|шоссе|пер|переулок|пл|площадь|мкр|микрорайон|д|дом|зд|здание|стр|строение|корп|корпус|кв|квартира)/i.test(cleanPart)) continue;
+        if (/(р-н|район|обл|область|край|республика|округ)/i.test(cleanPart)) continue;
+
+        if (allRegions.has(cleanPart.toLowerCase())) continue; // It's a region, not a settlement
+
+        // If we found a part with a prefix (like "г. Орёл"), it's our best bet.
+        if (isStrongCandidate) {
+            return cleanPart;
+        }
+        
+        // Otherwise, keep the first plausible candidate.
+        if (!bestCandidate) {
+            bestCandidate = cleanPart;
+        }
+    }
+    
+    // Fallback to the first part if no better candidate was found
+    return bestCandidate || (parts.length > 0 ? parts[0] : null);
+}
 
 function determineQueryInfo(fullAddress) {
     let cleanAddress = String(fullAddress || '').trim().toLowerCase().replace(/ё/g, 'е');
-    if (!cleanAddress) return { locationKey: 'Не определен', queryLocation: null, capitalToExclude: null, isCapital: false };
+    const capitalize = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 
-    // Standardize region types
-    cleanAddress = cleanAddress.replace(/\\s*обл\\.?/, ' область').replace(/\\s*р-н\\.?/, ' район');
+    if (!cleanAddress) return { locationKey: 'Не определен', queryLocation: null, capitalToExclude: null, isCapital: false };
+    
+    const settlement = extractSettlementFromAddress(cleanAddress);
+    const capitalizedSettlement = capitalize(settlement);
 
     let identifiedRegion = null;
-    let identifiedSettlement = null;
-    
-    // Attempt to find a known region first
     for (const region of Object.keys(regionToCenterMap)) {
         if (cleanAddress.includes(region)) {
             identifiedRegion = region;
@@ -205,33 +245,18 @@ function determineQueryInfo(fullAddress) {
         }
     }
 
-    // Find the most likely settlement
-    const parts = cleanAddress.split(/[,;]/).map(p => p.replace(/^(г|город|поселок|пгт|село|деревня|д)\\.?\\s*/, '').trim()).filter(Boolean);
-    if (parts.length > 0) {
-        // A part is a settlement candidate if it's not the region itself and doesn't look like a street address
-        const settlementCandidates = parts.filter(p => p !== identifiedRegion && !/\\d/.test(p) && p.length > 2);
-        if (settlementCandidates.length > 0) {
-            // Prefer the first candidate, as it's often the city/town
-            identifiedSettlement = settlementCandidates[0];
-        }
-    }
-    
-    // Capitalize for display
-    const capitalize = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-    
-    // Case 1: A specific settlement is identified
-    if (identifiedSettlement) {
-        const capitalSettlement = capitalize(identifiedSettlement);
-        // Is this settlement a capital city?
-        if (capitalCities.has(capitalSettlement)) {
+    // Case 1: A settlement was clearly identified
+    if (settlement) {
+         // Is this settlement a capital city?
+        if (capitalCities.has(capitalizedSettlement)) {
              return {
-                locationKey: capitalSettlement,
-                queryLocation: capitalSettlement,
+                locationKey: capitalizedSettlement,
+                queryLocation: capitalizedSettlement,
                 capitalToExclude: null,
                 isCapital: true
             };
         } else {
-            // It's a smaller settlement, so it belongs to a region. Find that region.
+             // It's a smaller settlement. We must group it by its region.
             if (identifiedRegion) {
                 const regionName = capitalize(identifiedRegion);
                 const capital = regionToCenterMap[identifiedRegion];
@@ -241,28 +266,25 @@ function determineQueryInfo(fullAddress) {
                     capitalToExclude: capital,
                     isCapital: false
                 };
+            } else {
+                // We have a settlement but no clear region, treat it as a city search
+                 return {
+                    locationKey: capitalizedSettlement,
+                    queryLocation: capitalizedSettlement,
+                    capitalToExclude: null,
+                    isCapital: true // Assume it's a primary location
+                };
             }
         }
     }
     
-    // Case 2: Only a region was found (or a non-capital settlement without a clear region)
+    // Case 2: Only a region was found (no specific settlement)
     if (identifiedRegion) {
         const regionName = capitalize(identifiedRegion);
         const capital = regionToCenterMap[identifiedRegion];
-         // Special handling for Moscow and St. Petersburg regions
-        if (regionName === 'Московская область' && capital === 'Москва') {
-             // Search Moscow Oblast, exclude Moscow city
-             return { locationKey: 'Московская область', queryLocation: 'Московская область', capitalToExclude: 'Москва', isCapital: false };
-        }
-        if (regionName === 'Ленинградская область' && capital === 'Санкт-Петербург') {
-             return { locationKey: 'Ленинградская область', queryLocation: 'Ленинградская область', capitalToExclude: 'Санкт-Петербург', isCapital: false };
-        }
-        
-        // If the region name itself IS a capital (e.g., "Москва", "Санкт-Петербург")
-        if (capitalCities.has(regionName)) {
+        if (capitalCities.has(regionName)) { // e.g., address is just "Москва"
              return { locationKey: regionName, queryLocation: regionName, capitalToExclude: null, isCapital: true };
         }
-
         return {
             locationKey: regionName,
             queryLocation: regionName,
@@ -271,14 +293,7 @@ function determineQueryInfo(fullAddress) {
         };
     }
     
-    // Fallback: if we only have a single part, treat it as a potential city/region name
-    if (parts.length === 1) {
-       const singleName = capitalize(parts[0]);
-       if(capitalCities.has(singleName)){
-           return { locationKey: singleName, queryLocation: singleName, capitalToExclude: null, isCapital: true };
-       }
-    }
-
+    // Fallback: Use the original full address as a key, but this should be rare.
     return { locationKey: capitalize(fullAddress), queryLocation: capitalize(fullAddress), capitalToExclude: null, isCapital: false };
 }
 
