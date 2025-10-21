@@ -198,8 +198,7 @@ function extractSettlementFromAddress(address) {
     for (const part of parts) {
         let cleanPart = part;
         const settlementTypes = ['г', 'город', 'пос', 'поселок', 'пгт', 'село', 'деревня', 'д', 'ст-ца', 'станица', 'аул', 'хутор', 'рп', 'кп'];
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        const typesRegex = new RegExp(`(?:^|\\s)(\\${settlementTypes.join('|')})\\.?\\s+|\\s*,?\\s*\\.?(\\${settlementTypes.join('|')})\\s*$`, 'i');
+        const typesRegex = new RegExp(\`(?:^|\\s)(\\\${settlementTypes.join('|')})\\.?\\s+|\\s*,?\\s*\\.?(\\\${settlementTypes.join('|')})\\s*$\`, 'i');
         
         const match = cleanPart.match(typesRegex);
         if (match) {
@@ -207,8 +206,7 @@ function extractSettlementFromAddress(address) {
             const cleaned = cleanPart.replace(typesRegex, '').trim();
             // Ensure we didn't just match noise from a street name like "ул. Городская"
             const noiseWords = ['ул', 'улица', 'проспект', 'пр-т', 'шоссе', 'ш'];
-            // FIX: Escape template literals to prevent evaluation in the main script's scope.
-            const containsNoise = noiseWords.some(noise => new RegExp(`\\\\b\\${noise}\\\\.?\\\\b`, 'i').test(part));
+            const containsNoise = noiseWords.some(noise => new RegExp(\`\\\\b\\\${noise}\\\\.?\\\\b\`, 'i').test(part));
 
             if (cleaned && !containsNoise) {
                  // Found a strong candidate, return it immediately.
@@ -223,8 +221,7 @@ function extractSettlementFromAddress(address) {
         const part = parts[i];
         
         // Ignore postal codes and parts that are only digits (like house numbers)
-        // FIX: Escape backslashes in regex literal to ensure they are parsed correctly by the worker's JS engine.
-        if (/^\\\\d{5,6}$/.test(part) || /^\\\\d+$/.test(part)) continue;
+        if (/^\\d{5,6}$/.test(part) || /^\\d+$/.test(part)) continue;
         
         // Ignore parts that are clearly streets, regions, districts etc.
         const ignoreRegex = /(ул|улица|пр-т|проспект|ш|шоссе|пер|переулок|пл|площадь|мкр|микрорайон|дом|зд|здание|стр|строение|корп|корпус|кв|квартира|р-н|район|обл|область|край|республика|округ)/i;
@@ -239,8 +236,7 @@ function extractSettlementFromAddress(address) {
     }
     
     // Fallback to the very first part if nothing else was found
-    // FIX: Escape backslashes in regex literal to ensure they are parsed correctly by the worker's JS engine.
-    return bestCandidate || (parts.length > 0 && !/\\\\d{5,6}/.test(parts[0]) ? parts[0] : null);
+    return bestCandidate || (parts.length > 0 && !/\\d{5,6}/.test(parts[0]) ? parts[0] : null);
 }
 
 function determineQueryInfo(fullAddress) {
@@ -335,8 +331,7 @@ function aggregateData(data) {
     const aggregationMap = new Map();
 
     data.forEach(item => {
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        const key = \`\${item.rm}|\${item.brand}|\${item.locationKey}\`;
+        const key = \`\\\${item.rm}|\\\${item.brand}|\\\${item.locationKey}\`;
         if (!aggregationMap.has(key)) {
             aggregationMap.set(key, {
                 rm: item.rm,
@@ -362,8 +357,7 @@ function aggregateData(data) {
 
     return Array.from(aggregationMap.values()).map(item => {
         const uniqueClients = Array.from(new Map(item.potentialClients.map(c => [
-            // FIX: Escape template literals to prevent evaluation in the main script's scope.
-            c.lat && c.lon ? \`\${c.lat},\${c.lon}\` : c.name, 
+            c.lat && c.lon ? \`\\\${c.lat},\\\${c.lon}\` : c.name, 
             c
         ])).values());
 
@@ -438,8 +432,7 @@ const parseFileAndExtractData = (file) => {
                         if (h === 'fact') return "'Факт (кг/ед)'/'Вес, кг'";
                         return h;
                     }).join(', ');
-                    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-                    throw new Error(\`В файле отсутствуют обязательные столбцы: \${missingRussian}. Пожалуйста, проверьте названия столбцов.\`);
+                    throw new Error(\`В файле отсутствуют обязательные столбцы: \\\${missingRussian}. Пожалуйста, проверьте названия столбцов.\`);
                 }
                 // --- END Flexible Header Parsing ---
 
@@ -516,8 +509,7 @@ async function getAreaIdForLocation(locationName) {
 const throttledGetAreaIdForLocation = nominatimRateLimiter(getAreaIdForLocation);
 
 async function getMarketPotentialForArea(queryInfo) {
-    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-    const cacheKey = \`\${queryInfo.regionAreaId}|\${queryInfo.capitalAreaId || ''}\`;
+    const cacheKey = \`\\\${queryInfo.regionAreaId}|\\\${queryInfo.capitalAreaId || ''}\`;
     if (areaMarketPotentialCache.has(cacheKey)) {
         return areaMarketPotentialCache.get(cacheKey);
     }
@@ -525,15 +517,12 @@ async function getMarketPotentialForArea(queryInfo) {
 
     let areaQueryPart;
     if (queryInfo.capitalAreaId && queryInfo.regionAreaId !== queryInfo.capitalAreaId) {
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        areaQueryPart = \`(area(\\${queryInfo.regionAreaId}); - area(\\${queryInfo.capitalAreaId});)->.searchArea;\`;
+        areaQueryPart = \`(area(\\\${queryInfo.regionAreaId}); - area(\\\${queryInfo.capitalAreaId});)->.searchArea;\`;
     } else {
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        areaQueryPart = \`area(\\${queryInfo.regionAreaId})->.searchArea;\`;
+        areaQueryPart = \`area(\\\${queryInfo.regionAreaId})->.searchArea;\`;
     }
 
-    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-    const query = \`[out:json][timeout:120];\\${areaQueryPart}(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;\`;
+    const query = \`[out:json][timeout:120];\\\${areaQueryPart}(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;\`;
     
     const maxRetries = 3;
     let attempt = 0;
@@ -610,13 +599,11 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     const startTime = Date.now();
     
     // 2. Check cache and fetch missing area IDs
-    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-    onProgress(30, \`Этап 1: Проверка кеша для \${totalGeocodingTasks} локаций...\`, '');
+    onProgress(30, \`Этап 1: Проверка кеша для \\\${totalGeocodingTasks} локаций...\`, '');
     const cachedAreaIds = await GeoCache.batchGetAreaIds(locationArray);
     const locationsToFetch = locationArray.filter(name => !cachedAreaIds.has(name));
     const locationToAreaIdMap = new Map(cachedAreaIds);
-    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-    onProgress(40, \`Найдено в кеше: \${cachedAreaIds.size}. Запрос \${locationsToFetch.length} новых...\`, '');
+    onProgress(40, \`Найдено в кеше: \\\${cachedAreaIds.size}. Запрос \\\${locationsToFetch.length} новых...\`, '');
 
     const geocodingPromises = locationsToFetch.map(async (locationName) => {
         const areaId = await throttledGetAreaIdForLocation(locationName);
@@ -626,8 +613,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         }
         geocodedCount++;
         const etr = calculateEtr(startTime, geocodedCount, totalGeocodingTasks);
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        onProgress(40 + (geocodedCount / totalGeocodingTasks) * 20, \`Геокодирование... (\${geocodedCount}/\${totalGeocodingTasks})\`, etr);
+        onProgress(40 + (geocodedCount / totalGeocodingTasks) * 20, \`Геокодирование... (\\\${geocodedCount}/\\\${totalGeocodingTasks})\`, etr);
     });
     await Promise.all(geocodingPromises);
 
@@ -637,8 +623,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
         const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
         if (regionAreaId) {
-            // FIX: Escape template literals to prevent evaluation in the main script's scope.
-            const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
+            const queryKey = \`\\\${regionAreaId}|\\\${capitalAreaId || ''}\`;
             if (!uniqueOverpassQueries.has(queryKey)) {
                 uniqueOverpassQueries.set(queryKey, { regionAreaId, capitalAreaId });
             }
@@ -646,8 +631,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     });
 
     // 4. Execute Overpass queries
-    // FIX: Escape template literals to prevent evaluation in the main script's scope.
-    onProgress(60, \`Этап 2: Выполнение \${uniqueOverpassQueries.size} уникальных запросов к рынку...\`, '');
+    onProgress(60, \`Этап 2: Выполнение \\\${uniqueOverpassQueries.size} уникальных запросов к рынку...\`, '');
     const enqueue = createRequestQueue(4);
     const potentialMap = new Map();
     let queriesProcessed = 0;
@@ -658,8 +642,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
         potentialMap.set(key, potential);
         queriesProcessed++;
         const etr = calculateEtr(startTime, geocodedCount + queriesProcessed, totalGeocodingTasks + totalQueries);
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        onProgress(60 + (queriesProcessed / totalQueries) * 35, \`Сбор данных... (\${queriesProcessed}/\${totalQueries})\`, etr);
+        onProgress(60 + (queriesProcessed / totalQueries) * 35, \`Сбор данных... (\\\${queriesProcessed}/\\\${totalQueries})\`, etr);
     }));
     await Promise.all(overpassPromises);
 
@@ -667,8 +650,7 @@ const calculateRealisticPotential = async (initialData, onProgress) => {
     const dataWithPotential = initialData.map(item => {
         const regionAreaId = locationToAreaIdMap.get(item.queryInfo.queryLocation);
         const capitalAreaId = item.queryInfo.capitalToExclude ? locationToAreaIdMap.get(item.queryInfo.capitalToExclude) : null;
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        const queryKey = \`\${regionAreaId}|\${capitalAreaId || ''}\`;
+        const queryKey = \`\\\${regionAreaId}|\\\${capitalAreaId || ''}\`;
         const cityPotential = potentialMap.get(queryKey) || { count: 0, clients: [] };
         
         const potentialTTs = cityPotential.count;
@@ -693,8 +675,7 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение файла...', etr: '' } });
         const processedData = await parseFileAndExtractData(file);
         
-        // FIX: Escape template literals to prevent evaluation in the main script's scope.
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: \`Найдено \${processedData.length} строк. Запрос данных...\`, etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: \`Найдено \\\${processedData.length} строк. Запрос данных...\`, etr: '' } });
         
         const onProgress = (progress, text, etr) => {
             self.postMessage({ type: 'progress', payload: { status: 'fetching', progress, text, etr: formatTime(etr) } });
