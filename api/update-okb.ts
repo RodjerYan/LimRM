@@ -4,12 +4,16 @@ import { JWT } from 'google-auth-library';
 
 const SHEET_NAME = 'Лист1';
 
-// Шаг 1: Настройка аутентификации через сервисный аккаунт
-// Эта функция создает JWT-клиент для аутентификации запросов к Google API.
+/**
+ * Шаг 1: Настройка аутентификации через сервисный аккаунт.
+ * Эта функция создает JWT-клиент для аутентификации запросов к Google API.
+ * Она использует переменные окружения для безопасности и запрашивает права на редактирование таблиц.
+ */
 const getAuth = () => {
     const client_email = process.env.GOOGLE_CLIENT_EMAIL;
     const private_key = process.env.GOOGLE_PRIVATE_KEY;
 
+    // Проверяем, что учетные данные заданы в переменных окружения
     if (!client_email || !private_key) {
         throw new Error('Переменные окружения GOOGLE_CLIENT_EMAIL и GOOGLE_PRIVATE_KEY не установлены.');
     }
@@ -17,7 +21,7 @@ const getAuth = () => {
     // Возвращаем JWT-клиент с правами на редактирование таблиц
     return new JWT({
         email: client_email,
-        key: private_key.replace(/\\n/g, '\n'),
+        key: private_key.replace(/\\n/g, '\n'), // Заменяем `\n` на реальные переносы строк
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 };
@@ -32,6 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Шаг 2: Валидация входящих данных
         const { rows: rowsToAdd } = req.body;
 
+        // Убеждаемся, что тело запроса содержит непустой массив `rows`
         if (!Array.isArray(rowsToAdd) || rowsToAdd.length === 0) {
             console.warn('Update attempt with no data.');
             return res.status(400).json({ 
@@ -60,7 +65,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        // Загружаем заголовки, чтобы убедиться, что они существуют
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Загружаем заголовки, чтобы убедиться, что они существуют
         await sheet.loadHeaderRow();
         if (!sheet.headerValues || sheet.headerValues.length === 0) {
             console.error('CRITICAL: Cannot add rows because header row is missing.');

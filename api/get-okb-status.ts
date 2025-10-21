@@ -4,9 +4,11 @@ import { JWT } from 'google-auth-library';
 
 const SHEET_NAME = 'Лист1'; 
 
-// Шаг 1: Настройка аутентификации через сервисный аккаунт
-// Эта функция создает JWT-клиент для аутентификации запросов к Google API.
-// Она использует переменные окружения для безопасности.
+/**
+ * Шаг 1: Настройка аутентификации через сервисный аккаунт.
+ * Эта функция создает JWT-клиент для аутентификации запросов к Google API.
+ * Запрашиваются права на чтение таблиц и метаданных файлов на Google Drive.
+ */
 const getAuth = () => {
     const client_email = process.env.GOOGLE_CLIENT_EMAIL;
     const private_key = process.env.GOOGLE_PRIVATE_KEY;
@@ -15,18 +17,18 @@ const getAuth = () => {
         throw new Error('Переменные окружения GOOGLE_CLIENT_EMAIL и GOOGLE_PRIVATE_KEY не установлены.');
     }
     
-    // Возвращаем JWT-клиент с необходимыми правами доступа (scopes)
     return new JWT({
         email: client_email,
         key: private_key.replace(/\\n/g, '\n'),
         scopes: [
-            'https://www.googleapis.com/auth/spreadsheets.readonly', // Только чтение для таблиц
-            'https://www.googleapis.com/auth/drive.metadata.readonly' // Только чтение метаданных файлов (для даты изменения)
+            'https://www.googleapis.com/auth/spreadsheets.readonly',
+            'https://www.googleapis.com/auth/drive.metadata.readonly'
         ],
     });
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // Проверяем, что используется метод GET
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
@@ -39,26 +41,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const serviceAccountAuth = getAuth();
         
-        // --- Шаг 2: Получаем информацию о листе и количестве строк ---
+        // --- Шаг 2: Получаем информацию о листе ---
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        await doc.loadInfo(); // Загружаем основную информацию о документе
+        await doc.loadInfo();
         const sheet = doc.sheetsByTitle[SHEET_NAME];
         
-        let rowCount = 0;
-        if (sheet) {
-            // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Загружаем заголовки перед их использованием.
-            // Это решает ошибку "Header values are not yet loaded".
-            await sheet.loadHeaderRow(); 
-
-            // Корректно считаем количество строк данных, исключая заголовок.
-            // sheet.rowCount - это общее количество строк, включая заголовок.
-            if (sheet.headerValues && sheet.headerValues.length > 0) {
-                 rowCount = sheet.rowCount > 0 ? sheet.rowCount - 1 : 0;
-            } else {
-                 // Если заголовков нет, считаем все строки как данные.
-                 rowCount = sheet.rowCount;
-            }
+        if (!sheet) {
+            return res.status(404).json({ 
+                error: `Лист "${SHEET_NAME}" не найден.`,
+                details: `В таблице Google отсутствует лист с названием "${SHEET_NAME}". Пожалуйста, создайте его.`
+            });
         }
+
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Загружаем заголовки перед их использованием, чтобы избежать ошибки "Header values are not yet loaded".
+        await sheet.loadHeaderRow(); 
+
+        // Если заголовки отсутствуют, это ошибка конфигурации. Приложение не может работать без них.
+        if (!sheet.headerValues || sheet.headerValues.length === 0) {
+            return res.status(500).json({
+                error: 'Ошибка конфигурации таблицы.',
+                details: `В листе "${SHEET_NAME}" отсутствуют обязательные заголовки в первой строке.`
+            });
+        }
+        
+        // Корректный подсчет: общее количество строк минус одна строка заголовка.
+        // Если в таблице только заголовок (rowCount = 1), вернется 0.
+        const rowCount = sheet.rowCount > 1 ? sheet.rowCount - 1 : 0;
 
         // --- Шаг 3: Получаем дату последнего изменения файла через Google Drive API ---
         const tokenResponse = await serviceAccountAuth.getAccessToken();
@@ -93,21 +101,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let statusCode = 500;
         const message = error.message || '';
 
-        // Обработка ошибки "Доступ запрещен"
         if (message.includes('403') || message.includes('permission denied')) {
             statusCode = 403;
             const serviceAccountEmail = process.env.GOOGLE_CLIENT_EMAIL || '[email не найден]';
-            details = `Доступ запрещен. Убедитесь, что сервисный аккаунт ('${serviceAccountEmail}') имеет права "Читателя" для этой таблицы.`;
+            details = `Доступ запрещен. Убедитесь, что сервисный аккаунт ('${serviceAccountEmail}') имеет права "Читателя" для этой таблицы и "Просмотр" для файла на Google Drive.`;
         } 
-        // Обработка ошибки "Не найдено"
         else if (message.includes('404') || message.includes('Requested entity was not found')) {
             statusCode = 404;
             details = `Таблица Google не найдена. Убедитесь, что GOOGLE_SHEET_ID указан верно.`;
-        }
-        // Обработка ошибки с заголовками
-         else if (message.includes('header')) {
-            statusCode = 500;
-            details = `Проблема с заголовками в таблице. Возможно, лист пуст или имеет неверный формат.`;
         }
 
         res.status(statusCode).json({ 
