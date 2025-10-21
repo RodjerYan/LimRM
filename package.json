@@ -15,7 +15,8 @@
     "xlsx": "^0.18.5",
     "@google/genai": "^0.14.0",
     "papaparse": "^5.4.1",
-    "@vercel/node": "^5.3.26"
+    "@vercel/node": "^5.3.26",
+    "google-spreadsheet": "^4.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
