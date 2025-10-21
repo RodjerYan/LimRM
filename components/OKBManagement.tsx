@@ -1,74 +1,118 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
-import { google } from 'googleapis';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LoaderIcon } from './icons';
 
-const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
-const SHEET_NAME = 'Лист1'; 
+interface OKBManagementProps {
+    addNotification: (message: string, type: 'success' | 'error' | 'info') => void;
+}
 
-const getAuth = () => {
-    const credsBase64 = process.env.GOOGLE_CREDENTIALS_BASE64;
-    if (!credsBase64) {
-        throw new Error('Google credentials environment variable GOOGLE_CREDENTIALS_BASE64 is not set.');
-    }
+const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
+    const [status, setStatus] = useState<'loading' | 'success' | 'error' | 'updating'>('loading');
+    const [lastUpdate, setLastUpdate] = useState<string>('...');
+    const [totalRecords, setTotalRecords] = useState<string>('...');
+
+    const fetchStatus = useCallback(async () => {
+        setStatus('loading');
+        try {
+            const response = await fetch('/api/get-okb-status');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.details || 'Не удалось получить статус базы.');
+            }
+            const data = await response.json();
+            
+            setLastUpdate(new Date(data.modifiedTime).toLocaleString('ru-RU', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            }));
+            setTotalRecords(data.rowCount.toLocaleString('ru-RU'));
+            setStatus('success');
+        } catch (error: any) {
+            console.error('Failed to fetch OKB status:', error);
+            addNotification(`Ошибка получения статуса: ${error.message}`, 'error');
+            setStatus('error');
+            setLastUpdate('Ошибка');
+            setTotalRecords('Ошибка');
+        }
+    }, [addNotification]);
+
+    useEffect(() => {
+        fetchStatus();
+    }, [fetchStatus]);
     
-    const credsJson = Buffer.from(credsBase64, 'base64').toString('utf-8');
-    const { client_email, private_key } = JSON.parse(credsJson);
+    const handleUpdate = async () => {
+        if (status === 'updating' || status === 'loading') return;
+        
+        setStatus('updating');
+        addNotification('Запрос на обновление базы отправлен. Процесс может занять до 5 минут.', 'info');
 
-    return new JWT({
-        email: client_email,
-        key: private_key,
-        scopes: [
-            'https://www.googleapis.com/auth/spreadsheets.readonly',
-            'https://www.googleapis.com/auth/drive.readonly' // Scope for file metadata
-        ],
-    });
+        try {
+            const response = await fetch('/api/update-okb', { method: 'POST' });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.details || 'Ошибка при запуске обновления.');
+            }
+            
+            addNotification('Процесс обновления успешно запущен в фоновом режиме!', 'success');
+            
+            // Give the backend a moment to start, then check status again
+            setTimeout(() => {
+                fetchStatus();
+            }, 30000); // Check status after 30 seconds to see if modifiedTime has changed
+
+        } catch (error: any) {
+            console.error('Failed to start OKB update:', error);
+            addNotification(error.message, 'error');
+            setStatus('error'); // Revert status on failure
+        }
+    };
+
+    const getStatusText = () => {
+        switch (status) {
+            case 'loading': return <span className="text-gray-400 animate-pulse">Загрузка...</span>;
+            case 'updating': return <span className="text-yellow-400 animate-pulse">Обновление...</span>;
+            case 'error': return <span className="text-danger">Ошибка</span>;
+            case 'success': return <span className="text-success">Готово</span>;
+            default: return '...';
+        }
+    };
+
+    const isButtonDisabled = status === 'loading' || status === 'updating';
+
+    return (
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+            <h2 className="text-xl font-bold mb-4 text-white">Управление базой ОКБ</h2>
+            <div className="space-y-2 text-sm text-gray-300 mb-6">
+                <div className="flex justify-between items-center">
+                    <span>Статус:</span>
+                    <span className="font-semibold">{getStatusText()}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <span>Последнее обновление:</span>
+                    <span className="font-semibold">{lastUpdate}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <span>Всего записей:</span>
+                    <span className="font-semibold">{totalRecords}</span>
+                </div>
+            </div>
+            
+            <button
+                onClick={handleUpdate}
+                disabled={isButtonDisabled}
+                className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-90 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-indigo-500/20 flex items-center justify-center"
+                aria-live="polite"
+            >
+                {status === 'updating' && <LoaderIcon />}
+                <span className={status === 'updating' ? 'ml-2' : ''}>Обновить координаты в ОКБ</span>
+            </button>
+            <p className="text-xs text-gray-500 mt-3 text-center">
+                Обновляет геолокацию для записей без координат в Google Sheets.
+            </p>
+        </div>
+    );
 };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== 'GET') {
-        return res.status(405).json({ error: 'Method Not Allowed' });
-    }
-
-    try {
-        const serviceAccountAuth = getAuth();
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
-        
-        await doc.loadInfo();
-        
-        let sheet = doc.sheetsByTitle[SHEET_NAME];
-        if (!sheet) {
-            sheet = doc.sheetsByIndex[0];
-        }
-
-        if (!sheet) {
-            return res.status(404).json({ error: 'No sheets found in the document.' });
-        }
-
-        const rowCount = sheet.rowCount - 1; // Exclude header
-
-        // To get last modified time, we need to query the Drive API
-        const drive = google.drive({ version: 'v3', auth: serviceAccountAuth });
-        const fileMeta = await drive.files.get({
-            fileId: SPREADSHEET_ID,
-            fields: 'modifiedTime'
-        });
-        
-        const modifiedTime = fileMeta.data.modifiedTime 
-            ? new Date(fileMeta.data.modifiedTime).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) 
-            : 'N/A';
-        
-        res.setHeader('Cache-Control', 'no-cache');
-        res.status(200).json({ 
-            rowCount: rowCount > 0 ? rowCount : 0,
-            modifiedTime,
-        });
-
-    } catch (error: any) {
-        console.error('Error in get-okb-status:', error);
-        res.status(500).json({ 
-            error: 'Failed to fetch sheet status.', 
-            details: error.message 
-        });
-    }
-}
+export default OKBManagement;
