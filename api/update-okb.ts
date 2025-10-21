@@ -1,14 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-// ИСПРАВЛЕНО: Импорт из локальной, самодостаточной копии данных
 import { regionCenters } from './_data/regions';
 
-// Эта опция позволяет функции работать до 5 минут на бесплатном тарифе Vercel
 export const maxDuration = 300; 
 
 const SPREADSHEET_ID = '1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s';
-const SHEET_NAME = 'Лист1'; 
+const SHEET_NAME = 'Лист1';
 const HEADERS = ['ID', 'Название', 'Тип', 'Адрес', 'Регион', 'Страна', 'Телефон', 'Email', 'Сайт', 'Широта', 'Долгота'];
 
 const OVERPASS_ENDPOINTS = [
@@ -20,9 +18,6 @@ const OVERPASS_ENDPOINTS = [
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-/**
- * Улучшенная функция для запросов к Overpass API с ретраями и переключением на зеркала.
- */
 async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     const query = `
         [out:json][timeout:90];
@@ -40,7 +35,7 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout
+                const timeoutId = setTimeout(() => controller.abort(), 120000); 
 
                 const response = await fetch(endpoint, {
                     method: 'POST',
@@ -74,20 +69,25 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     return [];
 }
 
-
-/**
- * Основная функция, выполняющая всю работу в фоновом режиме.
- */
 async function runUpdateProcess() {
     try {
-        console.log("Starting OKB update process...");
+        console.log("Starting OKB update process in background...");
+
+        if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+            console.error("FATAL: Google Service Account credentials are not available in the environment.");
+            return; // Exit if credentials are not set
+        }
+
+        // **ИСПРАВЛЕНО: Инициализация JWT происходит здесь, внутри защищенного блока try/catch**
         const serviceAccountAuth = new JWT({
             email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-            key: process.env.GOOGLE_PRIVATE_KEY!.replace(/\\n/g, '\n'),
+            key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
 
+        // FIX: In google-spreadsheet v4+, the auth object is passed directly to the constructor, and the `useJWTAuth` method has been removed.
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        
         await doc.loadInfo();
         
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
@@ -102,7 +102,6 @@ async function runUpdateProcess() {
         const allClients = new Map<string, any>();
         let idCounter = 1;
         
-        // **КЛЮЧЕВОЕ УЛУЧШЕНИЕ: Параллельная обработка**
         const concurrencyLimit = 8;
         const regionBatches: string[][] = [];
         for (let i = 0; i < uniqueRegions.length; i += concurrencyLimit) {
@@ -119,7 +118,6 @@ async function runUpdateProcess() {
 
             batch.forEach((region, index) => {
                 const elements = results[index];
-                console.log(`-> Received ${elements.length} elements for ${region}`);
                 for (const el of elements) {
                     const name = el.tags?.name || 'Без названия';
                     const address = (el.tags?.['addr:full'] || [el.tags?.['addr:city'], el.tags?.['addr:street'], el.tags?.['addr:housenumber']].filter(Boolean).join(', ')).trim();
@@ -141,16 +139,15 @@ async function runUpdateProcess() {
                     }
                 }
             });
-             await sleep(1000); // Вежливая задержка между пачками запросов
+             await sleep(1000); 
         }
         
-        console.log(`Found ${allClients.size} unique clients. Writing to Google Sheet...`);
         const rows = Array.from(allClients.values());
         if (rows.length > 0) {
              await sheet.addRows(rows);
         }
        
-        console.log('OKB database update completed successfully.');
+        console.log(`OKB database update completed successfully. Total clients: ${allClients.size}`);
 
     } catch (error: any) {
         console.error('CRITICAL ERROR during OKB background update:', error);
@@ -163,13 +160,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-        console.error("Google Service Account credentials are not configured.");
-        return res.status(500).json({ error: 'Google Service Account credentials are not configured on the server.' });
+        console.error("Handler check failed: Google Service Account credentials are not configured.");
+        return res.status(500).json({ error: 'Google Service Account credentials not configured on server.' });
     }
     
-    // Немедленно отвечаем клиенту, что процесс запущен, чтобы избежать таймаута
     res.status(202).json({ message: 'OKB database update process started. This may take several minutes.' });
     
-    // Запускаем длительный процесс в фоновом режиме
     runUpdateProcess();
 }
