@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
-import { regionCenters } from '../utils/regionCenters';
+// ИСПРАВЛЕНО: Импорт из локальной, самодостаточной копии данных
+import { regionCenters } from './_data/regions';
 
 // Эта опция позволяет функции работать до 5 минут на бесплатном тарифе Vercel
 export const maxDuration = 300; 
