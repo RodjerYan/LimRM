@@ -64,7 +64,7 @@ async function fetchFromOverpass(region: string, retries = 2): Promise<any[]> {
   return [];
 }
 
-function normalize(str: any): string {
+function normalize(str: string) {
   if (typeof str !== 'string') return '';
   return str.trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -128,12 +128,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
     
+    // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Фильтруем массив ДО цикла с использованием type predicate.
+    // Это создает новый массив, в котором TypeScript на 100% уверен, что нет null элементов.
+    const existingRows = existingRowsRaw.filter(
+      (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
+    );
+
     const existingEntries = new Set<string>();
-    // ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ: итерация с явным приведением типа.
-    for (const rowRaw of existingRowsRaw) {
-      if (!rowRaw) continue; // 1. Проверяем на null
-      // 2. Явно приводим тип, чтобы TypeScript был уверен.
-      const row = rowRaw as GoogleSpreadsheetRow<Record<string, any>>; 
+    // Теперь итерация идет по 100% чистому массиву `existingRows`, что решает ошибку сборки.
+    for (const row of existingRows) {
       const key = `${normalize(row.get('Наименование'))}|${normalize(row.get('Город или населенный пункт'))}`;
       existingEntries.add(key);
     }
@@ -170,7 +173,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         const addedRowsRaw = await sheet.addRows(batch);
         
-        // Применяем тот же надежный паттерн для подсчета.
+        // Применяем тот же надежный паттерн для безопасного подсчета добавленных строк.
         const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
         totalAddedCount += addedRows.length;
       }
