@@ -420,8 +420,60 @@ const parseFileAndExtractCities = (file) => {
 
 // --- START overpassService ---
 let baseUrl = ''; // Will be set by the main thread
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+
+// --- START Robust Fetch Service ---
+const OVERPASS_MIRRORS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://main.overpass-api.de/api/interpreter',
+];
+
+async function fetchWithRetries(url, options, retries = 3, mirrorList = null) {
+    const { timeout = 20000, retryDelay = 3000, body } = options;
+    let urlsToTry = mirrorList ? [...mirrorList] : [url];
+    
+    for (const currentUrl of urlsToTry) {
+        for (let i = 0; i < retries; i++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+            try {
+                const response = await fetch(currentUrl, {
+                    ...options,
+                    signal: controller.signal,
+                    body: body
+                });
+                clearTimeout(timeoutId);
+
+                if (response.ok) {
+                    return response; // Success
+                }
+                if (response.status === 429) {
+                    console.warn(\`Rate limited on \${currentUrl}. Waiting for \${retryDelay * 2}ms before retry \${i + 1}.\`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay * 2));
+                    continue; 
+                }
+                console.warn(\`Attempt \${i + 1} for \${currentUrl} failed with status \${response.status}. Retrying in \${retryDelay}ms...\`);
+
+            } catch (error) {
+                clearTimeout(timeoutId);
+                console.warn(\`Attempt \${i + 1} for \${currentUrl} failed with error: \${error.message}. Retrying in \${retryDelay}ms...\`);
+            }
+            
+            if (i < retries - 1) {
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+            }
+        }
+        console.error(\`All retries failed for URL: \${currentUrl}\`);
+    }
+
+    throw new Error(\`Не удалось получить данные от API после \${retries} попыток для всех зеркал.\`);
+}
+// --- END Robust Fetch Service ---
+
 const areaMarketPotentialCache = new Map();
+const nominatimRateLimiter = createRateLimiter(1001); // 1 req/sec + 1ms buffer
 
 function createRateLimiter(minInterval) {
     let lastCallTime = 0;
@@ -441,27 +493,19 @@ function createRateLimiter(minInterval) {
     };
 }
 
-const nominatimRateLimiter = createRateLimiter(1001); // 1 req/sec + 1ms buffer
-
 async function getAreaIdForLocation(locationName) {
-    // FIX: Web workers cannot resolve relative URLs. Prepend the baseUrl passed from the main thread.
     const url = baseUrl + '/api/nominatim-proxy?q=' + encodeURIComponent(locationName);
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Nominatim proxy network error');
+        const response = await fetchWithRetries(url, { timeout: 10000 });
         const data = await response.json();
         if (data && data.length > 0) {
             const result = data[0];
-            if (result.osm_type === 'relation') {
-                return 3600000000 + parseInt(result.osm_id, 10);
-            }
-            if (result.osm_type === 'way') {
-                return 2400000000 + parseInt(result.osm_id, 10);
-            }
+            if (result.osm_type === 'relation') return 3600000000 + parseInt(result.osm_id, 10);
+            if (result.osm_type === 'way') return 2400000000 + parseInt(result.osm_id, 10);
         }
         return null;
     } catch (error) {
-        console.error('Nominatim lookup failed for ' + locationName + ':', error);
+        console.error('Nominatim lookup failed permanently for ' + locationName + ':', error);
         return null;
     }
 }
@@ -471,19 +515,21 @@ async function getMarketPotentialForArea(areaId) {
     if (areaMarketPotentialCache.has(areaId)) {
         return areaMarketPotentialCache.get(areaId);
     }
-    // FIX: Replaced template literal with standard string concatenation to fix Vercel build error.
-    // FIX: Increased timeout to 60s for better reliability with large areas.
     const query = '[out:json][timeout:60];area(' + areaId + ')->.searchArea;(nwr["shop"~"pet|veterinary"](area.searchArea);nwr["amenity"="veterinary"](area.searchArea););out center;';
     try {
-        const response = await fetch(OVERPASS_URL, {
-            method: 'POST',
-            body: 'data=' + encodeURIComponent(query),
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-        if (!response.ok) {
-            if (response.status === 429) return { error: 'rate_limit' };
-            throw new Error('Network response was not ok. Status: ' + response.status);
-        }
+        const response = await fetchWithRetries(
+            OVERPASS_MIRRORS[0],
+            {
+                method: 'POST',
+                body: 'data=' + encodeURIComponent(query),
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                timeout: 30000,
+                retryDelay: 4000
+            },
+            3,
+            OVERPASS_MIRRORS
+        );
+        
         const data = await response.json();
         const clients = data.elements.map((el) => ({
             name: el.tags?.name || 'Без названия',
@@ -496,10 +542,11 @@ async function getMarketPotentialForArea(areaId) {
         areaMarketPotentialCache.set(areaId, result);
         return result;
     } catch (error) {
-        console.error('There has been a problem with your fetch operation for area ' + areaId + ':', error);
-        return { count: 0, clients: [], error: 'fetch_error' };
+        console.error('Overpass fetch failed permanently for area ' + areaId + ':', error);
+        return { count: 0, clients: [], error: 'fetch_error', message: error.message };
     }
 }
+
 function createRequestQueue(concurrency) {
     const queue = []; let activeRequests = 0;
     function processQueue() {
@@ -544,7 +591,7 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
         }
         geocodedCount++;
         const etr = calculateEtr(startTime, geocodedCount, totalGeocodingSteps);
-        onProgress(40 + (geocodedCount / (totalGeocodingSteps || 1)) * 20, 'Геокодирование... (' + geocodedCount + '/' + totalGeocodingSteps + ')', etr);
+        onProgress(40 + (geocodedCount / (totalGeocodingSteps || 1)) * 20, \`Геокодирование: \${locationName} (\${geocodedCount}/\${totalGeocodingSteps})\`, etr);
     });
     
     await Promise.all(geocodingPromises);
@@ -558,11 +605,16 @@ const calculateRealisticPotential = async (initialData, uniqueLocations, onProgr
     
     const promises = locationsWithIds.map(([locationName, areaId]) => enqueue(async () => {
         const potential = await getMarketPotentialForArea(areaId);
-        potentialMap.set(locationName, potential);
+        if (potential.error) {
+            self.postMessage({ type: 'region_error', payload: { regionName: locationName, error: potential.message } });
+            potentialMap.set(locationName, { count: 0, clients: [] });
+        } else {
+            potentialMap.set(locationName, potential);
+        }
 
         processedCount++;
         const etr = calculateEtr(startTime, processedCount + totalGeocodingSteps, locationsWithIds.length + totalGeocodingSteps);
-        onProgress(60 + (processedCount / (locationsWithIds.length || 1)) * 35, 'Сбор данных... (' + processedCount + '/' + locationsWithIds.length + ')', etr);
+        onProgress(60 + (processedCount / (locationsWithIds.length || 1)) * 35, \`Сбор данных: \${locationName} (\${processedCount}/\${locationsWithIds.length})\`, etr);
     }));
 
     await Promise.all(promises);
@@ -631,6 +683,7 @@ export default function App() {
     const [aggregatedData, setAggregatedData] = useState<AggregatedDataRow[]>([]);
     const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
+    const [failedRegions, setFailedRegions] = useState<Set<string>>(new Set());
     
     const [filters, setFilters] = useState<FilterState>(() => {
         try {
@@ -676,7 +729,7 @@ export default function App() {
         setNotifications(prev => [...prev, { id, message, type }]);
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 4000);
+        }, 5000);
     }, []);
     
     const cleanupWorker = () => {
@@ -702,6 +755,7 @@ export default function App() {
         setAggregatedData([]);
         setFilters({ rm: '', brand: [], city: [] });
         setSearchTerm('');
+        setFailedRegions(new Set());
         
         try {
             const blob = new Blob([workerScript], { type: 'application/javascript' });
@@ -724,10 +778,14 @@ export default function App() {
                         setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
                     }, 3000);
                     cleanupWorker();
+                } else if (type === 'region_error') {
+                    const { regionName, error } = payload;
+                    addNotification(`⚠️ Ошибка при загрузке данных по региону: ${regionName}`, 'error');
+                    console.warn(`Worker error for region ${regionName}:`, error);
+                    setFailedRegions(prev => new Set(prev).add(regionName));
                 } else if (type === 'error') {
                     console.error("Error from worker:", payload);
                     const errorMessage = payload;
-                    // FIX: Replaced template literal with standard string concatenation to fix Vercel build error.
                     addNotification('Ошибка: ' + errorMessage, 'error');
                     setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + errorMessage, etr: '' });
                     cleanupWorker();
@@ -908,6 +966,7 @@ export default function App() {
                         requestSort={requestSort}
                         searchTerm={searchTerm}
                         onSearchChange={setSearchTerm}
+                        failedRegions={failedRegions}
                     />
                 </div>
             </div>

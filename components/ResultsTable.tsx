@@ -12,6 +12,7 @@ interface ResultsTableProps {
     requestSort: (key: keyof AggregatedDataRow) => void;
     searchTerm: string;
     onSearchChange: (value: string) => void;
+    failedRegions: Set<string>;
 }
 
 const TableHeader: React.FC<{
@@ -65,12 +66,28 @@ const TableHeader: React.FC<{
     );
 };
 
-const TableRow: React.FC<{ item: AggregatedDataRow, onRowClick: (item: AggregatedDataRow) => void }> = ({ item, onRowClick }) => {
+const TableRow: React.FC<{ 
+    item: AggregatedDataRow; 
+    onRowClick: (item: AggregatedDataRow) => void;
+    hasFailed: boolean;
+    hasZeroPotential: boolean;
+}> = ({ item, onRowClick, hasFailed, hasZeroPotential }) => {
+    
+    const rowClass = hasFailed
+        ? 'bg-red-900/40 hover:bg-red-900/60 border-l-2 border-transparent hover:border-danger'
+        : hasZeroPotential
+        ? 'bg-yellow-900/20 hover:bg-yellow-900/40 opacity-80 border-l-2 border-transparent hover:border-warning'
+        : 'hover:bg-gray-700/50 border-l-2 border-transparent hover:border-accent';
+
+    const cityCellContent = hasFailed 
+        ? <span title="Не удалось загрузить данные для этого региона">{item.city} ⚠️</span>
+        : item.city;
+
     return (
-        <tr onClick={() => onRowClick(item)} className="hover:bg-gray-700/50 transition duration-150 cursor-pointer border-l-2 border-transparent hover:border-accent">
+        <tr onClick={() => onRowClick(item)} className={`transition duration-150 cursor-pointer ${rowClass}`}>
             <td className="px-4 py-3 text-sm font-medium text-white text-left">{item.rm}</td>
             <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.brand}</td>
-            <td className="px-4 py-3 text-sm text-gray-300 text-left">{item.city}</td>
+            <td className="px-4 py-3 text-sm text-gray-300 text-left">{cityCellContent}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-300 font-mono">{item.potentialTTs}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.fact)}</td>
             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-300 text-right">{formatLargeNumber(item.potential)}</td>
@@ -103,7 +120,7 @@ const SkeletonRow: React.FC = () => (
     </tr>
 );
 
-const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig, requestSort, searchTerm, onSearchChange }) => {
+const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig, requestSort, searchTerm, onSearchChange, failedRegions }) => {
     const [modalData, setModalData] = useState<AggregatedDataRow | null>(null);
 
     const handleRowClick = (item: AggregatedDataRow) => setModalData(item);
@@ -114,6 +131,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             rm: 'РМ',
             brand: 'Бренд',
             city: 'Город',
+            status: 'Статус',
             potentialTTs: 'Общая Клиентская База (ОКБ, шт.)',
             fact: 'Факт (кг/ед)',
             potential: 'Потенциал (кг/ед)',
@@ -125,6 +143,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             [headers.rm]: row.rm,
             [headers.brand]: row.brand,
             [headers.city]: row.city,
+            [headers.status]: failedRegions.has(row.city) ? 'Ошибка загрузки' : (row.potentialTTs === 0 ? 'Нет данных' : 'OK'),
             [headers.potentialTTs]: row.potentialTTs,
             [headers.fact]: Number(row.fact.toFixed(2)),
             [headers.potential]: Number(row.potential.toFixed(2)),
@@ -137,8 +156,8 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
         XLSX.utils.book_append_sheet(wb, ws, 'Анализ_Рынка');
 
         const columnWidths = [
-            { wch: 30 }, { wch: 25 }, { wch: 25 }, { wch: 35 },
-            { wch: 18 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
+            { wch: 30 }, { wch: 25 }, { wch: 25 }, {wch: 18 },
+            { wch: 35 }, { wch: 18 }, { wch: 22 }, { wch: 28 }, { wch: 15 },
         ];
         ws['!cols'] = columnWidths;
 
@@ -166,7 +185,19 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
         if (data.length === 0) {
             return (<tr><td colSpan={8} className="p-6 text-center text-gray-400">Нет данных для отображения. Загрузите файл или измените фильтры/поиск.</td></tr>);
         }
-        return data.map((item, index) => <TableRow key={`${item.rm}-${item.brand}-${item.city}-${index}`} item={item} onRowClick={handleRowClick} />);
+        return data.map((item, index) => {
+            const hasFailed = failedRegions.has(item.city);
+            const hasZeroPotential = !hasFailed && item.potentialTTs === 0;
+            return (
+                <TableRow 
+                    key={`${item.rm}-${item.brand}-${item.city}-${index}`} 
+                    item={item} 
+                    onRowClick={handleRowClick}
+                    hasFailed={hasFailed}
+                    hasZeroPotential={hasZeroPotential}
+                />
+            );
+        });
     };
 
     return (
