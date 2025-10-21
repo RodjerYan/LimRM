@@ -65,6 +65,7 @@ async function fetchFromOverpass(region: string, retries = 2): Promise<any[]> {
 }
 
 function normalize(str: string) {
+  if (typeof str !== 'string') return '';
   return str.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
@@ -126,13 +127,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
+    
+    // САМОЕ НАДЕЖНОЕ РЕШЕНИЕ: Фильтруем массив ДО цикла.
+    const existingRows = existingRowsRaw.filter(
+      (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
+    );
 
     const existingEntries = new Set<string>();
-    for (const row of existingRowsRaw) {
-      if (row) {
-        const key = `${normalize(row.get('Наименование'))}|${normalize(row.get('Город или населенный пункт'))}`;
-        existingEntries.add(key);
-      }
+    // Теперь итерируем по 100% чистому массиву `existingRows`.
+    for (const row of existingRows) {
+      const key = `${normalize(row.get('Наименование'))}|${normalize(row.get('Город или населенный пункт'))}`;
+      existingEntries.add(key);
     }
 
     const allUniqueNewRows: any[] = [];
@@ -164,12 +169,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       for (let i = 0; i < allUniqueNewRows.length; i += BATCH_SIZE) {
         const batch = allUniqueNewRows.slice(i, i + BATCH_SIZE);
         sendProgress(res, 90 + Math.round((i / allUniqueNewRows.length) * 9), `Запись строк: ${i + batch.length} из ${allUniqueNewRows.length}...`);
+        
         const addedRowsRaw = await sheet.addRows(batch);
-        for (const row of addedRowsRaw) {
-          if (row) {
-            totalAddedCount++;
-          }
-        }
+        
+        // Применяем тот же надежный паттерн для подсчета.
+        const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
+        totalAddedCount += addedRows.length;
       }
       console.log(`Фактически добавлено ${totalAddedCount} из ${allUniqueNewRows.length} новых строк.`);
     }
