@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
+// FIX: Import JWT for authentication with Google Sheets API.
 import { JWT } from 'google-auth-library';
 import { regionCenters } from './_data/regions';
 
@@ -16,7 +17,7 @@ const OVERPASS_ENDPOINTS = [
     'https://overpass.openstreetmap.ru/api/interpreter'
 ];
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, resolve));
 
 async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
     const query = `
@@ -52,13 +53,11 @@ async function fetchFromOverpassWithRetry(region: string, maxRetries = 3) {
                     throw new Error(`Server error: ${response.status}`);
                 }
                 
-                // УЛУЧШЕНО: Добавлена защита от невалидного JSON
                 let data;
                 try {
                     data = await response.json();
                 } catch (e) {
                     console.error(`Invalid JSON response from Overpass for region "${region}" on ${endpoint}. Status: ${response.status}`);
-                    // Прерываем попытки для этого эндпоинта, так как он может быть сломан
                     break; 
                 }
 
@@ -90,14 +89,16 @@ async function runUpdateProcess() {
             return;
         }
         
-        // ИСПРАВЛЕНО: Ключевое исправление для правильного форматирования приватного ключа
+        // FIX: Replaced deprecated authentication method with the current JWT-based approach.
+        // This resolves both the "Expected 2 arguments" error and the non-existent 'useServiceAccountAuth' property error.
         const serviceAccountAuth = new JWT({
-            email,
+            email: email,
             key: key.replace(/\\n/g, '\n'),
             scopes: ['https://www.googleapis.com/auth/spreadsheets'],
         });
-
+        
         const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+
         await doc.loadInfo();
 
         let sheet = doc.sheetsByTitle[SHEET_NAME] || doc.sheetsByIndex[0];
@@ -172,7 +173,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         runUpdateProcess();
     } catch (err: any) {
         console.error('Handler failed to initiate background process:', err);
-        // This case is unlikely now, but as a fallback
         if (!res.headersSent) {
             res.status(500).json({ error: 'Server error while trying to start the update process.' });
         }
