@@ -309,46 +309,45 @@ function calculateRealisticGrowthRate(fact, potentialTTs) {
     return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
 }
 
-// FIX: Rewritten aggregation logic to be more robust and correct.
+// FIX: Corrected aggregation logic to properly handle cases where multiple display names 
+// (e.g., "Орловская обл", "Орёл") map to the same query location ("Орёл"). This ensures
+// potential client data (ОКБ) is correctly assigned to all relevant groups.
 function aggregateData(data) {
     const aggregationMap = new Map();
-    const cityPotentialMap = new Map();
-
-    // Step 1: Pre-calculate total potential for each display city to avoid double counting.
-    const seenSettlements = new Set();
+    
+    // Step 1: Create a map from the query name (e.g., 'Орёл') to its potential data.
+    // This correctly collects the potential for each unique geographical location once.
+    const queryToPotentialMap = new Map();
     data.forEach(item => {
-        // A settlement is uniquely identified by its overpass query name.
-        if (item.cityForOverpass && !seenSettlements.has(item.cityForOverpass)) {
-            if (!cityPotentialMap.has(item.city)) {
-                cityPotentialMap.set(item.city, { potentialTTs: 0, potentialClients: [] });
-            }
-            const cityData = cityPotentialMap.get(item.city);
-            cityData.potentialTTs += item.potentialTTs || 0;
-            cityData.potentialClients.push(...(item.potentialClients || []));
-            seenSettlements.add(item.cityForOverpass);
+        if (item.cityForOverpass && !queryToPotentialMap.has(item.cityForOverpass)) {
+            queryToPotentialMap.set(item.cityForOverpass, {
+                potentialTTs: item.potentialTTs || 0,
+                potentialClients: item.potentialClients || []
+            });
         }
     });
 
-    // Step 2: Aggregate the sales data.
+    // Step 2: Aggregate sales data, grouping by the display name (e.g., "Орловская обл").
     data.forEach(item => {
-        const key = \`\${item.rm}|\${item.brand}|\${item.city}\`;
+        const key = \`\${item.rm}|\${item.brand}|\${item.city}\`; // Group by display city
         if (!aggregationMap.has(key)) {
-            // On first sight of a group, create it and assign the pre-calculated potential.
-            const potentials = cityPotentialMap.get(item.city) || { potentialTTs: 0, potentialClients: [] };
+            // On first sight of a group, create it.
+            // Look up the potential using the item's unique query name.
+            const potentials = queryToPotentialMap.get(item.cityForOverpass) || { potentialTTs: 0, potentialClients: [] };
             aggregationMap.set(key, {
                 rm: item.rm,
                 brand: item.brand,
-                city: item.city,
+                city: item.city, // The display name
                 fact: 0,
                 potential: 0,
                 growthPotential: 0,
                 growthRateSum: 0,
                 count: 0,
                 potentialTTs: potentials.potentialTTs,
-                potentialClients: potentials.potentialClients, // Assign all potential clients for the city.
+                potentialClients: potentials.potentialClients,
             });
         }
-        // Add current item's sales data to the aggregate.
+        // Add the current item's sales data to the aggregate.
         const current = aggregationMap.get(key);
         current.fact += item.fact;
         current.potential += item.potential;
@@ -359,6 +358,7 @@ function aggregateData(data) {
 
     // Step 3: Finalize the aggregated data (calculate averages and de-duplicate clients).
     return Array.from(aggregationMap.values()).map(item => {
+        // Ensure client list is unique for display purposes.
         const uniqueClients = Array.from(new Map(item.potentialClients.map(c => [
             c.lat && c.lon ? \`\${c.lat},\${c.lon}\` : c.name, 
             c
