@@ -57,6 +57,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
 
         const processNextBatch = async (startIndex = 0) => {
             try {
+                // Для первого запроса используем 'startUpdate', для последующих - 'continueUpdate'
                 const action = startIndex === 0 ? 'startUpdate' : 'continueUpdate';
                 const body = { action, startIndex };
 
@@ -66,13 +67,16 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                     body: JSON.stringify(body),
                 });
                 
+                // Важно сначала получить текст, чтобы иметь его для отладки в случае ошибки парсинга JSON
                 const resultText = await response.text();
                 if (!response.ok) {
                     let errorDetails = 'Не удалось выполнить шаг обновления.';
                     try {
+                        // Попытка распарсить JSON из ошибки, если он есть
                         const errorJson = JSON.parse(resultText);
                         errorDetails = errorJson.details || errorJson.message || resultText;
                     } catch (e) {
+                        // Если парсинг не удался, используем текст ответа как есть
                         errorDetails = resultText || errorDetails;
                     }
                     throw new Error(errorDetails);
@@ -84,17 +88,19 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                     throw new Error(result.message || 'Apps Script вернул ошибку во время обработки.');
                 }
 
+                // Рассчитываем процент выполнения на основе данных от GAS
                 const progressPercent = result.total > 0 ? ((result.nextIndex || result.total) / result.total) * 100 : 100;
                 setUpdateProgress({ text: result.message, percent: Math.min(progressPercent, 100) });
 
-                if (result.status === 'processing' && result.nextIndex) {
-                    // Рекурсивно вызываем обработку следующего батча
+                // Если GAS говорит, что нужно продолжать, рекурсивно вызываем обработку следующего батча
+                if (result.status === 'processing' && typeof result.nextIndex === 'number') {
                     await processNextBatch(result.nextIndex);
                 } else if (result.status === 'complete') {
                     addNotification(`✅ База успешно обновлена! Всего обработано: ${result.total} записей.`, 'success');
                     setUpdateProgress(null);
-                    await fetchStatus(); // Обновляем финальный статус
+                    await fetchStatus(); // Обновляем финальный статус после завершения
                 } else {
+                    // Если ответ от сервера некорректный
                     throw new Error('Получен неожиданный ответ от сервера.');
                 }
 
@@ -106,7 +112,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             }
         };
 
-        await processNextBatch(0); // Запускаем процесс с самого начала
+        // Запускаем процесс с самого начала (startIndex = 0)
+        await processNextBatch(0);
     }, [status, addNotification, fetchStatus]);
 
 
