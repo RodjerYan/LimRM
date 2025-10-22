@@ -1,4 +1,3 @@
-
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -69,11 +68,20 @@ const bufferedProxyToGoogleScript = async (req, res) => {
 
         clearTimeout(timeout);
         
-        // Сначала полностью получаем и парсим ответ от Google
+        const contentType = response.headers.get('content-type');
+
+        // КРИТИЧЕСКАЯ ПРОВЕРКА: Если Google возвращает страницу входа (HTML), значит права доступа неверны.
+        if (contentType && contentType.includes('text/html')) {
+            console.error('FATAL PERMISSION ERROR: Google Apps Script returned an HTML page instead of JSON. This almost certainly means the script is not shared correctly ("Who has access" should be "Anyone").');
+            return res.status(500).json({
+                message: 'Ошибка конфигурации Google Apps Script',
+                details: 'Сервер получил HTML-страницу для входа вместо ожидаемых данных. Убедитесь, что ваше веб-приложение в Google Apps Script опубликовано с правом доступа "Все" (Anyone) и вы используете корректный URL развертывания.'
+            });
+        }
+        
         const data = await response.json();
         console.log(`Received buffered response from Google. Status: ${response.status}`);
         
-        // И только потом отправляем его клиенту
         res.status(response.status).json(data);
 
     } catch (error) {
@@ -110,6 +118,16 @@ const streamProxyToGoogleScript = async (req, res) => {
         });
 
         clearTimeout(timeout);
+        
+        const contentType = response.headers.get('content-type');
+        // Такая же проверка на HTML для потокового запроса
+        if (contentType && contentType.includes('text/html')) {
+            console.error('FATAL PERMISSION ERROR on streaming endpoint: Google Apps Script returned an HTML page.');
+             return res.status(500).json({
+                message: 'Ошибка конфигурации Google Apps Script',
+                details: 'Сервер получил HTML-страницу для входа вместо потока данных. Убедитесь, что ваше веб-приложение в Google Apps Script опубликовано с правом доступа "Все" (Anyone).'
+            });
+        }
 
         if (!response.body) {
              const data = await response.json();
