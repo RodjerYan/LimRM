@@ -1,7 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
-const FETCH_TIMEOUT = 14000; // Таймаут чуть меньше лимита Vercel (~15с)
+// ИЗМЕНЕНО: Таймаут уменьшен до 10 секунд.
+// Это дает функции запас времени (~5с на бесплатном тарифе Vercel) для корректной
+// обработки таймаута и отправки ответа клиенту, избегая принудительного завершения.
+const FETCH_TIMEOUT = 10000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
@@ -47,11 +50,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (error: any) {
         clearTimeout(timeoutId);
         
-        // ИЗМЕНЕНО: Обрабатываем таймаут не как ошибку, а как сигнал для клиента повторить запрос.
         if (error.name === 'AbortError') {
-            console.warn('Request to Google Apps Script timed out. Instructing client to poll.');
-            // Возвращаем статус 200, чтобы фронтенд не считал это фатальной ошибкой.
-            // Передаем специальный статус и тот же 'action', чтобы клиент мог его повторить.
+            console.warn(`Request to Google Apps Script timed out after ${FETCH_TIMEOUT / 1000}s. Instructing client to poll.`);
             res.status(200).json({
                 status: 'processing_timeout',
                 message: `Сервер обрабатывает запрос... Ожидаем завершения.`,
@@ -60,7 +60,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return;
         }
 
-        // Обрабатываем все остальные, настоящие ошибки
         console.error('CRITICAL Error in update-okb proxy:', error);
         res.status(500).json({ 
             status: 'error',
