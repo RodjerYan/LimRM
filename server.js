@@ -1,6 +1,7 @@
 // server.js
 import express from 'express';
 import path from 'path';
+import fs from 'fs'; // Импортируем модуль для работы с файловой системой
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
@@ -96,7 +97,6 @@ app.get('/api/nominatim-proxy', async (req, res) => {
 // 5. Запуск/продолжение обновления ОКБ
 app.post('/api/update-okb', async (req, res) => {
     try {
-        // Убрана вся логика с AbortController, так как она больше не нужна
         const scriptResponse = await fetch(APPS_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -119,12 +119,23 @@ app.post('/api/update-okb', async (req, res) => {
 
 
 // --- РАЗДАЧА ФРОНТЕНДА ---
-// Это важно для Render: после сборки сервер будет раздавать статические файлы React-приложения
-app.use(express.static(path.join(__dirname, 'dist')));
+const staticPath = path.join(__dirname, 'dist');
 
-// Для всех остальных запросов, не являющихся API, отдаем index.html (для работы React Router)
+// КРИТИЧЕСКАЯ ПРОВЕРКА: Убедимся, что сборка прошла успешно
+if (!fs.existsSync(path.join(staticPath, 'index.html'))) {
+    console.error('---------------------------------------------------------');
+    console.error('CRITICAL ERROR: Файл "dist/index.html" не найден!');
+    console.error('Это означает, что команда "npm run build" не выполнилась успешно.');
+    console.error('Наиболее вероятная причина - отсутствующие переменные окружения VITE_...');
+    console.error('Пожалуйста, проверьте переменные в настройках Render и перезапустите deploy.');
+    console.error('---------------------------------------------------------');
+    process.exit(1); // Завершаем процесс с ошибкой, чтобы это было видно в логах
+}
+
+app.use(express.static(staticPath));
+
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    res.sendFile(path.join(staticPath, 'index.html'));
 });
 
 
