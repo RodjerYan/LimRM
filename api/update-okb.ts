@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
+const FETCH_TIMEOUT = 28000; // 28 секунд таймаут для fetch-запроса
 
 /**
  * Этот обработчик является прокси для Google Apps Script, поддерживающим пакетную обработку.
@@ -13,8 +14,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
+    // Добавляем AbortController для контроля таймаута
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
     try {
-        // Тело запроса от фронтенда содержит действие и начальный индекс для батча
         const requestBody = req.body;
         console.log('Proxying request to Google Apps Script with body:', requestBody);
 
@@ -22,8 +26,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestBody),
-            redirect: 'follow'
+            redirect: 'follow',
+            signal: controller.signal // Привязываем контроллер к запросу
         });
+        
+        // Очищаем таймаут, если запрос выполнился вовремя
+        clearTimeout(timeoutId);
 
         const contentType = scriptResponse.headers.get('content-type');
         if (!scriptResponse.ok || !contentType || !contentType.includes('application/json')) {
@@ -33,8 +41,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 contentType: contentType,
                 body: errorText,
             });
-            // Попытка извлечь более читаемую ошибку, если GAS вернул HTML
-             if (errorText.includes('<title>Google Accounts</title>')) {
+            if (errorText.includes('<title>Google Accounts</title>')) {
                 throw new Error('Apps Script вернул страницу входа Google. Проверьте настройки доступа: "Who has access" должно быть "Anyone".');
             }
             throw new Error(`Google Apps Script вернул ошибку или не-JSON ответ. Детали: ${errorText}`);
@@ -43,14 +50,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const data = await scriptResponse.json();
         console.log('Received response from Google Apps Script:', data);
         
-        // Пересылаем успешный JSON-ответ от GAS обратно клиенту
         res.status(200).json(data);
 
     } catch (error: any) {
+        // Очищаем таймаут в случае других ошибок
+        clearTimeout(timeoutId);
+        
         console.error('CRITICAL Error in update-okb proxy:', error);
+        
+        let message = 'Не удалось обработать обновление через прокси Google Apps Script.';
+        // Если ошибка вызвана нашим таймаутом, даем более понятное сообщение
+        if (error.name === 'AbortError') {
+            message = `Запрос к Google Apps Script занял слишком много времени (>${FETCH_TIMEOUT / 1000}с) и был прерван. Возможно, размер пакета (BATCH_SIZE) в скрипте слишком велик или API OpenStreetMap медленно отвечает.`;
+        }
+
         res.status(500).json({ 
             status: 'error',
-            message: 'Не удалось обработать обновление через прокси Google Apps Script.', 
+            message: message,
             details: error.message 
         });
     }
