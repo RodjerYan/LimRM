@@ -10,15 +10,17 @@ interface OKBStatus {
     modifiedTime: string;
 }
 
+// Улучшенное состояние для отслеживания прогресса в процентах
 interface UpdateProgress {
     text: string;
     isUpdating: boolean;
+    percentage: number;
 }
 
 const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
     const [status, setStatus] = useState<OKBStatus | null>(null);
     const [isLoadingStatus, setIsLoadingStatus] = useState(true);
-    const [progress, setProgress] = useState<UpdateProgress>({ text: '', isUpdating: false });
+    const [progress, setProgress] = useState<UpdateProgress>({ text: '', isUpdating: false, percentage: 0 });
 
     const fetchStatus = useCallback(async () => {
         setIsLoadingStatus(true);
@@ -57,35 +59,46 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             }
             
             const data = await response.json();
+            const message = data.message || '';
+            let percentage = progress.percentage;
 
-            // Only update progress text if a message is provided
-            if (data.message) {
-                 setProgress({ text: data.message, isUpdating: true });
+            // Парсим сообщение от сервера, чтобы вычислить процент выполнения
+            if (data.stage === 'FETCHING_CITIES') {
+                const cityMatch = message.match(/обработан город.*\((\d+)\/(\d+)\)/);
+                if (cityMatch) {
+                    const current = parseInt(cityMatch[1], 10);
+                    const total = parseInt(cityMatch[2], 10);
+                    // Сбор данных по городам занимает первую половину прогресса (0-50%)
+                    percentage = (current / total) * 50;
+                }
+            } else if (data.stage === 'GEOCODING') {
+                const geoMatch = message.match(/обработано (\d+)\/(\d+)/);
+                 if (geoMatch) {
+                    const current = parseInt(geoMatch[1], 10);
+                    const total = parseInt(geoMatch[2], 10);
+                    // Геокодирование занимает вторую половину прогресса (50-100%)
+                    percentage = 50 + (current / total) * 50;
+                }
             }
+            
+            setProgress({ text: message, isUpdating: true, percentage });
 
             if (data.status === 'processing' && data.nextAction) {
-                // Schedule next step to allow UI to update and avoid deep recursion stack
                 setTimeout(() => processUpdateStep(data.nextAction), 200);
             } else if (data.status === 'complete') {
                 addNotification(data.message || 'База ОКБ успешно обновлена!', 'success');
-                setProgress({ text: '', isUpdating: false });
-                fetchStatus(); // Refresh status after update
+                setProgress({ text: '', isUpdating: false, percentage: 0 });
+                fetchStatus();
             } else if (data.status === 'error') {
                 throw new Error(data.message || 'Произошла ошибка во время обновления.');
-            } else if (!data.nextAction && data.status === 'processing') {
-                // Handle cases where the server is processing but doesn't return a next action immediately
-                // This could be a final processing step before 'complete'
-                console.log("Processing continues on server...");
-            } else if (data.status !== 'complete' && data.status !== 'processing') {
-                 throw new Error(`Неизвестный статус от сервера: ${data.status}`);
             }
 
         } catch (error: any) {
             console.error('Update process failed:', error);
             addNotification(error.message, 'error');
-            setProgress({ text: '', isUpdating: false });
+            setProgress({ text: '', isUpdating: false, percentage: 0 });
         }
-    }, [addNotification, fetchStatus]);
+    }, [addNotification, fetchStatus, progress.percentage]);
 
     const handleStartUpdate = useCallback(() => {
         if (progress.isUpdating) return;
@@ -97,7 +110,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         );
       
         if (confirmed) {
-            setProgress({ text: 'Инициализация процесса обновления...', isUpdating: true });
+            setProgress({ text: 'Инициализация процесса...', isUpdating: true, percentage: 0 });
             processUpdateStep({ action: 'startUpdate' });
         }
     }, [progress.isUpdating, processUpdateStep]);
@@ -132,8 +145,14 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                 )}
             </button>
             {progress.isUpdating && (
-                <div className="mt-4 text-center h-4">
-                    <p className="text-sm text-gray-300 animate-pulse">{progress.text}</p>
+                <div className="mt-4">
+                    <p className="text-sm text-center text-gray-300 mb-2 truncate">{progress.text}</p>
+                    <div className="w-full bg-gray-900/50 rounded-full h-2.5">
+                        <div 
+                            className="bg-gradient-to-r from-accent to-accent-dark h-2.5 rounded-full transition-all duration-300" 
+                            style={{width: `${progress.percentage}%`}}
+                        ></div>
+                    </div>
                 </div>
             )}
              <p className="text-xs text-gray-500 mt-3 text-center">

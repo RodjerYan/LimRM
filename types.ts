@@ -19,8 +19,7 @@ export interface AggregatedDataRow {
     potentialClients: PotentialClient[];
 }
 
-// FIX: Added missing RawDataRow type to resolve an import error in `services/fileParser.ts`.
-// This type represents a row of data parsed from a user-uploaded file and appears to be part of a legacy feature.
+// FIX: Added missing RawDataRow interface to resolve compilation error in services/fileParser.ts
 export interface RawDataRow {
     rm: string;
     brand: string;
