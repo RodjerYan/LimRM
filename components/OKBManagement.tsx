@@ -5,175 +5,139 @@ interface OKBManagementProps {
     addNotification: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+interface OKBStatus {
+    rowCount: number;
+    modifiedTime: string;
+}
+
 interface UpdateProgress {
     text: string;
-    percent: number;
+    isUpdating: boolean;
 }
 
 const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
-    const [status, setStatus] = useState<'loading' | 'success' | 'error' | 'updating'>('loading');
-    const [lastUpdate, setLastUpdate] = useState<string>('...');
-    const [totalRecords, setTotalRecords] = useState<string>('...');
-    const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
+    const [status, setStatus] = useState<OKBStatus | null>(null);
+    const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+    const [progress, setProgress] = useState<UpdateProgress>({ text: '', isUpdating: false });
 
     const fetchStatus = useCallback(async () => {
-        setStatus('loading');
+        setIsLoadingStatus(true);
         try {
             const response = await fetch('/api/get-okb-status');
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.details || 'Не удалось получить статус базы.');
+                throw new Error(errorData.details || 'Не удалось получить статус ОКБ.');
             }
-            const data = await response.json();
-            
-            setLastUpdate(new Date(data.modifiedTime).toLocaleString('ru-RU', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-            }));
-            setTotalRecords(data.rowCount.toLocaleString('ru-RU'));
-            setStatus('success');
+            const data: OKBStatus = await response.json();
+            setStatus(data);
         } catch (error: any) {
-            console.error('Failed to fetch OKB status:', error);
-            addNotification(`Ошибка получения статуса: ${error.message}`, 'error');
-            setStatus('error');
-            setLastUpdate('Ошибка');
-            setTotalRecords('Ошибка');
+            console.error('Error fetching OKB status:', error);
+            addNotification(error.message, 'error');
+            setStatus(null);
+        } finally {
+            setIsLoadingStatus(false);
         }
     }, [addNotification]);
 
     useEffect(() => {
         fetchStatus();
     }, [fetchStatus]);
-    
-    const handleUpdate = useCallback(async () => {
-        if (status === 'updating' || status === 'loading') return;
-        
-        setStatus('updating');
-        setUpdateProgress({ text: 'Запуск процесса...', percent: 0 });
-        addNotification('Запуск обновления базы ОКБ. Процесс разбит на части и может занять несколько минут.', 'info');
 
-        const processNextBatch = async (startIndex = 0) => {
-            try {
-                // Для первого запроса используем 'startUpdate', для последующих - 'continueUpdate'
-                const action = startIndex === 0 ? 'startUpdate' : 'continueUpdate';
-                const body = { action, startIndex };
+    const processUpdateStep = useCallback(async (body: object) => {
+        try {
+            const response = await fetch('/api/update-okb', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
 
-                const response = await fetch('/api/update-okb', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
-                
-                // Важно сначала получить текст, чтобы иметь его для отладки в случае ошибки парсинга JSON
-                const resultText = await response.text();
-                if (!response.ok) {
-                    let errorDetails = 'Не удалось выполнить шаг обновления.';
-                    try {
-                        // Попытка распарсить JSON из ошибки, если он есть
-                        const errorJson = JSON.parse(resultText);
-                        errorDetails = errorJson.details || errorJson.message || resultText;
-                    } catch (e) {
-                        // Если парсинг не удался, используем текст ответа как есть
-                        errorDetails = resultText || errorDetails;
-                    }
-                    throw new Error(errorDetails);
-                }
-                
-                const result = JSON.parse(resultText);
-                
-                if (result.status === 'error') {
-                    throw new Error(result.message || 'Apps Script вернул ошибку во время обработки.');
-                }
-
-                // Рассчитываем процент выполнения на основе данных от GAS
-                const progressPercent = result.total > 0 ? ((result.nextIndex || result.total) / result.total) * 100 : 100;
-                setUpdateProgress({ text: result.message, percent: Math.min(progressPercent, 100) });
-
-                // Если GAS говорит, что нужно продолжать, рекурсивно вызываем обработку следующего батча
-                if (result.status === 'processing' && typeof result.nextIndex === 'number') {
-                    await processNextBatch(result.nextIndex);
-                } else if (result.status === 'complete') {
-                    addNotification(`✅ База успешно обновлена! Всего обработано: ${result.total} записей.`, 'success');
-                    setUpdateProgress(null);
-                    await fetchStatus(); // Обновляем финальный статус после завершения
-                } else {
-                    // Если ответ от сервера некорректный
-                    throw new Error('Получен неожиданный ответ от сервера.');
-                }
-
-            } catch (error: any) {
-                console.error('Failed during OKB update batch processing:', error);
-                addNotification(`❌ Ошибка обновления базы: ${error.message}`, 'error');
-                setStatus('error');
-                setUpdateProgress(null);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.details || errorData.message || 'Ошибка на сервере при обновлении ОКБ.');
             }
-        };
+            
+            const data = await response.json();
 
-        // Запускаем процесс с самого начала (startIndex = 0)
-        await processNextBatch(0);
-    }, [status, addNotification, fetchStatus]);
+            // Only update progress text if a message is provided
+            if (data.message) {
+                 setProgress({ text: data.message, isUpdating: true });
+            }
 
+            if (data.status === 'processing' && data.nextAction) {
+                // Schedule next step to allow UI to update and avoid deep recursion stack
+                setTimeout(() => processUpdateStep(data.nextAction), 200);
+            } else if (data.status === 'complete') {
+                addNotification(data.message || 'База ОКБ успешно обновлена!', 'success');
+                setProgress({ text: '', isUpdating: false });
+                fetchStatus(); // Refresh status after update
+            } else if (data.status === 'error') {
+                throw new Error(data.message || 'Произошла ошибка во время обновления.');
+            } else if (!data.nextAction && data.status === 'processing') {
+                // Handle cases where the server is processing but doesn't return a next action immediately
+                // This could be a final processing step before 'complete'
+                console.log("Processing continues on server...");
+            } else if (data.status !== 'complete' && data.status !== 'processing') {
+                 throw new Error(`Неизвестный статус от сервера: ${data.status}`);
+            }
 
-    const getStatusText = () => {
-        switch (status) {
-            case 'loading': return <span className="text-gray-400 animate-pulse">Загрузка...</span>;
-            case 'updating': return <span className="text-yellow-400 animate-pulse">Обновление базы...</span>;
-            case 'error': return <span className="text-danger">Ошибка</span>;
-            case 'success': return <span className="text-success">Готово</span>;
-            default: return '...';
+        } catch (error: any) {
+            console.error('Update process failed:', error);
+            addNotification(error.message, 'error');
+            setProgress({ text: '', isUpdating: false });
         }
-    };
+    }, [addNotification, fetchStatus]);
 
-    const isButtonDisabled = status === 'loading' || status === 'updating';
+    const handleStartUpdate = useCallback(() => {
+        if (progress.isUpdating) return;
+        
+        const confirmed = window.confirm(
+            'Вы уверены, что хотите запустить полное обновление базы клиентов?\n\n' +
+            'Этот процесс полностью очистит текущую таблицу и заполнит ее новыми данными из открытых источников. ' +
+            'Это может занять несколько минут. Не закрывайте вкладку до завершения.'
+        );
+      
+        if (confirmed) {
+            setProgress({ text: 'Инициализация процесса обновления...', isUpdating: true });
+            processUpdateStep({ action: 'startUpdate' });
+        }
+    }, [progress.isUpdating, processUpdateStep]);
+
+    const formatStatus = () => {
+        if (isLoadingStatus) return 'Загрузка статуса...';
+        if (!status || typeof status.rowCount !== 'number') return 'Статус неизвестен';
+        
+        const lastModified = new Date(status.modifiedTime).toLocaleString('ru-RU');
+        return `В базе ${status.rowCount} строк. Обновлено: ${lastModified}`;
+    };
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <h2 className="text-xl font-bold mb-4 text-white">Управление базой ОКБ</h2>
-            <div className="space-y-2 text-sm text-gray-300 mb-6">
-                <div className="flex justify-between items-center">
-                    <span>Статус:</span>
-                    <span className="font-semibold">{getStatusText()}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                    <span>Последнее обновление:</span>
-                    <span className="font-semibold">{lastUpdate}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                    <span>Всего записей:</span>
-                    <span className="font-semibold">{totalRecords}</span>
-                </div>
-            </div>
+            <h2 className="text-xl font-bold mb-2 text-white">
+                Управление базой (ОКБ)
+            </h2>
+             <p className="text-xs text-gray-400 mb-4 h-4 truncate" title={formatStatus()}>{formatStatus()}</p>
             
             <button
-                onClick={handleUpdate}
-                disabled={isButtonDisabled}
-                className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-90 disabled:from-gray-500 disabled:to-gray-600 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg shadow-indigo-500/20 flex items-center justify-center"
-                aria-live="polite"
+                onClick={handleStartUpdate}
+                disabled={progress.isUpdating || isLoadingStatus}
+                className="w-full bg-transparent border border-amber-500/50 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-amber-400 font-bold py-2.5 px-4 rounded-lg transition duration-200 flex items-center justify-center"
             >
-                {status === 'updating' && <LoaderIcon />}
-                <span className={status === 'updating' ? 'ml-2' : ''}>
-                    {status === 'updating' ? 'Обновление...' : 'Обновить координаты в ОКБ'}
-                </span>
+                {progress.isUpdating ? (
+                    <>
+                        <LoaderIcon />
+                        <span className="ml-2">Обновление...</span>
+                    </>
+                ) : (
+                    <span>Обновить базу ОКБ</span>
+                )}
             </button>
-            {updateProgress && (
-                <div className="mt-4">
-                    <div className="flex justify-between text-xs text-gray-400 mb-1">
-                        <span className="truncate pr-2">{updateProgress.text}</span>
-                        <span>{Math.round(updateProgress.percent)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-900/50 rounded-full h-2.5">
-                        <div
-                            className="bg-gradient-to-r from-indigo-500 to-purple-600 h-2.5 rounded-full transition-all duration-300"
-                            style={{ width: `${updateProgress.percent}%` }}
-                        ></div>
-                    </div>
+            {progress.isUpdating && (
+                <div className="mt-4 text-center h-4">
+                    <p className="text-sm text-gray-300 animate-pulse">{progress.text}</p>
                 </div>
             )}
-            <p className="text-xs text-gray-500 mt-3 text-center">
-                Обновляет геолокацию для записей без координат в Google Sheets.
+             <p className="text-xs text-gray-500 mt-3 text-center">
+                Полностью перезагружает и геокодирует данные из Google. Может занять несколько минут.
             </p>
         </div>
     );
