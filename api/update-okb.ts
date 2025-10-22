@@ -6,51 +6,48 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7Iox
 /**
  * Этот обработчик теперь выступает в роли прокси для Google Apps Script.
  * Он просто инициирует процесс обновления, который полностью выполняется на стороне Apps Script.
+ * ВАЖНО: Мы НЕ ждем (await) ответа от fetch, так как процесс в Apps Script очень долгий
+ * и вызовет таймаут на Vercel. Мы запускаем его и сразу возвращаем ответ.
  */
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
     try {
-        console.log('Forwarding request to Google Apps Script for processing...');
+        console.log('Initiating asynchronous update process via Google Apps Script...');
         
         // Запускаем процесс в Apps Script. В теле запроса можно передавать параметры.
         // Здесь мы указываем действие 'updateGeocodes', чтобы скрипт знал, что делать.
-        const scriptResponse = await fetch(APPS_SCRIPT_URL, {
+        fetch(APPS_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'updateGeocodes' }),
-            redirect: 'follow' // Apps Script требует следовать редиректам
+            redirect: 'follow'
+        }).then(scriptResponse => {
+            // Мы можем логировать ответ от скрипта, когда он придет, но не блокируем основной ответ
+            if (!scriptResponse.ok) {
+                scriptResponse.text().then(text => {
+                    console.error('Error from Google Apps Script (async):', scriptResponse.status, text);
+                });
+            } else {
+                 scriptResponse.json().then(data => {
+                    console.log('Google Apps Script process finished (async):', data);
+                 });
+            }
+        }).catch(error => {
+            // Логируем ошибку, если запрос даже не удалось отправить
+            console.error('Failed to send request to Google Apps Script (async):', error);
         });
         
-        // ИСПРАВЛЕНО: Добавлена проверка типа контента для отлавливания ошибок публикации скрипта
-        const contentType = scriptResponse.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-            const responseText = await scriptResponse.text();
-             // Если скрипт опубликован неправильно, он может вернуть HTML-страницу входа Google
-            if (responseText.includes('<title>Google Accounts</title>')) {
-                throw new Error('Apps Script вернул страницу входа Google. Проверьте настройки доступа: "Who has access" должно быть "Anyone".');
-            }
-            throw new Error(`Ожидался JSON, но получен ${contentType}. Проверьте, что Apps Script опубликован корректно.`);
-        }
-
-        const responseData = await scriptResponse.json();
-        
-        console.log('Response from Google Apps Script:', responseData);
-
-        if (responseData && responseData.status === 'success') {
-            res.status(200).json(responseData);
-        } else {
-            // Перенаправляем ошибку от Apps Script клиенту
-            res.status(500).json({ 
-                error: 'Выполнение Apps Script завершилось с ошибкой.', 
-                details: responseData.message || 'Нет деталей от скрипта.' 
-            });
-        }
+        // Немедленно отвечаем клиенту, что процесс запущен
+        res.status(202).json({ 
+            status: 'success', 
+            message: 'Процесс обновления запущен в фоновом режиме. Обновление статуса займет несколько минут.' 
+        });
 
     } catch (error: any) {
-        console.error('CRITICAL Error in update-okb proxy:', error);
+        console.error('CRITICAL Error in update-okb proxy initiator:', error);
         res.status(500).json({ 
             error: 'Не удалось запустить обновление через Google Apps Script.', 
             details: error.message 
