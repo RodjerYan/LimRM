@@ -30,7 +30,6 @@ if (!GOOGLE_SCRIPT_URL || !GEMINI_API_KEY) {
     process.exit(1);
 }
 
-
 const app = express();
 const PORT = process.env.PORT || 10000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,91 +40,75 @@ if (!fs.existsSync(indexPath)) {
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     console.error("FATAL ERROR: 'dist/index.html' not found.");
     console.error("This means the 'npm run build' command failed or was not run.");
-    console.error("Check the build logs on Render for errors, likely missing VITE_ environment variables.");
+    console.error("Check the build logs on Render for errors.");
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     process.exit(1);
 }
 
 app.use(express.json());
 
-// --- НОВЫЙ УНИВЕРСАЛЬНЫЙ ПРОКСИ-СЕРВЕР НА FETCH ---
+// --- Упрощенный Прокси-сервер (только для GET) ---
 
-const makeGoogleRequest = async (req, res, stream = false) => {
+const makeGoogleGetRequest = async (action, res, stream = false) => {
     const requestLogId = `[${Date.now()}]`;
-    console.log(`${requestLogId} Initiating fetch-based ${stream ? 'streaming' : 'buffered'} proxy to Google for action: ${req.body.action}`);
-    
+    console.log(`${requestLogId} Initiating GET proxy to Google for action: ${action}`);
     try {
-        const postData = JSON.stringify(req.body);
+        const urlWithParams = new URL(GOOGLE_SCRIPT_URL);
+        urlWithParams.searchParams.append('action', action);
 
-        const googleResponse = await fetch(GOOGLE_SCRIPT_URL, {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                'User-Agent': 'Limkorm-Render-Proxy/1.0'
-            },
-            body: postData,
-            redirect: 'follow', // Явно указываем следовать редиректам
+        const googleResponse = await fetch(urlWithParams.toString(), {
+            method: 'GET',
+            redirect: 'follow', // Automatically follow redirects
         });
 
         console.log(`${requestLogId} Received response from Google. Status: ${googleResponse.status}.`);
 
         const contentType = googleResponse.headers.get('content-type');
         if (contentType && contentType.includes('text/html')) {
-            console.error(`${requestLogId} FATAL PERMISSION ERROR: Google Apps Script returned an HTML page.`);
+            console.error(`${requestLogId} FATAL CONFIG ERROR: Google Apps Script returned an HTML page.`);
             return res.status(500).json({
                 message: 'Ошибка конфигурации Google Apps Script',
-                details: 'Сервер получил HTML-страницу вместо данных. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone) и вы используете URL-адрес из **нового развертывания**.'
+                details: 'Сервер получил HTML-страницу вместо данных. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone) и вы используете URL из **нового развертывания**.'
             });
         }
 
         if (!googleResponse.ok) {
             const errorText = await googleResponse.text();
-            console.error(`${requestLogId} Google API Error:`, errorText);
+            console.error(`${requestLogId} Google API Error (Status: ${googleResponse.status}):`, errorText);
             return res.status(googleResponse.status).send(errorText);
         }
         
         res.setHeader('Content-Type', googleResponse.headers.get('content-type') || 'application/json');
 
-        if (stream) {
-            if (!googleResponse.body) throw new Error("Google response has no body for streaming.");
+        if (stream && googleResponse.body) {
             console.log(`${requestLogId} Piping stream to client.`);
             Readable.fromWeb(googleResponse.body).pipe(res);
         } else {
             const responseBody = await googleResponse.text();
-            console.log(`${requestLogId} Buffered response finished. Body length: ${responseBody.length}`);
+            console.log(`${requestLogId} Buffered response finished. Length: ${responseBody.length}`);
             res.status(googleResponse.status).send(responseBody);
         }
-
     } catch (error) {
-        console.error(`${requestLogId} Unhandled error in makeGoogleRequest:`, error);
+        console.error(`${requestLogId} Unhandled error in makeGoogleGetRequest:`, error);
         if (!res.headersSent) {
-            res.status(500).json({ message: 'Internal server error during proxy request.', details: error.message });
+            res.status(500).json({ message: 'Internal server error during GET proxy.', details: error.message });
         }
     }
 };
 
-
 // --- API МАРШРУТЫ ---
 
-app.post('/api/update-okb', (req, res) => makeGoogleRequest(req, res, false));
-
-app.post('/api/get-okb-status', (req, res) => {
-    console.log(`[${new Date().toISOString()}] Received request for /api/get-okb-status`);
-    makeGoogleRequest({ body: { action: 'getStatus' } }, res, false);
+app.get('/api/get-okb-status', (req, res) => {
+    makeGoogleGetRequest('getStatus', res, false);
 });
 
-// FIX: Changed from GET to POST for unification
-app.post('/api/get-okb', (req, res) => {
-    console.log(`[${new Date().toISOString()}] Received request for /api/get-okb`);
-    makeGoogleRequest({ body: { action: 'getAllData' } }, res, true);
+app.get('/api/get-okb', (req, res) => {
+    makeGoogleGetRequest('getAllData', res, true);
 });
 
-// Потоковый прокси для Gemini AI
 app.post('/api/gemini-proxy', async (req, res) => {
     const { prompt } = req.body;
-    if (!prompt) {
-        return res.status(400).json({ error: 'Prompt is required.' });
-    }
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?key=${GEMINI_API_KEY}&alt=sse`;
     
@@ -143,9 +126,6 @@ app.post('/api/gemini-proxy', async (req, res) => {
         }
 
         res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-
         Readable.fromWeb(geminiResponse.body).pipe(res);
 
     } catch (error) {
@@ -154,13 +134,9 @@ app.post('/api/gemini-proxy', async (req, res) => {
     }
 });
 
-
 // --- РАЗДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(distPath));
-
-app.get('*', (req, res) => {
-    res.sendFile(indexPath);
-});
+app.get('*', (req, res) => res.sendFile(indexPath));
 
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
