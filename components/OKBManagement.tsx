@@ -46,33 +46,38 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         if (status === 'updating' || status === 'loading') return;
         
         setStatus('updating');
-        addNotification('Запрос на обновление базы отправлен. Процесс может занять до 5 минут.', 'info');
+        addNotification('Запрос на обновление базы отправлен. Процесс может занять несколько минут.', 'info');
+        console.log('Отправка запроса на /api/update-okb...');
 
         try {
             const response = await fetch('/api/update-okb', { method: 'POST' });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.details || 'Ошибка при запуске обновления.');
+            
+            const result = await response.json();
+            console.log('Ответ от /api/update-okb:', result);
+
+            if (!response.ok || result.status !== 'success') {
+                throw new Error(result.details || result.message || 'Неизвестная ошибка от сервера.');
             }
             
-            addNotification('Процесс обновления успешно запущен в фоновом режиме!', 'success');
+            // Сообщение об успехе, как и требовалось
+            const successMessage = `✅ База успешно обновлена. ${result.message || ''}`;
+            addNotification(successMessage, 'success');
             
-            // Give the backend a moment to start, then check status again
-            setTimeout(() => {
-                fetchStatus();
-            }, 30000); // Check status after 30 seconds to see if modifiedTime has changed
+            // Сразу же обновляем статус, чтобы увидеть актуальные данные
+            await fetchStatus();
 
         } catch (error: any) {
             console.error('Failed to start OKB update:', error);
-            addNotification(error.message, 'error');
-            setStatus('error'); // Revert status on failure
+            // Сообщение об ошибке, как и требовалось
+            addNotification(`❌ Ошибка обновления базы: ${error.message}`, 'error');
+            setStatus('error'); // Возвращаем статус в состояние ошибки
         }
     };
 
     const getStatusText = () => {
         switch (status) {
             case 'loading': return <span className="text-gray-400 animate-pulse">Загрузка...</span>;
-            case 'updating': return <span className="text-yellow-400 animate-pulse">Обновление...</span>;
+            case 'updating': return <span className="text-yellow-400 animate-pulse">Обновление базы...</span>;
             case 'error': return <span className="text-danger">Ошибка</span>;
             case 'success': return <span className="text-success">Готово</span>;
             default: return '...';
@@ -106,7 +111,9 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                 aria-live="polite"
             >
                 {status === 'updating' && <LoaderIcon />}
-                <span className={status === 'updating' ? 'ml-2' : ''}>Обновить координаты в ОКБ</span>
+                <span className={status === 'updating' ? 'ml-2' : ''}>
+                    {status === 'updating' ? 'Обновление...' : 'Обновить координаты в ОКБ'}
+                </span>
             </button>
             <p className="text-xs text-gray-500 mt-3 text-center">
                 Обновляет геолокацию для записей без координат в Google Sheets.
