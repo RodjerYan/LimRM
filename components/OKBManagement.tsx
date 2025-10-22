@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { LoaderIcon } from './icons';
 
 interface OKBManagementProps {
@@ -20,20 +20,45 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
     const [status, setStatus] = useState<OKBStatus | null>(null);
     const [isLoadingStatus, setIsLoadingStatus] = useState(true);
     const [progress, setProgress] = useState<UpdateProgress>({ text: '', isUpdating: false, percentage: 0 });
+    const [logs, setLogs] = useState<string[]>([]);
+    const logContainerRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll logs to the bottom
+    useEffect(() => {
+        if (logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [logs]);
 
     const fetchStatus = useCallback(async () => {
         setIsLoadingStatus(true);
         try {
             const response = await fetch('/api/get-okb-status');
+            
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.details || 'Не удалось получить статус ОКБ.');
+                const errorText = await response.text();
+                let errorMessage = `Ошибка ${response.status}: ${response.statusText}.`;
+                try {
+                    const errorData = JSON.parse(errorText);
+                    errorMessage = errorData.details || errorData.message || errorMessage;
+                } catch {
+                     errorMessage += ` Ответ сервера: ${errorText.substring(0, 150)}...`;
+                }
+                throw new Error(errorMessage);
             }
+
             const data: OKBStatus = await response.json();
             setStatus(data);
+
         } catch (error: any) {
             console.error('Error fetching OKB status:', error);
-            addNotification(error.message, 'error');
+            let finalErrorMessage = error.message;
+
+            if (error instanceof SyntaxError && error.message.toLowerCase().includes('json')) {
+                finalErrorMessage = 'Критическая ошибка: Не удалось обработать ответ от Google. Вероятно, неверно настроены права доступа к Google Apps Script. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone).';
+            }
+            
+            addNotification(finalErrorMessage, 'error');
             setStatus(null);
         } finally {
             setIsLoadingStatus(false);
@@ -43,6 +68,11 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
     useEffect(() => {
         fetchStatus();
     }, [fetchStatus]);
+
+    const addLog = (message: string, type: 'INFO' | 'ERROR' = 'INFO') => {
+        const timestamp = new Date().toLocaleTimeString('ru-RU');
+        setLogs(prev => [...prev, `[${timestamp}] [${type}] ${message}`]);
+    };
 
     const processUpdateStep = useCallback(async (body: object) => {
         try {
@@ -59,6 +89,9 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             
             const data = await response.json();
             const message = data.message || '';
+            
+            if (message) addLog(message);
+            
             let percentage = progress.percentage;
 
             if (data.stage === 'FETCHING_CITIES') {
@@ -79,16 +112,17 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             
             setProgress({ text: message, isUpdating: true, percentage });
 
-            // ИЗМЕНЕНО: Добавлена обработка таймаута как штатной ситуации
             if (data.status === 'processing_timeout' && data.nextAction) {
-                // Сервер все еще работает, ждем дольше и повторяем тот же запрос
                 setTimeout(() => processUpdateStep(data.nextAction), 5000); 
             } else if (data.status === 'processing' && data.nextAction) {
-                // Нормальный шаг, продолжаем быстро
                 setTimeout(() => processUpdateStep(data.nextAction), 200);
             } else if (data.status === 'complete') {
-                addNotification(data.message || 'База ОКБ успешно обновлена!', 'success');
-                setProgress({ text: '', isUpdating: false, percentage: 0 });
+                const finalMessage = data.message || 'База ОКБ успешно обновлена!';
+                addNotification(finalMessage, 'success');
+                setProgress({ text: finalMessage, isUpdating: false, percentage: 100 });
+                setTimeout(() => {
+                     setProgress({ text: '', isUpdating: false, percentage: 0 });
+                }, 4000);
                 fetchStatus();
             } else if (data.status === 'error') {
                 throw new Error(data.message || 'Произошла ошибка во время обновления.');
@@ -96,8 +130,9 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
 
         } catch (error: any) {
             console.error('Update process failed:', error);
+            addLog(error.message, 'ERROR');
             addNotification(error.message, 'error');
-            setProgress({ text: '', isUpdating: false, percentage: 0 });
+            setProgress({ text: 'Ошибка!', isUpdating: false, percentage: progress.percentage });
         }
     }, [addNotification, fetchStatus, progress.percentage]);
 
@@ -111,7 +146,10 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         );
       
         if (confirmed) {
-            setProgress({ text: 'Инициализация процесса...', isUpdating: true, percentage: 0 });
+            const initialMessage = 'Инициализация процесса...';
+            setProgress({ text: initialMessage, isUpdating: true, percentage: 0 });
+            setLogs([]); // Clear previous logs
+            addLog(initialMessage);
             processUpdateStep({ action: 'startUpdate' });
         }
     }, [progress.isUpdating, processUpdateStep]);
@@ -147,12 +185,17 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             </button>
             {progress.isUpdating && (
                 <div className="mt-4">
-                    <p className="text-sm text-center text-gray-300 mb-2 truncate">{progress.text}</p>
+                    <p className="text-sm text-center text-gray-300 mb-2 truncate" title={progress.text}>{progress.text}</p>
                     <div className="w-full bg-gray-900/50 rounded-full h-2.5">
                         <div 
                             className="bg-gradient-to-r from-accent to-accent-dark h-2.5 rounded-full transition-all duration-300" 
                             style={{width: `${progress.percentage}%`}}
                         ></div>
+                    </div>
+                    <div ref={logContainerRef} className="mt-3 h-32 bg-gray-900/70 rounded-lg p-2.5 overflow-y-auto custom-scrollbar border border-gray-700">
+                        <pre className="text-xs text-gray-400 whitespace-pre-wrap font-mono leading-relaxed">
+                            {logs.join('\n')}
+                        </pre>
                     </div>
                 </div>
             )}

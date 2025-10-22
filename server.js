@@ -52,12 +52,11 @@ app.use(express.json());
 
 // --- API МАРШРУТЫ ---
 
-// Универсальный прокси для Google Apps Script
-const proxyToGoogleScript = async (req, res) => {
-    // Переменная GOOGLE_SCRIPT_URL уже проверена при старте
-    console.log(`Proxying request to Google Apps Script with body:`, req.body);
+// Надежный прокси для небольших JSON-ответов (статусы, команды)
+const bufferedProxyToGoogleScript = async (req, res) => {
+    console.log(`Buffered proxy request to Google Apps Script with body:`, req.body);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 35000); // 35-секундный таймаут
+    const timeout = setTimeout(() => controller.abort(), 300000); // 5-минутный таймаут
 
     try {
         const response = await fetch(GOOGLE_SCRIPT_URL, {
@@ -69,29 +68,88 @@ const proxyToGoogleScript = async (req, res) => {
         });
 
         clearTimeout(timeout);
-        const data = await response.json();
-        console.log(`Received response from Google Apps Script. Status: ${response.status}`);
-        res.status(response.status).json(data);
         
+        // Сначала полностью получаем и парсим ответ от Google
+        const data = await response.json();
+        console.log(`Received buffered response from Google. Status: ${response.status}`);
+        
+        // И только потом отправляем его клиенту
+        res.status(response.status).json(data);
+
     } catch (error) {
         clearTimeout(timeout);
         if (error.name === 'AbortError') {
-            console.error('Request to Google Apps Script timed out after 35s.');
-            return res.status(504).json({ message: 'Request to Google Apps Script timed out.' });
+            console.error('Request to Google Apps Script timed out after 5 minutes.');
+            return res.status(504).json({ 
+                message: 'Request to Google Apps Script timed out.', 
+                details: 'The operation took longer than 5 minutes and was terminated by the server proxy.' 
+            });
         }
-        console.error('Error proxying to Google Apps Script:', error);
-        res.status(500).json({ message: 'Failed to proxy request to Google Apps Script.' });
+        console.error('Error in buffered proxy to Google Apps Script:', error);
+        res.status(500).json({ 
+            message: 'Failed to proxy request to Google Apps Script.', 
+            details: error.message 
+        });
     }
 };
 
-// Маршруты, использующие прокси
-app.post('/api/update-okb', proxyToGoogleScript);
-app.get('/api/get-okb-status', (req, res) => proxyToGoogleScript({ body: { action: 'getStatus' } }, res));
-app.get('/api/get-okb', (req, res) => proxyToGoogleScript({ body: { action: 'getAllData' } }, res));
+
+// Эффективный потоковый прокси для больших объемов данных (скачивание всей базы)
+const streamProxyToGoogleScript = async (req, res) => {
+    console.log(`Streaming proxy request to Google Apps Script with body:`, req.body);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300000); // 5-минутный таймаут
+
+    try {
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(req.body),
+            redirect: 'follow'
+        });
+
+        clearTimeout(timeout);
+
+        if (!response.body) {
+             const data = await response.json();
+             console.log(`Received non-streamable response from Google. Status: ${response.status}`);
+             return res.status(response.status).json(data);
+        }
+        
+        console.log(`Streaming response from Google Apps Script. Status: ${response.status}`);
+        
+        res.setHeader('Content-Type', response.headers.get('Content-Type') || 'application/json');
+        res.status(response.status);
+
+        // Передаем тело ответа напрямую клиенту, минимизируя использование памяти на сервере.
+        Readable.fromWeb(response.body).pipe(res);
+
+    } catch (error) {
+        clearTimeout(timeout);
+        if (error.name === 'AbortError') {
+            console.error('Request to Google Apps Script timed out after 5 minutes.');
+            return res.status(504).json({ 
+                message: 'Request to Google Apps Script timed out.', 
+                details: 'The operation took longer than 5 minutes and was terminated by the server proxy.' 
+            });
+        }
+        console.error('Error proxying to Google Apps Script:', error);
+        res.status(500).json({ 
+            message: 'Failed to proxy request to Google Apps Script.', 
+            details: error.message 
+        });
+    }
+};
+
+// Применяем правильный прокси к каждому маршруту
+app.post('/api/update-okb', bufferedProxyToGoogleScript);
+app.get('/api/get-okb-status', (req, res) => bufferedProxyToGoogleScript({ body: { action: 'getStatus' } }, res));
+app.get('/api/get-okb', (req, res) => streamProxyToGoogleScript({ body: { action: 'getAllData' } }, res));
+
 
 // Потоковый прокси для Gemini AI
 app.post('/api/gemini-proxy', async (req, res) => {
-    // Переменная GEMINI_API_KEY уже проверена при старте
     const { prompt } = req.body;
     if (!prompt) {
         return res.status(400).json({ error: 'Prompt is required.' });
