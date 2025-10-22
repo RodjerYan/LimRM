@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import type { OKBDataRow } from '../types';
 
 // --- Helper Functions ---
 const normalizeAddress = (str: string | undefined): string => {
@@ -106,13 +107,12 @@ self.onmessage = async (e: MessageEvent<{ file: File }>) => {
     try {
         self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 5, text: 'Загрузка мастер-базы ОКБ...', etr: '' } });
         
-        // ИСПРАВЛЕНО: Воркер сам загружает данные ОКБ, чтобы не блокировать основной поток
         const okbResponse = await fetch('/api/get-okb');
         if (!okbResponse.ok) {
             const errorData = await okbResponse.json();
             throw new Error(errorData.details || 'Не удалось загрузить базу ОКБ с сервера.');
         }
-        const okbData = await okbResponse.json();
+        const okbData: OKBDataRow[] = await okbResponse.json();
         
         if (!okbData || okbData.length === 0) {
             throw new Error('База ОКБ пуста или не была загружена. Сначала обновите её.');
@@ -123,25 +123,30 @@ self.onmessage = async (e: MessageEvent<{ file: File }>) => {
 
         self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 40, text: 'Поиск потенциальных клиентов...', etr: '' } });
         
-        const potentialClients = okbData.filter(okbClient => 
-            !akbAddressSet.has(normalizeAddress(okbClient['Адрес']))
+        const potentialClients = okbData.filter((okbClient: OKBDataRow) => 
+            okbClient['Адрес'] && !akbAddressSet.has(normalizeAddress(okbClient['Адрес']))
         );
 
         const potentialClientsByCity = new Map<string, any[]>();
         for (const client of potentialClients) {
-            // ВАЖНО: Ключом для группировки должен быть город, а не регион.
-            // Структура ответа Apps Script должна содержать поле 'Город или населенный пункт'
-            const city = client['Город или населенный пункт'] || client['Регион'] || 'Неизвестный город';
+            const city = client['Город или населенный пункт'] || client['Субъект'] || 'Неизвестный город';
             if (!potentialClientsByCity.has(city)) {
                 potentialClientsByCity.set(city, []);
             }
+            
+            // Safely parse coordinates, replacing comma with dot for decimals and handling undefined/NaN
+            const latString = client['Широта'] ? String(client['Широта']).replace(',', '.') : undefined;
+            const lonString = client['Долгота'] ? String(client['Долгота']).replace(',', '.') : undefined;
+            const lat = latString ? parseFloat(latString) : undefined;
+            const lon = lonString ? parseFloat(lonString) : undefined;
+
             potentialClientsByCity.get(city)!.push({
                 name: client['Наименование'],
                 address: client['Адрес'],
                 phone: client['Контакты'],
                 type: client['Категория'],
-                lat: parseFloat(client['Широта']),
-                lon: parseFloat(client['Долгота']),
+                lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
+                lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
             });
         }
 

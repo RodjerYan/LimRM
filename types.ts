@@ -74,3 +74,16 @@ export type SortConfig = {
     key: keyof AggregatedDataRow;
     direction: 'ascending' | 'descending';
 } | null;
+
+export interface OKBDataRow {
+    'Страна': string;
+    'Субъект': string;
+    'Город или населенный пункт': string;
+    'Категория': string;
+    'Наименование': string;
+    'Адрес': string;
+    'Контакты': string;
+    'Дата обновления базы': string;
+    'Широта'?: string;
+    'Долгота'?: string;
+}
