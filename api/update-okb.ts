@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
-// ИЗМЕНЕНО: Таймаут уменьшен до 10 секунд.
-// Это дает функции запас времени (~5с на бесплатном тарифе Vercel) для корректной
-// обработки таймаута и отправки ответа клиенту, избегая принудительного завершения.
-const FETCH_TIMEOUT = 10000;
+// ИЗМЕНЕНО: Таймаут уменьшен до 8 секунд.
+// Это дает функции еще больший запас времени (~7с на Vercel) для корректной
+// обработки таймаута и избежания принудительного завершения платформой.
+const FETCH_TIMEOUT = 8000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
