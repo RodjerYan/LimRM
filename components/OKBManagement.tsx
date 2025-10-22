@@ -33,7 +33,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
     const fetchStatus = useCallback(async () => {
         setIsLoadingStatus(true);
         try {
-            const response = await fetch('/api/get-okb-status');
+            // FIX: Changed from GET to POST to align with server and Google Script logic
+            const response = await fetch('/api/get-okb-status', { method: 'POST' });
             
             if (!response.ok) {
                 const errorText = await response.text();
@@ -56,6 +57,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
 
             if (error instanceof SyntaxError && error.message.toLowerCase().includes('json')) {
                 finalErrorMessage = 'Критическая ошибка: Не удалось обработать ответ от Google. Вероятно, неверно настроены права доступа к Google Apps Script. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone).';
+            } else if (error.message.includes('Failed to fetch')) {
+                finalErrorMessage = 'Ошибка сети: Не удалось подключиться к серверу для получения статуса. Проверьте соединение и состояние сервиса на Render.';
             }
             
             addNotification(finalErrorMessage, 'error');

@@ -130,10 +130,14 @@ const makeGoogleRequest = (req, res, stream = false) => {
 };
 
 app.post('/api/update-okb', (req, res) => makeGoogleRequest(req, res, false));
-app.get('/api/get-okb-status', (req, res) => {
+
+// FIX: Changed from GET to POST to align with frontend and Google Script logic
+app.post('/api/get-okb-status', (req, res) => {
     console.log(`[${new Date().toISOString()}] Received request for /api/get-okb-status`);
+    // The body is constructed here, not passed from the client for this specific route
     makeGoogleRequest({ body: { action: 'getStatus' } }, res, false);
 });
+
 app.get('/api/get-okb', (req, res) => makeGoogleRequest({ body: { action: 'getAllData' } }, res, true));
 
 
