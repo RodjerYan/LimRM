@@ -5,11 +5,26 @@ import fs from 'fs'; // Импортируем модуль для работы 
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 
+// --- ГЛОБАЛЬНАЯ ОБРАБОТКА ОШИБОК ---
+// Этот блок кода КРИТИЧЕСКИ ВАЖЕН для отладки на Render.
+// Он перехватит любые ошибки, которые могут "уронить" сервер, и выведет их в лог.
+process.on('uncaughtException', (err, origin) => {
+    console.error('!!! UNCAUGHT EXCEPTION !!!');
+    console.error(`Caught exception: ${err}\n` + `Exception origin: ${origin}`);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('!!! UNHANDLED REJECTION !!!');
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+
 // --- КОНФИГУРАЦИЯ ---
 const app = express();
 const PORT = process.env.PORT || 3001;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
+const PROXY_TIMEOUT = 30000; // 30 секунд - разумный таймаут для ожидания ответа от Google
 
 // --- MIDDLEWARE ---
 app.use(express.json());
@@ -96,24 +111,43 @@ app.get('/api/nominatim-proxy', async (req, res) => {
 
 // 5. Запуск/продолжение обновления ОКБ
 app.post('/api/update-okb', async (req, res) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT);
+
     try {
+        console.log(`[update-okb] Received request with action: ${req.body?.action}`);
+        
         const scriptResponse = await fetch(APPS_SCRIPT_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(req.body),
             redirect: 'follow',
+            signal: controller.signal, // Добавляем AbortSignal
         });
+
+        clearTimeout(timeoutId); // Отменяем таймаут, так как ответ получен
+
+        console.log(`[update-okb] Received status ${scriptResponse.status} from Google Apps Script.`);
 
         if (!scriptResponse.ok) {
              const errorText = await scriptResponse.text();
-             throw new Error(`Google Apps Script returned an error: ${errorText}`);
+             console.error(`[update-okb] Google Script Error Text: ${errorText}`);
+             throw new Error(`Google Apps Script returned a non-ok status: ${scriptResponse.status}`);
         }
         
         const data = await scriptResponse.json();
+        console.log(`[update-okb] Successfully received data, sending to client.`);
         res.status(200).json(data);
+
     } catch (error) {
-        console.error('CRITICAL Error in update-okb proxy:', error);
-        res.status(500).json({ status: 'error', message: 'Proxy server failed', details: error.message });
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            console.error('[update-okb] Request to Google Apps Script timed out.');
+            res.status(504).json({ status: 'error', message: 'Gateway Timeout', details: 'The request to Google Apps Script took too long to respond.' });
+        } else {
+            console.error('CRITICAL Error in update-okb proxy:', error);
+            res.status(500).json({ status: 'error', message: 'Proxy server failed', details: error.message });
+        }
     }
 });
 
