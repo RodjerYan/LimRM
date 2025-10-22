@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleSpreadsheet, GoogleSpreadsheetRow } from 'google-spreadsheet';
+import { GoogleSpreadsheet } from 'google-spreadsheet';
 import { JWT } from 'google-auth-library';
 
 const SHEET_NAME = 'Лист1'; 
@@ -58,10 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const rows = await sheet.getRows();
-        // FIX: Filter out possible null values from getRows() before mapping.
-        const data = rows
-            .filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null)
-            .map(row => row.toObject());
+        const data = rows.map(row => row.toObject());
 
         res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=82800');
         res.status(200).json(data);
