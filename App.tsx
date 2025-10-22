@@ -98,23 +98,11 @@ export default function App() {
         setFilters({ rm: '', brand: [], city: [] });
         setSearchTerm('');
         setFailedRegions(new Set());
+        setLoadingState({ status: 'reading', progress: 0, text: 'Инициализация анализатора...', etr: '' });
         
         try {
-            setLoadingState({ status: 'fetching', progress: 5, text: 'Загрузка мастер-базы ОКБ...', etr: '' });
-            const okbResponse = await fetch('/api/get-okb');
-            if (!okbResponse.ok) {
-                const errorData = await okbResponse.json();
-                throw new Error(errorData.error || 'Не удалось загрузить базу ОКБ с сервера.');
-            }
-            const okbData = await okbResponse.json();
-
-            if (okbData.length === 0) {
-                 addNotification('База ОКБ пуста. Сначала обновите её.', 'error');
-                 setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: База ОКБ не содержит данных.', etr: '' });
-                 return;
-            }
-            
-            // Modern and robust way to instantiate a worker with Vite
+            // ИСПРАВЛЕНО: Создаем воркер и сразу отправляем ему файл.
+            // Воркер сам загрузит ОКБ, обработает и вернет результат.
             workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             
             workerRef.current.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
@@ -146,8 +134,9 @@ export default function App() {
                  cleanupWorker();
             };
             
-            setLoadingState({ status: 'reading', progress: 15, text: 'Отправка данных в анализатор...', etr: '' });
-            workerRef.current.postMessage({ file, okbData });
+            setLoadingState({ status: 'reading', progress: 5, text: 'Отправка файла в анализатор...', etr: '' });
+            // Передаем только файл, воркер сам позаботится об остальном
+            workerRef.current.postMessage({ file });
 
         } catch(error: any) {
             console.error("Failed during file select process:", error);
@@ -302,7 +291,7 @@ export default function App() {
                     <PotentialChart data={filteredAndSortedData} />
                     <ResultsTable 
                         data={filteredAndSortedData} 
-                        isLoading={loadingState.status !== 'idle' && loadingState.status !== 'done'}
+                        isLoading={loadingState.status === 'reading' || loadingState.status === 'fetching' || loadingState.status === 'aggregating'}
                         sortConfig={sortConfig}
                         requestSort={requestSort}
                         searchTerm={searchTerm}

@@ -1,30 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { JWT } from 'google-auth-library';
 
-const SHEET_NAME = 'Лист1'; 
-// ИСПРАВЛЕНО: Добавлены колонки для координат, чтобы соответствовать логике геокодирования.
-const HEADERS = [
-    "Страна", "Субъект", "Город или населенный пункт",
-    "Категория (вет. клиника или вет. магазин)", "Наименование",
-    "Адрес", "Контакты", "Широта", "Долгота", "Дата обновления базы"
-];
-
-const getAuth = () => {
-    const client_email = process.env.GOOGLE_CLIENT_EMAIL;
-    const private_key = process.env.GOOGLE_PRIVATE_KEY;
-
-    if (!client_email || !private_key) {
-        throw new Error('Google credentials environment variables (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY) are not set.');
-    }
-
-    return new JWT({
-        email: client_email,
-        key: private_key.replace(/\\n/g, '\n'),
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-};
-
+// URL веб-приложения Google Apps Script для получения ВСЕХ данных
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') {
@@ -32,41 +9,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-        if (!SPREADSHEET_ID) {
-            throw new Error("GOOGLE_SHEET_ID environment variable is not set.");
-        }
-
-        const serviceAccountAuth = getAuth();
-        const doc = new GoogleSpreadsheet(SPREADSHEET_ID, serviceAccountAuth);
+        // Указываем действие 'getAllData', чтобы Apps Script вернул все строки
+        const urlWithAction = `${APPS_SCRIPT_URL}?action=getAllData`;
+        console.log(`Fetching all OKB data from Google Apps Script: ${urlWithAction}`);
         
-        await doc.loadInfo();
+        const scriptResponse = await fetch(urlWithAction, {
+            method: 'GET',
+            redirect: 'follow'
+        });
+
+        if (!scriptResponse.ok) {
+            const errorText = await scriptResponse.text();
+            throw new Error(`Ошибка от Google Apps Script: ${scriptResponse.status} ${errorText}`);
+        }
         
-        let sheet = doc.sheetsByTitle[SHEET_NAME];
-        if (!sheet) {
-            console.log(`Sheet "${SHEET_NAME}" not found, creating it.`);
-            sheet = await doc.addSheet({ title: SHEET_NAME, headerValues: HEADERS });
-            return res.status(200).json([]);
+        const contentType = scriptResponse.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const responseText = await scriptResponse.text();
+            if (responseText.includes('<title>Google Accounts</title>')) {
+                throw new Error('Apps Script вернул страницу входа Google. Проверьте настройки доступа: "Who has access" должно быть "Anyone".');
+            }
+            throw new Error(`Ожидался JSON, но получен ${contentType}. Проверьте, что Apps Script опубликован корректно.`);
         }
 
-        // Ensure headers exist even if the sheet was created manually but is empty
-        await sheet.loadHeaderRow().catch(() => {});
-        if (!sheet.headerValues || sheet.headerValues.length === 0) {
-            console.log("Sheet exists but has no headers. Setting headers now.");
-            await sheet.setHeaderRow(HEADERS);
-            return res.status(200).json([]);
-        }
-
-        const rows = await sheet.getRows();
-        const data = rows.map(row => row.toObject());
-
-        res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=82800');
+        const data = await scriptResponse.json();
+        
+        console.log(`Successfully fetched ${data.length} rows from Apps Script.`);
+        
+        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
         res.status(200).json(data);
 
     } catch (error: any) {
-        console.error('CRITICAL API ERROR in get-okb:', error);
+        console.error('CRITICAL API ERROR in get-okb proxy:', error);
         res.status(500).json({ 
-            error: 'Failed to fetch data from Google Sheets.', 
+            error: 'Failed to fetch data from Google Sheets via Apps Script.', 
             details: error.message 
         });
     }

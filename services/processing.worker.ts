@@ -100,14 +100,28 @@ const parseUserFile = (file: File): Promise<{ processedData: any[], akbAddressSe
 };
 
 // --- Main Worker Logic ---
-self.onmessage = async (e: MessageEvent<{ file: File; okbData: any[] }>) => {
-    const { file, okbData } = e.data;
+self.onmessage = async (e: MessageEvent<{ file: File }>) => {
+    const { file } = e.data;
 
     try {
-        self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 10, text: 'Чтение и агрегация файла АКБ...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 5, text: 'Загрузка мастер-базы ОКБ...', etr: '' } });
+        
+        // ИСПРАВЛЕНО: Воркер сам загружает данные ОКБ, чтобы не блокировать основной поток
+        const okbResponse = await fetch('/api/get-okb');
+        if (!okbResponse.ok) {
+            const errorData = await okbResponse.json();
+            throw new Error(errorData.details || 'Не удалось загрузить базу ОКБ с сервера.');
+        }
+        const okbData = await okbResponse.json();
+        
+        if (!okbData || okbData.length === 0) {
+            throw new Error('База ОКБ пуста или не была загружена. Сначала обновите её.');
+        }
+
+        self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 20, text: 'Чтение и агрегация файла АКБ...', etr: '' } });
         const { processedData: akbData, akbAddressSet } = await parseUserFile(file);
 
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 30, text: 'Поиск потенциальных клиентов...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 40, text: 'Поиск потенциальных клиентов...', etr: '' } });
         
         const potentialClients = okbData.filter(okbClient => 
             !akbAddressSet.has(normalizeAddress(okbClient['Адрес']))
@@ -115,21 +129,23 @@ self.onmessage = async (e: MessageEvent<{ file: File; okbData: any[] }>) => {
 
         const potentialClientsByCity = new Map<string, any[]>();
         for (const client of potentialClients) {
-            const city = client['Регион']; // Using the region from OKB as the city key
+            // ВАЖНО: Ключом для группировки должен быть город, а не регион.
+            // Структура ответа Apps Script должна содержать поле 'Город или населенный пункт'
+            const city = client['Город или населенный пункт'] || client['Регион'] || 'Неизвестный город';
             if (!potentialClientsByCity.has(city)) {
                 potentialClientsByCity.set(city, []);
             }
             potentialClientsByCity.get(city)!.push({
-                name: client['Название'],
+                name: client['Наименование'],
                 address: client['Адрес'],
-                phone: client['Телефон'],
-                type: client['Тип'],
+                phone: client['Контакты'],
+                type: client['Категория'],
                 lat: parseFloat(client['Широта']),
                 lon: parseFloat(client['Долгота']),
             });
         }
 
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 60, text: 'Расчет рыночного потенциала...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 70, text: 'Расчет рыночного потенциала...', etr: '' } });
         
         const dataWithPotential = akbData.map(item => {
             const clientsForCity = potentialClientsByCity.get(item.city) || [];
@@ -149,7 +165,7 @@ self.onmessage = async (e: MessageEvent<{ file: File; okbData: any[] }>) => {
             };
         });
         
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 95, text: 'Финализация результатов...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'done', progress: 100, text: 'Финализация результатов...', etr: '' } });
         
         self.postMessage({ type: 'result', payload: dataWithPotential });
 

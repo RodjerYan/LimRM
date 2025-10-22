@@ -218,7 +218,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
                                 <SearchIcon />
                             </div>
                         </div>
-                         <button onClick={handleExport} className="p-2.5 bg-success/20 hover:bg-success/30 text-success font-bold rounded-lg transition duration-200" title="Экспорт в Excel (.xlsx)">
+                         <button onClick={handleExport} disabled={data.length === 0 || isLoading} className="p-2.5 bg-success/20 hover:bg-success/30 disabled:bg-gray-700 disabled:text-gray-400 disabled:cursor-not-allowed text-success font-bold rounded-lg transition duration-200" title="Экспорт в Excel (.xlsx)">
                             <ExportIcon />
                         </button>
                     </div>
@@ -243,6 +243,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, isLoading, sortConfig
             )}
         </>
     );
-};
+}
 
+// FIX: Add default export for ResultsTable component
 export default ResultsTable;
