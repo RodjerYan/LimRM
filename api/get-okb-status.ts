@@ -23,6 +23,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             throw new Error(`Ошибка от Google Apps Script: ${scriptResponse.status} ${errorText}`);
         }
         
+        // ИСПРАВЛЕНО: Добавлена проверка типа контента для отлавливания ошибок публикации скрипта
+        const contentType = scriptResponse.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            const responseText = await scriptResponse.text();
+            // Если скрипт опубликован неправильно, он может вернуть HTML-страницу входа Google
+            if (responseText.includes('<title>Google Accounts</title>')) {
+                throw new Error('Apps Script вернул страницу входа Google. Проверьте настройки доступа: "Who has access" должно быть "Anyone".');
+            }
+            throw new Error(`Ожидался JSON, но получен ${contentType}. Проверьте, что Apps Script опубликован корректно.`);
+        }
+
         const data = await scriptResponse.json();
         
         console.log('Successfully fetched status from Apps Script:', data);
