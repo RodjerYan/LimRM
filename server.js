@@ -13,6 +13,25 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('CRITICAL: Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+// --- Проверка КРИТИЧЕСКИХ переменных окружения ---
+const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
+const GEMINI_API_KEY = process.env.API_KEY;
+
+if (!GOOGLE_SCRIPT_URL || !GEMINI_API_KEY) {
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    console.error("FATAL ERROR: Missing critical environment variables.");
+    if (!GOOGLE_SCRIPT_URL) {
+        console.error("- GOOGLE_SCRIPT_URL is not set. This is required to connect to the Google Sheet database.");
+    }
+    if (!GEMINI_API_KEY) {
+        console.error("- API_KEY is not set. This is required for the AI Analyst feature.");
+    }
+    console.error("Please add these variables in your hosting provider's settings (e.g., Render) and redeploy.");
+    console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    process.exit(1); // Завершаем процесс с ошибкой, чтобы деплой провалился
+}
+
+
 const app = express();
 const PORT = process.env.PORT || 10000; // Render использует порт 10000 по умолчанию
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,17 +52,9 @@ app.use(express.json());
 
 // --- API МАРШРУТЫ ---
 
-const GOOGLE_SCRIPT_URL = process.env.GOOGLE_SCRIPT_URL;
-if (!GOOGLE_SCRIPT_URL) {
-    console.error("FATAL: GOOGLE_SCRIPT_URL environment variable is not set on Render!");
-}
-
 // Универсальный прокси для Google Apps Script
 const proxyToGoogleScript = async (req, res) => {
-    if (!GOOGLE_SCRIPT_URL) {
-        return res.status(500).json({ message: 'Server configuration error: Google Script URL is not set.' });
-    }
-    
+    // Переменная GOOGLE_SCRIPT_URL уже проверена при старте
     console.log(`Proxying request to Google Apps Script with body:`, req.body);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 35000); // 35-секундный таймаут
@@ -80,11 +91,7 @@ app.get('/api/get-okb', (req, res) => proxyToGoogleScript({ body: { action: 'get
 
 // Потоковый прокси для Gemini AI
 app.post('/api/gemini-proxy', async (req, res) => {
-    const GEMINI_API_KEY = process.env.API_KEY;
-    if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'API key is not configured on the server.' });
-    }
-    
+    // Переменная GEMINI_API_KEY уже проверена при старте
     const { prompt } = req.body;
     if (!prompt) {
         return res.status(400).json({ error: 'Prompt is required.' });
