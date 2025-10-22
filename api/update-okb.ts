@@ -128,17 +128,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendProgress(res, 10, "Получение существующих записей для дедупликации...");
     const existingRowsRaw = await sheet.getRows();
     
-    // ИСПРАВЛЕНИЕ TS18047: Фильтруем массив ДО цикла с использованием type predicate.
-    // Это создает новый массив `existingRows`, в котором TypeScript уверен, что нет `null` элементов.
+    // FIX TS18047: Filter the array BEFORE the loop using a type predicate.
+    // This creates a new `existingRows` array where TypeScript is certain there are no `null` elements.
     const existingRows = existingRowsRaw.filter(
       (row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null
     );
 
     const existingEntries = new Set<string>();
-    // Теперь итерация идет по 100% чистому массиву `existingRows`.
+    // Now the iteration is over the 100% clean `existingRows` array.
     for (const row of existingRows) {
-      // ИСПРАВЛЕНИЕ TS18047: Используем `|| ''` для безопасного доступа к данным,
-      // даже если ячейка пуста и .get() вернет undefined.
+      // FIX TS18047: Use `|| ''` for safe data access,
+      // even if the cell is empty and .get() returns undefined.
       const name = row.get('Наименование') || '';
       const city = row.get('Город или населенный пункт') || '';
       const key = `${normalize(name)}|${normalize(city)}`;
@@ -177,7 +177,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         const addedRowsRaw = await sheet.addRows(batch);
         
-        // Применяем тот же надежный паттерн фильтрации для безопасного подсчета.
+        // Apply the same robust filtering pattern for safe counting.
         const addedRows = addedRowsRaw.filter((row): row is GoogleSpreadsheetRow<Record<string, any>> => row != null);
         totalAddedCount += addedRows.length;
       }
