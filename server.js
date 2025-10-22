@@ -69,6 +69,12 @@ const bufferedProxyToGoogleScript = async (req, res) => {
         clearTimeout(timeout);
         
         const contentType = response.headers.get('content-type');
+        const responseText = await response.text();
+        
+        console.log(`Received response from Google. Status: ${response.status}. Content-Type: ${contentType}`);
+        console.log('--- Raw Google Response Body ---');
+        console.log(responseText.substring(0, 500) + (responseText.length > 500 ? '...' : '')); // Логируем только начало, чтобы не засорять логи
+        console.log('------------------------------');
 
         // КРИТИЧЕСКАЯ ПРОВЕРКА: Если Google возвращает страницу входа (HTML), значит права доступа неверны.
         if (contentType && contentType.includes('text/html')) {
@@ -79,9 +85,8 @@ const bufferedProxyToGoogleScript = async (req, res) => {
             });
         }
         
-        const data = await response.json();
-        console.log(`Received buffered response from Google. Status: ${response.status}`);
-        
+        // Теперь парсим текст, который мы уже прочитали и залогировали
+        const data = JSON.parse(responseText);
         res.status(response.status).json(data);
 
     } catch (error) {
@@ -91,6 +96,13 @@ const bufferedProxyToGoogleScript = async (req, res) => {
             return res.status(504).json({ 
                 message: 'Request to Google Apps Script timed out.', 
                 details: 'The operation took longer than 5 minutes and was terminated by the server proxy.' 
+            });
+        }
+        if (error instanceof SyntaxError) {
+             console.error('Error parsing JSON from Google response.', error);
+             return res.status(500).json({
+                message: 'Ошибка формата ответа от Google',
+                details: 'Не удалось обработать ответ от Google Apps Script как JSON. Вероятно, скрипт вернул ошибку в виде HTML или обычного текста. Проверьте лог сервера.'
             });
         }
         console.error('Error in buffered proxy to Google Apps Script:', error);
