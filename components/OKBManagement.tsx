@@ -5,10 +5,16 @@ interface OKBManagementProps {
     addNotification: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
+interface UpdateProgress {
+    text: string;
+    percent: number;
+}
+
 const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
     const [status, setStatus] = useState<'loading' | 'success' | 'error' | 'updating'>('loading');
     const [lastUpdate, setLastUpdate] = useState<string>('...');
     const [totalRecords, setTotalRecords] = useState<string>('...');
+    const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
 
     const fetchStatus = useCallback(async () => {
         setStatus('loading');
@@ -42,37 +48,67 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         fetchStatus();
     }, [fetchStatus]);
     
-    const handleUpdate = async () => {
+    const handleUpdate = useCallback(async () => {
         if (status === 'updating' || status === 'loading') return;
         
         setStatus('updating');
-        addNotification('Запрос на обновление базы отправлен. Процесс может занять несколько минут.', 'info');
-        console.log('Отправка запроса на /api/update-okb...');
+        setUpdateProgress({ text: 'Запуск процесса...', percent: 0 });
+        addNotification('Запуск обновления базы ОКБ. Процесс разбит на части и может занять несколько минут.', 'info');
 
-        try {
-            const response = await fetch('/api/update-okb', { method: 'POST' });
-            
-            const result = await response.json();
-            console.log('Ответ от /api/update-okb:', result);
+        const processNextBatch = async (startIndex = 0) => {
+            try {
+                const action = startIndex === 0 ? 'startUpdate' : 'continueUpdate';
+                const body = { action, startIndex };
 
-            if (!response.ok || result.status !== 'success') {
-                throw new Error(result.details || result.message || 'Неизвестная ошибка от сервера.');
+                const response = await fetch('/api/update-okb', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                
+                const resultText = await response.text();
+                if (!response.ok) {
+                    let errorDetails = 'Не удалось выполнить шаг обновления.';
+                    try {
+                        const errorJson = JSON.parse(resultText);
+                        errorDetails = errorJson.details || errorJson.message || resultText;
+                    } catch (e) {
+                        errorDetails = resultText || errorDetails;
+                    }
+                    throw new Error(errorDetails);
+                }
+                
+                const result = JSON.parse(resultText);
+                
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Apps Script вернул ошибку во время обработки.');
+                }
+
+                const progressPercent = result.total > 0 ? ((result.nextIndex || result.total) / result.total) * 100 : 100;
+                setUpdateProgress({ text: result.message, percent: Math.min(progressPercent, 100) });
+
+                if (result.status === 'processing' && result.nextIndex) {
+                    // Рекурсивно вызываем обработку следующего батча
+                    await processNextBatch(result.nextIndex);
+                } else if (result.status === 'complete') {
+                    addNotification(`✅ База успешно обновлена! Всего обработано: ${result.total} записей.`, 'success');
+                    setUpdateProgress(null);
+                    await fetchStatus(); // Обновляем финальный статус
+                } else {
+                    throw new Error('Получен неожиданный ответ от сервера.');
+                }
+
+            } catch (error: any) {
+                console.error('Failed during OKB update batch processing:', error);
+                addNotification(`❌ Ошибка обновления базы: ${error.message}`, 'error');
+                setStatus('error');
+                setUpdateProgress(null);
             }
-            
-            // Сообщение об успехе, как и требовалось
-            const successMessage = `✅ База успешно обновлена. ${result.message || ''}`;
-            addNotification(successMessage, 'success');
-            
-            // Сразу же обновляем статус, чтобы увидеть актуальные данные
-            await fetchStatus();
+        };
 
-        } catch (error: any) {
-            console.error('Failed to start OKB update:', error);
-            // Сообщение об ошибке, как и требовалось
-            addNotification(`❌ Ошибка обновления базы: ${error.message}`, 'error');
-            setStatus('error'); // Возвращаем статус в состояние ошибки
-        }
-    };
+        await processNextBatch(0); // Запускаем процесс с самого начала
+    }, [status, addNotification, fetchStatus]);
+
 
     const getStatusText = () => {
         switch (status) {
@@ -115,6 +151,20 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                     {status === 'updating' ? 'Обновление...' : 'Обновить координаты в ОКБ'}
                 </span>
             </button>
+            {updateProgress && (
+                <div className="mt-4">
+                    <div className="flex justify-between text-xs text-gray-400 mb-1">
+                        <span className="truncate pr-2">{updateProgress.text}</span>
+                        <span>{Math.round(updateProgress.percent)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-900/50 rounded-full h-2.5">
+                        <div
+                            className="bg-gradient-to-r from-indigo-500 to-purple-600 h-2.5 rounded-full transition-all duration-300"
+                            style={{ width: `${updateProgress.percent}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
             <p className="text-xs text-gray-500 mt-3 text-center">
                 Обновляет геолокацию для записей без координат в Google Sheets.
             </p>
