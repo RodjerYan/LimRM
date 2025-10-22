@@ -10,7 +10,6 @@ interface OKBStatus {
     modifiedTime: string;
 }
 
-// Улучшенное состояние для отслеживания прогресса в процентах
 interface UpdateProgress {
     text: string;
     isUpdating: boolean;
@@ -62,13 +61,11 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
             const message = data.message || '';
             let percentage = progress.percentage;
 
-            // Парсим сообщение от сервера, чтобы вычислить процент выполнения
             if (data.stage === 'FETCHING_CITIES') {
                 const cityMatch = message.match(/обработан город.*\((\d+)\/(\d+)\)/);
                 if (cityMatch) {
                     const current = parseInt(cityMatch[1], 10);
                     const total = parseInt(cityMatch[2], 10);
-                    // Сбор данных по городам занимает первую половину прогресса (0-50%)
                     percentage = (current / total) * 50;
                 }
             } else if (data.stage === 'GEOCODING') {
@@ -76,14 +73,18 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                  if (geoMatch) {
                     const current = parseInt(geoMatch[1], 10);
                     const total = parseInt(geoMatch[2], 10);
-                    // Геокодирование занимает вторую половину прогресса (50-100%)
                     percentage = 50 + (current / total) * 50;
                 }
             }
             
             setProgress({ text: message, isUpdating: true, percentage });
 
-            if (data.status === 'processing' && data.nextAction) {
+            // ИЗМЕНЕНО: Добавлена обработка таймаута как штатной ситуации
+            if (data.status === 'processing_timeout' && data.nextAction) {
+                // Сервер все еще работает, ждем дольше и повторяем тот же запрос
+                setTimeout(() => processUpdateStep(data.nextAction), 5000); 
+            } else if (data.status === 'processing' && data.nextAction) {
+                // Нормальный шаг, продолжаем быстро
                 setTimeout(() => processUpdateStep(data.nextAction), 200);
             } else if (data.status === 'complete') {
                 addNotification(data.message || 'База ОКБ успешно обновлена!', 'success');
@@ -105,7 +106,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
         
         const confirmed = window.confirm(
             'Вы уверены, что хотите запустить полное обновление базы клиентов?\n\n' +
-            'Этот процесс полностью очистит текущую таблицу и заполнит ее новыми данными из открытых источников. ' +
+            'Этот процесс полностью очистит текущую таблицу и заполнит ее новыми данными. ' +
             'Это может занять несколько минут. Не закрывайте вкладку до завершения.'
         );
       
@@ -156,7 +157,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
                 </div>
             )}
              <p className="text-xs text-gray-500 mt-3 text-center">
-                Полностью перезагружает и геокодирует данные из Google. Может занять несколько минут.
+                Полностью перезагружает и геокодирует данные. Может занять несколько минут.
             </p>
         </div>
     );
