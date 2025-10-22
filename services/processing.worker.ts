@@ -1,34 +1,9 @@
-import * as XLSX from 'xlsx';
-import type { OKBDataRow } from '../types';
+import { OKBDataRow, AggregatedDataRow, PotentialClient } from '../types';
 
 // --- Helper Functions ---
-const normalizeAddress = (str: string | undefined): string => {
+const normalizeString = (str: string | undefined): string => {
     if (!str) return '';
-    return str.toLowerCase()
-        .replace(/ё/g, 'е')
-        .replace(/[^а-яa-z0-9]/g, '');
-};
-
-const determineCityFromAddress = (fullAddress: string): string => {
-    if (!fullAddress) return 'Не определен';
-    
-    const parts = fullAddress.split(/[,;]/).map(p => p.trim());
-    const addressWithoutIndex = parts.filter(p => !/^\d{6}$/.test(p));
-
-    for (const part of addressWithoutIndex) {
-        if (part.toLowerCase().startsWith('г.') || part.toLowerCase().startsWith('город')) {
-            return part.replace(/^(г\.?|город)\s*/i, '').trim();
-        }
-    }
-
-    if (addressWithoutIndex.length > 1) {
-        const potentialCity = addressWithoutIndex[1];
-        if (potentialCity && isNaN(parseInt(potentialCity, 10))) {
-            return potentialCity;
-        }
-    }
-    
-    return addressWithoutIndex[0] || 'Не определен';
+    return str.toLowerCase().trim();
 };
 
 const MIN_GROWTH_RATE = 0.05;
@@ -36,76 +11,30 @@ const MAX_GROWTH_RATE = 0.80;
 const BASE_GROWTH_RATE = 0.15;
 
 function calculateRealisticGrowthRate(fact: number, potentialTTs: number): number {
+    if (potentialTTs === 0) return 0;
+    
     let growthRate = BASE_GROWTH_RATE;
-    const saturationFactor = Math.max(0.1, 1 - (fact / 10000));
+    const saturationFactor = Math.max(0.1, 1 - (fact / (potentialTTs * 5000))); // Assume 5k potential per TT
     growthRate *= saturationFactor;
+    
     let cityMultiplier = 1.0;
     if (potentialTTs <= 10) cityMultiplier = 1.0;
     else if (potentialTTs <= 30) cityMultiplier = 1.3;
     else if (potentialTTs <= 100) cityMultiplier = 1.6;
     else cityMultiplier = 2.0;
     growthRate *= cityMultiplier;
+
     const randomVariation = 0.8 + (Math.random() * 0.4);
     growthRate *= randomVariation;
+
     return Math.max(MIN_GROWTH_RATE, Math.min(growthRate, MAX_GROWTH_RATE));
 }
 
-// --- File Parser for User's File (АКБ) ---
-const parseUserFile = (file: File): Promise<{ processedData: any[], akbAddressSet: Set<string> }> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                if (!e.target?.result) throw new Error("Не удалось прочитать файл АКБ.");
-                const data = new Uint8Array(e.target.result as ArrayBuffer);
-                const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json(worksheet) as any[];
-
-                const akbAddressSet = new Set<string>();
-                const akbDataMap = new Map<string, any>();
-
-                json.forEach((row) => {
-                    const brand = String(row['Бренд'] || row['brand'] || 'Не указан').trim();
-                    const fact = Number(String(row['Факт (кг/ед)'] || row['fact'] || 0).replace(',', '.'));
-                    const fullAddress = String(row['Адрес'] || row['address'] || '').trim();
-                    const rm = String(row['РМ'] || row['rm'] || 'Не указан').trim();
-                    const city = String(row['Город'] || row['city'] || determineCityFromAddress(fullAddress)).trim();
-                    
-                    if(fullAddress) {
-                        akbAddressSet.add(normalizeAddress(fullAddress));
-                    }
-
-                    if (rm !== 'Не указан' && city && brand !== 'Не указан') {
-                        const key = `${rm}|${brand}|${city}`;
-                        const existing = akbDataMap.get(key) || { rm, brand, city, fact: 0, fullAddress: city };
-                        existing.fact += fact;
-                        akbDataMap.set(key, existing);
-                    }
-                });
-                
-                const processedData = Array.from(akbDataMap.values());
-
-                if (processedData.length === 0) throw new Error("В файле АКБ не найдено корректных данных. Проверьте названия колонок: 'РМ', 'Бренд', 'Город', 'Факт (кг/ед)'.");
-                
-                resolve({ processedData, akbAddressSet });
-
-            } catch (error) {
-                reject(error instanceof Error ? error : new Error("Не удалось разобрать файл АКБ."));
-            }
-        };
-        reader.onerror = (error) => reject(error);
-        reader.readAsArrayBuffer(file);
-    });
-};
 
 // --- Main Worker Logic ---
-self.onmessage = async (e: MessageEvent<{ file: File }>) => {
-    const { file } = e.data;
-
+self.onmessage = async () => {
     try {
-        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 5, text: 'Загрузка мастер-базы ОКБ...', etr: '' } });
+        self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 10, text: 'Загрузка мастер-базы из Google Sheets...' } });
         
         const okbResponse = await fetch('/api/get-okb');
         if (!okbResponse.ok) {
@@ -115,64 +44,89 @@ self.onmessage = async (e: MessageEvent<{ file: File }>) => {
         const okbData: OKBDataRow[] = await okbResponse.json();
         
         if (!okbData || okbData.length === 0) {
-            throw new Error('База ОКБ пуста или не была загружена. Сначала обновите её.');
+            throw new Error('База ОКБ пуста или не была загружена. Проверьте Google Sheet.');
         }
 
-        self.postMessage({ type: 'progress', payload: { status: 'reading', progress: 20, text: 'Чтение и агрегация файла АКБ...', etr: '' } });
-        const { processedData: akbData, akbAddressSet } = await parseUserFile(file);
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 40, text: 'Агрегация данных и расчет потенциала...' } });
 
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 40, text: 'Поиск потенциальных клиентов...', etr: '' } });
-        
-        const potentialClients = okbData.filter((okbClient: OKBDataRow) => 
-            okbClient['Адрес'] && !akbAddressSet.has(normalizeAddress(okbClient['Адрес']))
-        );
+        const aggregatedMap = new Map<string, AggregatedDataRow>();
 
-        const potentialClientsByCity = new Map<string, any[]>();
-        for (const client of potentialClients) {
-            const city = client['Город или населенный пункт'] || client['Субъект'] || 'Неизвестный город';
-            if (!potentialClientsByCity.has(city)) {
-                potentialClientsByCity.set(city, []);
-            }
-            
-            // Safely parse coordinates, replacing comma with dot for decimals and handling undefined/NaN
-            const latString = client['Широта'] ? String(client['Широта']).replace(',', '.') : undefined;
-            const lonString = client['Долгота'] ? String(client['Долгота']).replace(',', '.') : undefined;
+        // This will store all clients grouped by their city for potential calculation
+        const allClientsByCity = new Map<string, PotentialClient[]>();
+
+        okbData.forEach(row => {
+            const city = normalizeString(row['Город или населенный пункт']);
+            if (!city) return;
+
+            // Safely parse coordinates
+            const latString = row['Широта'] ? String(row['Широта']).replace(',', '.') : undefined;
+            const lonString = row['Долгота'] ? String(row['Долгота']).replace(',', '.') : undefined;
             const lat = latString ? parseFloat(latString) : undefined;
             const lon = lonString ? parseFloat(lonString) : undefined;
 
-            potentialClientsByCity.get(city)!.push({
-                name: client['Наименование'],
-                address: client['Адрес'],
-                phone: client['Контакты'],
-                type: client['Категория'],
+            const client: PotentialClient = {
+                name: row['Наименование'],
+                address: row['Адрес'],
+                phone: row['Контакты'],
+                type: row['Категория'],
                 lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
                 lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
-            });
+            };
+
+            if (!allClientsByCity.has(city)) {
+                allClientsByCity.set(city, []);
+            }
+            allClientsByCity.get(city)!.push(client);
+        });
+
+
+        okbData.forEach(row => {
+             // Use normalized values for keys, but original values for display
+            const rm = row['РМ'] || 'Не указан';
+            const brand = row['Бренд'] || 'Не указан';
+            const city = row['Город или населенный пункт'] || 'Не указан';
+            const fact = Number(String(row['Факт (кг/ед)'] || '0').replace(',', '.'));
+            
+            if (city === 'Не указан' || rm === 'Не указан') return;
+
+            const key = `${normalizeString(rm)}|${normalizeString(brand)}|${normalizeString(city)}`;
+
+            if (!aggregatedMap.has(key)) {
+                const cityClients = allClientsByCity.get(normalizeString(city)) || [];
+                const potentialTTs = cityClients.length;
+
+                aggregatedMap.set(key, {
+                    rm,
+                    brand,
+                    city,
+                    fact: 0,
+                    potential: 0, // will be calculated after summing up facts
+                    growthPotential: 0,
+                    growthRate: 0,
+                    potentialTTs,
+                    potentialClients: cityClients,
+                });
+            }
+
+            const entry = aggregatedMap.get(key)!;
+            entry.fact += isNaN(fact) ? 0 : fact;
+        });
+
+        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 80, text: 'Финальные расчеты...' } });
+
+        // Now calculate potential based on the aggregated facts
+        for (const entry of aggregatedMap.values()) {
+            const growthRate = calculateRealisticGrowthRate(entry.fact, entry.potentialTTs);
+            entry.potential = entry.fact * (1 + growthRate);
+            entry.growthPotential = entry.potential - entry.fact;
+            entry.growthRate = growthRate * 100;
         }
 
-        self.postMessage({ type: 'progress', payload: { status: 'aggregating', progress: 70, text: 'Расчет рыночного потенциала...', etr: '' } });
+        const finalData = Array.from(aggregatedMap.values());
         
-        const dataWithPotential = akbData.map(item => {
-            const clientsForCity = potentialClientsByCity.get(item.city) || [];
-            const potentialTTs = clientsForCity.length;
-            
-            const growthRate = calculateRealisticGrowthRate(item.fact, potentialTTs);
-            const potential = item.fact * (1 + growthRate);
-            const growthPotential = potential - item.fact;
-
-            return { 
-                ...item, 
-                potential, 
-                growthPotential, 
-                growthRate: growthRate * 100, 
-                potentialTTs, 
-                potentialClients: clientsForCity 
-            };
-        });
+        self.postMessage({ type: 'progress', payload: { status: 'done', progress: 100, text: 'Анализ завершен!' } });
         
-        self.postMessage({ type: 'progress', payload: { status: 'done', progress: 100, text: 'Финализация результатов...', etr: '' } });
-        
-        self.postMessage({ type: 'result', payload: dataWithPotential });
+        self.postMessage({ type: 'result', payload: finalData });
 
     } catch (error) {
         self.postMessage({ type: 'error', payload: error instanceof Error ? error.message : "Произошла неизвестная ошибка в фоновом обработчике." });

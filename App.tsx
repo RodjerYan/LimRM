@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
 import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
-import FileUpload from './components/FileUpload';
+import DataControl from './components/DataControl';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import PotentialChart from './components/PotentialChart';
@@ -87,11 +87,11 @@ export default function App() {
     };
 
     useEffect(() => {
-        addNotification('Система готова! Загрузите файл или обновите базу ОКБ.', 'success');
+        addNotification('Система готова! Запустите анализ или обновите базу ОКБ.', 'success');
         return () => cleanupWorker();
     }, [addNotification]);
     
-    const handleFileSelect = async (file: File) => {
+    const handleStartAnalysis = useCallback(() => {
         cleanupWorker(); 
 
         setAggregatedData([]);
@@ -101,19 +101,17 @@ export default function App() {
         setLoadingState({ status: 'reading', progress: 0, text: 'Инициализация анализатора...', etr: '' });
         
         try {
-            // ИСПРАВЛЕНО: Создаем воркер и сразу отправляем ему файл.
-            // Воркер сам загрузит ОКБ, обработает и вернет результат.
             workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
             
             workerRef.current.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
                 const { type, payload } = e.data;
 
                 if (type === 'progress') {
-                    setLoadingState(payload);
+                    setLoadingState(prevState => ({ ...prevState, ...payload }));
                 } else if (type === 'result') {
                     setAggregatedData(payload);
                     setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-                    addNotification('Анализ потенциальных клиентов завершен!', 'success');
+                    addNotification('Анализ рыночного потенциала завершен!', 'success');
                     setTimeout(() => {
                         setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
                     }, 3000);
@@ -134,16 +132,15 @@ export default function App() {
                  cleanupWorker();
             };
             
-            setLoadingState({ status: 'reading', progress: 5, text: 'Отправка файла в анализатор...', etr: '' });
-            // Передаем только файл, воркер сам позаботится об остальном
-            workerRef.current.postMessage({ file });
+            setLoadingState({ status: 'reading', progress: 5, text: 'Запрос на запуск анализа...', etr: '' });
+            workerRef.current.postMessage({}); // Send message to start, no file needed
 
         } catch(error: any) {
-            console.error("Failed during file select process:", error);
+            console.error("Failed to start analysis process:", error);
             addNotification(error.message, 'error');
             setLoadingState({ status: 'error', progress: 0, text: error.message, etr: '' });
         }
-    };
+    }, [addNotification]);
 
 
     const handleFilterChange = useCallback((newFilters: FilterState) => {
@@ -276,7 +273,7 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 space-y-8">
                     <OKBManagement addNotification={addNotification} />
-                    <FileUpload onFileSelect={handleFileSelect} loadingState={loadingState} />
+                    <DataControl onStart={handleStartAnalysis} loadingState={loadingState} />
                     <Filters 
                         options={filterOptions}
                         currentFilters={filters}

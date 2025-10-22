@@ -1,13 +1,3 @@
-
-
-export interface RawDataRow {
-    rm: string;
-    brand: string;
-    fullAddress: string;
-    city: string;
-    fact: number;
-}
-
 export interface PotentialClient {
     name: string;
     address: string;
@@ -15,14 +5,6 @@ export interface PotentialClient {
     type: string;
     lat?: number;
     lon?: number;
-}
-
-export interface ProcessedDataRow extends RawDataRow {
-    potential: number;
-    growthPotential: number;
-    growthRate: number;
-    potentialTTs: number;
-    potentialClients: PotentialClient[];
 }
 
 export interface AggregatedDataRow {
@@ -35,6 +17,16 @@ export interface AggregatedDataRow {
     growthRate: number;
     potentialTTs: number;
     potentialClients: PotentialClient[];
+}
+
+// FIX: Added missing RawDataRow type to resolve an import error in `services/fileParser.ts`.
+// This type represents a row of data parsed from a user-uploaded file and appears to be part of a legacy feature.
+export interface RawDataRow {
+    rm: string;
+    brand: string;
+    city: string;
+    fact: number;
+    fullAddress: string;
 }
 
 export interface LoadingState {
@@ -75,6 +67,8 @@ export type SortConfig = {
     direction: 'ascending' | 'descending';
 } | null;
 
+// This type now represents the expected structure of a row from Google Sheets.
+// It should contain all necessary data, including what was previously in the user's file.
 export interface OKBDataRow {
     'Страна': string;
     'Субъект': string;
@@ -86,4 +80,8 @@ export interface OKBDataRow {
     'Дата обновления базы': string;
     'Широта'?: string;
     'Долгота'?: string;
+    // Optional fields that are now expected from the master Google Sheet
+    'РМ'?: string;
+    'Бренд'?: string;
+    'Факт (кг/ед)'?: string | number;
 }
