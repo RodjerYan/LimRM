@@ -36,7 +36,8 @@ self.onmessage = async () => {
     try {
         self.postMessage({ type: 'progress', payload: { status: 'fetching', progress: 10, text: 'Загрузка мастер-базы из Google Sheets...' } });
         
-        const okbResponse = await fetch('/api/get-okb');
+        // FIX: Changed from GET to POST to align with the unified server API
+        const okbResponse = await fetch('/api/get-okb', { method: 'POST' });
         if (!okbResponse.ok) {
             const errorData = await okbResponse.json();
             throw new Error(errorData.details || 'Не удалось загрузить базу ОКБ с сервера.');

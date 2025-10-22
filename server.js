@@ -3,8 +3,6 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Readable } from 'stream';
-import https from 'https';
-import { URL } from 'url';
 
 // --- Глобальные обработчики для предотвращения падения сервера ---
 process.on('uncaughtException', (err, origin) => {
@@ -29,7 +27,7 @@ if (!GOOGLE_SCRIPT_URL || !GEMINI_API_KEY) {
     }
     console.error("Please add these variables in your hosting provider's settings (e.g., Render) and redeploy.");
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-    process.exit(1); // Завершаем процесс с ошибкой, чтобы деплой провалился
+    process.exit(1);
 }
 
 
@@ -39,7 +37,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.join(__dirname, 'dist');
 const indexPath = path.join(distPath, 'index.html');
 
-// --- Проверка наличия сборки перед запуском ---
 if (!fs.existsSync(indexPath)) {
     console.error("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     console.error("FATAL ERROR: 'dist/index.html' not found.");
@@ -51,97 +48,79 @@ if (!fs.existsSync(indexPath)) {
 
 app.use(express.json());
 
-// --- API МАРШРУТЫ ---
+// --- НОВЫЙ УНИВЕРСАЛЬНЫЙ ПРОКСИ-СЕРВЕР НА FETCH ---
 
-const makeGoogleRequest = (req, res, stream = false) => {
+const makeGoogleRequest = async (req, res, stream = false) => {
     const requestLogId = `[${Date.now()}]`;
-    console.log(`${requestLogId} Initiating ${stream ? 'streaming' : 'buffered'} proxy request to Google Apps Script.`);
+    console.log(`${requestLogId} Initiating fetch-based ${stream ? 'streaming' : 'buffered'} proxy to Google for action: ${req.body.action}`);
     
     try {
         const postData = JSON.stringify(req.body);
-        const googleUrl = new URL(GOOGLE_SCRIPT_URL);
 
-        const options = {
-            hostname: googleUrl.hostname,
-            path: googleUrl.pathname + googleUrl.search,
+        const googleResponse = await fetch(GOOGLE_SCRIPT_URL, {
             method: 'POST',
-            headers: {
+            headers: { 
                 'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
+                'User-Agent': 'Limkorm-Render-Proxy/1.0'
             },
-            timeout: 300000 // 5-минутный таймаут
-        };
-
-        const proxyReq = https.request(options, (proxyRes) => {
-            console.log(`${requestLogId} Received response from Google. Status: ${proxyRes.statusCode}.`);
-            const contentType = proxyRes.headers['content-type'];
-
-            if (contentType && contentType.includes('text/html')) {
-                console.error(`${requestLogId} FATAL PERMISSION ERROR: Google Apps Script returned an HTML page.`);
-                 proxyRes.resume(); // Consume response data to free up memory
-                return res.status(500).json({
-                    message: 'Ошибка конфигурации Google Apps Script',
-                    details: 'Сервер получил HTML-страницу вместо данных. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone).'
-                });
-            }
-            
-            res.writeHead(proxyRes.statusCode, proxyRes.headers);
-
-            if (stream) {
-                console.log(`${requestLogId} Piping stream to client.`);
-                proxyRes.pipe(res);
-            } else {
-                let responseBody = '';
-                proxyRes.setEncoding('utf8');
-                proxyRes.on('data', (chunk) => { responseBody += chunk; });
-                proxyRes.on('end', () => {
-                    console.log(`${requestLogId} Buffered response finished. Body length: ${responseBody.length}`);
-                    res.end(responseBody);
-                });
-            }
+            body: postData,
+            redirect: 'follow', // Явно указываем следовать редиректам
         });
 
-        proxyReq.on('timeout', () => {
-            console.error(`${requestLogId} Request to Google timed out.`);
-            proxyReq.destroy();
-            if (!res.headersSent) {
-                res.status(504).json({ message: 'Request to Google Apps Script timed out.' });
-            }
-        });
+        console.log(`${requestLogId} Received response from Google. Status: ${googleResponse.status}.`);
 
-        proxyReq.on('error', (e) => {
-            console.error(`${requestLogId} Proxy request error:`, e);
-            if (!res.headersSent) {
-                res.status(500).json({ message: 'Failed to proxy request to Google.', details: e.message });
-            }
-        });
+        const contentType = googleResponse.headers.get('content-type');
+        if (contentType && contentType.includes('text/html')) {
+            console.error(`${requestLogId} FATAL PERMISSION ERROR: Google Apps Script returned an HTML page.`);
+            return res.status(500).json({
+                message: 'Ошибка конфигурации Google Apps Script',
+                details: 'Сервер получил HTML-страницу вместо данных. Убедитесь, что веб-приложение опубликовано с доступом "Все" (Anyone) и вы используете URL-адрес из **нового развертывания**.'
+            });
+        }
+
+        if (!googleResponse.ok) {
+            const errorText = await googleResponse.text();
+            console.error(`${requestLogId} Google API Error:`, errorText);
+            return res.status(googleResponse.status).send(errorText);
+        }
         
-        console.log(`${requestLogId} Writing data to Google request:`, req.body);
-        proxyReq.write(postData);
-        proxyReq.end();
-        console.log(`${requestLogId} Request sent to Google.`);
+        res.setHeader('Content-Type', googleResponse.headers.get('content-type') || 'application/json');
+
+        if (stream) {
+            if (!googleResponse.body) throw new Error("Google response has no body for streaming.");
+            console.log(`${requestLogId} Piping stream to client.`);
+            Readable.fromWeb(googleResponse.body).pipe(res);
+        } else {
+            const responseBody = await googleResponse.text();
+            console.log(`${requestLogId} Buffered response finished. Body length: ${responseBody.length}`);
+            res.status(googleResponse.status).send(responseBody);
+        }
 
     } catch (error) {
         console.error(`${requestLogId} Unhandled error in makeGoogleRequest:`, error);
         if (!res.headersSent) {
-            res.status(500).json({ message: 'Internal server error during proxy setup.', details: error.message });
+            res.status(500).json({ message: 'Internal server error during proxy request.', details: error.message });
         }
     }
 };
 
+
+// --- API МАРШРУТЫ ---
+
 app.post('/api/update-okb', (req, res) => makeGoogleRequest(req, res, false));
 
-// FIX: Changed from GET to POST to align with frontend and Google Script logic
 app.post('/api/get-okb-status', (req, res) => {
     console.log(`[${new Date().toISOString()}] Received request for /api/get-okb-status`);
-    // The body is constructed here, not passed from the client for this specific route
     makeGoogleRequest({ body: { action: 'getStatus' } }, res, false);
 });
 
-app.get('/api/get-okb', (req, res) => makeGoogleRequest({ body: { action: 'getAllData' } }, res, true));
+// FIX: Changed from GET to POST for unification
+app.post('/api/get-okb', (req, res) => {
+    console.log(`[${new Date().toISOString()}] Received request for /api/get-okb`);
+    makeGoogleRequest({ body: { action: 'getAllData' } }, res, true);
+});
 
-
-// Потоковый прокси для Gemini AI (оставляем fetch, т.к. он тут стабилен для SSE)
+// Потоковый прокси для Gemini AI
 app.post('/api/gemini-proxy', async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) {
@@ -179,7 +158,6 @@ app.post('/api/gemini-proxy', async (req, res) => {
 // --- РАЗДАЧА СТАТИЧЕСКИХ ФАЙЛОВ ---
 app.use(express.static(distPath));
 
-// Для всех остальных запросов отдаем index.html (для роутинга на клиенте)
 app.get('*', (req, res) => {
     res.sendFile(indexPath);
 });
