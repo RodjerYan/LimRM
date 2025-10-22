@@ -1,7 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyH3ArfrPFU7IoxpOMtlr5O14awqaaGR9qbdAcw2bKob3k3Z8ktBb2BZV1W0gxFOdPy7A/exec';
-const FETCH_TIMEOUT = 28000; // 28 секунд таймаут для fetch-запроса
+// ИЗМЕНЕНО: Таймаут уменьшен до 14 секунд, чтобы быть меньше лимита Vercel (~15с)
+const FETCH_TIMEOUT = 14000; 
 
 /**
  * Этот обработчик является прокси для Google Apps Script, поддерживающим пакетную обработку.
@@ -61,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let message = 'Не удалось обработать обновление через прокси Google Apps Script.';
         // Если ошибка вызвана нашим таймаутом, даем более понятное сообщение
         if (error.name === 'AbortError') {
-            message = `Запрос к Google Apps Script занял слишком много времени (>${FETCH_TIMEOUT / 1000}с) и был прерван. Возможно, размер пакета (BATCH_SIZE) в скрипте слишком велик или API OpenStreetMap медленно отвечает.`;
+            message = `Запрос к Google Apps Script занял слишком много времени (>${FETCH_TIMEOUT / 1000}с) и был прерван. Это может быть вызвано медленным ответом от Gemini API. Процесс продолжится автоматически.`;
         }
 
         res.status(500).json({ 
