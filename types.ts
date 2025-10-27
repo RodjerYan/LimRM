@@ -1,19 +1,5 @@
-
-export interface RawDataRow {
-    [key: string]: any; // Allows for flexible column names from Excel
-}
-
-export interface OkbDataRow {
-    'Наименование полное': string;
-    'Юридический адрес': string;
-    'Вид деятельности (ОКВЭД)': string;
-    'Широта': number | null;
-    'Долгота': number | null;
-    'Регион': string;
-}
-
 export interface AggregatedDataRow {
-    key: string; // Unique key for react lists, e.g., clientName-brand
+    key: string;
     rm: string;
     clientName: string;
     brand: string;
@@ -23,22 +9,26 @@ export interface AggregatedDataRow {
     potential: number;
     growthPotential: number;
     growthPercentage: number;
+    potentialClients?: PotentialClient[];
 }
 
-export interface WorkerMessage {
-    type: 'progress' | 'result' | 'error';
-    payload: any;
+export interface PotentialClient {
+    name: string;
+    address: string;
+    type: string;
+    lat?: number;
+    lon?: number;
 }
 
-export interface WorkerProgress {
-    percentage: number;
-    message: string;
-}
-
-export interface OkbStatus {
-    lastUpdated: string | null;
-    status: 'idle' | 'updating' | 'ready' | 'error';
-    message?: string;
+export interface OkbDataRow {
+    [key: string]: any; // Allow any string keys for flexibility with spreadsheet columns
+    'Наименование': string;
+    'Юридический адрес'?: string;
+    'Регион'?: string;
+    'Город'?: string;
+    'Вид деятельности'?: string;
+    'ИНН'?: string;
+    'Статус'?: string;
 }
 
 export interface FilterOptions {
@@ -53,12 +43,16 @@ export interface FilterState {
     city: string[];
 }
 
-export interface PotentialClient {
-    name: string;
-    address: string;
-    type: string;
-    lat: number | null;
-    lon: number | null;
+export interface SummaryMetrics {
+    totalFact: number;
+    totalPotential: number;
+    totalGrowth: number;
+    totalClients: number;
+    averageGrowthPercentage: number;
+    topPerformingRM: {
+        name: string;
+        value: number;
+    };
 }
 
 export interface NotificationMessage {
@@ -67,11 +61,22 @@ export interface NotificationMessage {
     type: 'success' | 'error' | 'info';
 }
 
-export interface SummaryMetrics {
-    totalFact: number;
-    totalPotential: number;
-    totalGrowth: number;
-    totalClients: number;
-    averageGrowthPercentage: number;
-    topPerformingRM: { name: string; value: number };
-}
+export type OkbStatus = {
+    status: 'idle' | 'loading' | 'processing' | 'ready' | 'error';
+    message: string | null;
+    timestamp?: string;
+    rowCount?: number;
+};
+
+// Types for the Web Worker communication
+export type WorkerProgressPayload = {
+    percentage: number;
+    message: string;
+};
+export type WorkerResultPayload = AggregatedDataRow[];
+export type WorkerErrorPayload = string;
+
+export type WorkerMessage =
+    | { type: 'progress', payload: WorkerProgressPayload }
+    | { type: 'result', payload: WorkerResultPayload }
+    | { type: 'error', payload: WorkerErrorPayload };
