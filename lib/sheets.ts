@@ -36,6 +36,7 @@ async function getGoogleSheetsClient() {
 /**
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
  * It parses the data into an array of structured objects compatible with the application's types.
+ * This version includes robust parsing to handle empty rows and headers gracefully.
  * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
  */
 export async function getOKBData(): Promise<OkbDataRow[]> {
@@ -50,33 +51,48 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     return []; // No data or only a header row
   }
 
-  const header = rows[0].map(h => String(h).trim());
+  // Robust header parsing: treat null/undefined as an empty string.
+  const header = rows[0].map(h => String(h || '').trim());
   const dataRows = rows.slice(1);
 
-  const okbData: OkbDataRow[] = dataRows.map(row => {
-    const rowData: { [key: string]: any } = {};
-    header.forEach((key, index) => {
-      rowData[key] = row[index] || null;
-    });
-    return rowData as OkbDataRow;
-  });
+  const okbData: OkbDataRow[] = dataRows
+    .map(row => {
+        // Skip completely empty rows
+        if (row.every(cell => cell === null || cell === '' || cell === undefined)) {
+            return null;
+        }
+
+        const rowData: { [key: string]: any } = {};
+        header.forEach((key, index) => {
+            // Only map data if the header key is not empty
+            if (key) {
+                rowData[key] = row[index] || null; // Use null for empty cells
+            }
+        });
+        // Ensure the object is not empty if all header keys were blank for this row
+        if (Object.keys(rowData).length === 0) {
+            return null;
+        }
+        return rowData as OkbDataRow;
+    })
+    .filter((row): row is OkbDataRow => row !== null); // Filter out any null (empty) rows
 
   return okbData;
 }
 
 /**
- * Fetches only the client addresses from column E of the Google Sheet, skipping the header.
+ * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
  * @returns {Promise<string[]>} A promise that resolves to an array of address strings.
  */
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!E2:E`, // Start from E2 to skip the header
+        range: `${SHEET_NAME}!C2:C`, // FIX: Fetch from column C (Юридический адрес)
     });
 
     const rows = res.data.values || [];
-    return rows.flat().filter(address => address && String(address).trim() !== '');
+    return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
 }
 
 
@@ -90,7 +106,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     const sheets = await getGoogleSheetsClient();
 
     const data = updates.map(update => ({
-        range: `${SHEET_NAME}!G${update.rowIndex}`, // Column G is 'Статус' in the target sheet
+        range: `${SHEET_NAME}!F${update.rowIndex}`, // FIX: Column F is 'Статус'
         values: [[update.status]],
     }));
 
