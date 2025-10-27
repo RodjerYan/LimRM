@@ -1,120 +1,89 @@
+
 import { AggregatedDataRow } from "../types";
-import { formatLargeNumber } from "../utils/dataUtils";
 
-// This service is now refactored to use the Google Gemini API via a proxy.
-export async function* generateAiSummaryStream(data: AggregatedDataRow): AsyncGenerator<string> {
-    // FIX: Use type assertion to access Vite environment variables without causing a TypeScript error.
-    const proxyUrl = (import.meta as any).env.VITE_GEMINI_PROXY_URL;
+// The proxy URL should be configured in one place, but for simplicity, we define it here.
+const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
-    if (!proxyUrl) {
-        yield "### Ошибка Конфигурации\n\nПрокси-сервер не настроен. Пожалуйста, установите переменную окружения `VITE_GEMINI_PROXY_URL` в настройках Vercel на значение `/api/gemini-proxy` и перезапустите развертывание.";
-        return;
-    }
-    
-    const fullUrl = `${proxyUrl}`;
+/**
+ * Generates a prompt for Gemini based on a single client's data.
+ * @param clientData - The data for a single aggregated client row.
+ * @returns A string prompt for the AI.
+ */
+const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
+    const formattedFact = new Intl.NumberFormat('ru-RU').format(clientData.fact);
+    const formattedPotential = new Intl.NumberFormat('ru-RU').format(clientData.potential);
+    const formattedGrowth = new Intl.NumberFormat('ru-RU').format(clientData.growthPotential);
 
-    const prompt = `
-    Ты — опытный бизнес-аналитик в компании Limkorm, специализирующейся на кормах для животных.
-    Твоя задача — предоставить краткую, но ёмкую аналитическую справку для регионального менеджера (${data.rm}) по городу ${data.city} и бренду ${data.brand}.
-    Справка должна быть в формате markdown, структурирована, позитивна и мотивирующа.
+    return `
+        Проанализируй данные по клиенту и дай краткие, действенные рекомендации по увеличению продаж.
+        Отвечай на русском языке. Ответ должен быть в формате Markdown, без заголовков.
+        Используй списки для перечисления рекомендаций.
 
-    Входные данные:
-    - Город: ${data.city}
-    - Региональный менеджер (РМ): ${data.rm}
-    - Бренд: ${data.brand}
-    - Текущие продажи (Факт): ${formatLargeNumber(data.fact)} кг/ед.
-    - Прогнозный потенциал рынка: ${formatLargeNumber(data.potential)} кг/ед.
-    - Потенциал роста: ${formatLargeNumber(data.growthPotential)} кг/ед. (${data.growthRate.toFixed(1)}%)
-    - Количество потенциальных торговых точек (зоомагазины, ветклиники и т.д.) в городе: ${data.potentialTTs} шт.
-    - Примеры потенциальных клиентов: ${data.potentialClients.slice(0, 3).map(c => c.name).join(', ')}.
+        **Данные о клиенте:**
+        - **Клиент:** ${clientData.clientName}
+        - **Город:** ${clientData.city}
+        - **Бренд:** ${clientData.brand}
+        - **Региональный менеджер (РМ):** ${clientData.rm}
+        - **Текущие продажи (Факт):** ${formattedFact} кг/ед.
+        - **Общий потенциал рынка:** ${formattedPotential} кг/ед.
+        - **Потенциал роста:** ${formattedGrowth} кг/ед. (${clientData.growthPercentage.toFixed(1)}%)
 
-    Твоя задача:
-    1.  **Заголовок**: Создай четкий заголовок, например, "Анализ потенциала: г. ${data.city} / ${data.brand}".
-    2.  **Ключевые выводы (Executive Summary)**: Напиши 2-3 предложения с главной мыслью. Подчеркни основной потенциал роста.
-    3.  **Сильные стороны**: Отметь текущие достижения (объем продаж).
-    4.  **Зоны роста**: Укажи на разницу между фактом и потенциалом. Используй данные о количестве ТТ как обоснование для возможностей.
-    5.  **Рекомендации**: Дай 1-2 конкретные, действенные рекомендации. Например, "Сфокусироваться на работе с новыми ветклиниками" или "Провести аудит представленности бренда в ключевых зоомагазинах".
-    6.  **Заключение**: Закончи на позитивной и мотивирующей ноте.
-
-    Стиль: деловой, но энергичный. Используй **жирный шрифт** для акцентов и списки для структурирования. Не используй длинных абзацев. Ответ должен быть только на русском языке.
+        **Задача:**
+        1.  Определи 2-3 ключевых фактора, которые могут способствовать росту.
+        2.  Предложи 3-4 конкретных шага или тактики для РМ для реализации этого потенциала.
+            Например: предложить новые продукты, провести обучение, запустить маркетинговую акцию и т.д.
+        3.  Будь кратким и четким.
     `;
+};
 
-    const requestBody = {
-        prompt: prompt
-    };
 
+/**
+ * Fetches AI-powered insights for a given client from the Gemini API via our proxy.
+ * @param clientData - The data for the client to be analyzed.
+ * @param onChunk - A callback function that receives streaming text chunks.
+ * @param onError - A callback for handling errors.
+ * @param signal - An AbortSignal to cancel the request.
+ */
+export const streamClientInsights = async (
+    clientData: AggregatedDataRow,
+    onChunk: (chunk: string) => void,
+    onError: (error: Error) => void,
+    signal: AbortSignal
+) => {
     try {
-        const response = await fetch(fullUrl, {
+        const prompt = createClientInsightPrompt(clientData);
+
+        const response = await fetch(PROXY_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ prompt }),
+            signal, // Pass the abort signal to the fetch request
         });
-        
+
         if (!response.ok) {
-            const errorText = await response.text();
-            let detailedError = "Неизвестная ошибка сервера.";
-            let isApiKeyError = false;
-
-            try {
-                const errorJson = JSON.parse(errorText);
-                const errorMessage = errorJson.error || '';
-                detailedError = errorJson.details || errorMessage || errorText;
-                if (typeof errorMessage === 'string' && errorMessage.includes('API key is not configured')) {
-                    isApiKeyError = true;
-                }
-            } catch (e) {
-                detailedError = errorText;
-            }
-
-            if (isApiKeyError) {
-                yield `### 🚨 **Критическая Ошибка Конфигурации Сервера**\n\n` +
-                      `**Проблема:** Ключ API для Google Gemini **не найден на сервере**.\n\n` +
-                      `Это означает, что переменная окружения \`API_KEY\` не была установлена при развертывании в Google Cloud Run.\n\n` +
-                      `--- \n` +
-                      `#### 🔍 **Важное замечание (частая ошибка):** \n` +
-                      `Пожалуйста, убедитесь, что вы передаете переменную с именем ровно **\`API_KEY\`**, а не \`VITE_GEMINI_API_KEY\`. \n\n`+
-                      `*   \`VITE_GEMINI_API_KEY\` — это **клиентская** переменная-заглушка. Она нужна только для того, чтобы приложение запустилось. \n` +
-                      `*   \`API_KEY\` — это **серверная** переменная. Именно она содержит сам ключ и используется для запросов к AI. **Именно её сейчас не хватает.**\n\n` +
-                      `--- \n` +
-                      `**Как исправить:**\n` +
-                      `1.  При выполнении команды \`gcloud run deploy\` убедитесь, что вы используете флаг \`--set-env-vars\`.\n` +
-                      `2.  Внутри этого флага должен быть параметр **\`API_KEY=[ВАШ_КЛЮЧ_GEMINI_API]\`**.\n` +
-                      `3.  Пример части команды:\n` +
-                      `   \`... --set-env-vars="API_KEY=AIzaSy...,GOOGLE_SCRIPT_URL=https://..."\`\n` +
-                      `4.  Если сервис уже развернут, вы можете обновить его переменные через Google Cloud Console или выполнив команду \`gcloud run deploy\` заново с правильными переменными.\n\n` +
-                      `*Функция AI-аналитика не заработает, пока вы не выполните эти шаги.*`;
-                return;
-            }
-
-            yield `### Ошибка API\n\nПрокси-сервер вернул ошибку от Google Gemini.\n**Статус:** ${response.status}\n**Ответ:** \`${detailedError}\``;
-            return;
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Ошибка сервера: ${response.statusText}`);
         }
 
         if (!response.body) {
-            yield "### Ошибка\n\nОтвет от сервера не содержит данных для потоковой передачи.";
-            return;
+            throw new Error('Ответ не содержит тела.');
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
         while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            yield decoder.decode(value, { stream: true });
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            onChunk(decoder.decode(value, { stream: true }));
         }
-        
-        const finalChunk = decoder.decode();
-        if (finalChunk) {
-           yield finalChunk;
-        }
-
     } catch (error) {
-        console.error("Gemini fetch stream error:", error);
-        let errorMessage = `### Ошибка сети\n\nНе удалось подключиться к прокси-серверу (\`${proxyUrl}\`). Проверьте сетевое подключение и убедитесь, что проект на Vercel развернут успешно.`;
-        if (error instanceof Error && !error.message.toLowerCase().includes('failed to fetch')) {
-             errorMessage = `### Внутренняя ошибка\n\nПроизошла ошибка при обработке запроса: ${error.message}`;
+        if ((error as Error).name !== 'AbortError') {
+             onError(error as Error);
         }
-        yield errorMessage;
     }
 };

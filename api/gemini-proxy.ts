@@ -13,6 +13,7 @@ export const config = {
 /**
  * Handles POST requests to proxy Gemini API calls.
  * It takes a 'prompt' from the request body and streams a response from the Gemini API.
+ * This version uses a pool of API keys for load balancing and redundancy.
  * @param {Request} req The incoming request object.
  * @returns {Response} A streaming response with the generated text or an error response.
  */
@@ -34,16 +35,26 @@ export default async function handler(req: Request) {
       });
     }
 
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      // This error message is specifically crafted to be caught by the client-side error handler.
+    // Read multiple API keys from environment variables and filter out any that are not set.
+    const apiKeys = [
+      process.env.API_KEY_1,
+      process.env.API_KEY_2,
+      process.env.API_KEY_3,
+      process.env.API_KEY_4,
+    ].filter(Boolean) as string[];
+
+    if (apiKeys.length === 0) {
+      // This specific error message is caught by the client-side error handler for a user-friendly display.
       return new Response(JSON.stringify({ error: 'API key is not configured' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
       });
     }
     
-    // Initialize the GoogleGenAI client with the API key from environment variables.
+    // Select a random API key from the available pool for each request.
+    const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+    
+    // Initialize the GoogleGenAI client with the randomly selected API key.
     const ai = new GoogleGenAI({ apiKey });
 
     // Select a suitable and cost-effective model for the text generation task.

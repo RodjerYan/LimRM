@@ -1,44 +1,102 @@
+
 import React from 'react';
-import { Metrics } from '../types';
-import { formatLargeNumber } from '../utils/dataUtils';
+import { SummaryMetrics } from '../types';
 import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon } from './icons';
 
-interface MetricsSummaryProps {
-    metrics: Metrics;
-    totalPotentialTTs: number;
+interface MetricCardProps {
+    title: string;
+    value: string;
+    icon: React.ReactNode;
+    color: string;
+    tooltip: string;
 }
 
-const MetricItem: React.FC<{ label: string; value: string; color: string; icon: React.ReactNode }> = ({ label, value, color, icon }) => (
-    <div className="p-3 bg-gray-900/50 rounded-lg flex items-center">
-        <div className="mr-3 text-accent text-opacity-80">
-            {icon}
+const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tooltip }) => (
+    <div title={tooltip} className="bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20">
+        <div className={`p-3 rounded-lg ${color} bg-opacity-20`}>
+           {icon}
         </div>
         <div>
-            <p className="text-xs text-gray-400">{label}</p>
-            <p className={`font-bold text-lg ${color}`}>{value}</p>
+            <p className="text-sm text-gray-400">{title}</p>
+            <p className="text-2xl font-bold text-white">{value}</p>
         </div>
     </div>
 );
 
+const formatNumber = (num: number) => {
+    if (Math.abs(num) >= 1_000_000) {
+        return `${(num / 1_000_000).toFixed(2)} млн`;
+    }
+    if (Math.abs(num) >= 1_000) {
+        return `${(num / 1_000).toFixed(1)} тыс.`;
+    }
+    return num.toFixed(0);
+};
 
-const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, totalPotentialTTs }) => {
-    return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
-                 <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">3</span>
-                 Сводные метрики
-            </h2>
-            <div className="grid grid-cols-2 gap-3">
-                <MetricItem label="Общий Факт" value={formatLargeNumber(metrics.totalFact)} color="text-success" icon={<FactIcon small />} />
-                <MetricItem label="Общий Потенциал" value={formatLargeNumber(metrics.totalPotential)} color="text-blue-400" icon={<PotentialIcon small />} />
-                <MetricItem label="Потенциал Роста" value={formatLargeNumber(metrics.totalGrowthPotential)} color="text-warning" icon={<GrowthIcon small />} />
-                <MetricItem label="Общая Клиентская База" value={`${totalPotentialTTs} шт.`} color="text-teal-400" icon={<UsersIcon />} />
-                <MetricItem label="Средний Рост к Факту" value={`${metrics.totalGrowthRate.toFixed(2)}%`} color="text-danger" icon={<TrendingUpIcon />} />
-                <MetricItem label="Средний % повышения" value={`${metrics.avgPlanIncrease.toFixed(2)}%`} color="text-purple-400" icon={<TargetIcon />} />
+interface MetricsSummaryProps {
+    metrics: SummaryMetrics | null;
+    disabled: boolean;
+}
+
+const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, disabled }) => {
+    if (disabled || !metrics) {
+        // Render placeholders
+        return (
+            <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 ${disabled ? 'opacity-50' : ''}`}>
+                {Array.from({ length: 6 }).map((_, index) => (
+                    <div key={index} className="bg-card-bg/50 p-5 rounded-xl animate-pulse">
+                        <div className="h-6 bg-gray-700 rounded w-3/4 mb-2"></div>
+                        <div className="h-8 bg-gray-600 rounded w-1/2"></div>
+                    </div>
+                ))}
             </div>
-             <p className="text-xs text-gray-500 mt-4">
-                Потенциал рассчитывается на основе открытых данных OpenStreetMap.
-            </p>
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <MetricCard 
+                title="Общий Факт" 
+                value={formatNumber(metrics.totalFact)} 
+                icon={<FactIcon />} 
+                color="text-success"
+                tooltip={`Текущий объем продаж: ${metrics.totalFact.toLocaleString('ru-RU')} кг/ед`}
+            />
+            <MetricCard 
+                title="Общий Потенциал" 
+                value={formatNumber(metrics.totalPotential)} 
+                icon={<PotentialIcon />} 
+                color="text-accent"
+                tooltip={`Прогнозируемый объем рынка: ${metrics.totalPotential.toLocaleString('ru-RU')} кг/ед`}
+            />
+            <MetricCard 
+                title="Потенциал Роста" 
+                value={formatNumber(metrics.totalGrowth)} 
+                icon={<GrowthIcon />} 
+                color="text-warning"
+                tooltip={`Неосвоенный объем рынка: ${metrics.totalGrowth.toLocaleString('ru-RU')} кг/ед`}
+            />
+            <MetricCard 
+                title="Средний Рост" 
+                value={`${metrics.averageGrowthPercentage.toFixed(1)}%`}
+                icon={<TrendingUpIcon />} 
+                color="text-yellow-400"
+                tooltip="Средний процент неосвоенного потенциала по всем клиентам"
+            />
+            <MetricCard 
+                title="Активных Клиентов" 
+                value={metrics.totalClients.toLocaleString('ru-RU')}
+                icon={<UsersIcon />} 
+                color="text-cyan-400"
+                tooltip="Количество уникальных клиентов в выборке"
+            />
+            <MetricCard 
+                title="Топ РМ (по росту)" 
+                value={metrics.topPerformingRM.name}
+                icon={<TargetIcon />} 
+                color="text-red-400"
+                tooltip={`РМ с наибольшим потенциалом роста: ${formatNumber(metrics.topPerformingRM.value)} кг/ед`}
+            />
         </div>
     );
 };

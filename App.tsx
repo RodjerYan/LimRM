@@ -1,302 +1,174 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AggregatedDataRow, FilterState, LoadingState, NotificationMessage, SortConfig } from './types';
-import { calculateMetrics, formatLargeNumber } from './utils/dataUtils';
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DataControl from './components/DataControl';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
-import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
+import PotentialChart from './components/PotentialChart';
+import DetailsModal from './components/DetailsModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import { regionCenters } from './utils/regionCenters';
-import OKBManagement from './components/OKBManagement';
+import { 
+    AggregatedDataRow, 
+    FilterOptions, 
+    FilterState, 
+    NotificationMessage, 
+    OkbStatus, 
+    SummaryMetrics 
+} from './types';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
-declare global {
-  interface ImportMeta {
-    readonly env: {
-      readonly VITE_GEMINI_API_KEY: string;
-      readonly VITE_GEMINI_PROXY_URL?: string;
-    };
-  }
-}
+// This check determines if the application is properly configured for Vercel deployment.
+const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-const getInitialFilters = (): FilterState => {
-    try {
-        const savedFilters = localStorage.getItem('geoAnalysisFilters');
-        if (!savedFilters) return { rm: '', brand: [], city: [] };
-
-        const parsed = JSON.parse(savedFilters);
-        return {
-            rm: parsed?.rm || '',
-            brand: Array.isArray(parsed?.brand) ? parsed.brand : [],
-            city: Array.isArray(parsed?.city) ? parsed.city : [],
-        };
-    } catch (error) {
-        console.error("Failed to parse filters from localStorage", error);
-        return { rm: '', brand: [], city: [] };
-    }
-};
-
-export default function App() {
-    const apiKeyExists = import.meta.env.VITE_GEMINI_API_KEY;
-
-    if (!apiKeyExists) {
+const App: React.FC = () => {
+    // If the special key is not set during the build, show an error message.
+    if (!isApiKeySet) {
         return <ApiKeyErrorDisplay />;
     }
+
+    // Main data state
+    const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
+    const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
     
-    const [aggregatedData, setAggregatedData] = useState<AggregatedDataRow[]>([]);
-    const [loadingState, setLoadingState] = useState<LoadingState>({ status: 'idle', progress: 0, text: '', etr: '' });
+    // UI State
+    const [isLoading, setIsLoading] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [failedRegions, setFailedRegions] = useState<Set<string>>(new Set());
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
+
+    // OKB Data State
+    const [okbData, setOkbData] = useState<any[]>([]);
+    const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
+
+    // Filters State
+    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], city: [] });
+    const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
-    const [filters, setFilters] = useState<FilterState>(getInitialFilters);
-    const [searchTerm, setSearchTerm] = useState<string>(() => localStorage.getItem('geoAnalysisSearchTerm') || '');
-    const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'growthPotential', direction: 'descending' });
+    // Derived Data
+    const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
+        return filteredData.length > 0 ? calculateSummaryMetrics(filteredData) : null;
+    }, [filteredData]);
 
-    const workerRef = useRef<Worker | null>(null);
-
-    useEffect(() => {
-        try {
-            localStorage.setItem('geoAnalysisFilters', JSON.stringify(filters));
-        } catch (error) {
-            console.error("Could not save filters to localStorage", error);
-        }
-    }, [filters]);
-
-    useEffect(() => {
-        try {
-            localStorage.setItem('geoAnalysisSearchTerm', searchTerm);
-        } catch (error) {
-            console.error("Could not save search term to localStorage", error);
-        }
-    }, [searchTerm]);
-
-    const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info') => {
-        const id = Date.now();
-        setNotifications(prev => [...prev, { id, message, type }]);
+    const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
+        const newNotification: NotificationMessage = { id: Date.now(), message, type };
+        setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== id));
+            setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 5000);
     }, []);
-    
-    const cleanupWorker = () => {
-        if (workerRef.current) {
-            workerRef.current.terminate();
-            workerRef.current = null;
-        }
-    };
 
-    useEffect(() => {
-        addNotification('Система готова! Запустите анализ или обновите базу ОКБ.', 'success');
-        return () => cleanupWorker();
+    const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
+        setAllData(data);
+        setFilters({ rm: '', brand: [], city: [] }); // Reset filters on new data
+        addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных записей.`, 'success');
     }, [addNotification]);
     
-    const handleStartAnalysis = useCallback(() => {
-        cleanupWorker(); 
-
-        setAggregatedData([]);
-        setFilters({ rm: '', brand: [], city: [] });
-        setSearchTerm('');
-        setFailedRegions(new Set());
-        setLoadingState({ status: 'reading', progress: 0, text: 'Инициализация анализатора...', etr: '' });
-        
-        try {
-            workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
-            
-            workerRef.current.onmessage = (e: MessageEvent<{ type: string; payload: any }>) => {
-                const { type, payload } = e.data;
-
-                if (type === 'progress') {
-                    setLoadingState(prevState => ({ ...prevState, ...payload }));
-                } else if (type === 'result') {
-                    setAggregatedData(payload);
-                    setLoadingState({ status: 'done', progress: 100, text: 'Анализ завершен!', etr: '' });
-                    addNotification('Анализ рыночного потенциала завершен!', 'success');
-                    setTimeout(() => {
-                        setLoadingState({ status: 'idle', progress: 0, text: '', etr: '' });
-                    }, 3000);
-                    cleanupWorker();
-                } else if (type === 'error') {
-                    console.error("Error from worker:", payload);
-                    addNotification('Ошибка: ' + payload, 'error');
-                    setLoadingState({ status: 'error', progress: 0, text: 'Ошибка: ' + payload, etr: '' });
-                    cleanupWorker();
-                }
-            };
-
-            workerRef.current.onerror = (e) => {
-                 console.error("Unhandled worker error:", e);
-                 const errorMessage = "Произошла критическая ошибка в фоновом обработчике.";
-                 addNotification('Ошибка: ' + errorMessage, 'error');
-                 setLoadingState({ status: 'error', progress: 0, text: errorMessage, etr: '' });
-                 cleanupWorker();
-            };
-            
-            setLoadingState({ status: 'reading', progress: 5, text: 'Запрос на запуск анализа...', etr: '' });
-            workerRef.current.postMessage({}); // Send message to start, no file needed
-
-        } catch(error: any) {
-            console.error("Failed to start analysis process:", error);
-            addNotification(error.message, 'error');
-            setLoadingState({ status: 'error', progress: 0, text: error.message, etr: '' });
+    const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
+        setIsLoading(loading);
+        setLoadingMessage(message);
+        if (!loading && message.startsWith('Ошибка')) {
+            addNotification(message, 'error');
+        } else if (!loading) {
+            addNotification(message, 'info');
         }
     }, [addNotification]);
-
 
     const handleFilterChange = useCallback((newFilters: FilterState) => {
         setFilters(newFilters);
     }, []);
-
+    
     const resetFilters = useCallback(() => {
         setFilters({ rm: '', brand: [], city: [] });
-        setSearchTerm('');
-        addNotification('Фильтры сброшены.', 'success');
-    }, [addNotification]);
+    }, []);
 
-    const requestSort = useCallback((key: keyof AggregatedDataRow) => {
-        let direction: 'ascending' | 'descending' = 'ascending';
-        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
-            direction = 'descending';
-        }
-        setSortConfig({ key, direction });
-    }, [sortConfig]);
+    const handleRowClick = useCallback((row: AggregatedDataRow) => {
+        setSelectedRow(row);
+        setIsModalOpen(true);
+    }, []);
 
-    const filterOptions = useMemo(() => {
-        const rms = [...new Set(aggregatedData.map(d => d.rm))].sort();
-        const brands = [...new Set(aggregatedData.map(d => d.brand))].sort();
-        const cities = [...new Set(aggregatedData.map(d => d.city))].sort();
-        return { rms, brands, cities };
-    }, [aggregatedData]);
+    const handleOkbStatusChange = (status: OkbStatus) => {
+        setOkbStatus(status);
+        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
+        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
+    };
 
-    const normalize = useCallback((str: string): string =>
-        str
-        ?.toLowerCase()
-        .replace(/(город федерального значения|автономный округ|республика|область|край|ао|г\.|обл\.|респ\.)/gi, '')
-        .trim()
-        .replace(/\s+/g, ' '),
-    []);
+    const handleOkbDataChange = (data: any[]) => {
+        setOkbData(data);
+    };
 
-    const matchesRegionOrCity = useCallback((item: AggregatedDataRow, query: string): boolean => {
-        const normQuery = normalize(query);
-        if (!normQuery) return false;
+    // Effect to apply filters when data or filters change
+    useEffect(() => {
+        setIsLoading(true);
+        setLoadingMessage('Применение фильтров...');
+        // Use a timeout to prevent blocking the UI on large datasets
+        const timer = setTimeout(() => {
+            const result = applyFilters(allData, filters);
+            setFilteredData(result);
+            setIsLoading(false);
+            setLoadingMessage('');
+        }, 100);
+        return () => clearTimeout(timer);
+    }, [allData, filters]);
 
-        const normItemCity = normalize(item.city);
-
-        if (normItemCity.includes(normQuery)) {
-            return true;
-        }
-
-        const regionForQuery = regionCenters[normQuery as keyof typeof regionCenters];
-        if (regionForQuery && normalize(regionForQuery).includes(normItemCity)) {
-            return true;
-        }
-
-        const regionForItem = Object.keys(regionCenters).find(key => normalize(regionCenters[key as keyof typeof regionCenters]) === normItemCity);
-        if (regionForItem && normalize(regionForItem).includes(normQuery)) {
-            return true;
-        }
-        
-        return false;
-    }, [normalize]);
-
-    const filteredAndSortedData = useMemo(() => {
-        let processedData = aggregatedData.filter(item => 
-            (!filters.rm || item.rm === filters.rm) &&
-            (filters.brand.length === 0 || filters.brand.includes(item.brand)) &&
-            (filters.city.length === 0 || filters.city.includes(item.city))
-        );
-
-        if (searchTerm) {
-            const lowercasedTerm = searchTerm.toLowerCase();
-            processedData = processedData.filter(item =>
-                item.rm.toLowerCase().includes(lowercasedTerm) ||
-                item.brand.toLowerCase().includes(lowercasedTerm) ||
-                matchesRegionOrCity(item, searchTerm) ||
-                String(item.potentialTTs).includes(lowercasedTerm) ||
-                formatLargeNumber(item.fact).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.potential).toLowerCase().includes(lowercasedTerm) ||
-                formatLargeNumber(item.growthPotential).toLowerCase().includes(lowercasedTerm) ||
-                item.growthRate.toFixed(2).includes(lowercasedTerm)
-            );
-        }
-
-        if (sortConfig !== null) {
-            processedData.sort((a, b) => {
-                const aVal = a[sortConfig.key];
-                const bVal = b[sortConfig.key];
-                if (typeof aVal === 'string' && typeof bVal === 'string') {
-                    return sortConfig.direction === 'ascending' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                }
-                if (aVal < bVal) {
-                    return sortConfig.direction === 'ascending' ? -1 : 1;
-                }
-                if (aVal > bVal) {
-                    return sortConfig.direction === 'ascending' ? 1 : -1;
-                }
-                return 0;
-            });
-        }
-        
-        return processedData;
-    }, [aggregatedData, filters, searchTerm, sortConfig, matchesRegionOrCity]);
-
-    const metrics = useMemo(() => calculateMetrics(filteredAndSortedData), [filteredAndSortedData]);
-
-    const totalPotentialTTs = useMemo(() => {
-        const cityTTs = new Map<string, number>();
-        filteredAndSortedData.forEach(item => {
-            if (!cityTTs.has(item.city)) {
-                cityTTs.set(item.city, item.potentialTTs || 0);
-            }
-        });
-        return Array.from(cityTTs.values()).reduce((sum, count) => sum + count, 0);
-    }, [filteredAndSortedData]);
-
+    const isDataLoaded = allData.length > 0;
+    const isControlPanelLocked = isLoading || (isDataLoaded && !okbStatus);
 
     return (
-        <div className="container mx-auto p-4 md:p-8 min-h-screen">
-            <header className="mb-10 text-center">
-                <h1 className="text-4xl md:text-5xl font-extrabold text-white tracking-tight">
-                    Гео-Анализ <span className="text-accent">Limkorm</span>
-                </h1>
-                <p className="text-gray-400 mt-2 max-w-2xl mx-auto">
-                    Инструмент для планирования продаж: детализация по РМ, Бренду и Городу на основе открытых данных OpenStreetMap.
-                </p>
-            </header>
+        <div className="bg-primary-dark min-h-screen text-slate-200 font-sans p-4 lg:p-6">
+            <main className="max-w-screen-2xl mx-auto space-y-6">
+                <header>
+                    <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
+                    <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
+                </header>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                    {/* Left Sidebar */}
+                    <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
+                        <DataControl
+                            onDataLoaded={handleFileProcessed}
+                            onLoadingStateChange={handleProcessingStateChange}
+                            onOkbStatusChange={handleOkbStatusChange}
+                            onOkbDataChange={handleOkbDataChange}
+                            okbData={okbData}
+                            okbStatus={okbStatus}
+                            disabled={isControlPanelLocked}
+                        />
+                        <Filters
+                            options={filterOptions}
+                            currentFilters={filters}
+                            onFilterChange={handleFilterChange}
+                            onReset={resetFilters}
+                            disabled={!isDataLoaded || isLoading}
+                        />
+                    </aside>
 
-            <div id="notification-area" className="fixed top-4 right-4 z-[100] space-y-2 w-full max-w-sm">
-                {notifications.map(n => (
-                    <Notification key={n.id} message={n.message} type={n.type} />
-                ))}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 space-y-8">
-                    <OKBManagement addNotification={addNotification} />
-                    <DataControl onStart={handleStartAnalysis} loadingState={loadingState} />
-                    <Filters 
-                        options={filterOptions}
-                        currentFilters={filters}
-                        onFilterChange={handleFilterChange}
-                        onReset={resetFilters}
-                        disabled={aggregatedData.length === 0}
-                    />
-                    <MetricsSummary metrics={metrics} totalPotentialTTs={totalPotentialTTs} />
+                    {/* Main Content */}
+                    <div className="lg:col-span-3 space-y-6">
+                        <MetricsSummary metrics={summaryMetrics} disabled={!isDataLoaded || isLoading} />
+                        <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
+                        <PotentialChart data={filteredData} />
+                    </div>
                 </div>
 
-                <div className="lg:col-span-2 space-y-8">
-                    <PotentialChart data={filteredAndSortedData} />
-                    <ResultsTable 
-                        data={filteredAndSortedData} 
-                        isLoading={loadingState.status === 'reading' || loadingState.status === 'fetching' || loadingState.status === 'aggregating'}
-                        sortConfig={sortConfig}
-                        requestSort={requestSort}
-                        searchTerm={searchTerm}
-                        onSearchChange={setSearchTerm}
-                        failedRegions={failedRegions}
-                    />
+                {/* Notifications container */}
+                <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
+                    {notifications.map(n => (
+                        <Notification key={n.id} message={n.message} type={n.type} />
+                    ))}
                 </div>
-            </div>
+
+                {/* Details Modal */}
+                <DetailsModal 
+                    isOpen={isModalOpen} 
+                    onClose={() => setIsModalOpen(false)}
+                    data={selectedRow}
+                    okbData={okbData}
+                />
+            </main>
         </div>
     );
-}
+};
+
+export default App;

@@ -1,38 +1,44 @@
-export interface PotentialClient {
-    name: string;
-    address: string;
-    phone: string;
-    type: string;
-    lat?: number;
-    lon?: number;
+
+export interface RawDataRow {
+    [key: string]: any; // Allows for flexible column names from Excel
+}
+
+export interface OkbDataRow {
+    'Наименование полное': string;
+    'Юридический адрес': string;
+    'Вид деятельности (ОКВЭД)': string;
+    'Широта': number | null;
+    'Долгота': number | null;
+    'Регион': string;
 }
 
 export interface AggregatedDataRow {
+    key: string; // Unique key for react lists, e.g., clientName-brand
     rm: string;
+    clientName: string;
     brand: string;
     city: string;
+    region: string;
     fact: number;
     potential: number;
     growthPotential: number;
-    growthRate: number;
-    potentialTTs: number;
-    potentialClients: PotentialClient[];
+    growthPercentage: number;
 }
 
-// FIX: Add RawDataRow type definition. This type was missing, causing an import error.
-export interface RawDataRow {
-    rm: string;
-    brand: string;
-    city: string;
-    fact: number;
-    fullAddress: string;
+export interface WorkerMessage {
+    type: 'progress' | 'result' | 'error';
+    payload: any;
 }
 
-export interface LoadingState {
-    status: 'idle' | 'reading' | 'fetching' | 'aggregating' | 'done' | 'error';
-    progress: number;
-    text: string;
-    etr: string;
+export interface WorkerProgress {
+    percentage: number;
+    message: string;
+}
+
+export interface OkbStatus {
+    lastUpdated: string | null;
+    status: 'idle' | 'updating' | 'ready' | 'error';
+    message?: string;
 }
 
 export interface FilterOptions {
@@ -47,12 +53,12 @@ export interface FilterState {
     city: string[];
 }
 
-export interface Metrics {
-    totalFact: number;
-    totalPotential: number;
-    totalGrowthPotential: number;
-    totalGrowthRate: number;
-    avgPlanIncrease: number;
+export interface PotentialClient {
+    name: string;
+    address: string;
+    type: string;
+    lat: number | null;
+    lon: number | null;
 }
 
 export interface NotificationMessage {
@@ -61,26 +67,11 @@ export interface NotificationMessage {
     type: 'success' | 'error' | 'info';
 }
 
-export type SortConfig = {
-    key: keyof AggregatedDataRow;
-    direction: 'ascending' | 'descending';
-} | null;
-
-// This type now represents the expected structure of a row from Google Sheets.
-// It should contain all necessary data, including what was previously in the user's file.
-export interface OKBDataRow {
-    'Страна': string;
-    'Субъект': string;
-    'Город или населенный пункт': string;
-    'Категория': string;
-    'Наименование': string;
-    'Адрес': string;
-    'Контакты': string;
-    'Дата обновления базы': string;
-    'Широта'?: string;
-    'Долгота'?: string;
-    // Optional fields that are now expected from the master Google Sheet
-    'РМ'?: string;
-    'Бренд'?: string;
-    'Факт (кг/ед)'?: string | number;
+export interface SummaryMetrics {
+    totalFact: number;
+    totalPotential: number;
+    totalGrowth: number;
+    totalClients: number;
+    averageGrowthPercentage: number;
+    topPerformingRM: { name: string; value: number };
 }

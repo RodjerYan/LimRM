@@ -1,84 +1,91 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
+import { OkbStatus } from '../types';
+import { LoaderIcon, SuccessIcon, ErrorIcon, InfoIcon } from './icons';
 
 interface OKBManagementProps {
-    addNotification: (message: string, type: 'success' | 'error' | 'info') => void;
+    onStatusChange: (status: OkbStatus) => void;
+    onDataChange: (data: any[]) => void;
+    status: OkbStatus | null;
+    disabled: boolean;
 }
 
-interface OKBStatus {
-    rowCount: number;
-    modifiedTime: string;
-}
+const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
+    const [isLoading, setIsLoading] = useState(false);
 
-const OKBManagement: React.FC<OKBManagementProps> = ({ addNotification }) => {
-    const [status, setStatus] = useState<OKBStatus | null>(null);
-    const [isLoadingStatus, setIsLoadingStatus] = useState(true);
-
-    const fetchStatus = useCallback(async () => {
-        setIsLoadingStatus(true);
+    const fetchStatus = async () => {
         try {
             const response = await fetch('/api/get-okb-status');
-            
-            if (!response.ok) {
-                let errorMessage = `Ошибка ${response.status}: ${response.statusText}.`;
-                try {
-                    const errorData = await response.json();
-                    errorMessage = errorData.details || errorData.message || errorMessage;
-                } catch {
-                     // Parsing failed, use raw text
-                }
-                throw new Error(errorMessage);
-            }
-
-            const data: OKBStatus = await response.json();
-            setStatus(data);
-
-        } catch (error: any) {
-            console.error('Error fetching OKB status:', error);
-            const finalErrorMessage = error.message.includes('Failed to fetch') 
-                ? 'Ошибка сети: Не удалось получить статус базы ОКБ.'
-                : error.message;
-
-            addNotification(finalErrorMessage, 'error');
-            setStatus(null);
-        } finally {
-            setIsLoadingStatus(false);
+            if (!response.ok) throw new Error('Failed to fetch status');
+            const data: OkbStatus = await response.json();
+            onStatusChange(data);
+        } catch (error) {
+            console.error("Error fetching OKB status:", error);
+            onStatusChange({ lastUpdated: null, status: 'error', message: 'Не удалось получить статус ОКБ' });
         }
-    }, [addNotification]);
-
-    useEffect(() => {
-        fetchStatus();
-        // Refresh the status periodically to keep it up-to-date
-        const intervalId = setInterval(fetchStatus, 60000); // Refresh every 60 seconds
-        return () => clearInterval(intervalId); // Cleanup interval on component unmount
-    }, [fetchStatus]);
-
-
-    const formatStatus = () => {
-        if (isLoadingStatus) return 'Загрузка статуса...';
-        if (!status || typeof status.rowCount !== 'number') return 'Статус неизвестен';
-        
-        const lastModified = new Date(status.modifiedTime).toLocaleString('ru-RU', {
-            day: '2-digit', month: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit'
-        });
-        return `В базе ${status.rowCount} строк. Обновлено: ${lastModified}`;
     };
 
+    const fetchData = async () => {
+        setIsLoading(true);
+        onStatusChange({ ...(status || { lastUpdated: null, status: 'idle' }), status: 'updating', message: 'Загрузка данных...' });
+        try {
+            const response = await fetch('/api/get-okb');
+            if (!response.ok) throw new Error('Failed to fetch OKB data');
+            const data = await response.json();
+            if(!data || !Array.isArray(data.data)) throw new Error('Invalid data format received');
+            onDataChange(data.data);
+            const newStatus = { lastUpdated: new Date().toISOString(), status: 'ready' as const, message: `Данные обновлены. Записей: ${data.data.length}` };
+            onStatusChange(newStatus);
+        } catch (error) {
+            console.error("Error fetching OKB data:", error);
+            onStatusChange({ ...(status || { lastUpdated: null, status: 'idle' }), status: 'error', message: 'Ошибка при загрузке данных ОКБ' });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchStatus(); // Initial status fetch on component mount
+    }, []);
+
+    const getStatusContent = () => {
+        if (!status) {
+            return { icon: <LoaderIcon />, text: 'Получение статуса...', color: 'text-gray-400' };
+        }
+        switch (status.status) {
+            case 'ready':
+                return { icon: <SuccessIcon />, text: 'ОКБ загружена и готова к работе', color: 'text-success' };
+            case 'updating':
+                return { icon: <LoaderIcon />, text: 'Идет обновление ОКБ...', color: 'text-blue-400' };
+            case 'error':
+                return { icon: <ErrorIcon />, text: status.message || 'Ошибка при работе с ОКБ', color: 'text-danger' };
+            case 'idle':
+            default:
+                return { icon: <InfoIcon />, text: 'ОКБ не загружена. Нажмите "Обновить"', color: 'text-warning' };
+        }
+    };
+
+    const { icon, text, color } = getStatusContent();
+    const lastUpdatedDate = status?.lastUpdated ? new Date(status.lastUpdated).toLocaleString('ru-RU') : 'никогда';
+
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <h2 className="text-xl font-bold mb-2 text-white">
-                Статус базы (ОКБ)
-            </h2>
-            <div 
-                className={`h-10 p-2.5 rounded-lg flex items-center justify-center transition-colors ${isLoadingStatus ? 'bg-gray-700/30 shimmer-effect' : 'bg-gray-900/50'}`}
-                title={formatStatus()}
-            >
-                <p className="text-sm text-gray-300 truncate">{formatStatus()}</p>
-            </div>
-             <p className="text-xs text-gray-500 mt-3 text-center">
-                Эта база данных обновляется автоматически по расписанию. 
-                Ручное управление доступно в <a href={`https://docs.google.com/spreadsheets/d/1ci4Uf92NaFHDlaem5UQ6lj7QjwJiKzTEu1BhcERUq6s/edit`} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">Google Sheet</a>.
-            </p>
+        <div className={`bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 transition-opacity ${disabled ? 'opacity-50' : ''}`}>
+             <h2 className="text-xl font-bold mb-4 text-white">Управление ОКБ</h2>
+             <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <div className={`flex items-center gap-2 ${color}`}>
+                        <div className="w-5 h-5 flex-shrink-0">{icon}</div>
+                        <p className="font-semibold">{text}</p>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 pl-7">Последнее обновление: {lastUpdatedDate}</p>
+                </div>
+                 <button
+                    onClick={fetchData}
+                    disabled={isLoading || disabled}
+                    className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto flex-shrink-0"
+                >
+                    {isLoading ? 'Обновление...' : 'Обновить ОКБ'}
+                </button>
+             </div>
         </div>
     );
 };

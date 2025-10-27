@@ -12,7 +12,7 @@ const ApiKeyErrorDisplay: React.FC = () => (
                 <div className="bg-yellow-900/40 border border-warning/50 p-3 rounded-md mb-4">
                     <p className="font-bold text-warning">Внимание!</p>
                     <p className="text-slate-300 text-sm">
-                        Вам нужно настроить **ЧЕТЫРЕ** переменные окружения в настройках вашего проекта на Vercel.
+                        Вам нужно настроить **СЕМЬ** переменных окружения в настройках вашего проекта на Vercel.
                     </p>
                 </div>
                 <ol className="list-decimal list-inside space-y-3 text-slate-400">
@@ -20,14 +20,14 @@ const ApiKeyErrorDisplay: React.FC = () => (
                         Перейдите в ваш проект на Vercel, откройте вкладку **"Settings"**, затем выберите **"Environment Variables"**.
                     </li>
                     <li>
-                        Добавьте следующие четыре переменные:
+                        Добавьте следующие переменные:
                         <ul className="list-disc list-inside ml-6 mt-3 space-y-4 text-slate-300">
                            <li>
                                 <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY</code>
+                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_1</code> ... <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_4</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Ваш ключ API от Google Gemini. Он используется на сервере и должен оставаться в секрете.
+                                    **(Секрет)** Ваши четыре ключа API от Google Gemini. Сервер будет использовать их случайным образом для распределения нагрузки.
                                 </div>
                            </li>
                            <li>
