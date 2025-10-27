@@ -13,9 +13,19 @@ async function getGoogleSheetsClient() {
   if (!serviceAccountKey) {
     throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
   }
+  
+  let credentials;
+  try {
+    credentials = JSON.parse(serviceAccountKey);
+  } catch (error) {
+    console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:", error);
+    throw new Error(
+      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string without extra characters or line breaks. Check your Vercel environment variable settings.'
+    );
+  }
 
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(serviceAccountKey),
+    credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 

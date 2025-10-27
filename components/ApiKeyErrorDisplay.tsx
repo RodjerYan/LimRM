@@ -3,18 +3,12 @@ import React from 'react';
 const ApiKeyErrorDisplay: React.FC = () => (
     <div className="flex items-center justify-center h-screen p-4">
         <div className="bg-card-bg/70 backdrop-blur-sm p-8 rounded-2xl shadow-lg border border-danger/50 max-w-4xl text-center">
-            <h1 className="text-3xl font-bold text-danger mb-4">Ошибка Конфигурации</h1>
+            <h1 className="text-3xl font-bold text-danger mb-4">Ошибка Конфигурирования Сервера</h1>
             <p className="text-lg text-slate-300 mb-6">
                 Приложение не может запуститься, так как не настроены переменные окружения, необходимые для его работы на Vercel.
             </p>
             <div className="text-left bg-gray-900/50 p-6 rounded-lg border border-gray-700">
                 <p className="font-semibold text-white mb-3">Как это исправить (для Vercel):</p>
-                <div className="bg-yellow-900/40 border border-warning/50 p-3 rounded-md mb-4">
-                    <p className="font-bold text-warning">Внимание!</p>
-                    <p className="text-slate-300 text-sm">
-                        Вам нужно настроить **СЕМЬ** переменных окружения в настройках вашего проекта на Vercel.
-                    </p>
-                </div>
                 <ol className="list-decimal list-inside space-y-3 text-slate-400">
                     <li>
                         Перейдите в ваш проект на Vercel, откройте вкладку **"Settings"**, затем выберите **"Environment Variables"**.
@@ -27,15 +21,19 @@ const ApiKeyErrorDisplay: React.FC = () => (
                                     <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_1</code> ... <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_4</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Ваши четыре ключа API от Google Gemini. Сервер будет использовать их случайным образом для распределения нагрузки.
+                                    **(Секрет)** Ваши четыре ключа API от Google Gemini. Сервер будет использовать их случайным образом.
                                 </div>
                            </li>
                            <li>
                                 <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GOOGLE_SCRIPT_URL</code>
+                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GOOGLE_SERVICE_ACCOUNT_KEY</code>
                                 </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Полный URL вашего опубликованного Google Apps Script для получения данных из таблицы.
+                                <div className="text-xs text-gray-400 mt-1 space-y-1">
+                                    <p>**(Секрет)** Полный JSON-ключ вашего сервисного аккаунта Google.</p>
+                                    <p className="text-yellow-500">
+                                        **Важно:** Скопируйте все содержимое JSON-файла и вставьте его как одну строку. Убедитесь, что нет переносов строк.
+                                    </p>
+                                     <p>Не забудьте "поделиться" вашей Google Таблицей с адресом `client_email` из этого JSON-ключа, выдав ему права **Редактора**.</p>
                                 </div>
                            </li>
                             <li>

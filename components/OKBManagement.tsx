@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
 
@@ -12,33 +12,13 @@ interface OKBManagementProps {
 const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
     const [isFetching, setIsFetching] = useState(false);
 
-    const fetchInitialStatus = useCallback(async () => {
-        // This function gets the last known status from the server, e.g., the timestamp of the last successful data generation.
-        onStatusChange({ status: 'idle', message: 'Загрузите данные ОКБ для начала работы.' });
-        try {
-            const response = await fetch('/api/get-okb-status');
-            if (response.ok) {
-                const statusData = await response.json();
-                if (statusData.timestamp) {
-                     onStatusChange({
-                        status: 'idle',
-                        message: 'Готова к загрузке последняя версия ОКБ.',
-                        ...statusData
-                    });
-                }
-            }
-        } catch (error) {
-            console.error("Could not fetch initial OKB status:", error);
-            // Silently fail, proceed with the default idle state.
-        }
-    }, [onStatusChange]);
-
     useEffect(() => {
-        // Fetch status on initial component mount if not already set.
+        // On mount, if the status hasn't been set by a parent, initialize it to the default idle state.
         if (!status) {
-             fetchInitialStatus();
+            onStatusChange({ status: 'idle', message: 'Загрузите данные ОКБ для начала работы.' });
         }
-    }, [fetchInitialStatus, status]);
+    }, [onStatusChange, status]);
+
 
     const handleFetchData = async () => {
         setIsFetching(true);
@@ -47,7 +27,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             const response = await fetch('/api/get-okb');
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);
+                throw new Error(errorData.details || errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);
             }
             const data: OkbDataRow[] = await response.json();
             onDataChange(data);
