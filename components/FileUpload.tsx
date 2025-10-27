@@ -15,7 +15,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
     const [etr, setEtr] = useState<number | null>(null);
-    const workerRef = useRef<Worker>();
+    // FIX: Correctly initialize useRef with null. The type must allow for null before the worker is created.
+    const workerRef = useRef<Worker | null>(null);
     const startTimeRef = useRef<number | null>(null);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
