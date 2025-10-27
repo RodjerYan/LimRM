@@ -13,8 +13,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
         res.status(200).json(okbData);
     } catch (error) {
-        console.error('Error fetching OKB data from Google Sheets:', error);
-        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-        res.status(500).json({ error: 'Failed to retrieve OKB data', details: errorMessage });
+        // --- Enhanced Error Logging ---
+        console.error('--- Full Error Object from Google Sheets API ---');
+        console.error(JSON.stringify(error, null, 2)); // Log the full error object for detailed inspection in Vercel
+
+        let detailedMessage = 'An unknown server error occurred.';
+        if (error instanceof Error) {
+            detailedMessage = error.message;
+        }
+        
+        // Check for specific Google API error structures
+        const gapiError = error as any;
+        if (gapiError.response?.data?.error) {
+            const { message, code, status } = gapiError.response.data.error;
+            detailedMessage = `Google API Error ${code} (${status}): ${message}`;
+        } else if (gapiError.errors && Array.isArray(gapiError.errors) && gapiError.errors.length > 0) {
+            detailedMessage = gapiError.errors.map((e: any) => e.message).join(', ');
+        }
+
+        res.status(500).json({ error: 'Failed to retrieve OKB data', details: detailedMessage });
     }
 }
