@@ -1,88 +1,133 @@
-import { AggregatedDataRow, OkbDataRow, FilterOptions, FilterState, SummaryMetrics } from '../types';
+
+import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
 import { regionCenters } from './regionCenters';
 
 /**
- * Normalizes a string for comparison by converting to lowercase and removing special characters.
- * @param str The input string.
+ * Normalizes a string by converting it to lower case, removing extra spaces,
+ * and standardizing common company legal forms for better matching.
+ * @param str The string to normalize.
  * @returns The normalized string.
  */
 export const normalizeString = (str: string | undefined | null): string => {
     if (!str) return '';
     return str
         .toLowerCase()
-        .replace(/["'«»().,]/g, '') // Remove common punctuation
-        .replace(/\s+/g, ' ') // Collapse whitespace
+        .replace(/["'«»`]/g, '') // remove quotes
+        .replace(/\s+/g, ' ') // collapse whitespace
+        .replace(/ё/g, 'е')
+        .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ') // remove legal forms
         .trim();
 };
 
+
 /**
- * Calculates a simple similarity score between two strings based on common words.
- * @param str1 First string.
- * @param str2 Second string.
- * @returns A number representing the similarity score.
+ * Compares two strings using a simplified similarity metric (Jaro-Winkler-like).
+ * This is a basic implementation for demonstration purposes.
+ * @param s1 The first string.
+ * @param s2 The second string.
+ * @returns A similarity score between 0 and 1.
  */
-const getSimpleSimilarity = (str1: string, str2: string): number => {
-    const words1 = new Set(str1.split(' '));
-    const words2 = new Set(str2.split(' '));
-    if (words1.size === 0 || words2.size === 0) return 0;
+const stringSimilarity = (s1: string, s2: string): number => {
+    // Basic Jaro-Winkler logic (simplified)
+    let m = 0;
+    const s1_len = s1.length;
+    const s2_len = s2.length;
+    if (s1_len === 0 || s2_len === 0) return 0;
+
+    const match_distance = Math.floor(Math.max(s1_len, s2_len) / 2) - 1;
+    const s1_matches = new Array(s1_len).fill(false);
+    const s2_matches = new Array(s2_len).fill(false);
+
+    for (let i = 0; i < s1_len; i++) {
+        const start = Math.max(0, i - match_distance);
+        const end = Math.min(i + match_distance + 1, s2_len);
+        for (let j = start; j < end; j++) {
+            if (!s2_matches[j] && s1[i] === s2[j]) {
+                s1_matches[i] = true;
+                s2_matches[j] = true;
+                m++;
+                break;
+            }
+        }
+    }
+
+    if (m === 0) return 0;
+
+    let t = 0;
+    let k = 0;
+    for (let i = 0; i < s1_len; i++) {
+        if (s1_matches[i]) {
+            while (!s2_matches[k]) k++;
+            if (s1[i] !== s2[k]) t++;
+            k++;
+        }
+    }
+    t /= 2;
+
+    const jaro = (m / s1_len + m / s2_len + (m - t) / m) / 3;
     
-    const intersection = new Set([...words1].filter(word => words2.has(word)));
-    return intersection.size / Math.max(words1.size, words2.size);
+    // Winkler bonus
+    let p = 0.1;
+    let l = 0;
+    const max_l = 4;
+    while (l < max_l && s1[l] === s2[l]) {
+        l++;
+    }
+    
+    return jaro + l * p * (1 - jaro);
 };
 
 
 /**
- * Finds the best matching OKB record for a given client name and city.
- * It prioritizes city matches and then uses string similarity for the name.
- * @param clientName The name of the client to match.
+ * Finds the best matching record from the OKB data for a given client name and city.
+ * @param clientName The name of the client from the main data file.
  * @param city The city of the client.
- * @param okbDataWithNormalizedNames An array of OKB data, with a pre-computed 'normalizedName' field.
- * @returns The best matching OkbDataRow or null if no suitable match is found.
+ * @param okbData The array of OKB records with pre-normalized names.
+ * @returns The best matching OKB row or null if no good match is found.
  */
-export const findBestOkbMatch = (clientName: string, city: string, okbDataWithNormalizedNames: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
-    const normalizedClient = normalizeString(clientName);
-    const normalizedCity = normalizeString(city);
+export const findBestOkbMatch = (clientName: string, city: string, okbData: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
+    const normalizedClientName = normalizeString(clientName);
+    const lowercasedCity = city.toLowerCase();
+    
+    let bestMatch: OkbDataRow | null = null;
+    let maxScore = 0.8; // Set a threshold to avoid bad matches
 
-    const cityMatches = okbDataWithNormalizedNames.filter(
-        okb => normalizeString(okb['Город']) === normalizedCity
+    const potentialMatches = okbData.filter(okb =>
+        okb['Город']?.toLowerCase() === lowercasedCity || okb['Юридический адрес']?.toLowerCase().includes(lowercasedCity)
     );
 
-    const candidates = cityMatches.length > 0 ? cityMatches : okbDataWithNormalizedNames;
-
-    if (candidates.length === 0) return null;
-
-    let bestMatch: OkbDataRow | null = null;
-    let bestScore = 0.5; // Set a threshold to avoid poor matches
-
-    for (const okb of candidates) {
-        const score = getSimpleSimilarity(normalizedClient, okb.normalizedName);
-        if (score > bestScore) {
-            bestScore = score;
+    for (const okb of potentialMatches) {
+        const score = stringSimilarity(normalizedClientName, okb.normalizedName);
+        if (score > maxScore) {
+            maxScore = score;
             bestMatch = okb;
         }
     }
-
+    
     return bestMatch;
 };
 
 
 /**
  * Extracts a standardized region name from an OKB data row.
- * It checks the 'Регион' field first, then tries to derive it from the 'Город' field using a lookup table.
- * @param okbMatch The OKB data row.
- * @returns The determined region name or 'Регион не определен'.
+ * It checks the 'Регион' field first, then tries to derive it from the 'Город' field using a map.
+ * @param okbRow The OKB data row.
+ * @returns The determined region name or a default value.
  */
-export const extractRegionFromOkb = (okbMatch: OkbDataRow): string => {
-    const region = okbMatch['Регион'];
-    if (region && region.trim().length > 5) {
-        // Simple title case formatting
-        return region.trim().toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
+    if (okbRow['Регион']) {
+        // Simple standardization for consistency
+        const region = okbRow['Регион'].toLowerCase()
+            .replace('г.', 'город')
+            .replace('обл.', 'область')
+            .replace('респ.', 'республика');
+        return region.charAt(0).toUpperCase() + region.slice(1);
     }
-
-    const city = okbMatch['Город']?.toLowerCase().trim();
+    
+    const city = okbRow['Город']?.toLowerCase();
     if (city && regionCenters[city]) {
-        const foundRegion = regionCenters[city];
-        return foundRegion.charAt(0).toUpperCase() + foundRegion.slice(1);
+        const region = regionCenters[city];
+        return region.charAt(0).toUpperCase() + region.slice(1);
     }
 
     return 'Регион не определен';
@@ -90,8 +135,23 @@ export const extractRegionFromOkb = (okbMatch: OkbDataRow): string => {
 
 
 /**
- * Extracts unique, sorted options for filters from the aggregated data.
- * @param data An array of all aggregated data rows.
+ * Filters the main dataset based on the current filter state.
+ * @param allData The complete array of aggregated data.
+ * @param filters The current filter settings.
+ * @returns A new array containing only the rows that match the filters.
+ */
+export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
+    return allData.filter(row => {
+        const rmMatch = filters.rm ? row.rm === filters.rm : true;
+        const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
+        const cityMatch = filters.city.length > 0 ? filters.city.includes(row.city) : true;
+        return rmMatch && brandMatch && cityMatch;
+    });
+};
+
+/**
+ * Extracts unique values for all filterable columns from the dataset.
+ * @param data The array of aggregated data.
  * @returns An object containing arrays of unique RMs, brands, and cities.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
@@ -106,70 +166,47 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
     });
 
     return {
-        rms: Array.from(rms).sort((a, b) => a.localeCompare(b, 'ru')),
-        brands: Array.from(brands).sort((a, b) => a.localeCompare(b, 'ru')),
-        cities: Array.from(cities).sort((a, b) => a.localeCompare(b, 'ru')),
+        rms: Array.from(rms).sort(),
+        brands: Array.from(brands).sort(),
+        cities: Array.from(cities).sort(),
     };
 };
 
 /**
- * Applies the current set of filters to the data.
- * @param data The full dataset.
- * @param filters The current filter state.
- * @returns The filtered array of data rows.
+ * Calculates summary metrics for a given dataset.
+ * @param data The array of (usually filtered) aggregated data.
+ * @returns An object with calculated summary metrics.
  */
-export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
-    return data.filter(row => {
-        const rmMatch = !filters.rm || row.rm === filters.rm;
-        const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
-        const cityMatch = filters.city.length === 0 || filters.city.includes(row.city);
-        return rmMatch && brandMatch && cityMatch;
-    });
-};
+export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics => {
+    const totalFact = data.reduce((sum, row) => sum + row.fact, 0);
+    const totalPotential = data.reduce((sum, row) => sum + row.potential, 0);
+    const totalGrowth = data.reduce((sum, row) => sum + row.growthPotential, 0);
 
-
-/**
- * Calculates summary metrics from a given set of data rows.
- * @param data The data (usually pre-filtered) to summarize.
- * @returns A SummaryMetrics object or null if data is empty.
- */
-export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics | null => {
-    if (data.length === 0) {
-        return null;
-    }
-
-    const totals = data.reduce(
-        (acc, row) => {
-            acc.totalFact += row.fact;
-            acc.totalPotential += row.potential;
-            acc.totalGrowth += row.growthPotential;
-            return acc;
-        },
-        { totalFact: 0, totalPotential: 0, totalGrowth: 0 }
-    );
-
-    const rmGrowth: { [key: string]: number } = data.reduce((acc, row) => {
-        if (!acc[row.rm]) {
-            acc[row.rm] = 0;
+    const totalClients = data.length;
+    
+    // To calculate average growth percentage, we sum the potential and growth and then divide,
+    // rather than averaging percentages to avoid skewed results.
+    const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
+    
+    const rmGrowth: { [key: string]: number } = {};
+    data.forEach(row => {
+        if (!rmGrowth[row.rm]) {
+            rmGrowth[row.rm] = 0;
         }
-        acc[row.rm] += row.growthPotential;
-        return acc;
-    }, {} as { [key: string]: number });
+        rmGrowth[row.rm] += row.growthPotential;
+    });
 
     const topPerformingRM = Object.entries(rmGrowth).reduce(
-        (top, [name, value]) => {
-            return value > top.value ? { name, value } : top;
-        },
+        (top, [name, value]) => (value > top.value ? { name, value } : top),
         { name: 'N/A', value: -1 }
     );
-    
-    const totalPotentialSum = totals.totalPotential > 0 ? totals.totalPotential : 1;
-    const averageGrowthPercentage = (totals.totalGrowth / totalPotentialSum) * 100;
 
     return {
-        ...totals,
-        totalClients: data.length,
-        averageGrowthPercentage: isNaN(averageGrowthPercentage) ? 0 : averageGrowthPercentage,
-        topPerformingRM: topPerformingRM.name === 'N/A' ? { name: 'Нет данных', value: 0 } : topPerformingRM,
+        totalFact,
+        totalPotential,
+        totalGrowth,
+        totalClients,
+        averageGrowthPercentage,
+        topPerformingRM,
     };
 };
