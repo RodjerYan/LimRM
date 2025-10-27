@@ -1,55 +1,88 @@
-
-import { AggregatedDataRow, FilterState, FilterOptions, SummaryMetrics, OkbDataRow } from "../types";
-import * as xlsx from 'xlsx';
+import { AggregatedDataRow, OkbDataRow, FilterOptions, FilterState, SummaryMetrics } from '../types';
 import { regionCenters } from './regionCenters';
 
 /**
- * Normalizes a string for comparison by converting to lowercase and removing common business entity suffixes.
+ * Normalizes a string for comparison by converting to lowercase and removing special characters.
+ * @param str The input string.
+ * @returns The normalized string.
  */
-export const normalizeString = (str: string): string => {
+export const normalizeString = (str: string | undefined | null): string => {
     if (!str) return '';
-    return str.toLowerCase()
-        .replace(/"/g, '')
-        .replace(/«/g, '')
-        .replace(/»/g, '')
-        .replace(/[\s-.,()]+/g, ' ')
-        .replace(/\b(ооо|ип|зао|пао|ао|гк|фгбу|гбу|мбу)\b/g, '')
+    return str
+        .toLowerCase()
+        .replace(/["'«»().,]/g, '') // Remove common punctuation
+        .replace(/\s+/g, ' ') // Collapse whitespace
         .trim();
 };
 
 /**
- * Finds the best matching client from the OKB data based on name and city.
+ * Calculates a simple similarity score between two strings based on common words.
+ * @param str1 First string.
+ * @param str2 Second string.
+ * @returns A number representing the similarity score.
  */
-export const findBestOkbMatch = (clientName: string, city: string, okbData: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
-    const normalizedClient = normalizeString(clientName);
+const getSimpleSimilarity = (str1: string, str2: string): number => {
+    const words1 = new Set(str1.split(' '));
+    const words2 = new Set(str2.split(' '));
+    if (words1.size === 0 || words2.size === 0) return 0;
     
-    // Simple direct match first
-    const directMatch = okbData.find(okb => okb.normalizedName.includes(normalizedClient));
-    if (directMatch) return directMatch;
-
-    // A more complex search could be implemented here (e.g., using string similarity libraries)
-    // For now, we'll keep it simple.
-    return null;
+    const intersection = new Set([...words1].filter(word => words2.has(word)));
+    return intersection.size / Math.max(words1.size, words2.size);
 };
 
-/**
- * Extracts a standardized region name from OKB data.
- */
-export const extractRegionFromOkb = (okbEntry: OkbDataRow): string => {
-    const address = okbEntry['Юридический адрес']?.toLowerCase() || '';
-    const regionFromOkb = okbEntry['Регион']?.toLowerCase() || '';
 
-    // Prioritize the dedicated "Регион" column if it exists and is valid.
-    if (regionFromOkb) {
-        return okbEntry['Регион'];
+/**
+ * Finds the best matching OKB record for a given client name and city.
+ * It prioritizes city matches and then uses string similarity for the name.
+ * @param clientName The name of the client to match.
+ * @param city The city of the client.
+ * @param okbDataWithNormalizedNames An array of OKB data, with a pre-computed 'normalizedName' field.
+ * @returns The best matching OkbDataRow or null if no suitable match is found.
+ */
+export const findBestOkbMatch = (clientName: string, city: string, okbDataWithNormalizedNames: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
+    const normalizedClient = normalizeString(clientName);
+    const normalizedCity = normalizeString(city);
+
+    const cityMatches = okbDataWithNormalizedNames.filter(
+        okb => normalizeString(okb['Город']) === normalizedCity
+    );
+
+    const candidates = cityMatches.length > 0 ? cityMatches : okbDataWithNormalizedNames;
+
+    if (candidates.length === 0) return null;
+
+    let bestMatch: OkbDataRow | null = null;
+    let bestScore = 0.5; // Set a threshold to avoid poor matches
+
+    for (const okb of candidates) {
+        const score = getSimpleSimilarity(normalizedClient, okb.normalizedName);
+        if (score > bestScore) {
+            bestScore = score;
+            bestMatch = okb;
+        }
     }
 
-    // Otherwise, try to infer from the address string.
-    for (const [city, region] of Object.entries(regionCenters)) {
-        if (address.includes(city)) {
-            // Capitalize the first letter of each word in the region name
-            return region.replace(/\b\w/g, l => l.toUpperCase());
-        }
+    return bestMatch;
+};
+
+
+/**
+ * Extracts a standardized region name from an OKB data row.
+ * It checks the 'Регион' field first, then tries to derive it from the 'Город' field using a lookup table.
+ * @param okbMatch The OKB data row.
+ * @returns The determined region name or 'Регион не определен'.
+ */
+export const extractRegionFromOkb = (okbMatch: OkbDataRow): string => {
+    const region = okbMatch['Регион'];
+    if (region && region.trim().length > 5) {
+        // Simple title case formatting
+        return region.trim().toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
+    }
+
+    const city = okbMatch['Город']?.toLowerCase().trim();
+    if (city && regionCenters[city]) {
+        const foundRegion = regionCenters[city];
+        return foundRegion.charAt(0).toUpperCase() + foundRegion.slice(1);
     }
 
     return 'Регион не определен';
@@ -57,7 +90,9 @@ export const extractRegionFromOkb = (okbEntry: OkbDataRow): string => {
 
 
 /**
- * Derives filter options (unique RMs, brands, cities) from the aggregated data.
+ * Extracts unique, sorted options for filters from the aggregated data.
+ * @param data An array of all aggregated data rows.
+ * @returns An object containing arrays of unique RMs, brands, and cities.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
     const rms = new Set<string>();
@@ -71,88 +106,70 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
     });
 
     return {
-        rms: Array.from(rms).sort(),
-        brands: Array.from(brands).sort(),
-        cities: Array.from(cities).sort(),
+        rms: Array.from(rms).sort((a, b) => a.localeCompare(b, 'ru')),
+        brands: Array.from(brands).sort((a, b) => a.localeCompare(b, 'ru')),
+        cities: Array.from(cities).sort((a, b) => a.localeCompare(b, 'ru')),
     };
 };
 
 /**
- * Filters the data based on the current filter state.
+ * Applies the current set of filters to the data.
+ * @param data The full dataset.
+ * @param filters The current filter state.
+ * @returns The filtered array of data rows.
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
     return data.filter(row => {
-        const rmMatch = filters.rm ? row.rm === filters.rm : true;
-        const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
-        const cityMatch = filters.city.length > 0 ? filters.city.includes(row.city) : true;
+        const rmMatch = !filters.rm || row.rm === filters.rm;
+        const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
+        const cityMatch = filters.city.length === 0 || filters.city.includes(row.city);
         return rmMatch && brandMatch && cityMatch;
     });
 };
 
+
 /**
- * Calculates summary metrics from the filtered data.
+ * Calculates summary metrics from a given set of data rows.
+ * @param data The data (usually pre-filtered) to summarize.
+ * @returns A SummaryMetrics object or null if data is empty.
  */
-export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics => {
-    const summary = data.reduce((acc, row) => {
-        acc.totalFact += row.fact;
-        acc.totalPotential += row.potential;
-        acc.totalGrowth += row.growthPotential;
-        acc.clientSet.add(row.clientName);
-        
-        if (!acc.rmPerformance[row.rm]) {
-            acc.rmPerformance[row.rm] = 0;
+export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics | null => {
+    if (data.length === 0) {
+        return null;
+    }
+
+    const totals = data.reduce(
+        (acc, row) => {
+            acc.totalFact += row.fact;
+            acc.totalPotential += row.potential;
+            acc.totalGrowth += row.growthPotential;
+            return acc;
+        },
+        { totalFact: 0, totalPotential: 0, totalGrowth: 0 }
+    );
+
+    const rmGrowth: { [key: string]: number } = data.reduce((acc, row) => {
+        if (!acc[row.rm]) {
+            acc[row.rm] = 0;
         }
-        acc.rmPerformance[row.rm] += row.growthPotential;
-
+        acc[row.rm] += row.growthPotential;
         return acc;
-    }, {
-        totalFact: 0,
-        totalPotential: 0,
-        totalGrowth: 0,
-        clientSet: new Set<string>(),
-        rmPerformance: {} as Record<string, number>,
-    });
+    }, {} as { [key: string]: number });
 
-    const totalGrowth = summary.totalGrowth;
-    const totalPotential = summary.totalPotential;
-    const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
+    const topPerformingRM = Object.entries(rmGrowth).reduce(
+        (top, [name, value]) => {
+            return value > top.value ? { name, value } : top;
+        },
+        { name: 'N/A', value: -1 }
+    );
     
-    const topPerformingRM = Object.entries(summary.rmPerformance)
-        .sort(([, a], [, b]) => b - a)[0] || ['-', 0];
+    const totalPotentialSum = totals.totalPotential > 0 ? totals.totalPotential : 1;
+    const averageGrowthPercentage = (totals.totalGrowth / totalPotentialSum) * 100;
 
     return {
-        totalFact: summary.totalFact,
-        totalPotential: summary.totalPotential,
-        totalGrowth: summary.totalGrowth,
-        totalClients: summary.clientSet.size,
-        averageGrowthPercentage,
-        topPerformingRM: { name: topPerformingRM[0], value: topPerformingRM[1] },
+        ...totals,
+        totalClients: data.length,
+        averageGrowthPercentage: isNaN(averageGrowthPercentage) ? 0 : averageGrowthPercentage,
+        topPerformingRM: topPerformingRM.name === 'N/A' ? { name: 'Нет данных', value: 0 } : topPerformingRM,
     };
-};
-
-
-/**
- * Exports data to an Excel file.
- */
-export const exportToExcel = (data: AggregatedDataRow[], filename: string = 'analysis_export.xlsx') => {
-    // Create a new worksheet
-    const ws = xlsx.utils.json_to_sheet(data, {
-        header: [
-            "rm", "clientName", "brand", "city", "region",
-            "fact", "potential", "growthPotential", "growthPercentage"
-        ]
-    });
-    
-    // Set headers manually for better naming
-    xlsx.utils.sheet_add_aoa(ws, [[
-        "РМ", "Клиент", "Бренд", "Город", "Регион",
-        "Факт, кг/ед", "Потенциал, кг/ед", "Потенциал Роста, кг/ед", "Рост, %"
-    ]], { origin: "A1" });
-
-    // Create a new workbook and append the worksheet
-    const wb = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(wb, ws, "Анализ");
-
-    // Trigger the file download
-    xlsx.writeFile(wb, filename);
 };
