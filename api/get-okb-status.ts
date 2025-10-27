@@ -1,64 +1,56 @@
-// FIX: This entire file's content is a fix.
-// It implements a Vercel Edge function to get the status of the OKB data source.
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import * as XLSX from 'xlsx';
+// FIX: Explicitly import `Buffer` to resolve the "Cannot find name 'Buffer'" TypeScript error.
+// This ensures the type is available even if Node.js globals are not automatically included in the compilation scope.
+import { Buffer } from 'buffer';
+import { getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets';
 
-export const config = {
-  runtime: 'edge',
-};
-
-/**
- * Handles GET requests to fetch the status of the OKB data from the Google Apps Script.
- * The status can include metadata like the last update timestamp and the number of rows.
- * @param {Request} req The incoming request object.
- * @returns {Response} A JSON response containing the status or an error message.
- */
-export default async function handler(req: Request) {
-  if (req.method !== 'GET') {
-    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-      status: 405,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  const scriptUrl = process.env.GOOGLE_SCRIPT_URL;
-
-  if (!scriptUrl) {
-    return new Response(JSON.stringify({ error: 'Google Script URL is not configured' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  try {
-    // Append a query parameter to get the status from the Google Apps Script.
-    const statusUrl = `${scriptUrl}?action=status`;
-    const response = await fetch(statusUrl, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-      redirect: 'follow',
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to fetch OKB status from Google Script: ${response.status} ${response.statusText}. Response: ${errorText}`);
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+    if (req.method !== 'POST') {
+        res.setHeader('Allow', ['POST']);
+        return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    const data = await response.json();
+    try {
+        // 1. Get reference addresses from Google Sheets
+        const okbAddresses = await getOKBAddresses();
 
-    return new Response(JSON.stringify(data), {
-      status: 200,
-      headers: { 
-        'Content-Type': 'application/json',
-        // Do not cache status, we always want the latest.
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-      },
-    });
+        // 2. Validate and process the uploaded file from the request body
+        if (!req.body || !req.body.fileBase64) {
+            return res.status(400).json({ error: 'AKB file (as fileBase64) is required in the request body.' });
+        }
+        
+        const buffer = Buffer.from(req.body.fileBase64, 'base64');
+        const workbook = XLSX.read(buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const akbData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-  } catch (error) {
-    console.error('Error fetching OKB status:', error);
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-    return new Response(JSON.stringify({ error: 'Failed to retrieve OKB status', details: errorMessage }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+        // Create a Set for efficient lookup of addresses from the uploaded file
+        const akbAddresses = new Set(akbData.flat().map(cell => String(cell).trim()));
+
+        // 3. Compare addresses and prepare data for batch update
+        const updates: { rowIndex: number, status: string }[] = [];
+        const results: { okbAddress: string, status: string }[] = [];
+
+        okbAddresses.forEach((okbAddress, index) => {
+            const status = akbAddresses.has(okbAddress) ? 'Совпадение' : 'Не найдено';
+            // Sheet is 1-indexed, and our data starts from row 2.
+            updates.push({ rowIndex: index + 2, status });
+            results.push({ okbAddress, status });
+        });
+
+        // 4. Perform the batch update to Google Sheets
+        if (updates.length > 0) {
+            await batchUpdateOKBStatus(updates);
+        }
+
+        // 5. Return the verification results
+        res.status(200).json({ results });
+
+    } catch (error) {
+        console.error('Error during OKB status check:', error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+        res.status(500).json({ error: 'API error during OKB status check', details: errorMessage });
+    }
 }
