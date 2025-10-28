@@ -1,5 +1,4 @@
 
-
 import React, { useState, useMemo } from 'react';
 import { AggregatedDataRow } from '../types';
 import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, CopyIcon, CheckIcon } from './icons';
@@ -16,15 +15,13 @@ const ResultsTable: React.FC<{
     const [copied, setCopied] = useState(false);
 
     const handleCopyToClipboard = () => {
-        const sortedForExport = sortedData; // Use currently sorted/filtered data
+        const sortedForExport = sortedData;
         const tsv = [
-            // Header
-            ['Группа', 'РМ', 'Город', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
-            // Rows
+            ['Группа', 'РМ', 'Регион', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
             ...sortedForExport.map(row => [
                 row.clientName,
                 row.rm,
-                row.city,
+                row.region,
                 row.brand,
                 row.fact,
                 row.potential,
@@ -47,7 +44,7 @@ const ResultsTable: React.FC<{
         return data.filter(item =>
             item.clientName.toLowerCase().includes(lowercasedFilter) ||
             item.rm.toLowerCase().includes(lowercasedFilter) ||
-            item.city.toLowerCase().includes(lowercasedFilter) ||
+            item.region.toLowerCase().includes(lowercasedFilter) ||
             item.brand.toLowerCase().includes(lowercasedFilter)
         );
     }, [data, searchTerm]);
@@ -59,13 +56,11 @@ const ResultsTable: React.FC<{
                 const aValue = a[sortConfig.key];
                 const bValue = b[sortConfig.key];
 
+                if (typeof aValue === 'string' && typeof bValue === 'string') {
+                    return sortConfig.direction === 'ascending' ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+                }
                 if (typeof aValue === 'number' && typeof bValue === 'number') {
-                    if (aValue < bValue) {
-                        return sortConfig.direction === 'ascending' ? -1 : 1;
-                    }
-                    if (aValue > bValue) {
-                        return sortConfig.direction === 'ascending' ? 1 : -1;
-                    }
+                    return sortConfig.direction === 'ascending' ? aValue - bValue : bValue - aValue;
                 }
                 return 0;
             });
@@ -104,7 +99,7 @@ const ResultsTable: React.FC<{
 
     if (disabled && data.length === 0) {
         return (
-             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 opacity-50">
+             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                 <h2 className="text-xl font-bold mb-4 text-white">Результаты Анализа</h2>
                 <div className="text-center py-10 text-gray-400">
                     <p>Загрузите и обработайте файл, чтобы увидеть данные.</p>
@@ -115,7 +110,6 @@ const ResultsTable: React.FC<{
 
     return (
         <div className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            {/* Table Header */}
             <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700">
                 <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты Анализа</h2>
                 <div className="w-full md:w-auto flex items-center gap-3">
@@ -141,14 +135,13 @@ const ResultsTable: React.FC<{
                 </div>
             </div>
 
-            {/* Table */}
             <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-gray-300">
                     <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 backdrop-blur-sm">
                         <tr>
                             <th scope="col" className="px-4 py-3">Группа/Клиент</th>
                             <SortableHeader sortKey="rm">РМ</SortableHeader>
-                            <SortableHeader sortKey="city">Город</SortableHeader>
+                            <SortableHeader sortKey="region">Регион</SortableHeader>
                             <SortableHeader sortKey="brand">Бренд</SortableHeader>
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
@@ -161,7 +154,7 @@ const ResultsTable: React.FC<{
                             <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
                                 <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
                                 <td className="px-4 py-3">{row.rm}</td>
-                                <td className="px-4 py-3">{row.city}</td>
+                                <td className="px-4 py-3">{row.region}</td>
                                 <td className="px-4 py-3">{row.brand}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
@@ -178,7 +171,6 @@ const ResultsTable: React.FC<{
                 )}
             </div>
             
-            {/* Pagination */}
             {totalPages > 1 && (
                  <div className="p-4 flex flex-col md:flex-row justify-between items-center text-sm text-gray-400 border-t border-gray-700">
                      <div className="mb-2 md:mb-0">
