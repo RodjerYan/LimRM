@@ -22,6 +22,8 @@ export interface ParsedAddress {
   postalCode: string | null;
   lat: number | null;
   lon: number | null;
+  confidence: number;
+  source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
   ambiguousCandidates: string[];
 }
 
