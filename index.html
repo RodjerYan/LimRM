@@ -1,105 +1,349 @@
+
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Гео-Анализ Рынка | Limkorm</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Happy Halloween!</title>
     <style>
+        :root {
+            --dark-purple: #0d021a;
+            --purple: #4b0082;
+            --orange: #ff7518;
+            --glow-orange: rgba(255, 117, 24, 0.7);
+            --light-grey: #f0e6ff;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            background-color: #111827;
-            background-image: radial-gradient(circle at 10% 20%, rgba(129, 140, 248, 0.15), transparent 40%),
-                              radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.15), transparent 50%);
-            background-attachment: fixed;
-        }
-        /* Custom animations */
-        @keyframes fade-in {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes fade-in-right {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes scale-in {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-        }
-        .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
-        .animate-fade-in-right { animation: fade-in-right 0.5s ease-out forwards; }
-        .animate-scale-in { animation: scale-in 0.3s ease-out forwards; }
-
-        /* Skeleton loader shimmer animation */
-        @keyframes shimmer {
-            0% { background-position: -1000px 0; }
-            100% { background-position: 1000px 0; }
-        }
-        .shimmer-effect {
-            animation: shimmer 2s infinite linear;
-            background: linear-gradient(to right, 
-                rgba(255, 255, 255, 0) 20%, 
-                rgba(255, 255, 255, 0.08) 50%, 
-                rgba(255, 255, 255, 0) 80%);
-            background-size: 2000px 100%;
+            background: radial-gradient(ellipse at bottom, var(--dark-purple) 0%, #000 100%);
+            color: var(--light-grey);
+            font-family: 'Creepster', cursive, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" style="font-size: 24px;"><text y="24" >🎃</text></svg>'), auto;
         }
 
-        /* Custom scrollbar for modal/table */
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 8px;
+        .scene {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            perspective: 100px;
         }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(31, 41, 55, 0.5); /* gray-800 */
-            border-radius: 10px;
+
+        /* --- Atmosphere --- */
+        .moon {
+            position: absolute;
+            top: 5%;
+            right: 10%;
+            width: 100px;
+            height: 100px;
+            background: var(--light-grey);
+            border-radius: 50%;
+            box-shadow: 0 0 20px #fff, 0 0 40px #fff, 0 0 60px var(--glow-orange);
+            animation: moon-shimmer 5s infinite alternate;
         }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #4f46e5; /* indigo-600 */
-            border-radius: 10px;
+
+        .fog-container {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            pointer-events: none;
+            overflow: hidden;
         }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #6366f1; /* indigo-500 */
+
+        .fog {
+            position: absolute;
+            bottom: -200px;
+            left: 0;
+            width: 300%;
+            height: 200px;
+            background: radial-gradient(circle, rgba(13, 2, 26, 0.6) 0%, rgba(13, 2, 26, 0) 70%);
+            border-radius: 50%;
+            animation: fog-drift 60s linear infinite;
         }
+        .fog.fog-2 { animation-duration: 45s; animation-delay: -15s; opacity: 0.8; }
+        .fog.fog-3 { animation-duration: 30s; opacity: 0.6; }
+
+        /* --- Content & Decorations --- */
+        .content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            flex-direction: column;
+        }
+
+        h1 {
+            font-size: clamp(3rem, 15vw, 8rem);
+            color: var(--orange);
+            text-shadow: 0 0 10px var(--glow-orange), 0 0 20px #ff0000;
+            animation: text-shake 1s infinite;
+            z-index: 10;
+        }
+
+        .decorations {
+            position: absolute;
+            inset: 0;
+        }
+
+        .pumpkin {
+            position: absolute;
+            width: 120px;
+            height: 100px;
+            background: var(--orange);
+            border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+            filter: drop-shadow(0 0 15px var(--glow-orange));
+            cursor: pointer;
+            transition: transform 0.3s ease, filter 0.3s ease;
+            animation: pumpkin-pulse 3s infinite ease-in-out;
+        }
+        .pumpkin::before { /* Stem */
+            content: '';
+            position: absolute;
+            top: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 15px;
+            height: 20px;
+            background: #4b2a0a;
+            border-radius: 5px 5px 0 0;
+        }
+        .pumpkin:hover {
+            transform: scale(1.1) rotate(5deg);
+            filter: drop-shadow(0 0 25px var(--glow-orange));
+            animation-play-state: paused;
+        }
+        .pumpkin-1 { bottom: 5%; left: 15%; animation-delay: -1s; }
+        .pumpkin-2 { bottom: 8%; right: 20%; width: 90px; height: 75px; animation-delay: -2s; }
+
+        .ghost {
+            position: absolute;
+            width: 80px;
+            height: 100px;
+            background: rgba(240, 230, 255, 0.8);
+            border-radius: 50% 50% 0 0;
+            animation: float 8s infinite ease-in-out;
+            transition: transform 0.3s ease;
+        }
+        .ghost:hover { transform: scale(1.2); }
+        .ghost-1 { top: 20%; left: 25%; animation-delay: -2s; }
+        .ghost-2 { top: 40%; right: 15%; animation-delay: -6s; }
+        .ghost::after, .ghost::before { /* Eyes */
+            content: '';
+            position: absolute;
+            top: 30px;
+            width: 10px;
+            height: 10px;
+            background: var(--dark-purple);
+            border-radius: 50%;
+        }
+        .ghost::before { left: 25px; }
+        .ghost::after { right: 25px; }
+
+        .bat {
+            position: fixed;
+            top: -50px;
+            width: 50px;
+            height: 30px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="black"><path d="M12 2.5c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm-1.5-10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm3 0c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5zm1.5 4.5h-6c-.28 0-.5.22-.5.5s.22.5.5.5h6c.28 0 .5-.22.5-.5s-.22-.5-.5-.5z" transform="scale(1.5 1) translate(-4 -6)"/><path d="M12,2C6.48,2,2,6.48,2,12s4.48,10,10,10,10-4.48,10-10S17.52,2,12,2z M12,20c-4.41,0-8-3.59-8-8s3.59-8,8-8 s8,3.59,8,8S16.41,20,12,20z M12,6c-1.65,0-3,1.35-3,3s1.35,3,3,3s3-1.35,3-3S13.65,6,12,6z" clip-path="url(%23p)"/><defs><clipPath id="p"><path d="M12 2a10 10 0 100 20 10 10 0 000-20v0zM5.1 16.24A6.5 6.5 0 014.2 8.5a1 1 0 012 .2 4.5 4.5 0 008.6 0 1 1 0 012-.2 6.5 6.5 0 01-1 7.94 1 1 0 01-1.3-.34 4.5 4.5 0 00-7.8 0 1 1 0 01-1.6.34z"/></defs></svg>');
+            background-repeat: no-repeat;
+            pointer-events: none;
+            z-index: 100;
+            opacity: 0.5;
+        }
+
+        .boo-text {
+            position: absolute;
+            font-size: 2rem;
+            color: var(--orange);
+            pointer-events: none;
+            animation: boo-fade 1s forwards;
+            text-shadow: 0 0 5px #fff;
+            z-index: 20;
+        }
+
+        /* --- Animations --- */
+        @keyframes moon-shimmer {
+            0% { box-shadow: 0 0 20px #fff, 0 0 40px #fff, 0 0 60px var(--glow-orange); }
+            100% { box-shadow: 0 0 25px #fff, 0 0 50px #fff, 0 0 75px var(--glow-orange); }
+        }
+
+        @keyframes fog-drift {
+            0% { transform: translateX(-10%); }
+            100% { transform: translateX(-60%); }
+        }
+
+        @keyframes text-shake {
+            0%, 100% { transform: translate(0, 0) rotate(0); }
+            10% { transform: translate(-2px, -3px) rotate(-0.5deg); }
+            20% { transform: translate(2px, 2px) rotate(0.5deg); }
+            30% { transform: translate(-3px, 2px) rotate(0); }
+            40% { transform: translate(2px, -2px) rotate(0.5deg); }
+            50% { transform: translate(-2px, 3px) rotate(-0.5deg); }
+            60% { transform: translate(3px, 2px) rotate(0); }
+            70% { transform: translate(-2px, -2px) rotate(0.5deg); }
+            80% { transform: translate(2px, -3px) rotate(-0.5deg); }
+            90% { transform: translate(-2px, 2px) rotate(0); }
+        }
+
+        @keyframes pumpkin-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); }
+            50% { transform: translateY(-30px) rotate(5deg); }
+        }
+
+        @keyframes boo-fade {
+            0% { transform: translateY(0) scale(0.5); opacity: 1; }
+            100% { transform: translateY(-50px) scale(1.2); opacity: 0; }
+        }
+        
+        /* --- Responsive --- */
+        @media (max-width: 768px) {
+            .pumpkin-1 { bottom: 2%; left: 5%; width: 80px; height: 65px;}
+            .pumpkin-2 { display: none; }
+            .ghost-2 { display: none; }
+            .moon { width: 70px; height: 70px; }
+        }
+
     </style>
 <script type="importmap">
 {
   "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.25.0",
-    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.4.1",
-    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
-    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
-    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
-    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "vite": "https://aistudiocdn.com/vite@^7.1.11",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
-    "url": "https://aistudiocdn.com/url@^0.11.4",
-    "google-spreadsheet": "https://aistudiocdn.com/google-spreadsheet@^5.0.2",
-    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.1",
-    "express": "https://aistudiocdn.com/express@^5.1.0",
-    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
-    "stream": "https://aistudiocdn.com/stream@^0.0.3",
-    "https": "https://aistudiocdn.com/https@^1.0.0",
-    "react-markdown": "https://aistudiocdn.com/react-markdown@^10.1.0",
     "marked": "https://aistudiocdn.com/marked@^16.4.1",
-    "date-fns/": "https://aistudiocdn.com/date-fns@^4.1.0/",
-    "date-fns": "https://aistudiocdn.com/date-fns@^4.1.0",
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
     "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "vite": "https://aistudiocdn.com/vite@^7.1.12",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.27.0",
+    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.0",
     "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
     "googleapis": "https://aistudiocdn.com/googleapis@^164.1.0"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
-<body class="bg-primary-dark text-slate-200 font-sans">
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+<body>
+
+    <div class="scene" id="scene">
+        <div class="moon parallax" data-speed="2"></div>
+        <div class="fog-container">
+            <div class="fog fog-1 parallax" data-speed="5"></div>
+            <div class="fog fog-2 parallax" data-speed="8"></div>
+            <div class="fog fog-3 parallax" data-speed="12"></div>
+        </div>
+
+        <main class="content">
+            <h1>Happy Halloween!</h1>
+        </main>
+
+        <div class="decorations">
+            <div class="pumpkin pumpkin-1 parallax" data-speed="-2"></div>
+            <div class="pumpkin pumpkin-2 parallax" data-speed="3"></div>
+            <div class="ghost ghost-1 parallax" data-speed="-4"></div>
+            <div class="ghost ghost-2 parallax" data-speed="1"></div>
+        </div>
+    </div>
+    
+    <audio id="ambience" loop>
+        <source src="https://www.soundjay.com/nature/sounds/wind-howl-1.mp3" type="audio/mpeg">
+    </audio>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const scene = document.getElementById('scene');
+            const parallaxElements = document.querySelectorAll('.parallax');
+            const interactiveElements = document.querySelectorAll('.pumpkin, .ghost');
+            const ambience = document.getElementById('ambience');
+
+            // --- Parallax Effect ---
+            scene.addEventListener('mousemove', (e) => {
+                const { clientX, clientY } = e;
+                const x = (clientX / window.innerWidth - 0.5) * 2; // -1 to 1
+                const y = (clientY / window.innerHeight - 0.5) * 2; // -1 to 1
+
+                parallaxElements.forEach(el => {
+                    const speed = el.getAttribute('data-speed');
+                    if (speed) {
+                        const speedValue = parseFloat(speed);
+                        el.style.transform = `translateX(${x * speedValue}px) translateY(${y * speedValue}px)`;
+                    }
+                });
+            });
+
+            // --- Bat Animation ---
+            function createBat() {
+                const bat = document.createElement('div');
+                bat.classList.add('bat');
+                bat.style.left = `${Math.random() * 100}vw`;
+                bat.style.animation = `fly ${5 + Math.random() * 5}s linear forwards`;
+                
+                const keyframes = `
+                    @keyframes fly {
+                        0% { transform: translate(0, 0) scale(0.8); }
+                        100% { transform: translate(${Math.random() > 0.5 ? '-' : ''}${Math.random() * 200}px, ${window.innerHeight + 100}px) scale(1.2); }
+                    }
+                `;
+                const styleSheet = document.styleSheets[0];
+                styleSheet.insertRule(keyframes, styleSheet.cssRules.length);
+
+                document.body.appendChild(bat);
+
+                setTimeout(() => {
+                    bat.remove();
+                }, 10000);
+            }
+            setInterval(createBat, 1500);
+
+            // --- Click Interaction ---
+            interactiveElements.forEach(el => {
+                el.addEventListener('click', (e) => {
+                    const booText = document.createElement('div');
+                    booText.classList.add('boo-text');
+                    booText.textContent = 'Boo!';
+                    booText.style.left = `${e.clientX}px`;
+                    booText.style.top = `${e.clientY}px`;
+                    document.body.appendChild(booText);
+
+                    setTimeout(() => {
+                        booText.remove();
+                    }, 1000);
+                });
+            });
+
+            // --- Audio ---
+            // Try to play audio, might be blocked by browser until user interacts
+            function playAudio() {
+                if (ambience.paused) {
+                    ambience.play().catch(e => console.log("Audio autoplay was blocked."));
+                }
+                // Remove listener after first interaction
+                document.body.removeEventListener('click', playAudio);
+                document.body.removeEventListener('mousemove', playAudio);
+            }
+            
+            // Attempt to play on first click or move, as a fallback for autoplay
+            document.body.addEventListener('click', playAudio);
+            document.body.addEventListener('mousemove', playAudio);
+            // Attempt autoplay directly
+            playAudio();
+        });
+    </script>
 </body>
 </html>
