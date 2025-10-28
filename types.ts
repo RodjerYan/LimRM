@@ -1,10 +1,9 @@
-
 export interface AggregatedDataRow {
     key: string;
     rm: string;
     clientName: string;
     brand: string;
-    city: string; // Contains the region name for display in the table
+    city: string;
     region: string;
     fact: number;
     potential: number;
@@ -36,13 +35,13 @@ export interface OkbDataRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    regions: string[];
+    cities: string[];
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
-    region: string[];
+    city: string[];
 }
 
 export interface SummaryMetrics {

@@ -1,4 +1,5 @@
 
+
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
 import { regionCenters } from './regionCenters';
 
@@ -109,46 +110,25 @@ export const findBestOkbMatch = (clientName: string, city: string, okbData: (Okb
 
 
 /**
- * Extracts a standardized region name from an OKB data row using a multi-step approach.
+ * Extracts a standardized region name from an OKB data row.
+ * It checks the 'Регион' field first, then tries to derive it from the 'Город' field using a map.
  * @param okbRow The OKB data row.
  * @returns The determined region name or a default value.
  */
 export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
-    const formatRegion = (region: string) => {
-        const cleaned = region.toLowerCase()
+    if (okbRow['Регион']) {
+        // Simple standardization for consistency
+        const region = okbRow['Регион'].toLowerCase()
             .replace('г.', 'город')
             .replace('обл.', 'область')
-            .replace('респ.', 'республика')
-            .trim();
-        return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-    };
-
-    // 1. Direct check of the 'Регион' column
-    if (okbRow['Регион'] && okbRow['Регион'].trim().length > 3) {
-        return formatRegion(okbRow['Регион']);
-    }
-
-    // 2. Search for a known region name within the legal address
-    const address = okbRow['Юридический адрес']?.toLowerCase() || '';
-    if (address) {
-        const allRegions = Object.values(regionCenters);
-        const sortedRegions = [...new Set(allRegions)].sort((a, b) => b.length - a.length);
-        
-        for (const region of sortedRegions) {
-            if (address.includes(region)) {
-                return formatRegion(region);
-            }
-            const regionAdjective = region.split(' ')[0];
-            if (regionAdjective.length > 4 && address.includes(regionAdjective)) {
-                 return formatRegion(region);
-            }
-        }
+            .replace('респ.', 'республика');
+        return region.charAt(0).toUpperCase() + region.slice(1);
     }
     
-    // 3. Fallback to using the 'Город' column and the region center map
     const city = okbRow['Город']?.toLowerCase();
     if (city && regionCenters[city]) {
-        return formatRegion(regionCenters[city]);
+        const region = regionCenters[city];
+        return region.charAt(0).toUpperCase() + region.slice(1);
     }
 
     return 'Регион не определен';
@@ -165,31 +145,31 @@ export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState)
     return allData.filter(row => {
         const rmMatch = filters.rm ? row.rm === filters.rm : true;
         const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
-        const regionMatch = filters.region.length > 0 ? filters.region.includes(row.region) : true;
-        return rmMatch && brandMatch && regionMatch;
+        const cityMatch = filters.city.length > 0 ? filters.city.includes(row.city) : true;
+        return rmMatch && brandMatch && cityMatch;
     });
 };
 
 /**
  * Extracts unique values for all filterable columns from the dataset.
  * @param data The array of aggregated data.
- * @returns An object containing arrays of unique RMs, brands, and regions.
+ * @returns An object containing arrays of unique RMs, brands, and cities.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
     const rms = new Set<string>();
     const brands = new Set<string>();
-    const regions = new Set<string>();
+    const cities = new Set<string>();
 
     data.forEach(row => {
         rms.add(row.rm);
         brands.add(row.brand);
-        regions.add(row.region);
+        cities.add(row.city);
     });
 
     return {
         rms: Array.from(rms).sort(),
         brands: Array.from(brands).sort(),
-        regions: Array.from(regions).sort(),
+        cities: Array.from(cities).sort(),
     };
 };
 
@@ -206,6 +186,8 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     const totalClients = data.length; // Now represents number of groups
     const totalActiveClients = data.reduce((sum, row) => sum + (row.clients?.length || 1), 0);
     
+    // To calculate average growth percentage, we sum the potential and growth and then divide,
+    // rather than averaging percentages to avoid skewed results.
     const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
     
     const rmGrowth: { [key: string]: number } = {};

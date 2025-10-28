@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { WorkerMessage, AggregatedDataRow, OkbStatus } from '../types';
 import { formatETR } from '../utils/timeUtils';
 
@@ -15,18 +15,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
     const [etr, setEtr] = useState<number | null>(null);
+    // FIX: Correctly initialize useRef with null. The type must allow for null before the worker is created.
     const workerRef = useRef<Worker | null>(null);
     const startTimeRef = useRef<number | null>(null);
-
-    // Effect to clean up the worker when the component unmounts
-    useEffect(() => {
-        return () => {
-            if (workerRef.current) {
-                workerRef.current.terminate();
-                workerRef.current = null;
-            }
-        };
-    }, []);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -64,19 +55,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Обработка завершена!`);
                     setEtr(0);
-                    if (workerRef.current) {
-                        workerRef.current.terminate();
-                        workerRef.current = null;
-                    }
                     break;
                 case 'error':
                     onProcessingStateChange(false, `Ошибка при обработке файла: ${payload}`);
                     setMessage(`Ошибка: ${payload}`);
                     setEtr(null);
-                    if (workerRef.current) {
-                        workerRef.current.terminate();
-                        workerRef.current = null;
-                    }
                     break;
                 default:
                     break;
@@ -87,10 +70,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             console.error('Worker error:', e);
             onProcessingStateChange(false, `Критическая ошибка воркера: ${e.message}`);
             setMessage(`Критическая ошибка: ${e.message}`);
-             if (workerRef.current) {
-                workerRef.current.terminate();
-                workerRef.current = null;
-            }
         };
         
         // Post file and OKB data to worker

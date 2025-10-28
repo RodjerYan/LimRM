@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FilterOptions, FilterState } from '../types';
 
@@ -95,6 +97,7 @@ const FilterSelect: React.FC<{
 };
 
 
+// NEW Multi-select component for Brand and City
 const MultiFilterSelect: React.FC<{
     label: string;
     selectedOptions: string[];
@@ -215,7 +218,7 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
             <fieldset disabled={disabled} className="space-y-4">
                 <FilterSelect label="РМ" value={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
                 <MultiFilterSelect label="Бренд" selectedOptions={currentFilters.brand} options={options.brands} onChange={(val) => handleFilterUpdate('brand', val)} />
-                <MultiFilterSelect label="Регион" selectedOptions={currentFilters.region} options={options.regions} onChange={(val) => handleFilterUpdate('region', val)} />
+                <MultiFilterSelect label="Город" selectedOptions={currentFilters.city} options={options.cities} onChange={(val) => handleFilterUpdate('city', val)} />
                 
                 <button
                     onClick={onReset}

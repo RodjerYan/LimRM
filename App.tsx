@@ -1,5 +1,7 @@
 
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import DataControl from './components/DataControl';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
@@ -7,41 +9,45 @@ import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import OKBManagement from './components/OKBManagement';
-import FileUpload from './components/FileUpload';
 import { 
     AggregatedDataRow, 
     FilterOptions, 
     FilterState, 
     NotificationMessage, 
     OkbStatus, 
-    OkbDataRow,
     SummaryMetrics 
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
+// This check determines if the application is properly configured for Vercel deployment.
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
 const App: React.FC = () => {
+    // If the special key is not set during the build, show an error message.
     if (!isApiKeySet) {
         return <ApiKeyErrorDisplay />;
     }
 
+    // Main data state
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
     
+    // UI State
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
 
-    const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
+    // OKB Data State
+    const [okbData, setOkbData] = useState<any[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
 
-    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
+    // Filters State
+    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], city: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
+    // Derived Data
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
         return filteredData.length > 0 ? calculateSummaryMetrics(filteredData) : null;
     }, [filteredData]);
@@ -56,7 +62,7 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
-        setFilters({ rm: '', brand: [], region: [] });
+        setFilters({ rm: '', brand: [], city: [] }); // Reset filters on new data
         addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
     
@@ -65,7 +71,7 @@ const App: React.FC = () => {
         setLoadingMessage(message);
         if (!loading && message.startsWith('Ошибка')) {
             addNotification(message, 'error');
-        } else if (!loading && !message.includes('успешно обработан')) {
+        } else if (!loading) {
             addNotification(message, 'info');
         }
     }, [addNotification]);
@@ -75,7 +81,7 @@ const App: React.FC = () => {
     }, []);
     
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], region: [] });
+        setFilters({ rm: '', brand: [], city: [] });
     }, []);
 
     const handleRowClick = useCallback((row: AggregatedDataRow) => {
@@ -89,9 +95,15 @@ const App: React.FC = () => {
         if (status.status === 'error' && status.message) addNotification(status.message, 'error');
     };
 
+    const handleOkbDataChange = (data: any[]) => {
+        setOkbData(data);
+    };
+
+    // Effect to apply filters when data or filters change
     useEffect(() => {
         setIsLoading(true);
         setLoadingMessage('Применение фильтров...');
+        // Use a timeout to prevent blocking the UI on large datasets
         const timer = setTimeout(() => {
             const result = applyFilters(allData, filters);
             setFilteredData(result);
@@ -102,7 +114,7 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isDataLoaded = allData.length > 0;
-    const isControlPanelLocked = isLoading;
+    const isControlPanelLocked = isLoading || (isDataLoaded && !okbStatus);
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans p-4 lg:p-6">
@@ -113,19 +125,16 @@ const App: React.FC = () => {
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                    {/* Left Sidebar */}
                     <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
-                        <OKBManagement
-                            onStatusChange={handleOkbStatusChange}
-                            onDataChange={setOkbData}
-                            status={okbStatus}
-                            disabled={isControlPanelLocked}
-                        />
-                        <FileUpload
-                            onFileProcessed={handleFileProcessed}
-                            onProcessingStateChange={handleProcessingStateChange}
+                        <DataControl
+                            onDataLoaded={handleFileProcessed}
+                            onLoadingStateChange={handleProcessingStateChange}
+                            onOkbStatusChange={handleOkbStatusChange}
+                            onOkbDataChange={handleOkbDataChange}
                             okbData={okbData}
                             okbStatus={okbStatus}
-                            disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
+                            disabled={isControlPanelLocked}
                         />
                         <Filters
                             options={filterOptions}
@@ -136,6 +145,7 @@ const App: React.FC = () => {
                         />
                     </aside>
 
+                    {/* Main Content */}
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
@@ -143,12 +153,14 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Notifications container */}
                 <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
                     {notifications.map(n => (
                         <Notification key={n.id} message={n.message} type={n.type} />
                     ))}
                 </div>
 
+                {/* Details Modal */}
                 <DetailsModal 
                     isOpen={isModalOpen} 
                     onClose={() => setIsModalOpen(false)}
