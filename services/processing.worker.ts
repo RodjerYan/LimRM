@@ -3,6 +3,18 @@ import * as XLSX from 'xlsx';
 import { AggregatedDataRow, OkbDataRow } from '../types';
 import { normalizeString, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
 
+// Определяем интерфейс для промежуточной сгруппированной структуры данных, чтобы обеспечить строгую типизацию
+interface GroupedRow {
+    rm: string;
+    clientName: string;
+    brand: string;
+    city: string;
+    fact: number;
+    potential: number;
+    clients: string[];
+}
+
+
 // Define expected column names from the input file for robustness
 const COLUMNS = {
     RM: 'РМ',
@@ -42,7 +54,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
 
         postMessage({ type: 'progress', payload: { percentage: 25, message: 'Группировка данных...' } });
         
-        const groupedData: Map<string, any> = new Map();
+        const groupedData: Map<string, GroupedRow> = new Map();
         const totalRows = jsonData.length;
 
         jsonData.forEach((row, index) => {
