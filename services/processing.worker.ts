@@ -1,5 +1,4 @@
 
-
 import * as xlsx from 'xlsx';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient } from '../types';
 import { normalizeString, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
@@ -123,7 +122,9 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         const workbook = xlsx.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet);
+        // By using `{ raw: false }`, we ensure that formatted numbers (like "1,200") are read as strings,
+        // allowing our custom `parseNumericValue` function to handle them correctly as decimals (e.g., 1.2).
+        const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false });
 
         const totalRows = jsonData.length;
         if (totalRows === 0) {
