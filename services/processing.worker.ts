@@ -1,50 +1,8 @@
 
 import * as xlsx from 'xlsx';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage } from '../types';
 import { normalizeString, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
-
-// A simple in-memory cache for geocoding results to avoid redundant API calls
-const geoCache = new Map<string, { lat: number, lon: number }>();
-
-// This is a placeholder for a real geocoding service.
-// In a real app, you would call an API like Yandex Maps, Google Maps, or Nominatim.
-// For this example, we'll use a mock function that returns random coordinates.
-const geocodeAddress = async (address: string, city: string): Promise<{ lat: number; lon: number } | null> => {
-    const cacheKey = `${address}, ${city}`.toLowerCase();
-    if (geoCache.has(cacheKey)) {
-        return geoCache.get(cacheKey)!;
-    }
-
-    // --- MOCK IMPLEMENTATION ---
-    // In a real scenario, this would be an API call.
-    // To simulate network delay and variability:
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 50));
-    
-    // Simulate some addresses not being found
-    if (Math.random() < 0.1) { 
-        return null;
-    }
-    
-    // Generate pseudo-random coordinates based on the address hash for consistency
-    let hash = 0;
-    for (let i = 0; i < cacheKey.length; i++) {
-        const char = cacheKey.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash |= 0; // Convert to 32bit integer
-    }
-
-    // Moscow-ish coordinates as a base
-    const baseLat = 55.751244;
-    const baseLon = 37.618423;
-
-    const lat = baseLat + (hash % 10000) / 100000;
-    const lon = baseLon + (hash % 10000) / 100000;
-    // --- END MOCK ---
-    
-    const result = { lat, lon };
-    geoCache.set(cacheKey, result);
-    return result;
-};
+import { regionCenters } from '../utils/regionCenters';
 
 /**
  * Safely parses a numeric value from a spreadsheet cell, which might be a number or a string.
@@ -58,9 +16,6 @@ const parseNumericValue = (value: any): number => {
         return isNaN(value) ? 0 : value;
     }
     if (typeof value === 'string') {
-        // 1. Remove all non-breaking spaces and regular spaces (like thousands separators).
-        // 2. Replace comma decimal separator with a period.
-        // 3. Remove any characters that are not digits, minus sign, or the decimal point.
         const cleanedString = value
             .replace(/\s/g, '')
             .replace(',', '.');
@@ -68,64 +23,86 @@ const parseNumericValue = (value: any): number => {
         const number = parseFloat(cleanedString);
         return isNaN(number) ? 0 : number;
     }
-    // Attempt to convert other types, default to 0.
     const converted = Number(value);
     return isNaN(converted) ? 0 : converted;
 };
 
 /**
- * Extracts a city name from a complex address string using a series of patterns.
+ * Extracts city and region details from a complex address string.
+ * It first attempts to find the city using robust patterns, then determines the region
+ * by either finding it directly in the string or mapping the found city to its region.
  * @param address The address string to parse.
- * @returns The extracted city name or a default value.
+ * @returns An object containing the extracted city and region.
  */
-const extractCityFromAddress = (address: string): string => {
-    if (!address) return 'Неизвестный город';
+const extractLocationDetails = (address: string): { city: string, region: string } => {
+    if (!address) return { city: 'Неизвестный город', region: 'Регион не определен' };
 
-    // Pattern 1: Look for "г. [CityName]" or "г [CityName]" (e.g., "г Орёл,")
-    // It captures text after "г " until a comma, end of string, or a street/region indicator.
+    // --- Find City First (using robust logic) ---
+    let city = 'Неизвестный город';
     const prefixCityPattern = /\bг(?:\.|\s)?\s*([а-яё\s-]+?)(?:,|$|\sул|\sобл|\sр-н)/i;
     const prefixMatch = address.match(prefixCityPattern);
     if (prefixMatch && prefixMatch[1]) {
         const cityName = prefixMatch[1].trim();
-        // Ensure the match is a valid city name and not just noise
         if (cityName.length > 1) {
-             return cityName.charAt(0).toUpperCase() + cityName.slice(1);
+            city = cityName.charAt(0).toUpperCase() + cityName.slice(1);
         }
     }
 
-    // Pattern 2: Look for "[CityName] г," or "..., [CityName] г" (e.g., "Смоленск г,")
-    const postfixCityPattern = /(?:,\s*|(?:\d{6},\s*))([а-яё\s-]+?)\s*г\b/i;
-    const postfixMatch = address.match(postfixCityPattern);
-    if (postfixMatch && postfixMatch[1]) {
-        const cityName = postfixMatch[1].trim();
-        return cityName.charAt(0).toUpperCase() + cityName.slice(1);
+    if (city === 'Неизвестный город') {
+        const postfixCityPattern = /(?:,\s*|(?:\d{6},\s*))([а-яё\s-]+?)\s*г\b/i;
+        const postfixMatch = address.match(postfixCityPattern);
+        if (postfixMatch && postfixMatch[1]) {
+            city = postfixMatch[1].trim().replace(/^\w/, c => c.toUpperCase());
+        }
     }
+
+    if (city === 'Неизвестный город') {
+        const parts = address.split(',').map(p => p.trim()).filter(Boolean);
+        for (const part of parts) {
+            const isNumeric = /^\d+$/.test(part);
+            const isAbbreviation = /\b(обл|р-н|ул|пр-т|пер|зд|пос|д)\b/i.test(part);
+            const hasLetters = /[а-яё]/i.test(part);
+            if (hasLetters && !isNumeric && !isAbbreviation && part.length > 2) {
+                city = part.replace(/^\w/, c => c.toUpperCase());
+                break;
+            }
+        }
+    }
+
+    // --- Now, determine Region ---
+    let region = 'Регион не определен';
     
-    // Pattern 3: Look for a region and derive the city from it (e.g., "Смоленская обл" -> "Смоленск")
-    const regionPattern = /([а-яё-]+)ая\s+обл/i;
+    // 1. Direct search for full region name in the address
+    const regionPattern = /([а-яё\s-]+(?:область|край|республика|автономный округ))/i;
     const regionMatch = address.match(regionPattern);
     if (regionMatch && regionMatch[1]) {
-        const city = regionMatch[1].toLowerCase();
-        return city.charAt(0).toUpperCase() + city.slice(1);
+        const regionName = regionMatch[1].trim();
+        region = regionName.charAt(0).toUpperCase() + regionName.slice(1);
+        return { city, region };
     }
 
-    // Fallback: Split address by comma and analyze parts
-    const parts = address.split(',').map(p => p.trim()).filter(Boolean);
-    
-    // Try to find a part that looks like a city
-    for (const part of parts) {
-        // A good city candidate has Russian letters, is not just a number, and is not a common address abbreviation.
-        const isNumeric = /^\d+$/.test(part);
-        const isAbbreviation = /\b(обл|р-н|ул|пр-т|пер|зд|пос|д)\b/i.test(part);
-        const hasLetters = /[а-яё]/i.test(part);
-
-        if (hasLetters && !isNumeric && !isAbbreviation && part.length > 2) {
-            return part.charAt(0).toUpperCase() + part.slice(1);
+    // 2. Map the extracted city to a region
+    if (city !== 'Неизвестный город') {
+        const normalizedCity = city.toLowerCase();
+        if (regionCenters[normalizedCity]) {
+            const mappedRegion = regionCenters[normalizedCity];
+            region = mappedRegion.charAt(0).toUpperCase() + mappedRegion.slice(1);
+            return { city, region };
         }
     }
 
-    // Final fallback: if no good part is found, return a default value
-    return 'Неизвестный город';
+    // 3. Fallback: search for patterns like "Смоленская обл"
+    const abbreviatedRegionPattern = /([а-яё-]+(?:ая|ий))\s+(обл|край|респ)/i;
+    const abbreviatedMatch = address.match(abbreviatedRegionPattern);
+    if (abbreviatedMatch && abbreviatedMatch[1] && abbreviatedMatch[2]) {
+        const regionBase = abbreviatedMatch[1];
+        const regionType = abbreviatedMatch[2].startsWith('обл') ? 'область' : abbreviatedMatch[2].startsWith('край') ? 'край' : 'республика';
+        const fullRegion = `${regionBase} ${regionType}`;
+        region = fullRegion.charAt(0).toUpperCase() + fullRegion.slice(1);
+        return { city, region };
+    }
+     
+    return { city, region };
 };
 
 
@@ -141,8 +118,6 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         const workbook = xlsx.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        // By using `{ raw: false }`, we ensure that formatted numbers (like "1,200") are read as strings,
-        // allowing our custom `parseNumericValue` function to handle them correctly as decimals (e.g., 1.2).
         const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false });
 
         const totalRows = jsonData.length;
@@ -158,13 +133,9 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             throw new Error('Файл должен содержать колонку "Вес, кг" для расчета факта продаж.');
         }
 
-        // FIX: The original type `AggregatedDataRow & { clients: Set<string> }` created an impossible
-        // intersection type for the `clients` property (`string[] & Set<string>`).
-        // By using `Omit`, we remove the original `clients` property from `AggregatedDataRow` and
-        // replace it with one correctly typed as `Set<string>` for this intermediate processing step.
         const aggregatedData: { [key: string]: Omit<AggregatedDataRow, 'clients'> & { clients: Set<string> } } = {};
         
-        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных...' } });
+        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных по регионам...' } });
 
         for (let i = 0; i < totalRows; i++) {
             const row = jsonData[i];
@@ -172,19 +143,20 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
-            const city = extractCityFromAddress(address);
+            
+            const { city, region } = extractLocationDetails(address);
             const fact = parseNumericValue(row['Вес, кг']);
 
-            const key = `${city}-${brand}-${rm}`.toLowerCase();
+            const key = `${region}-${brand}-${rm}`.toLowerCase();
 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
                     key,
-                    clientName: `г. ${city} (${brand})`,
+                    clientName: `${region} (${brand})`,
                     brand,
                     rm,
-                    city,
-                    region: 'Определение...',
+                    city: region, // The 'city' column in the table will display the region
+                    region: region,
                     fact: 0,
                     potential: 0,
                     growthPotential: 0,
@@ -196,28 +168,24 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             aggregatedData[key].clients.add(address);
 
             if (hasPotentialColumn) {
-                // Sum up potential from all individual clients in the group
                 aggregatedData[key].potential += parseNumericValue(row['Потенциал']);
             }
 
              if ((i % 100 === 0 || i === totalRows - 1) && i > 0) {
-                const percentage = 5 + Math.round((i / totalRows) * 75); // Aggregation is 75% of the work
+                const percentage = 5 + Math.round((i / totalRows) * 75);
                 postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i + 1} из ${totalRows} строк...` } });
             }
         }
         
-        let processedCount = 0;
         const finalData = Object.values(aggregatedData).map(item => ({...item, clients: Array.from(item.clients)}));
         const totalAggregated = finalData.length;
 
         postMessage({ type: 'progress', payload: { percentage: 80, message: 'Расчет потенциала...' } });
 
         for (const item of finalData) {
-            // If potential wasn't in the file, calculate it now based on aggregated fact with a 15% growth factor.
             if (!hasPotentialColumn) {
                 item.potential = item.fact * 1.15;
             } else {
-                 // If total potential from file is less than total fact (data error), adjust it.
                  if (item.potential < item.fact) {
                     item.potential = item.fact;
                 }
@@ -226,23 +194,17 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             item.growthPotential = Math.max(0, item.potential - item.fact);
             item.growthPercentage = item.potential > 0 ? (item.growthPotential / item.potential) * 100 : 0;
             
-            // Determine region from the first client in the group
+            // Re-check region from OKB for grouped data for better accuracy if needed
             const firstClientName = item.clients?.[0];
             if (firstClientName) {
                 const okbMatch = findBestOkbMatch(firstClientName, item.city, okbDataWithNormalizedNames);
-                item.region = okbMatch ? extractRegionFromOkb(okbMatch) : 'Регион не определен';
-            } else {
-                 item.region = 'Регион не определен';
+                 // We prioritize the region found by our new logic, but OKB can be a fallback.
+                if (item.region === 'Регион не определен' && okbMatch) {
+                    item.region = extractRegionFromOkb(okbMatch);
+                }
             }
 
-            // Potential clients logic is not applicable for grouped views, so we leave it empty.
             item.potentialClients = [];
-            
-            processedCount++;
-            if (processedCount % 50 === 0 || processedCount === totalAggregated) {
-                 const percentage = 80 + Math.round((processedCount / totalAggregated) * 20);
-                 postMessage({ type: 'progress', payload: { percentage, message: `Расчет для группы ${processedCount} из ${totalAggregated}...` } });
-            }
         }
 
         postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
