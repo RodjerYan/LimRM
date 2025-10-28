@@ -5,8 +5,7 @@ import { parseRussianAddress } from './addressParser'; // Import the new expert 
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
     const { file, okbData } = e.data;
-    const okbDataWithNormalizedNames = okbData.map(d => ({...d, normalizedName: normalizeAddressForSearch(d['Наименование'])}));
-
+    
     const postMessage = (message: WorkerMessage) => self.postMessage(message);
 
     try {
@@ -39,7 +38,13 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             const parsedAddress = parseRussianAddress(address);
             const region = parsedAddress.region || 'Регион не определен';
             
-            const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
+            const factString = String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.');
+            const fact = parseFloat(factString);
+
+            if (isNaN(fact)) {
+                console.warn(`Invalid number for 'Вес, кг' at row ${i+2}: ${row['Вес, кг']}`);
+                continue; // Skip row if fact is not a valid number
+            }
             
             const key = `${region}-${brand}-${rm}`.toLowerCase();
 
@@ -56,7 +61,11 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             aggregatedData[key].clients.add(address);
 
             if (hasPotentialColumn) {
-                aggregatedData[key].potential += parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
+                const potentialString = String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.');
+                const potential = parseFloat(potentialString);
+                if (!isNaN(potential)) {
+                    aggregatedData[key].potential += potential;
+                }
             }
 
             if ((i % 100 === 0 || i === jsonData.length - 1) && i > 0) {
@@ -83,6 +92,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         postMessage({ type: 'result', payload: finalData });
 
     } catch (error) {
+        console.error("Worker Error:", error);
         postMessage({ type: 'error', payload: (error as Error).message });
     }
 };

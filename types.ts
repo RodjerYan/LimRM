@@ -3,7 +3,7 @@ export interface AggregatedDataRow {
     rm: string;
     clientName: string;
     brand: string;
-    city: string; // Kept for legacy compatibility, but now holds the region name
+    city: string; 
     region: string;
     fact: number;
     potential: number;
@@ -12,6 +12,19 @@ export interface AggregatedDataRow {
     potentialClients?: PotentialClient[];
     clients?: string[]; // List of individual client names/addresses in the group
 }
+
+export interface ParsedAddress {
+  country: "Россия";
+  region: string | null;
+  city: string | null;
+  street: string | null;
+  house: string | null;
+  postalCode: string | null;
+  lat: number | null;
+  lon: number | null;
+  ambiguousCandidates: string[];
+}
+
 
 export interface PotentialClient {
     name: string;
@@ -35,13 +48,13 @@ export interface OkbDataRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    regions: string[]; // FIX: Changed from cities to regions
+    regions: string[];
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
-    region: string[]; // FIX: Changed from city to region
+    region: string[];
 }
 
 export interface SummaryMetrics {

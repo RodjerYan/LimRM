@@ -1,172 +1,199 @@
 import { regionCenters } from '../utils/regionCenters';
-import { levenshteinDistance, normalizeAddressForSearch } from '../utils/dataUtils';
+import { levenshteinDistance } from '../utils/dataUtils';
 
-interface ParsedAddress {
-    country: string;
-    region: string | null;
-    city: string | null;
-    street: string | null;
-    house: string | null;
-    lat: number | null;
-    lon: number | null;
+export interface ParsedAddress {
+  country: "Россия";
+  region: string | null;
+  city: string | null;
+  street: string | null;
+  house: string | null;
+  postalCode: string | null;
+  lat: number | null;
+  lon: number | null;
+  ambiguousCandidates: string[];
 }
 
 // --- Internal Data & Mappings ---
-
-const cityCoordinates: Record<string, { lat: number, lon: number }> = {
-    "орёл": { lat: 52.9655, lon: 36.0785 },
-    "омск": { lat: 54.9833, lon: 73.3667 },
-    "уфа": { lat: 54.7333, lon: 55.9667 },
-    "москва": { lat: 55.751244, lon: 37.618423 },
-};
-
 const canonicalRegionNames = [...new Set(Object.values(regionCenters))];
-
-const regionSynonyms: Record<string, string> = {
-    'обл': 'область',
-    'респ': 'республика',
-    'ао': 'автономный округ',
-};
-
-const streetSynonyms = ['улица', 'ул', 'проспект', 'пр-кт', 'переулок', 'пер', 'шоссе', 'ш', 'площадь', 'пл', 'бульвар', 'б-р'];
-const houseSynonyms = ['дом', 'д'];
 
 // Pre-normalized maps for performance
 const normalizedCityToRegion = new Map<string, string>();
+const canonicalCityNames = new Map<string, string>();
 for (const city in regionCenters) {
-    normalizedCityToRegion.set(normalizeAddressForSearch(city), regionCenters[city]);
+    const normalized = city.replace(/ё/g, 'е');
+    normalizedCityToRegion.set(normalized, regionCenters[city]);
+    canonicalCityNames.set(normalized, city);
 }
 
 const normalizedRegions = new Map<string, string>();
 for (const region of canonicalRegionNames) {
-    const key = normalizeAddressForSearch(region).replace(/область|край|республика|город федерального значения|автономный округ/g, '').trim();
+    const key = region.replace(/ё/g, 'е').toLowerCase()
+        .replace(/область|край|республика|город федерального значения|автономный округ|ао/g, '').trim();
     normalizedRegions.set(key, region);
 }
+
+const streetMarkers = ['улица', 'ул', 'проспект', 'пр-кт', 'пр', 'переулок', 'пер', 'шоссе', 'ш', 'площадь', 'пл', 'бульвар', 'б-р', 'аллея', 'набережная', 'наб'];
+const houseMarkers = ['дом', 'д'];
 
 /**
  * Capitalizes the first letter of each word in a string.
  */
 function capitalize(str: string): string {
+    if (!str) return str;
     return str.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
+
 /**
- * The main address parsing logic.
+ * The main "expert" address parsing function.
  * @param address The raw address string.
  * @returns A structured ParsedAddress object.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
+export function parseRussianAddress(address: string | undefined | null): ParsedAddress {
     const result: ParsedAddress = {
         country: "Россия",
         region: null,
         city: null,
         street: null,
         house: null,
+        postalCode: null,
         lat: null,
-        lon: null
+        lon: null,
+        ambiguousCandidates: []
     };
 
     if (!address || typeof address !== 'string') {
         return result;
     }
 
-    // 1. Preprocessing and Normalization
-    let cleanAddress = address.toLowerCase();
-    for (const key in regionSynonyms) {
-        cleanAddress = cleanAddress.replace(new RegExp(`\\b${key}\\.?\\b`, 'g'), regionSynonyms[key]);
-    }
-    const parts = cleanAddress.split(',').map(p => p.trim()).filter(Boolean);
-
-    // 2. Hierarchical Extraction
+    let processedAddress = address.toLowerCase().replace(/ё/g, 'е');
     
-    // --- Region ---
-    for (const part of parts) {
-        const normalizedPart = normalizeAddressForSearch(part).replace(/область|край|республика|город федерального значения|автономный округ/g, '').trim();
-        for (const [normRegion, canonicalRegion] of normalizedRegions.entries()) {
-            if (normRegion.includes(normalizedPart) || normalizedPart.includes(normRegion)) {
-                result.region = canonicalRegion;
-                break;
-            }
-        }
-        if (result.region) break;
+    // 1. Extract Postal Code
+    const postalCodeMatch = processedAddress.match(/(^|\s|,)(\d{6})($|\s|,)/);
+    if (postalCodeMatch) {
+        result.postalCode = postalCodeMatch[2];
+        processedAddress = processedAddress.replace(postalCodeMatch[2], '');
     }
 
-    // --- City (and Region if not found yet) ---
-    for (const part of parts) {
-        const normalizedPart = normalizeAddressForSearch(part.replace(/\b(г|город)\.?\b/g, ''));
-        if (normalizedCityToRegion.has(normalizedPart)) {
-            const canonicalCity = Object.keys(regionCenters).find(c => normalizeAddressForSearch(c) === normalizedPart) || normalizedPart;
-            result.city = capitalize(canonicalCity);
-            if (!result.region) {
-                result.region = normalizedCityToRegion.get(normalizedPart)!;
-            }
+    // 2. Normalize and Tokenize
+    processedAddress = processedAddress
+        .replace(/обл\.?/g, 'область')
+        .replace(/респ\.?/g, 'республика')
+        .replace(/кр\.?/g, 'край')
+        .replace(/г\.?\s/g, 'город '); // Add space to ensure separation
+        
+    let tokens = processedAddress.split(/,|\s+/).filter(p => p && p.trim() !== '');
+
+    // 3. Hierarchical Extraction
+
+    // Rule 1: Explicit Region has absolute priority
+    const fullNormalizedAddress = tokens.join(' ');
+    for (const [normRegion, canonicalRegion] of normalizedRegions.entries()) {
+        if (fullNormalizedAddress.includes(normRegion)) {
+            result.region = canonicalRegion;
             break;
         }
     }
     
-    // Fuzzy match for city if still not found
-    if (!result.city) {
-         for (const part of parts) {
-             const normalizedPart = normalizeAddressForSearch(part.replace(/\b(г|город)\.?\b/g, ''));
-             let bestMatch: { city: string, distance: number } | null = null;
-             for (const city of Object.keys(regionCenters)) {
-                 const distance = levenshteinDistance(normalizedPart, city);
-                 const threshold = city.length <= 5 ? 1 : 2;
-                 if (distance <= threshold && (!bestMatch || distance < bestMatch.distance)) {
-                     bestMatch = { city, distance };
-                 }
-             }
-             if (bestMatch) {
-                 result.city = capitalize(bestMatch.city);
-                 if (!result.region) {
-                    result.region = regionCenters[bestMatch.city];
-                 }
-                 break;
-             }
+    // Rule 2: Explicit City Marker has high priority
+    let cityFound = false;
+    for (let i = 0; i < tokens.length; i++) {
+        if (tokens[i] === 'город' && tokens[i + 1]) {
+            const cityName = tokens[i + 1];
+            if (normalizedCityToRegion.has(cityName)) {
+                result.city = canonicalCityNames.get(cityName)!;
+                if (!result.region) { // Set region only if not explicitly found
+                    result.region = normalizedCityToRegion.get(cityName)!;
+                }
+                cityFound = true;
+                tokens.splice(i, 2); // Remove marker and city name
+                break;
+            }
+        }
+    }
+
+    // Rule 3: City -> Region mapping if no explicit markers used yet
+    if (!cityFound) {
+        for (let i = 0; i < tokens.length; i++) {
+            const token = tokens[i];
+            if (normalizedCityToRegion.has(token)) {
+                result.city = canonicalCityNames.get(token)!;
+                if (!result.region) {
+                     result.region = normalizedCityToRegion.get(token)!;
+                }
+                cityFound = true;
+                tokens.splice(i, 1);
+                break;
+            }
+        }
+    }
+
+    // Rule 4: Fuzzy matching (last resort, and only if no city marker was present)
+    if (!cityFound && !address.toLowerCase().includes('г.')) {
+        let bestMatch: { city: string, distance: number } | null = null;
+        const candidates: { city: string, distance: number }[] = [];
+
+        for (const token of tokens) {
+            if (token.length < 3) continue; // Skip very short tokens
+            for (const [normCity] of normalizedCityToRegion.entries()) {
+                const distance = levenshteinDistance(token, normCity);
+                const threshold = normCity.length <= 5 ? 1 : normCity.length <= 10 ? 2 : 3;
+                if (distance <= threshold) {
+                    candidates.push({ city: normCity, distance });
+                }
+            }
+        }
+
+        if (candidates.length > 0) {
+            candidates.sort((a, b) => a.distance - b.distance);
+            const bestDistance = candidates[0].distance;
+            const topCandidates = candidates.filter(c => c.distance === bestDistance);
+            
+            if (topCandidates.length === 1) {
+                const foundCity = topCandidates[0].city;
+                result.city = canonicalCityNames.get(foundCity)!;
+                if (!result.region) {
+                    result.region = normalizedCityToRegion.get(foundCity)!;
+                }
+            } else {
+                 result.ambiguousCandidates = [...new Set(topCandidates.map(c => normalizedCityToRegion.get(c.city)!))];
+            }
+        }
+    }
+    
+    // 4. Extract Street & House from remaining tokens
+    let streetParts = [];
+    for (let i = 0; i < tokens.length; i++) {
+        if (streetMarkers.includes(tokens[i])) {
+            // Assume street name is the token(s) before or after the marker
+            if (i > 0 && !streetMarkers.includes(tokens[i-1]) && isNaN(parseInt(tokens[i-1]))) {
+                 streetParts.push(tokens[i-1]);
+            }
+             if (i < tokens.length - 1 && !houseMarkers.includes(tokens[i+1]) && isNaN(parseInt(tokens[i+1]))) {
+                 streetParts.push(tokens[i+1]);
+            }
+        }
+    }
+    if(streetParts.length > 0) result.street = streetParts.join(' ');
+
+    for (let i = 0; i < tokens.length; i++) {
+         if (houseMarkers.includes(tokens[i]) && tokens[i+1]) {
+             result.house = tokens[i+1];
+             break;
          }
     }
-    
-
-    // --- Street and House ---
-    for (const part of parts) {
-        if (streetSynonyms.some(syn => part.includes(syn))) {
-            let streetPart = part;
-            for (const syn of streetSynonyms) {
-                streetPart = streetPart.replace(new RegExp(`\\b${syn}\\.?\\b`, 'g'), '').trim();
-            }
-            // Check for house number within the street part
-            const houseMatch = streetPart.match(/(.*?)\s*(\d+[а-я]?(\/\d+)?)$/);
-            if (houseMatch) {
-                result.street = capitalize(houseMatch[1].trim());
-                result.house = houseMatch[2];
-            } else {
-                result.street = capitalize(streetPart);
-            }
-        } else if (houseSynonyms.some(syn => part.includes(syn)) && !result.house) {
-             result.house = part.replace(/\b(дом|д)\.?\b/g, '').trim();
-        }
-    }
-    
-    // Last numeric part as house number if not found yet
+     // Last numeric part as house number
     if (!result.house) {
-        const lastPart = parts[parts.length - 1];
-        if (/^\d+[а-я]?(\/\d+)?$/.test(lastPart)) {
-            result.house = lastPart;
+        const lastToken = tokens[tokens.length - 1];
+        if (/^\d+([а-я](\/\d+)?)?$/.test(lastToken)) {
+            result.house = lastToken;
         }
-    }
-    
-    // 3. Finalization and Geocoding
-    if (result.region) {
-        result.region = capitalize(result.region);
     }
 
-    if (result.city) {
-        const normCity = normalizeAddressForSearch(result.city);
-        if (cityCoordinates[normCity]) {
-            result.lat = cityCoordinates[normCity].lat;
-            result.lon = cityCoordinates[normCity].lon;
-        }
-    }
+    // 5. Finalize
+    result.region = result.region ? capitalize(result.region) : 'Регион не определен';
+    if(result.city) result.city = capitalize(result.city);
+    if(result.street) result.street = capitalize(result.street);
 
     return result;
 }
