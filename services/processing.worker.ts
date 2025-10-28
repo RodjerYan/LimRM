@@ -18,52 +18,55 @@ const parseNumericValue = (value: any): number => {
     return isNaN(converted) ? 0 : converted;
 };
 
+const capitalize = (str: string): string => {
+    return str
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
+};
+
 /**
- * Extracts a city name from a full address string with improved accuracy.
- * It prioritizes explicit city markers like "г." and falls back to searching a list of known cities.
+ * Extracts the highest-level geographical entity (region/oblast) from a full address string.
+ * This function is designed to be robust and handle various address formats and inconsistencies.
+ * 1. Normalizes the address (lowercase, ё -> е, abbreviations).
+ * 2. Tries to find an explicit region mention (e.g., "орловская область").
+ * 3. If no region is found, it looks for a known city and maps it to its corresponding region.
  * @param address The full address string.
- * @returns The extracted city name or a default string if not found.
+ * @returns The standardized region name or a default string if not found.
  */
-const extractCityFromAddress = (address: string): string => {
-    if (!address) return 'Город не определен';
+const extractRegionFromAddress = (address: string): string => {
+    if (!address || typeof address !== 'string') return 'Регион не определен';
 
-    // Pattern 1: Highly reliable search for "г. [CityName]" or "г [CityName]".
-    // It looks for the city name and stops at common delimiters like commas or other address parts.
-    const prefixCityPattern = /\bг(?:\.|\s)?\s*([а-яё\s-]+?)(?:,|$|\sул|\sобл|\sр-н|ул\.|обл\.)/i;
-    const prefixMatch = address.match(prefixCityPattern);
-    if (prefixMatch && prefixMatch[1]) {
-        const cityName = prefixMatch[1].trim();
-        if (cityName.length > 1) { // Avoid matching single letters
-            return cityName.charAt(0).toUpperCase() + cityName.slice(1);
-        }
-    }
+    // 1. Normalize the address string for consistent matching.
+    const normalizedAddress = address
+        .toLowerCase()
+        .replace(/ё/g, 'е')
+        .replace(/\bобл\.?/g, 'область')
+        .replace(/\bг\.?/g, 'город')
+        .replace(/\bр-н\.?/g, 'район');
 
-    // Pattern 2: Search for known city names from the `regionCenters` list.
-    // This is effective when the "г." prefix is missing.
-    const addressLower = address.toLowerCase();
-    // Sort known cities by length descending to match longer names first (e.g., "нижний новгород" before "новгород")
-    const sortedKnownCities = Object.keys(regionCenters).sort((a, b) => b.length - a.length);
-
-    for (const knownCity of sortedKnownCities) {
-        const cityPattern = new RegExp(`\\b${knownCity}\\b`, 'i');
-        if (cityPattern.test(addressLower)) {
-            return knownCity.charAt(0).toUpperCase() + knownCity.slice(1);
-        }
+    // 2. Prioritize finding an explicit region name first.
+    // This regex looks for phrases like "орловская область", "алтайский край", etc.
+    const regionPattern = /([а-яеы-]{5,}\s(?:область|край|республика|округ))/;
+    const regionMatch = normalizedAddress.match(regionPattern);
+    if (regionMatch && regionMatch[1]) {
+        // We found a direct mention of a region.
+        return capitalize(regionMatch[1].trim());
     }
     
-    // Pattern 3: Fallback logic for complex cases.
-    // Tries to find a plausible candidate that is not a common abbreviation.
-    const parts = address.split(',').map(p => p.trim());
-    for (const part of parts) {
-        // Remove known abbreviations and check if what's left is a plausible city name
-        const potentialCity = part.replace(/\b(обл|р-н|ул|пр-т|пер|зд|пос|д|г|область|край|республика)\b\.?/ig, '').trim();
-        // Check if it has letters, isn't just a number, and has a reasonable length
-        if (potentialCity.length > 2 && /[а-яё]/i.test(potentialCity) && !/^\d+$/.test(potentialCity)) {
-            return potentialCity.charAt(0).toUpperCase() + potentialCity.slice(1);
+    // 3. If no region is found, search for a known city and map it back to its region.
+    // We check against the `regionCenters` map.
+    for (const [city, region] of Object.entries(regionCenters)) {
+        // Use a word boundary `\b` to ensure we match the whole city name (e.g., "орел", not "корел").
+        const cityPattern = new RegExp(`\\b${city.replace(/ё/g, 'е')}\\b`);
+        if (cityPattern.test(normalizedAddress)) {
+            // Found a city, return its associated region.
+            return capitalize(region);
         }
     }
 
-    return 'Город не определен';
+    // 4. Fallback if no region or city is identified.
+    return 'Регион не определен';
 };
 
 
@@ -92,7 +95,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         // This intermediate structure uses a Set for efficient de-duplication of clients within a group.
         const aggregatedData: { [key: string]: Omit<AggregatedDataRow, 'clients'> & { clients: Set<string> } } = {};
         
-        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных по городам...' } });
+        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных по регионам...' } });
 
         for (let i = 0; i < totalRows; i++) {
             const row = jsonData[i];
@@ -101,20 +104,20 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             
-            const city = extractCityFromAddress(address);
+            const region = extractRegionFromAddress(address);
             const fact = parseNumericValue(row['Вес, кг']);
 
-            const key = `${city}-${brand}-${rm}`.toLowerCase();
+            // The key is now based on the standardized region name, ensuring all variations are grouped.
+            const key = `${region}-${brand}-${rm}`.toLowerCase();
 
             if (!aggregatedData[key]) {
-                const region = regionCenters[city.toLowerCase()] || city;
                 aggregatedData[key] = {
                     key,
-                    clientName: `${city} (${brand})`,
+                    clientName: `${region} (${brand})`,
                     brand,
                     rm,
-                    city: city,
-                    region: region.charAt(0).toUpperCase() + region.slice(1),
+                    city: region, // Use region name for the "City" column for consistency in UI
+                    region: region,
                     fact: 0,
                     potential: 0,
                     growthPotential: 0,
