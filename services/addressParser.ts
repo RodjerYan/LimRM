@@ -1,41 +1,19 @@
 import { regionCenters } from '../utils/regionCenters';
-import { levenshteinDistance } from '../utils/dataUtils';
-import { ParsedAddress } from '../types'; // Import from types
+import { ParsedAddress } from '../types';
 
-// --- Internal Data & Mappings ---
-const canonicalRegionNames = [...new Set(Object.values(regionCenters))];
-
-// Pre-normalized maps for performance
-const normalizedCityToRegion = new Map<string, string>();
-const canonicalCityNames = new Map<string, string>();
-for (const city in regionCenters) {
-    const normalized = city.replace(/ё/g, 'е');
-    normalizedCityToRegion.set(normalized, regionCenters[city]);
-    canonicalCityNames.set(normalized, city);
-}
-
-const normalizedRegions = new Map<string, string>();
-for (const region of canonicalRegionNames) {
-    const key = region.replace(/ё/g, 'е').toLowerCase()
-        .replace(/область|край|республика|город федерального значения|автономный округ|ао/g, '').trim()
-        .replace(/\s+/g, ' ');
-    normalizedRegions.set(key, region);
-}
-const regionKeys = [...normalizedRegions.keys()].sort((a, b) => b.length - a.length); // For longest match first
-
-const streetMarkers = ['улица', 'ул', 'проспект', 'пр-кт', 'пр', 'переулок', 'пер', 'шоссе', 'ш', 'площадь', 'пл', 'бульвар', 'б-р', 'аллея', 'набережная', 'наб', 'проезд', 'линия'];
-const houseMarkers = ['дом', 'д', 'строение', 'стр', 'корпус', 'к'];
+// A simplified map for direct region name lookups
+const regionSynonyms: Record<string, string> = {
+    "крым": "Республика Крым",
+    "московская": "Московская область",
+    "ленинградская": "Ленинградская область",
+    "краснодарский": "Краснодарский край",
+    "свердловская": "Свердловская область",
+    "калининградская": "Калининградская область",
+};
 
 /**
- * Capitalizes the first letter of each word in a string.
- */
-function capitalize(str: string): string {
-    if (!str) return str;
-    return str.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-}
-
-/**
- * The main "expert" address parsing function.
+ * A simplified function to parse a Russian address and determine the region.
+ * This version prioritizes direct matches of cities and known region names.
  * @param address The raw address string.
  * @returns A structured ParsedAddress object.
  */
@@ -58,165 +36,38 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
         return result;
     }
 
-    let normalizedAddress = address.toLowerCase().replace(/ё/g, 'е');
-    
-    // 1. Extract Postal Code
-    const postalCodeMatch = normalizedAddress.match(/(^|\s|,)(\d{6})($|\s|,)/);
-    if (postalCodeMatch) {
-        result.postalCode = postalCodeMatch[2];
-        normalizedAddress = normalizedAddress.replace(postalCodeMatch[2], '');
-    }
+    const normalizedAddress = address.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ');
+    const tokens = normalizedAddress.split(/\s+/).filter(Boolean);
 
-    // 2. Normalize and Tokenize
-    const cleanAddress = normalizedAddress
-        .replace(/обл\.?/g, 'область')
-        .replace(/респ\.?/g, 'республика')
-        .replace(/кр\.?/g, 'край')
-        .replace(/р-н/g, 'район')
-        .replace(/г\.о\.?/g, 'городской округ')
-        .replace(/г\.?\s/g, ' город ') // Add spaces to ensure separation
-        .replace(/ул\.?/g, ' улица ')
-        .replace(/д\.?/g, ' дом ')
-        .replace(/[.,;:]/g, ' '); // Replace punctuation with space
-        
-    let tokens = cleanAddress.split(/\s+/).filter(p => p && p.trim() !== '');
-
-    // 3. Hierarchical Extraction
-    const originalTokens = [...tokens];
-
-    // Rule 1: Explicit Region has absolute priority
-    const fullNormalizedAddress = tokens.join(' ');
-    for (const regionKey of regionKeys) {
-        if (fullNormalizedAddress.includes(regionKey)) {
-            result.region = normalizedRegions.get(regionKey)!;
-            result.confidence = 1.0;
-            result.source = 'explicit_region';
-            // Remove region words from tokens for cleaner subsequent parsing
-            const regionWords = regionKey.split(' ');
-            tokens = tokens.filter(t => !regionWords.includes(t));
-            break;
-        }
-    }
-    
-    // Rule 2: Explicit City Marker has high priority
-    let cityFoundByMarker = false;
-    let cityIndex = tokens.indexOf('город');
-    if (cityIndex !== -1 && tokens[cityIndex + 1]) {
-        const cityName = tokens[cityIndex + 1];
-        if (normalizedCityToRegion.has(cityName)) {
-            result.city = canonicalCityNames.get(cityName)!;
-            // Set region based on city, ONLY if region wasn't found explicitly
-            if (!result.region) {
-                result.region = normalizedCityToRegion.get(cityName)!;
-            }
-            result.confidence = 1.0;
-            result.source = 'explicit_city';
-            cityFoundByMarker = true;
-            tokens.splice(cityIndex, 2); // Remove marker and city name
+    // 1. Check for city names first (higher specificity)
+    for (const token of tokens) {
+        if (regionCenters[token]) {
+            result.city = token.charAt(0).toUpperCase() + token.slice(1);
+            result.region = regionCenters[token];
+            result.confidence = 0.9;
+            result.source = 'city_lookup';
+            break; // Found a city, stop searching
         }
     }
 
-    // Rule 2.5: District Name Lookup (e.g., "Симферопольский район")
+    // 2. If no city match, check for explicit region names
     if (!result.region) {
-        const districtIndex = tokens.findIndex(t => t === 'район');
-        if (districtIndex > 0) {
-            let districtName = tokens[districtIndex - 1];
-            // Normalize district name (e.g., "симферопольский" -> "симферополь")
-            const districtRoot = districtName.replace(/(ский|ской|цкий|цкой)$/, '');
-            
-            if (normalizedCityToRegion.has(districtRoot)) {
-                result.region = normalizedCityToRegion.get(districtRoot)!;
-                result.confidence = 0.95;
-                result.source = 'district_lookup';
-                tokens.splice(districtIndex - 1, 2); 
-            }
-        }
-    }
-
-    // Rule 3: City -> Region mapping if no explicit markers used yet
-    if (!result.city && !result.region) {
-        for (let i = 0; i < tokens.length; i++) {
-            const token = tokens[i];
-            if (normalizedCityToRegion.has(token)) {
-                result.city = canonicalCityNames.get(token)!;
-                result.region = normalizedCityToRegion.get(token)!;
-                result.confidence = 0.9;
-                result.source = 'city_lookup';
-                tokens.splice(i, 1);
+        // Handle multi-word region names like "краснодарский край"
+        const fullAddress = tokens.join(' ');
+        for (const key in regionSynonyms) {
+             if (fullAddress.includes(key)) {
+                result.region = regionSynonyms[key];
+                result.confidence = 0.8;
+                result.source = 'explicit_region';
                 break;
             }
         }
     }
-
-    // Rule 4: Fuzzy matching (last resort, and only if no city marker was present)
-    if (!result.city && !result.region && !cityFoundByMarker) {
-        const candidates: { city: string, distance: number }[] = [];
-        const potentialCityTokens = tokens.filter(t => t.length > 2 && isNaN(parseInt(t)));
-
-        for (const token of potentialCityTokens) {
-            for (const [normCity] of normalizedCityToRegion.entries()) {
-                const distance = levenshteinDistance(token, normCity);
-                const threshold = normCity.length <= 5 ? 1 : normCity.length <= 10 ? 2 : 3;
-                if (distance <= threshold) {
-                    candidates.push({ city: normCity, distance });
-                }
-            }
-        }
-
-        if (candidates.length > 0) {
-            candidates.sort((a, b) => a.distance - b.distance);
-            const bestDistance = candidates[0].distance;
-            const topCandidates = candidates.filter(c => c.distance === bestDistance);
-            
-            if (topCandidates.length === 1) {
-                const foundCity = topCandidates[0].city;
-                result.city = canonicalCityNames.get(foundCity)!;
-                result.region = normalizedCityToRegion.get(foundCity)!;
-                result.confidence = 0.7;
-                result.source = 'fuzzy';
-            } else {
-                 result.ambiguousCandidates = [...new Set(topCandidates.map(c => normalizedCityToRegion.get(c.city)!))];
-            }
-        }
-    }
     
-    // 4. Extract Street & House from remaining tokens
-    let streetParts: string[] = [];
-    for(let i = 0; i < originalTokens.length; i++){
-        if(streetMarkers.includes(originalTokens[i])){
-            // Greedily consume next tokens until a house marker or number is found
-            for(let j = i + 1; j < originalTokens.length; j++){
-                if(houseMarkers.includes(originalTokens[j]) || /^\d/.test(originalTokens[j])){
-                    break;
-                }
-                streetParts.push(originalTokens[j]);
-            }
-            break;
-        }
-    }
-    if (streetParts.length > 0) {
-        result.street = streetParts.join(' ');
+    // If a region was found, capitalize city if it was also found
+    if (result.region && result.city) {
+        result.city = result.city.charAt(0).toUpperCase() + result.city.slice(1);
     }
 
-
-    for (let i = 0; i < originalTokens.length; i++) {
-        if (houseMarkers.includes(originalTokens[i]) && originalTokens[i+1] && /^\d/.test(originalTokens[i+1])) {
-             result.house = originalTokens[i+1];
-             break;
-        }
-    }
-     // Last numeric part as house number
-    if (!result.house) {
-        const lastToken = originalTokens[originalTokens.length - 1];
-        if (/^\d+([а-я](\/\d+)?)?$/.test(lastToken)) {
-            result.house = lastToken;
-        }
-    }
-
-    // 5. Finalize
-    result.region = result.region ? capitalize(result.region) : null;
-    if(result.city) result.city = capitalize(result.city);
-    if(result.street) result.street = capitalize(result.street);
-    
     return result;
 }
