@@ -81,15 +81,27 @@ const parseNumericValue = (value: any): number => {
 const extractCityFromAddress = (address: string): string => {
     if (!address) return 'Неизвестный город';
 
-    // Best case: "г. Смоленск", "Смоленск г,", "302002, ... Орёл г,"
-    const cityPattern = /(?:,\s*|(?:\d{6},\s*))([а-яё\s-]+?)\s*г\b/i;
-    const match = address.match(cityPattern);
-    if (match && match[1]) {
-        const cityName = match[1].trim();
+    // Pattern 1: Look for "г. [CityName]" or "г [CityName]" (e.g., "г Орёл,")
+    // It captures text after "г " until a comma, end of string, or a street/region indicator.
+    const prefixCityPattern = /\bг(?:\.|\s)?\s*([а-яё\s-]+?)(?:,|$|\sул|\sобл|\sр-н)/i;
+    const prefixMatch = address.match(prefixCityPattern);
+    if (prefixMatch && prefixMatch[1]) {
+        const cityName = prefixMatch[1].trim();
+        // Ensure the match is a valid city name and not just noise
+        if (cityName.length > 1) {
+             return cityName.charAt(0).toUpperCase() + cityName.slice(1);
+        }
+    }
+
+    // Pattern 2: Look for "[CityName] г," or "..., [CityName] г" (e.g., "Смоленск г,")
+    const postfixCityPattern = /(?:,\s*|(?:\d{6},\s*))([а-яё\s-]+?)\s*г\b/i;
+    const postfixMatch = address.match(postfixCityPattern);
+    if (postfixMatch && postfixMatch[1]) {
+        const cityName = postfixMatch[1].trim();
         return cityName.charAt(0).toUpperCase() + cityName.slice(1);
     }
     
-    // Next best: Look for region and derive city from it. e.g. "Смоленская обл" -> "Смоленск"
+    // Pattern 3: Look for a region and derive the city from it (e.g., "Смоленская обл" -> "Смоленск")
     const regionPattern = /([а-яё-]+)ая\s+обл/i;
     const regionMatch = address.match(regionPattern);
     if (regionMatch && regionMatch[1]) {
@@ -97,15 +109,22 @@ const extractCityFromAddress = (address: string): string => {
         return city.charAt(0).toUpperCase() + city.slice(1);
     }
 
-    // Fallback: split by comma and take the first "wordy" part after a potential postcode
+    // Fallback: Split address by comma and analyze parts
     const parts = address.split(',').map(p => p.trim()).filter(Boolean);
-    const startIndex = /^\d{6}$/.test(parts[0]) ? 1 : 0;
-    for (let i = startIndex; i < parts.length; i++) {
-        if (parts[i].length > 3 && !parts[i].includes('обл') && !parts[i].includes('р-н')) {
-            return parts[i].charAt(0).toUpperCase() + parts[i].slice(1);
+    
+    // Try to find a part that looks like a city
+    for (const part of parts) {
+        // A good city candidate has Russian letters, is not just a number, and is not a common address abbreviation.
+        const isNumeric = /^\d+$/.test(part);
+        const isAbbreviation = /\b(обл|р-н|ул|пр-т|пер|зд|пос|д)\b/i.test(part);
+        const hasLetters = /[а-яё]/i.test(part);
+
+        if (hasLetters && !isNumeric && !isAbbreviation && part.length > 2) {
+            return part.charAt(0).toUpperCase() + part.slice(1);
         }
     }
 
+    // Final fallback: if no good part is found, return a default value
     return 'Неизвестный город';
 };
 
