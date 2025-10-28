@@ -1,19 +1,6 @@
 import { regionCenters } from '../utils/regionCenters';
 import { levenshteinDistance } from '../utils/dataUtils';
-
-export interface ParsedAddress {
-  country: "Россия";
-  region: string | null;
-  city: string | null;
-  street: string | null;
-  house: string | null;
-  postalCode: string | null;
-  lat: number | null;
-  lon: number | null;
-  confidence: number;
-  source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
-  ambiguousCandidates: string[];
-}
+import { ParsedAddress } from '../types'; // Import from types
 
 // --- Internal Data & Mappings ---
 const canonicalRegionNames = [...new Set(Object.values(regionCenters))];
@@ -67,7 +54,7 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
         ambiguousCandidates: []
     };
 
-    if (!address || typeof address !== 'string') {
+    if (!address || typeof address !== 'string' || address.toLowerCase() === 'неизвестно') {
         return result;
     }
 
@@ -85,6 +72,8 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
         .replace(/обл\.?/g, 'область')
         .replace(/респ\.?/g, 'республика')
         .replace(/кр\.?/g, 'край')
+        .replace(/р-н/g, 'район')
+        .replace(/г\.о\.?/g, 'городской округ')
         .replace(/г\.?\s/g, ' город ') // Add spaces to ensure separation
         .replace(/ул\.?/g, ' улица ')
         .replace(/д\.?/g, ' дом ')
@@ -127,15 +116,30 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
         }
     }
 
+    // Rule 2.5: District Name Lookup (e.g., "Симферопольский район")
+    if (!result.region) {
+        const districtIndex = tokens.findIndex(t => t === 'район');
+        if (districtIndex > 0) {
+            let districtName = tokens[districtIndex - 1];
+            // Normalize district name (e.g., "симферопольский" -> "симферополь")
+            const districtRoot = districtName.replace(/(ский|ской|цкий|цкой)$/, '');
+            
+            if (normalizedCityToRegion.has(districtRoot)) {
+                result.region = normalizedCityToRegion.get(districtRoot)!;
+                result.confidence = 0.95;
+                result.source = 'district_lookup';
+                tokens.splice(districtIndex - 1, 2); 
+            }
+        }
+    }
+
     // Rule 3: City -> Region mapping if no explicit markers used yet
-    if (!result.city) {
+    if (!result.city && !result.region) {
         for (let i = 0; i < tokens.length; i++) {
             const token = tokens[i];
             if (normalizedCityToRegion.has(token)) {
                 result.city = canonicalCityNames.get(token)!;
-                if (!result.region) {
-                     result.region = normalizedCityToRegion.get(token)!;
-                }
+                result.region = normalizedCityToRegion.get(token)!;
                 result.confidence = 0.9;
                 result.source = 'city_lookup';
                 tokens.splice(i, 1);
@@ -145,7 +149,7 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
     }
 
     // Rule 4: Fuzzy matching (last resort, and only if no city marker was present)
-    if (!result.city && !cityFoundByMarker) {
+    if (!result.city && !result.region && !cityFoundByMarker) {
         const candidates: { city: string, distance: number }[] = [];
         const potentialCityTokens = tokens.filter(t => t.length > 2 && isNaN(parseInt(t)));
 
@@ -167,9 +171,7 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
             if (topCandidates.length === 1) {
                 const foundCity = topCandidates[0].city;
                 result.city = canonicalCityNames.get(foundCity)!;
-                if (!result.region) {
-                    result.region = normalizedCityToRegion.get(foundCity)!;
-                }
+                result.region = normalizedCityToRegion.get(foundCity)!;
                 result.confidence = 0.7;
                 result.source = 'fuzzy';
             } else {
@@ -180,10 +182,8 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
     
     // 4. Extract Street & House from remaining tokens
     let streetParts: string[] = [];
-    let streetMarkerIndex = -1;
     for(let i = 0; i < originalTokens.length; i++){
         if(streetMarkers.includes(originalTokens[i])){
-            streetMarkerIndex = i;
             // Greedily consume next tokens until a house marker or number is found
             for(let j = i + 1; j < originalTokens.length; j++){
                 if(houseMarkers.includes(originalTokens[j]) || /^\d/.test(originalTokens[j])){
@@ -218,10 +218,5 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
     if(result.city) result.city = capitalize(result.city);
     if(result.street) result.street = capitalize(result.street);
     
-    if(!result.region && result.city) {
-        result.region = 'Регион не определен';
-    }
-
-
     return result;
 }

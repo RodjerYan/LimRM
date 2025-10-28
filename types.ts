@@ -23,7 +23,7 @@ export interface ParsedAddress {
   lat: number | null;
   lon: number | null;
   confidence: number;
-  source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
+  source: 'explicit_region' | 'explicit_city' | 'district_lookup' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
   ambiguousCandidates: string[];
 }
 
