@@ -1,4 +1,5 @@
 
+
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
 import { regionCenters } from './regionCenters';
 
@@ -182,7 +183,8 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     const totalPotential = data.reduce((sum, row) => sum + row.potential, 0);
     const totalGrowth = data.reduce((sum, row) => sum + row.growthPotential, 0);
 
-    const totalClients = data.length;
+    const totalClients = data.length; // Now represents number of groups
+    const totalActiveClients = data.reduce((sum, row) => sum + (row.clients?.length || 1), 0);
     
     // To calculate average growth percentage, we sum the potential and growth and then divide,
     // rather than averaging percentages to avoid skewed results.
@@ -206,6 +208,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
         totalPotential,
         totalGrowth,
         totalClients,
+        totalActiveClients,
         averageGrowthPercentage,
         topPerformingRM,
     };

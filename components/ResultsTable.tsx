@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo } from 'react';
 import { AggregatedDataRow } from '../types';
 import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, CopyIcon, CheckIcon } from './icons';
@@ -18,7 +19,7 @@ const ResultsTable: React.FC<{
         const sortedForExport = sortedData; // Use currently sorted/filtered data
         const tsv = [
             // Header
-            ['Клиент', 'РМ', 'Город', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
+            ['Группа', 'РМ', 'Город', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
             // Rows
             ...sortedForExport.map(row => [
                 row.clientName,
@@ -145,7 +146,7 @@ const ResultsTable: React.FC<{
                 <table className="w-full text-sm text-left text-gray-300">
                     <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 backdrop-blur-sm">
                         <tr>
-                            <th scope="col" className="px-4 py-3">Клиент</th>
+                            <th scope="col" className="px-4 py-3">Группа/Клиент</th>
                             <SortableHeader sortKey="rm">РМ</SortableHeader>
                             <SortableHeader sortKey="city">Город</SortableHeader>
                             <SortableHeader sortKey="brand">Бренд</SortableHeader>

@@ -10,6 +10,7 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthPercentage: number;
     potentialClients?: PotentialClient[];
+    clients?: string[]; // List of individual client names/addresses in the group
 }
 
 export interface PotentialClient {
@@ -47,7 +48,8 @@ export interface SummaryMetrics {
     totalFact: number;
     totalPotential: number;
     totalGrowth: number;
-    totalClients: number;
+    totalClients: number; // Represents the number of groups
+    totalActiveClients: number; // Represents the total number of unique sales outlets
     averageGrowthPercentage: number;
     topPerformingRM: {
         name: string;

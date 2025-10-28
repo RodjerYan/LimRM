@@ -1,4 +1,5 @@
 
+
 import * as xlsx from 'xlsx';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient } from '../types';
 import { normalizeString, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
@@ -44,34 +45,6 @@ const geocodeAddress = async (address: string, city: string): Promise<{ lat: num
     const result = { lat, lon };
     geoCache.set(cacheKey, result);
     return result;
-};
-
-
-const findPotentialClients = async (row: AggregatedDataRow, okbData: OkbDataRow[]): Promise<PotentialClient[]> => {
-    // This is a simplified logic. A real implementation would query a database or an API
-    // based on the client's location, industry, etc.
-    // Here, we'll just find a few other clients from the OKB in the same city.
-    const potential = okbData
-        .filter(okb => okb['Город']?.toLowerCase() === row.city.toLowerCase() && normalizeString(okb['Наименование']) !== normalizeString(row.clientName))
-        .slice(0, 5) // Limit to 5 for performance
-        .map(okb => ({
-            name: okb['Наименование'] || 'N/A',
-            address: okb['Юридический адрес'] || 'N/A',
-            type: okb['Вид деятельности'] || 'N/A',
-        }));
-
-    // Geocode the potential clients
-    const geocodedClients: PotentialClient[] = [];
-    for (const client of potential) {
-        const coords = await geocodeAddress(client.address, row.city);
-        if (coords) {
-            geocodedClients.push({ ...client, lat: coords.lat, lon: coords.lon });
-        } else {
-             geocodedClients.push(client);
-        }
-    }
-
-    return geocodedClients;
 };
 
 /**
@@ -165,26 +138,29 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             throw new Error('Файл должен содержать колонку "Вес, кг" для расчета факта продаж.');
         }
 
-        const aggregatedData: { [key: string]: AggregatedDataRow } = {};
+        // FIX: The original type `AggregatedDataRow & { clients: Set<string> }` created an impossible
+        // intersection type for the `clients` property (`string[] & Set<string>`).
+        // By using `Omit`, we remove the original `clients` property from `AggregatedDataRow` and
+        // replace it with one correctly typed as `Set<string>` for this intermediate processing step.
+        const aggregatedData: { [key: string]: Omit<AggregatedDataRow, 'clients'> & { clients: Set<string> } } = {};
         
-        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ строк...' } });
+        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных...' } });
 
         for (let i = 0; i < totalRows; i++) {
             const row = jsonData[i];
             
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`;
-            const clientName = address;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             const city = extractCityFromAddress(address);
             const fact = parseNumericValue(row['Вес, кг']);
 
-            const key = `${address}-${brand}-${rm}`.toLowerCase();
+            const key = `${city}-${brand}-${rm}`.toLowerCase();
 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
                     key,
-                    clientName,
+                    clientName: `г. ${city} (${brand})`,
                     brand,
                     rm,
                     city,
@@ -193,16 +169,15 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
                     potential: 0,
                     growthPotential: 0,
                     growthPercentage: 0,
-                    potentialClients: []
+                    clients: new Set<string>(),
                 };
             }
             aggregatedData[key].fact += fact;
+            aggregatedData[key].clients.add(address);
 
             if (hasPotentialColumn) {
-                const potential = parseNumericValue(row['Потенциал']);
-                if (aggregatedData[key].potential < potential) {
-                    aggregatedData[key].potential = potential;
-                }
+                // Sum up potential from all individual clients in the group
+                aggregatedData[key].potential += parseNumericValue(row['Потенциал']);
             }
 
              if ((i % 100 === 0 || i === totalRows - 1) && i > 0) {
@@ -212,17 +187,17 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         }
         
         let processedCount = 0;
-        const finalData = Object.values(aggregatedData);
+        const finalData = Object.values(aggregatedData).map(item => ({...item, clients: Array.from(item.clients)}));
         const totalAggregated = finalData.length;
 
-        postMessage({ type: 'progress', payload: { percentage: 80, message: 'Обогащение данных...' } });
+        postMessage({ type: 'progress', payload: { percentage: 80, message: 'Расчет потенциала...' } });
 
         for (const item of finalData) {
-            // If potential wasn't in the file, calculate it now based on aggregated fact.
+            // If potential wasn't in the file, calculate it now based on aggregated fact with a 15% growth factor.
             if (!hasPotentialColumn) {
-                item.potential = item.fact * 1.2; // Assume 20% growth potential
+                item.potential = item.fact * 1.15;
             } else {
-                 // If potential from file is less than fact (data error), adjust it.
+                 // If total potential from file is less than total fact (data error), adjust it.
                  if (item.potential < item.fact) {
                     item.potential = item.fact;
                 }
@@ -231,15 +206,22 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             item.growthPotential = Math.max(0, item.potential - item.fact);
             item.growthPercentage = item.potential > 0 ? (item.growthPotential / item.potential) * 100 : 0;
             
-            const okbMatch = findBestOkbMatch(item.clientName, item.city, okbDataWithNormalizedNames);
-            item.region = okbMatch ? extractRegionFromOkb(okbMatch) : 'Регион не определен';
-            
-            item.potentialClients = await findPotentialClients(item, okbData);
+            // Determine region from the first client in the group
+            const firstClientName = item.clients?.[0];
+            if (firstClientName) {
+                const okbMatch = findBestOkbMatch(firstClientName, item.city, okbDataWithNormalizedNames);
+                item.region = okbMatch ? extractRegionFromOkb(okbMatch) : 'Регион не определен';
+            } else {
+                 item.region = 'Регион не определен';
+            }
+
+            // Potential clients logic is not applicable for grouped views, so we leave it empty.
+            item.potentialClients = [];
             
             processedCount++;
-            if (processedCount % 20 === 0 || processedCount === totalAggregated) {
+            if (processedCount % 50 === 0 || processedCount === totalAggregated) {
                  const percentage = 80 + Math.round((processedCount / totalAggregated) * 20);
-                 postMessage({ type: 'progress', payload: { percentage, message: `Обогащение записи ${processedCount} из ${totalAggregated}...` } });
+                 postMessage({ type: 'progress', payload: { percentage, message: `Расчет для группы ${processedCount} из ${totalAggregated}...` } });
             }
         }
 

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DataControl from './components/DataControl';
 import Filters from './components/Filters';
@@ -62,7 +63,7 @@ const App: React.FC = () => {
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
         setFilters({ rm: '', brand: [], city: [] }); // Reset filters on new data
-        addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных записей.`, 'success');
+        addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
@@ -146,7 +147,7 @@ const App: React.FC = () => {
 
                     {/* Main Content */}
                     <div className="lg:col-span-3 space-y-6">
-                        <MetricsSummary metrics={summaryMetrics} disabled={!isDataLoaded || isLoading} />
+                        <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         <PotentialChart data={filteredData} />
                     </div>

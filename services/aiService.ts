@@ -1,11 +1,12 @@
 
+
 import { AggregatedDataRow } from "../types";
 
 // The proxy URL should be configured in one place, but for simplicity, we define it here.
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
 /**
- * Generates a prompt for Gemini based on a single client's data.
+ * Generates a prompt for Gemini based on a client's data (individual or grouped).
  * @param clientData - The data for a single aggregated client row.
  * @returns A string prompt for the AI.
  */
@@ -14,13 +15,19 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const formattedPotential = new Intl.NumberFormat('ru-RU').format(clientData.potential);
     const formattedGrowth = new Intl.NumberFormat('ru-RU').format(clientData.growthPotential);
 
+    const isGroup = !!clientData.clients && clientData.clients.length > 0;
+    const subject = isGroup ? 'группе клиентов' : 'клиенту';
+    const subjectDataHeader = isGroup ? 'Данные о группе' : 'Данные о клиенте';
+    const clientIdentifier = isGroup ? `Группа (${clientData.clients?.length} ТТ)` : 'Клиент';
+    const clientName = isGroup ? `${clientData.clientName} (РМ: ${clientData.rm})` : clientData.clientName;
+
     return `
-        Проанализируй данные по клиенту и дай краткие, действенные рекомендации по увеличению продаж.
+        Проанализируй данные по ${subject} и дай краткие, действенные рекомендации по увеличению продаж.
         Отвечай на русском языке. Ответ должен быть в формате Markdown, без заголовков.
         Используй списки для перечисления рекомендаций.
 
-        **Данные о клиенте:**
-        - **Клиент:** ${clientData.clientName}
+        **${subjectDataHeader}:**
+        - **${clientIdentifier}:** ${clientName}
         - **Город:** ${clientData.city}
         - **Бренд:** ${clientData.brand}
         - **Региональный менеджер (РМ):** ${clientData.rm}
@@ -29,7 +36,7 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
         - **Потенциал роста:** ${formattedGrowth} кг/ед. (${clientData.growthPercentage.toFixed(1)}%)
 
         **Задача:**
-        1.  Определи 2-3 ключевых фактора, которые могут способствовать росту.
+        1.  Определи 2-3 ключевых фактора, которые могут способствовать росту для этой ${isGroup ? 'группы' : 'ТТ'}.
         2.  Предложи 3-4 конкретных шага или тактики для РМ для реализации этого потенциала.
             Например: предложить новые продукты, провести обучение, запустить маркетинговую акцию и т.д.
         3.  Будь кратким и четким.
