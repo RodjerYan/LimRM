@@ -1,114 +1,101 @@
-
 import * as xlsx from 'xlsx';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage } from '../types';
-import { normalizeString, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
+import { normalizeAddressForSearch, levenshteinDistance, findBestOkbMatch, extractRegionFromOkb } from '../utils/dataUtils';
 import { regionCenters } from '../utils/regionCenters';
 
+// Pre-computation for performance: create normalized maps once when the worker starts.
+const cityToRegionMap = new Map<string, string>();
+const normalizedRegionNames = new Map<string, string>(); // a map from a normalized region name to its canonical form
+const allCities = Object.keys(regionCenters);
+
+for (const city in regionCenters) {
+    cityToRegionMap.set(normalizeAddressForSearch(city), regionCenters[city]);
+}
+
+// Create a unique list of canonical region names
+const canonicalRegions = [...new Set(Object.values(regionCenters))];
+for (const region of canonicalRegions) {
+    // Normalize the region name for searching (e.g., "орловская область" -> "орловская")
+    const normalized = normalizeAddressForSearch(region)
+        .replace(/область|край|республика|город федерального значения|автономный округ/g, '')
+        .trim();
+    normalizedRegionNames.set(normalized, region);
+}
+
+
 /**
- * Safely parses a numeric value from a spreadsheet cell, which might be a number or a string.
- * Handles common European number formats (e.g., "1 234,56").
- * @param value The value from the spreadsheet cell.
- * @returns The parsed number, or 0 if parsing fails.
+ * Safely parses a numeric value from a spreadsheet cell.
+ * Handles formats like "1 234,56".
  */
 const parseNumericValue = (value: any): number => {
     if (value === null || value === undefined) return 0;
-    if (typeof value === 'number') {
-        return isNaN(value) ? 0 : value;
-    }
+    if (typeof value === 'number') return isNaN(value) ? 0 : value;
     if (typeof value === 'string') {
-        const cleanedString = value
-            .replace(/\s/g, '')
-            .replace(',', '.');
-        
+        const cleanedString = value.replace(/\s/g, '').replace(',', '.');
         const number = parseFloat(cleanedString);
         return isNaN(number) ? 0 : number;
     }
-    const converted = Number(value);
-    return isNaN(converted) ? 0 : converted;
+    return isNaN(Number(value)) ? 0 : Number(value);
 };
 
 /**
- * Extracts city and region details from a complex address string.
- * It first attempts to find the city using robust patterns, then determines the region
- * by either finding it directly in the string or mapping the found city to its region.
- * @param address The address string to parse.
- * @returns An object containing the extracted city and region.
+ * Determines the region from a given address string using a hierarchical and fuzzy matching algorithm.
+ * @param address The raw address string.
+ * @returns The canonical region name or a default fallback string.
  */
-const extractLocationDetails = (address: string): { city: string, region: string } => {
-    if (!address) return { city: 'Неизвестный город', region: 'Регион не определен' };
+function determineRegion(address: string): string {
+    const fallbackRegion = 'Регион не определен';
+    if (!address || typeof address !== 'string') return fallbackRegion;
 
-    // --- Find City First (using robust logic) ---
-    let city = 'Неизвестный город';
-    const prefixCityPattern = /\bг(?:\.|\s)?\s*([а-яё\s-]+?)(?:,|$|\sул|\sобл|\sр-н)/i;
-    const prefixMatch = address.match(prefixCityPattern);
-    if (prefixMatch && prefixMatch[1]) {
-        const cityName = prefixMatch[1].trim();
-        if (cityName.length > 1) {
-            city = cityName.charAt(0).toUpperCase() + cityName.slice(1);
+    const normalizedAddress = normalizeAddressForSearch(address);
+
+    // 1. Explicit Region Search: Check for direct mentions of region names.
+    for (const [normRegion, canonicalRegion] of normalizedRegionNames.entries()) {
+        if (normalizedAddress.includes(normRegion)) {
+            return canonicalRegion.charAt(0).toUpperCase() + canonicalRegion.slice(1);
         }
     }
 
-    if (city === 'Неизвестный город') {
-        const postfixCityPattern = /(?:,\s*|(?:\d{6},\s*))([а-яё\s-]+?)\s*г\b/i;
-        const postfixMatch = address.match(postfixCityPattern);
-        if (postfixMatch && postfixMatch[1]) {
-            city = postfixMatch[1].trim().replace(/^\w/, c => c.toUpperCase());
-        }
-    }
+    // 2. City-to-Region Mapping (Exact and Fuzzy)
+    const addressParts = normalizedAddress.split(/\s+/);
+    let bestMatch: { city: string, score: number } | null = null;
 
-    if (city === 'Неизвестный город') {
-        const parts = address.split(',').map(p => p.trim()).filter(Boolean);
-        for (const part of parts) {
-            const isNumeric = /^\d+$/.test(part);
-            const isAbbreviation = /\b(обл|р-н|ул|пр-т|пер|зд|пос|д)\b/i.test(part);
-            const hasLetters = /[а-яё]/i.test(part);
-            if (hasLetters && !isNumeric && !isAbbreviation && part.length > 2) {
-                city = part.replace(/^\w/, c => c.toUpperCase());
-                break;
+    for (const part of addressParts) {
+        if (part.length < 3) continue; // Ignore very short parts
+
+        // Exact match
+        if (cityToRegionMap.has(part)) {
+            const region = cityToRegionMap.get(part)!;
+            return region.charAt(0).toUpperCase() + region.slice(1);
+        }
+        
+        // Fuzzy match preparation
+        for (const city of allCities) {
+            const distance = levenshteinDistance(part, city);
+            const maxLength = Math.max(part.length, city.length);
+            const similarity = 1 - distance / maxLength;
+            
+            // Set a high threshold for similarity to avoid incorrect matches
+            if (similarity > 0.85) { 
+                if (!bestMatch || similarity > bestMatch.score) {
+                    bestMatch = { city: city, score: similarity };
+                }
             }
         }
     }
 
-    // --- Now, determine Region ---
-    let region = 'Регион не определен';
+    if (bestMatch) {
+        const region = regionCenters[bestMatch.city];
+        return region.charAt(0).toUpperCase() + region.slice(1);
+    }
     
-    // 1. Direct search for full region name in the address
-    const regionPattern = /([а-яё\s-]+(?:область|край|республика|автономный округ))/i;
-    const regionMatch = address.match(regionPattern);
-    if (regionMatch && regionMatch[1]) {
-        const regionName = regionMatch[1].trim();
-        region = regionName.charAt(0).toUpperCase() + regionName.slice(1);
-        return { city, region };
-    }
-
-    // 2. Map the extracted city to a region
-    if (city !== 'Неизвестный город') {
-        const normalizedCity = city.toLowerCase();
-        if (regionCenters[normalizedCity]) {
-            const mappedRegion = regionCenters[normalizedCity];
-            region = mappedRegion.charAt(0).toUpperCase() + mappedRegion.slice(1);
-            return { city, region };
-        }
-    }
-
-    // 3. Fallback: search for patterns like "Смоленская обл"
-    const abbreviatedRegionPattern = /([а-яё-]+(?:ая|ий))\s+(обл|край|респ)/i;
-    const abbreviatedMatch = address.match(abbreviatedRegionPattern);
-    if (abbreviatedMatch && abbreviatedMatch[1] && abbreviatedMatch[2]) {
-        const regionBase = abbreviatedMatch[1];
-        const regionType = abbreviatedMatch[2].startsWith('обл') ? 'область' : abbreviatedMatch[2].startsWith('край') ? 'край' : 'республика';
-        const fullRegion = `${regionBase} ${regionType}`;
-        region = fullRegion.charAt(0).toUpperCase() + fullRegion.slice(1);
-        return { city, region };
-    }
-     
-    return { city, region };
-};
-
+    // If no city or region is found, return the fallback.
+    return fallbackRegion;
+}
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
     const { file, okbData } = e.data;
-    const okbDataWithNormalizedNames = okbData.map(d => ({...d, normalizedName: normalizeString(d['Наименование'])}));
+    const okbDataWithNormalizedNames = okbData.map(d => ({...d, normalizedName: normalizeAddressForSearch(d['Наименование'])}));
 
     const postMessage = (message: WorkerMessage) => self.postMessage(message);
 
@@ -120,47 +107,34 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         const worksheet = workbook.Sheets[sheetName];
         const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false });
 
-        const totalRows = jsonData.length;
-        if (totalRows === 0) {
-            throw new Error('Файл пуст или имеет неверный формат.');
-        }
-
+        if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
+        
         const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
-        const hasPotentialColumn = headers.some(h => h.toLowerCase().trim() === 'потенциал');
-        const hasFactColumn = headers.some(h => h.toLowerCase().trim() === 'вес, кг');
+        const hasPotentialColumn = headers.some(h => normalizeAddressForSearch(h) === 'потенциал');
+        const hasFactColumn = headers.some(h => normalizeAddressForSearch(h) === 'вес кг');
 
-        if (!hasFactColumn) {
-            throw new Error('Файл должен содержать колонку "Вес, кг" для расчета факта продаж.');
-        }
-
+        if (!hasFactColumn) throw new Error('Файл должен содержать колонку "Вес, кг".');
+        
         const aggregatedData: { [key: string]: Omit<AggregatedDataRow, 'clients'> & { clients: Set<string> } } = {};
         
-        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Группировка данных по регионам...' } });
+        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ и группировка данных...' } });
 
-        for (let i = 0; i < totalRows; i++) {
+        for (let i = 0; i < jsonData.length; i++) {
             const row = jsonData[i];
-            
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             
-            const { city, region } = extractLocationDetails(address);
+            const region = determineRegion(address);
             const fact = parseNumericValue(row['Вес, кг']);
-
             const key = `${region}-${brand}-${rm}`.toLowerCase();
 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
-                    key,
-                    clientName: `${region} (${brand})`,
-                    brand,
-                    rm,
-                    city: region, // The 'city' column in the table will display the region
+                    key, clientName: `${region} (${brand})`, brand, rm,
+                    city: region, // Keep city for compatibility, but it holds the region name.
                     region: region,
-                    fact: 0,
-                    potential: 0,
-                    growthPotential: 0,
-                    growthPercentage: 0,
+                    fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                     clients: new Set<string>(),
                 };
             }
@@ -171,39 +145,23 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
                 aggregatedData[key].potential += parseNumericValue(row['Потенциал']);
             }
 
-             if ((i % 100 === 0 || i === totalRows - 1) && i > 0) {
-                const percentage = 5 + Math.round((i / totalRows) * 75);
-                postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i + 1} из ${totalRows} строк...` } });
+            if ((i % 100 === 0 || i === jsonData.length - 1) && i > 0) {
+                const percentage = 5 + Math.round((i / jsonData.length) * 75);
+                postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i + 1} из ${jsonData.length} строк...` } });
             }
         }
         
         const finalData = Object.values(aggregatedData).map(item => ({...item, clients: Array.from(item.clients)}));
-        const totalAggregated = finalData.length;
-
         postMessage({ type: 'progress', payload: { percentage: 80, message: 'Расчет потенциала...' } });
 
         for (const item of finalData) {
             if (!hasPotentialColumn) {
                 item.potential = item.fact * 1.15;
-            } else {
-                 if (item.potential < item.fact) {
-                    item.potential = item.fact;
-                }
+            } else if (item.potential < item.fact) {
+                item.potential = item.fact;
             }
-
             item.growthPotential = Math.max(0, item.potential - item.fact);
             item.growthPercentage = item.potential > 0 ? (item.growthPotential / item.potential) * 100 : 0;
-            
-            // Re-check region from OKB for grouped data for better accuracy if needed
-            const firstClientName = item.clients?.[0];
-            if (firstClientName) {
-                const okbMatch = findBestOkbMatch(firstClientName, item.city, okbDataWithNormalizedNames);
-                 // We prioritize the region found by our new logic, but OKB can be a fallback.
-                if (item.region === 'Регион не определен' && okbMatch) {
-                    item.region = extractRegionFromOkb(okbMatch);
-                }
-            }
-
             item.potentialClients = [];
         }
 

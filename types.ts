@@ -3,7 +3,7 @@ export interface AggregatedDataRow {
     rm: string;
     clientName: string;
     brand: string;
-    city: string;
+    city: string; // Kept for legacy compatibility, but now holds the region name
     region: string;
     fact: number;
     potential: number;
@@ -22,7 +22,7 @@ export interface PotentialClient {
 }
 
 export interface OkbDataRow {
-    [key: string]: any; // Allow any string keys for flexibility with spreadsheet columns
+    [key: string]: any;
     'Наименование': string;
     'Юридический адрес'?: string;
     'Регион'?: string;
@@ -35,21 +35,21 @@ export interface OkbDataRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    cities: string[];
+    regions: string[]; // FIX: Changed from cities to regions
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
-    city: string[];
+    region: string[]; // FIX: Changed from city to region
 }
 
 export interface SummaryMetrics {
     totalFact: number;
     totalPotential: number;
     totalGrowth: number;
-    totalClients: number; // Represents the number of groups
-    totalActiveClients: number; // Represents the total number of unique sales outlets
+    totalClients: number;
+    totalActiveClients: number;
     averageGrowthPercentage: number;
     topPerformingRM: {
         name: string;

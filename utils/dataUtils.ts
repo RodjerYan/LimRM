@@ -1,93 +1,63 @@
-
-
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
 import { regionCenters } from './regionCenters';
 
 /**
- * Normalizes a string by converting it to lower case, removing extra spaces,
- * and standardizing common company legal forms for better matching.
+ * Normalizes an address string for search and comparison purposes.
+ * It converts to lower case, handles 'ё', removes punctuation and legal forms,
+ * and standardizes common abbreviations.
  * @param str The string to normalize.
  * @returns The normalized string.
  */
-export const normalizeString = (str: string | undefined | null): string => {
+export const normalizeAddressForSearch = (str: string | undefined | null): string => {
     if (!str) return '';
     return str
         .toLowerCase()
-        .replace(/["'«»`]/g, '') // remove quotes
-        .replace(/\s+/g, ' ') // collapse whitespace
         .replace(/ё/g, 'е')
-        .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ') // remove legal forms
+        .replace(/["'«»`.,;:[\]()]/g, '') // remove common punctuation
+        .replace(/\s+/g, ' ') // collapse whitespace
+        .replace(/\b(обл|обл\.)/g, 'область')
+        .replace(/\b(респ|респ\.)/g, 'республика')
+        .replace(/\b(г|г\.)/g, 'город')
+        .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
         .trim();
 };
 
+// For compatibility with older parts of the codebase if needed.
+export const normalizeString = normalizeAddressForSearch;
 
 /**
- * Compares two strings using a simplified similarity metric (Jaro-Winkler-like).
- * This is a basic implementation for demonstration purposes.
- * @param s1 The first string.
- * @param s2 The second string.
- * @returns A similarity score between 0 and 1.
+ * Calculates the Levenshtein distance between two strings.
+ * This is a measure of the difference between two sequences.
+ * @param a The first string.
+ * @param b The second string.
+ * @returns The Levenshtein distance (number of edits).
  */
-const stringSimilarity = (s1: string, s2: string): number => {
-    // Basic Jaro-Winkler logic (simplified)
-    let m = 0;
-    const s1_len = s1.length;
-    const s2_len = s2.length;
-    if (s1_len === 0 || s2_len === 0) return 0;
+export const levenshteinDistance = (a: string, b: string): number => {
+    const an = a ? a.length : 0;
+    const bn = b ? b.length : 0;
+    if (an === 0) return bn;
+    if (bn === 0) return an;
+    const matrix = Array.from({ length: bn + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= an; j++) matrix[0][j] = j;
 
-    const match_distance = Math.floor(Math.max(s1_len, s2_len) / 2) - 1;
-    const s1_matches = new Array(s1_len).fill(false);
-    const s2_matches = new Array(s2_len).fill(false);
-
-    for (let i = 0; i < s1_len; i++) {
-        const start = Math.max(0, i - match_distance);
-        const end = Math.min(i + match_distance + 1, s2_len);
-        for (let j = start; j < end; j++) {
-            if (!s2_matches[j] && s1[i] === s2[j]) {
-                s1_matches[i] = true;
-                s2_matches[j] = true;
-                m++;
-                break;
-            }
+    for (let i = 1; i <= bn; i++) {
+        for (let j = 1; j <= an; j++) {
+            const cost = a[j - 1] === b[i - 1] ? 0 : 1;
+            matrix[i][j] = Math.min(
+                matrix[i - 1][j] + 1,      // deletion
+                matrix[i][j - 1] + 1,      // insertion
+                matrix[i - 1][j - 1] + cost // substitution
+            );
         }
     }
-
-    if (m === 0) return 0;
-
-    let t = 0;
-    let k = 0;
-    for (let i = 0; i < s1_len; i++) {
-        if (s1_matches[i]) {
-            while (!s2_matches[k]) k++;
-            if (s1[i] !== s2[k]) t++;
-            k++;
-        }
-    }
-    t /= 2;
-
-    const jaro = (m / s1_len + m / s2_len + (m - t) / m) / 3;
-    
-    // Winkler bonus
-    let p = 0.1;
-    let l = 0;
-    const max_l = 4;
-    while (l < max_l && s1[l] === s2[l]) {
-        l++;
-    }
-    
-    return jaro + l * p * (1 - jaro);
+    return matrix[bn][an];
 };
-
 
 /**
  * Finds the best matching record from the OKB data for a given client name and city.
- * @param clientName The name of the client from the main data file.
- * @param city The city of the client.
- * @param okbData The array of OKB records with pre-normalized names.
- * @returns The best matching OKB row or null if no good match is found.
  */
 export const findBestOkbMatch = (clientName: string, city: string, okbData: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
-    const normalizedClientName = normalizeString(clientName);
+    const normalizedClientName = normalizeAddressForSearch(clientName);
     const lowercasedCity = city.toLowerCase();
     
     let bestMatch: OkbDataRow | null = null;
@@ -98,7 +68,8 @@ export const findBestOkbMatch = (clientName: string, city: string, okbData: (Okb
     );
 
     for (const okb of potentialMatches) {
-        const score = stringSimilarity(normalizedClientName, okb.normalizedName);
+        const distance = levenshteinDistance(normalizedClientName, okb.normalizedName);
+        const score = 1 - distance / Math.max(normalizedClientName.length, okb.normalizedName.length);
         if (score > maxScore) {
             maxScore = score;
             bestMatch = okb;
@@ -111,17 +82,10 @@ export const findBestOkbMatch = (clientName: string, city: string, okbData: (Okb
 
 /**
  * Extracts a standardized region name from an OKB data row.
- * It checks the 'Регион' field first, then tries to derive it from the 'Город' field using a map.
- * @param okbRow The OKB data row.
- * @returns The determined region name or a default value.
  */
 export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
     if (okbRow['Регион']) {
-        // Simple standardization for consistency
-        const region = okbRow['Регион'].toLowerCase()
-            .replace('г.', 'город')
-            .replace('обл.', 'область')
-            .replace('респ.', 'республика');
+        const region = normalizeAddressForSearch(okbRow['Регион']);
         return region.charAt(0).toUpperCase() + region.slice(1);
     }
     
@@ -137,64 +101,54 @@ export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
 
 /**
  * Filters the main dataset based on the current filter state.
- * @param allData The complete array of aggregated data.
- * @param filters The current filter settings.
- * @returns A new array containing only the rows that match the filters.
  */
 export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
     return allData.filter(row => {
         const rmMatch = filters.rm ? row.rm === filters.rm : true;
         const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
-        const cityMatch = filters.city.length > 0 ? filters.city.includes(row.city) : true;
-        return rmMatch && brandMatch && cityMatch;
+        // FIX: Filter by region instead of city
+        const regionMatch = filters.region.length > 0 ? filters.region.includes(row.region) : true;
+        return rmMatch && brandMatch && regionMatch;
     });
 };
 
 /**
  * Extracts unique values for all filterable columns from the dataset.
- * @param data The array of aggregated data.
- * @returns An object containing arrays of unique RMs, brands, and cities.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
     const rms = new Set<string>();
     const brands = new Set<string>();
-    const cities = new Set<string>();
+    const regions = new Set<string>(); // FIX: Extract regions instead of cities
 
     data.forEach(row => {
         rms.add(row.rm);
         brands.add(row.brand);
-        cities.add(row.city);
+        regions.add(row.region);
     });
 
     return {
         rms: Array.from(rms).sort(),
         brands: Array.from(brands).sort(),
-        cities: Array.from(cities).sort(),
+        regions: Array.from(regions).sort(), // FIX: Return sorted regions
     };
 };
 
 /**
  * Calculates summary metrics for a given dataset.
- * @param data The array of (usually filtered) aggregated data.
- * @returns An object with calculated summary metrics.
  */
 export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics => {
     const totalFact = data.reduce((sum, row) => sum + row.fact, 0);
     const totalPotential = data.reduce((sum, row) => sum + row.potential, 0);
     const totalGrowth = data.reduce((sum, row) => sum + row.growthPotential, 0);
 
-    const totalClients = data.length; // Now represents number of groups
+    const totalClients = data.length;
     const totalActiveClients = data.reduce((sum, row) => sum + (row.clients?.length || 1), 0);
     
-    // To calculate average growth percentage, we sum the potential and growth and then divide,
-    // rather than averaging percentages to avoid skewed results.
     const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
     
     const rmGrowth: { [key: string]: number } = {};
     data.forEach(row => {
-        if (!rmGrowth[row.rm]) {
-            rmGrowth[row.rm] = 0;
-        }
+        if (!rmGrowth[row.rm]) rmGrowth[row.rm] = 0;
         rmGrowth[row.rm] += row.growthPotential;
     });
 
@@ -204,12 +158,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     );
 
     return {
-        totalFact,
-        totalPotential,
-        totalGrowth,
-        totalClients,
-        totalActiveClients,
-        averageGrowthPercentage,
-        topPerformingRM,
+        totalFact, totalPotential, totalGrowth, totalClients, totalActiveClients,
+        averageGrowthPercentage, topPerformingRM,
     };
 };
