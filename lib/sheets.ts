@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { JWT } from 'google-auth-library';
+import { GoogleAuth } from 'google-auth-library';
 import { Buffer } from 'buffer';
 import { OkbDataRow } from '../types';
 
@@ -31,19 +31,23 @@ async function getGoogleSheetsClient() {
     );
   }
 
-  // Use JWT for explicit and robust service account authentication in serverless envs.
-  const auth = new JWT({
-    email: credentials.client_email,
-    // Private keys from env vars often have escaped newlines. This handles that.
-    key: credentials.private_key.replace(/\\n/g, '\n'),
+  // Use GoogleAuth, the recommended and type-safe method for server-to-server authentication.
+  // This resolves the TS2322 build error by providing a compatible auth object.
+  const auth = new GoogleAuth({
+    credentials: {
+      client_email: credentials.client_email,
+      // Private keys from env vars often have escaped newlines ('\n'). This handles that.
+      private_key: credentials.private_key.replace(/\\n/g, '\n'),
+    },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  // FIX: Set authentication globally to resolve TypeScript overload errors during build.
-  // This is a more robust pattern for initializing the API client.
-  google.options({ auth });
+  // Create the Sheets client by passing the GoogleAuth instance directly.
+  const sheets = google.sheets({
+    version: 'v4',
+    auth,
+  });
   
-  const sheets = google.sheets('v4');
   return sheets;
 }
 
