@@ -34,8 +34,8 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             
-            // Use the new expert address parser
-            const parsedAddress = parseRussianAddress(address);
+            // Use the new async expert address parser
+            const parsedAddress = await parseRussianAddress(address);
             const region = parsedAddress.region || 'Регион не определен';
             
             const factString = String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.');

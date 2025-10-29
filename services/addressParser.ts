@@ -1,172 +1,150 @@
 import { regionCenters } from '../utils/regionCenters';
+import { getRegionByCity, getRegionByPostal } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
-// Data for parsing foreign addresses
-const countryKeywords: Record<string, string> = {
-    'беларусь': 'Республика Беларусь',
-    'казахстан': 'Республика Казахстан',
-    'рф': 'Россия',
-    'россия': 'Россия',
-};
+// Gemini fallback prompt
+const GEMINI_FALLBACK_PROMPT = `
+You are an expert in Russian Federation administrative divisions and postal codes.
+Your task is to identify the federal subject (region, oblast, krai, republic, federal city) from the given address string.
+The address may be incomplete or contain errors. Infer the region if it's not explicitly mentioned.
 
-const foreignRegionsData: Record<string, { name: string, country: string }> = {
-    'могилевская область': { name: 'Могилевская область', country: 'Республика Беларусь' },
-    'гродненская область': { name: 'Гродненская область', country: 'Республика Беларусь' },
-    'алматинская область': { name: 'Алматинская область', country: 'Республика Казахстан' },
-    'акмолинская область': { name: 'Акмолинская область', country: 'Республика Казахстан' },
-    'карагандинская область': { name: 'Карагандинская область', country: 'Республика Казахстан' },
-};
+- Use the city name to infer the region (e.g., "г. Орел" is in "Орловская область").
+- Use the 6-digit postal code to infer the region (e.g., "302016" is in "Орловская область").
+- The final region name must be the official name of a Russian federal subject.
 
-const foreignCitiesData: Record<string, string> = {
-    'могилев': 'могилевская область',
-    'гродно': 'гродненская область',
-    'лида': 'гродненская область',
-    'слоним': 'гродненская область',
-    'белыничи': 'могилевская область',
-    'алматы': 'алматинская область',
-    'астана': 'акмолинская область',
-    'нур-султан': 'акмолинская область',
-    'темиртау': 'карагандинская область',
-    'караганда': 'карагандинская область',
-};
+Address: "{ADDRESS}"
 
+Return a single JSON object with one key: "region".
+If the region can be determined, the value should be the region's name (e.g., { "region": "Орловская область" }).
+If it's impossible to determine, the value should be null (e.g., { "region": null }).
+Do not provide any explanation, just the JSON object.
+`;
+
+const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
 /**
- * A comprehensive function to parse a Russian or CIS address and determine the region.
- * It identifies the country, then the region, and formats the output string according to specific rules.
+ * Attempts to parse a region from an address using a Gemini AI fallback.
  * @param address The raw address string.
- * @returns A structured ParsedAddress object with the correctly formatted region string.
+ * @returns The region name or null if not found.
  */
-export function parseRussianAddress(address: string | undefined | null): ParsedAddress {
+async function getRegionFromGemini(address: string): Promise<string | null> {
+    try {
+        const prompt = GEMINI_FALLBACK_PROMPT.replace('{ADDRESS}', address);
+        const response = await fetch(PROXY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+        });
+
+        if (!response.ok || !response.body) {
+            console.error('Gemini fallback failed: Invalid response from proxy');
+            return null;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let resultText = '';
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            resultText += decoder.decode(value, { stream: true });
+        }
+
+        // Clean up and parse the JSON from the streaming response
+        const jsonMatch = resultText.match(/\{.*?\}/s);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            return parsed.region || null;
+        }
+        return null;
+    } catch (error) {
+        console.error('Error during Gemini fallback:', error);
+        return null;
+    }
+}
+
+/**
+ * A comprehensive asynchronous function to parse a Russian address and determine the region.
+ * It uses a prioritized approach: postal code, city name, explicit region keywords, and finally an AI fallback.
+ * @param address The raw address string.
+ * @returns A promise that resolves to a structured ParsedAddress object.
+ */
+export async function parseRussianAddress(address: string | undefined | null): Promise<ParsedAddress> {
     const result: ParsedAddress = {
         country: "Россия", region: null, city: null, street: null, house: null,
         postalCode: null, lat: null, lon: null, confidence: 0,
         source: 'unknown', ambiguousCandidates: []
     };
+    
+    const defaultUndefined = { ...result, region: "Регион не определён" };
 
-    if (!address || typeof address !== 'string') {
-        result.region = "Регион не определён";
-        return result;
+    if (!address || typeof address !== 'string' || address.trim().length < 3) {
+        return defaultUndefined;
     }
     
-    // Normalize input for robust matching
-    const normalizedAddress = address.toLowerCase()
-        .replace(/ё/g, 'е')
-        .replace(/[.,"]/g, ' ')
-        .replace(/\b(обл|обл\.|область)\b/g, 'область')
-        .replace(/\b(респ|респ\.|республика)\b/g, 'республика')
-        .replace(/\b(край)\b/g, 'край')
-        .replace(/\s+/g, ' ').trim();
+    const cleanedAddress = address.replace(/ё/g, 'е');
+    const normalizedAddress = cleanedAddress.toLowerCase().replace(/[.,"]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    if (normalizedAddress.length === 0) {
-        result.region = "Регион не определён";
-        return result;
-    }
-
-    // 1. Detect Country from keywords
-    let detectedCountry: string | null = null;
-    for (const keyword in countryKeywords) {
-        if (normalizedAddress.includes(keyword)) {
-            detectedCountry = countryKeywords[keyword];
-            break;
+    // 1. Extract Postal Code and attempt lookup
+    const postalMatch = cleanedAddress.match(/\b(\d{6})\b/);
+    if (postalMatch) {
+        result.postalCode = postalMatch[1];
+        const regionFromPostal = getRegionByPostal(result.postalCode);
+        if (regionFromPostal) {
+            result.region = regionFromPostal;
+            result.source = 'postal';
+            result.confidence = 0.95;
+            return result;
         }
     }
 
-    // 2. Handle Foreign Addresses (Belarus, Kazakhstan, etc.)
-    if (detectedCountry && detectedCountry !== 'Россия') {
-        result.country = detectedCountry;
+    // 2. Extract City and attempt lookup
+    const cityMatch = cleanedAddress.match(/\b(г|город|пгт|село|деревня|д)\s*\.?\s*([А-Яа-я-\s]+)\b/i);
+    if (cityMatch) {
+        const cityName = cityMatch[2].trim().toLowerCase();
+        const regionFromCity = getRegionByCity(cityName);
+        if (regionFromCity) {
+            result.region = regionFromCity;
+            result.city = cityName.charAt(0).toUpperCase() + cityName.slice(1);
+            result.source = 'city_lookup';
+            result.confidence = 0.9;
+            return result;
+        }
+    }
 
-        // Search for explicit region name
-        for (const regionKey in foreignRegionsData) {
-            if (normalizedAddress.includes(regionKey) && foreignRegionsData[regionKey].country === detectedCountry) {
-                result.region = `${detectedCountry}, ${foreignRegionsData[regionKey].name}`;
-                result.confidence = 0.9;
+    // 3. Look for explicit region keywords (e.g., "Орловская область")
+    const allRegions = [...new Set(Object.values(regionCenters))];
+    for (const regionName of allRegions) {
+        // Create a searchable keyword from the region name (e.g., "орловская")
+        const regionKeyword = regionName.toLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/\b(г|республика|край|область|автономный округ|ао)\b/g, '')
+            .trim().split(' ')[0];
+            
+        if (regionKeyword && normalizedAddress.includes(regionKeyword)) {
+             // More specific regex to avoid partial matches (e.g., "первомайская" -> "пермь")
+            const regionRegex = new RegExp(`\\b${regionKeyword}\\w*\\s*(область|обл|край|республика|респ)?\\b`, 'i');
+            if (regionRegex.test(cleanedAddress)) {
+                result.region = regionName;
                 result.source = 'explicit_region';
+                result.confidence = 0.85;
                 return result;
             }
         }
-        
-        // If no region found, search for city to derive region
-        for (const cityKey in foreignCitiesData) {
-            if (normalizedAddress.includes(cityKey)) {
-                const regionKey = foreignCitiesData[cityKey];
-                if (foreignRegionsData[regionKey]?.country === detectedCountry) {
-                     result.region = `${detectedCountry}, ${foreignRegionsData[regionKey].name}`;
-                     result.city = cityKey.charAt(0).toUpperCase() + cityKey.slice(1);
-                     result.confidence = 0.8;
-                     result.source = 'city_lookup';
-                     return result;
-                }
-            }
-        }
-        
-        // If only the country was found in the address string
-        result.region = detectedCountry;
-        result.confidence = 0.5;
-        result.source = 'explicit_region';
-        return result;
-    }
-
-    // 3. Handle Russian Addresses
-    result.country = 'Россия';
-    
-    // Check for federal cities first (as they are special regions)
-    if (normalizedAddress.includes('москва')) {
-        result.region = 'г. Москва';
-        result.city = 'Москва';
-        result.confidence = 0.95;
-        result.source = 'city_lookup';
-        return result;
-    }
-    if (normalizedAddress.includes('санкт-петербург')) {
-        result.region = 'г. Санкт-Петербург';
-        result.city = 'Санкт-Петербург';
-        result.confidence = 0.95;
-        result.source = 'city_lookup';
-        return result;
-    }
-     if (normalizedAddress.includes('севастополь')) {
-        result.region = 'г. Севастополь';
-        result.city = 'Севастополь';
-        result.confidence = 0.95;
-        result.source = 'city_lookup';
-        return result;
-    }
-
-    // Check for Russian cities from the main directory (regionCenters.ts)
-    // Sort keys by length descending to match multi-word names first (e.g., "нижний новгород" before "новгород")
-    const sortedCityKeys = Object.keys(regionCenters).sort((a, b) => b.length - a.length);
-
-    for (const cityKey of sortedCityKeys) {
-        if (normalizedAddress.includes(cityKey)) {
-            result.region = regionCenters[cityKey];
-            result.city = cityKey.charAt(0).toUpperCase() + cityKey.slice(1);
-            result.confidence = 0.9;
-            result.source = 'city_lookup';
-            return result;
-        }
     }
     
-    // Fallback: Check for explicit Russian region names that might not have been matched by a city
-    // e.g., if the address only contains "Краснодарский край"
-    const allRussianRegions = [...new Set(Object.values(regionCenters))]; // Use Set for unique region names
-    for (const regionName of allRussianRegions) {
-        // Create a simplified, searchable version of the region name
-        const searchableRegion = regionName.toLowerCase()
-            .replace('республика', '')
-            .replace('край', '')
-            .replace('область', '')
-            .trim().split(' ')[0]; // Use the first significant word
-
-        if (searchableRegion && normalizedAddress.includes(searchableRegion)) {
-            result.region = regionName;
-            result.confidence = 0.7;
-            result.source = 'explicit_region';
-            return result;
-        }
+    // 4. Gemini AI Fallback (if all local methods fail)
+    // Uncomment the following lines to enable the AI fallback.
+    /*
+    const regionFromAI = await getRegionFromGemini(address);
+    if (regionFromAI) {
+        result.region = regionFromAI;
+        result.source = 'fuzzy';
+        result.confidence = 0.7; // Lower confidence as it's an AI guess
+        return result;
     }
+    */
 
-    // 4. If no region can be determined, return the specific fallback string
-    result.region = "Регион не определён";
-    return result;
+    return defaultUndefined;
 }
