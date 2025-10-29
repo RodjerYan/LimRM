@@ -58,8 +58,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
                 };
             }
             aggregatedData[key].fact += fact;
-            // Use the new, clean, and formatted address for the client list.
-            aggregatedData[key].clients.add(parsedAddress.formattedAddress);
+            aggregatedData[key].clients.add(address);
 
             if (hasPotentialColumn) {
                 const potentialString = String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.');
