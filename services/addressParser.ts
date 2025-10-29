@@ -1,22 +1,18 @@
-import { getRegionByCity, getRegionByPostal, cityToRegion } from '../utils/addressMappings';
+// services/addressParser.ts
+// FIX: Import `cityToRegion` to resolve the 'Cannot find name' error.
+import { getRegionByPostal, getRegionByCity, cityToRegion } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
 // Gemini fallback prompt
 const GEMINI_FALLBACK_PROMPT = `
-You are an expert in Russian Federation administrative divisions and postal codes.
-Your task is to identify the federal subject (region, oblast, krai, republic, federal city) from the given address string.
-The address may be incomplete or contain errors. Infer the region if it's not explicitly mentioned.
+Ты — эксперт по адресам РФ.  
+Из строки адреса извлеки **только субъект РФ** (область, край, республика, город федерального значения).  
+Если в строке явно указано «Орловская обл», «Смоленская обл» и т.п. – верни полное название.  
+Если есть почтовый индекс, используй его (первая пара цифр).  
+Верни **одну строку** без кавычек и без лишних слов.  
+Если не уверен – верни "Регион не определён".
 
-- Use the city name to infer the region (e.g., "г. Орел" is in "Орловская область").
-- Use the 6-digit postal code to infer the region (e.g., "302016" is in "Орловская область").
-- The final region name must be the official name of a Russian federal subject.
-
-Address: "{ADDRESS}"
-
-Return a single JSON object with one key: "region".
-If the region can be determined, the value should be the region's name (e.g., { "region": "Орловская область" }).
-If it's impossible to determine, the value should be null (e.g., { "region": null }).
-Do not provide any explanation, just the JSON object.
+Адрес: """{ADDRESS}"""
 `;
 
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
@@ -26,7 +22,7 @@ const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
  * @param address The raw address string.
  * @returns The region name or null if not found.
  */
-async function getRegionFromGemini(address: string): Promise<string | null> {
+async function getRegionFromGemini(address: string): Promise<string> {
     try {
         const prompt = GEMINI_FALLBACK_PROMPT.replace('{ADDRESS}', address);
         const response = await fetch(PROXY_URL, {
@@ -37,7 +33,7 @@ async function getRegionFromGemini(address: string): Promise<string | null> {
 
         if (!response.ok || !response.body) {
             console.error('Gemini fallback failed: Invalid response from proxy');
-            return null;
+            return '';
         }
 
         const reader = response.body.getReader();
@@ -50,18 +46,17 @@ async function getRegionFromGemini(address: string): Promise<string | null> {
             resultText += decoder.decode(value, { stream: true });
         }
 
-        // Clean up and parse the JSON from the streaming response
-        const jsonMatch = resultText.match(/\{.*?\}/s);
-        if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            return parsed.region || null;
-        }
-        return null;
+        const text = resultText.trim();
+        return text.includes('область') || text.includes('край') || text.includes('республика') || text.includes('Москва') || text.includes('Санкт-Петербург')
+            ? text
+            : '';
+            
     } catch (error) {
         console.error('Error during Gemini fallback:', error);
-        return null;
+        return '';
     }
 }
+
 
 /**
  * A comprehensive asynchronous function to parse a Russian address and determine the region.
@@ -75,87 +70,82 @@ export async function parseRussianAddress(address: string | undefined | null): P
         postalCode: null, lat: null, lon: null, confidence: 0,
         source: 'unknown', ambiguousCandidates: []
     };
-    
-    const defaultUndefined = { ...result, region: "Регион не определён" };
 
     if (!address || typeof address !== 'string' || address.trim().length < 3) {
-        return defaultUndefined;
+        return { ...result, region: "Регион не определён" };
     }
     
-    const cleanedAddress = address.replace(/ё/g, 'е');
-    
-    // PRIORITY 1: Look for explicit region keywords (e.g., "Смоленская область")
-    const explicitMatch = cleanedAddress.match(/([А-Яа-я-\s]+)\s+(область|обл|край|республика|респ|автономный округ|ао)\b/i);
+    // --- Prioritized Parsing Logic ---
+    let region: string | null = null;
+    let source: ParsedAddress['source'] = 'unknown';
+    let confidence = 0;
+
+    // 1. Explicit Region Match (Highest Priority)
+    const explicitMatch = address.match(/([А-Яа-яЁё\s-]+?)\s+(обл\.?|область|край|республика|р-н|АО)\b/i);
     if (explicitMatch) {
-        const matchedName = explicitMatch[1].trim().toLowerCase();
-        const allRegions = [...new Set(Object.values(cityToRegion))];
-        let bestMatch = '';
+        // Construct a partial region name to find the canonical version
+        const potentialRegionName = explicitMatch[1].trim();
+        const regionType = explicitMatch[2].replace(/\./g, '');
         
-        // Find the canonical region name that contains the matched keyword
-        for (const canonicalRegion of allRegions) {
-            const normalizedCanonical = canonicalRegion.toLowerCase().replace(/ё/g, 'е');
-            if (normalizedCanonical.includes(matchedName)) {
-                bestMatch = canonicalRegion;
-                break; // Found the first and likely best match
-            }
-        }
-        if (bestMatch) {
-            result.region = bestMatch;
-            result.source = 'explicit_region';
-            result.confidence = 0.98;
-            return { ...result, region: result.region };
+        // Find the full official name from cityToRegion values
+        // FIX: Explicitly type `allRegions` as string[] to ensure correct type inference in the `.find()` method.
+        const allRegions: string[] = [...new Set(Object.values(cityToRegion))];
+        const foundRegion = allRegions.find(r => r.toLowerCase().includes(potentialRegionName.toLowerCase()));
+
+        if (foundRegion) {
+            // FIX: The type of `foundRegion` is now correctly inferred as `string`, making this assignment valid.
+            region = foundRegion;
+            source = 'explicit_region';
+            confidence = 0.99;
+        } else {
+            // Fallback to constructed name if not found in canonical list
+            region = `${potentialRegionName} ${regionType}`;
+            source = 'explicit_region';
+            confidence = 0.95;
         }
     }
 
-    // PRIORITY 2: Extract Postal Code and attempt lookup
-    const postalMatch = cleanedAddress.match(/\b(\d{6})\b/);
+    // 2. Postal Code Match (If region not found yet)
+    const postalMatch = address.match(/(\d{6})/);
     if (postalMatch) {
         result.postalCode = postalMatch[1];
-        const regionFromPostal = getRegionByPostal(result.postalCode);
-        if (regionFromPostal) {
-            result.region = regionFromPostal;
-            result.source = 'postal';
-            result.confidence = 0.95;
-            return { ...result, region: result.region };
-        }
-    }
-
-    // PRIORITY 3: Extract City and attempt lookup
-    const cityMatch = cleanedAddress.match(/\b(г|город|пгт|село|деревня|д|рп)\s*\.?\s*([А-Яа-я-\s]+)\b/i);
-    let cityNameForLookup: string | null = null;
-    if (cityMatch) {
-        cityNameForLookup = cityMatch[2].trim().toLowerCase();
-        result.city = cityNameForLookup.charAt(0).toUpperCase() + cityNameForLookup.slice(1);
-    } else {
-        // Fallback for city names without "г." prefix by checking against known centers
-        const words = cleanedAddress.toLowerCase().replace(/[.,"]/g, ' ').replace(/\s+/g, ' ').trim().split(' ');
-        for(const word of words) {
-            if (getRegionByCity(word)) {
-                cityNameForLookup = word;
-                result.city = word.charAt(0).toUpperCase() + word.slice(1);
-                break;
+        if (!region) {
+            const regionFromPostal = getRegionByPostal(result.postalCode);
+            if (regionFromPostal) {
+                region = regionFromPostal;
+                source = 'postal';
+                confidence = 0.9;
             }
         }
     }
 
-    if (cityNameForLookup) {
-        const regionFromCity = getRegionByCity(cityNameForLookup);
-        if (regionFromCity) {
-            result.region = regionFromCity;
-            result.source = 'city_lookup';
-            result.confidence = 0.9;
-            return { ...result, region: result.region };
+    // 3. City Name Match (If region still not found)
+    const cityMatch = address.match(/(?:г\.?|рп|с|д)\s*([А-Яа-яЁё\s-]+)(?:,|$)/i);
+    if (cityMatch) {
+        result.city = cityMatch[1].trim();
+        if (!region) {
+            const regionFromCity = getRegionByCity(result.city);
+            if (regionFromCity) {
+                region = regionFromCity;
+                source = 'city_lookup';
+                confidence = 0.8;
+            }
         }
     }
     
-    // PRIORITY 4: Gemini AI Fallback (if all local methods fail)
-    const regionFromAI = await getRegionFromGemini(address);
-    if (regionFromAI) {
-        result.region = regionFromAI;
-        result.source = 'fuzzy';
-        result.confidence = 0.7; // Lower confidence as it's an AI guess
-        return { ...result, region: result.region };
+    // 4. Gemini Fallback (Last resort)
+    if (!region) {
+        const regionFromAI = await getRegionFromGemini(address);
+        if (regionFromAI) {
+            region = regionFromAI;
+            source = 'fuzzy';
+            confidence = 0.7;
+        }
     }
 
-    return defaultUndefined;
+    result.region = region || "Регион не определён";
+    result.source = source;
+    result.confidence = confidence;
+
+    return result;
 }
