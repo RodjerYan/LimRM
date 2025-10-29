@@ -1,7 +1,12 @@
 // utils/addressMappings.ts
-// Ключи – первые 2 цифры индекса (по официальному справочнику Почты РФ 2025)
 export const postalToRegion: Record<string, string> = {
-  // ---------- 85 субъектов ----------
+  // CORRECTED: 32 -> Oryol Oblast (not Belgorod!)
+  '30': 'Орловская область',
+  '32': 'Орловская область',   // 32038 -> 32 -> Oryol!
+  '24': 'Брянская область',
+  '21': 'Смоленская область',
+  '31': 'Белгородская область', // <- 310000–319999
+  // ... other 85 subjects
   '10': 'Москва',
   '11': 'Москва',
   '12': 'Москва',
@@ -13,18 +18,13 @@ export const postalToRegion: Record<string, string> = {
   '18': 'Вологодская область',
   '19': 'Санкт-Петербург',
   '20': 'Тверская область',
-  '21': 'Смоленская область',
   '22': 'Псковская область',
   '23': 'Новгородская область',
-  '24': 'Брянская область',       // CORRECTED: 24 is Bryansk
   '25': 'Калининградская область',
   '26': 'Ленинградская область',
   '27': 'Архангельская область',
   '28': 'Вологодская область',
   '29': 'Ненецкий автономный округ',
-  '30': 'Орловская область',
-  '31': 'Белгородская область',
-  '32': 'Орловская область',     // FIX: 32 must be Oryol based on user data '32038'
   '33': 'Владимирская область',
   '34': 'Волгоградская область',
   '35': 'Краснодарский край',
@@ -94,40 +94,44 @@ export const postalToRegion: Record<string, string> = {
   '99': 'Республика Тыва'
 };
 
-export const cityToRegion: Record<string, string> = {
-  // Города из ваших примеров (lowercase)
-  'брянск': 'Брянская область',
-  'орёл': 'Орловская область',
-  'орел': 'Орловская область',
-  'ливны': 'Орловская область',
-  'смоленск': 'Смоленская область',
-};
 
+// Normalize region names (unify "obl" and "oblast")
 export const normalizeRegion = (region: string): string => {
     if (!region) return '';
     let normalized = region.trim();
-    
+
     // Standardize common abbreviations to full words
     normalized = normalized.replace(/\bобл\.?/gi, 'область')
                          .replace(/\bресп\.?/gi, 'Республика')
                          .replace(/\bр-н\b/gi, 'район');
 
-    // Capitalize the first letter of each word, except for 'Республика'
+    // Handle cases like "Oblast Bryanskaya" -> "Bryanskaya Oblast"
+    const parts = normalized.split(' ');
+    if (parts.length === 2 && parts[0].toLowerCase() === 'область') {
+        normalized = `${parts[1]} ${parts[0]}`;
+    }
+
+    // Capitalize the first letter of each word
     return normalized.split(' ')
-        .map((word, index) => {
-            if (word.toLowerCase() === 'республика') return 'Республика';
-            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-        })
-        .join(' ');
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
+
+export const cityToRegion: Record<string, string> = {
+  'брянск': 'Брянская область',
+  'орёл': 'Орловская область',
+  'орел': 'Орловская область', // handle 'e' vs 'ё'
+  'ливны': 'Орловская область',
+  'смоленск': 'Смоленская область',
+  // add others as needed
 };
 
 export function getRegionByPostal(postal: string): string | undefined {
-  const clean = postal.replace(/\D/g, '');
-  if (clean.length >= 2) {
-    const key = clean.slice(0, 2);
-    return postalToRegion[key];
-  }
-  return undefined;
+  const key = postal.replace(/\D/g, '').slice(0, 2);
+  return postalToRegion[key];
 }
 
 export function getRegionByCity(city: string): string | undefined {

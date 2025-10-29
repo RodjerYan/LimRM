@@ -1,12 +1,14 @@
 // services/addressParser.ts
 import { getRegionByPostal, getRegionByCity, normalizeRegion } from '../utils/addressMappings';
-// FIX: Removed incorrect import. The 'callGeminiForRegion' function is defined locally in this file.
+import { callGeminiForRegion } from './geminiService';
 import { ParsedAddress } from '../types';
 
 /**
- * Parses a Russian address string with a strict priority order to determine the region.
- * Priority: 1. Explicit Region > 2. Postal Code > 3. City Name > 4. Gemini Fallback.
- * Once a region is found, subsequent checks are skipped.
+ * Parses a Russian address with a strict priority order.
+ * 1. Explicit "<Name> obl|oblast|krai|republic|r-n" (even without a dot or "obl" – it looks for the name + indicator word).
+ * 2. By index (6 digits -> first 2).
+ * 3. By city (with or without "g." prefix).
+ * 4. Gemini fallback.
  */
 export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
   let region = '';
@@ -14,7 +16,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
   let postal = '';
   let source: ParsedAddress['source'] = 'unknown';
 
-  // === 1. Explicit Region (Highest Priority) ===
+  // ---------- 1. Explicit (flexible) ----------
   const explicitPatterns = [
     /([А-Яа-яЁё\s-]+?)\s+(обл\.?|область|край|республика|р-н|ао|округ)\b/i,
     /\b(обл|область)\s+([А-Яа-яЁё\s-]+)\b/i,
@@ -27,27 +29,29 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
       if (name) {
         region = normalizeRegion(name + ' область');
         source = 'explicit';
-        break; // Stop searching if an explicit region is found
+        break;
       }
     }
   }
 
-  // === 2. Postal Index (Only if explicit region was NOT found) ===
-  if (!region) {
-    const postalMatch = address.match(/(\d{5,6})/);
-    if (postalMatch) {
-      postal = postalMatch[1];
+
+  // ---------- 2. Index (5-6 digits) ----------
+  const postalMatch = address.match(/(\d{5,6})/);
+  if (postalMatch) {
+    postal = postalMatch[1];
+    if (!region) {
       const fromPostal = getRegionByPostal(postal);
       if (fromPostal) {
-        region = normalizeRegion(fromPostal);
-        source = 'postal';
+          region = normalizeRegion(fromPostal);
+          source = 'postal';
       }
     }
   }
 
-  // === 3. City Name (Only if region is still not found) ===
+  // ---------- 3. City (with/without prefix) ----------
   if (!region) {
-    const cityMatch = address.match(/(?:,\s*|^)(?:г\.?\s*)?([А-Яа-яЁё\s-]+?)\s*(?:г\.?|город|рп|с|д)(?:,|$|\s)/i);
+    const cityPattern = /(?:,\s*|^)(?:г\.?\s*)?([А-Яа-яЁё\s-]+?)\s*(?:г\.?|город|рп|с|д)(?:,|$|\s)/i;
+    const cityMatch = address.match(cityPattern);
     if (cityMatch) {
       city = cityMatch[1].trim();
       const fromCity = getRegionByCity(city);
@@ -58,7 +62,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
   }
 
-  // === 4. Gemini Fallback (Last resort) ===
+  // ---------- 4. Gemini fallback ----------
   if (!region) {
     const geminiResult = await callGeminiForRegion(address);
     if (geminiResult) {
@@ -81,25 +85,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     house: null,
     lat: null,
     lon: null,
-    confidence: 0, // Confidence logic can be expanded based on source
+    confidence: 0,
     ambiguousCandidates: []
   };
-}
-
-// Simplified Gemini fallback for this parser
-async function callGeminiForRegion(address: string): Promise<string> {
-  const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
-  try {
-    const prompt = `Из адреса "${address}" извлеки только субъект РФ (например, "Смоленская область"). Если не уверен, верни пустую строку.`;
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
-    });
-    if (!response.ok) return '';
-    const text = await response.text();
-    return text.trim();
-  } catch {
-    return '';
-  }
 }
