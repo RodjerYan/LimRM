@@ -14,18 +14,18 @@ export interface AggregatedDataRow {
 }
 
 export interface ParsedAddress {
-  country: string;
-  region: string | null;
-  city: string | null;
-  street: string | null;
-  house: string | null;
-  postalCode: string | null;
-  lat: number | null;
-  lon: number | null;
-  confidence: number;
-  source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
-  ambiguousCandidates: string[];
-  formattedAddress?: string;
+    country: string;
+    region: string | null;
+    city: string | null;
+    street: string | null;
+    house: string | null;
+    postalCode: string | null;
+    lat: number | null;
+    lon: number | null;
+    confidence: number;
+    source: 'explicit' | 'postal' | 'city_lookup' | 'fuzzy' | 'unknown';
+    ambiguousCandidates: string[];
+    status?: 'определён' | 'не определён';
 }
 
 

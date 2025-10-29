@@ -16,14 +16,14 @@ export const postalToRegion: Record<string, string> = {
   '21': 'Смоленская область',
   '22': 'Псковская область',
   '23': 'Новгородская область',
-  '24': 'Брянская область',
+  '24': 'Брянская область',       // CORRECTED: 24 is Bryansk
   '25': 'Калининградская область',
   '26': 'Ленинградская область',
   '27': 'Архангельская область',
   '28': 'Вологодская область',
   '29': 'Ненецкий автономный округ',
   '30': 'Орловская область',
-  '31': 'Белгородская область', // CORRECT: 31 is Belgorod
+  '31': 'Белгородская область',
   '32': 'Орловская область',     // FIX: 32 must be Oryol based on user data '32038'
   '33': 'Владимирская область',
   '34': 'Волгоградская область',
@@ -101,36 +101,25 @@ export const cityToRegion: Record<string, string> = {
   'орел': 'Орловская область',
   'ливны': 'Орловская область',
   'смоленск': 'Смоленская область',
-  // добавьте любые другие, если понадобится
 };
 
-/**
- * Normalizes a region string to a canonical form (e.g., "обл." -> "область").
- * @param region The region string to normalize.
- * @returns The normalized region string.
- */
 export const normalizeRegion = (region: string): string => {
     if (!region) return '';
     let normalized = region.trim();
-
-    // Find a potential region type keyword
-    const regionTypeMatch = normalized.match(/\b(обл\.?|область|край|республика|р-н|ао|округ)\b/i);
-    const regionType = regionTypeMatch ? regionTypeMatch[0].toLowerCase() : '';
-
-    // Remove the keyword to isolate the name
-    let regionName = normalized.replace(/\b(обл\.?|область|край|республика|р-н|ао|округ)\b/ig, '').trim();
-    regionName = regionName.charAt(0).toUpperCase() + regionName.slice(1).toLowerCase();
-
-    if (regionType.startsWith('обл')) return `${regionName} область`;
-    if (regionType === 'край') return `${regionName} край`;
-    if (regionType === 'республика') return `Республика ${regionName}`;
     
-    // Fallback if no specific type is found but a name exists
-    if (regionName) return regionName;
+    // Standardize common abbreviations to full words
+    normalized = normalized.replace(/\bобл\.?/gi, 'область')
+                         .replace(/\bресп\.?/gi, 'Республика')
+                         .replace(/\bр-н\b/gi, 'район');
 
-    return region; // return original if all else fails
+    // Capitalize the first letter of each word, except for 'Республика'
+    return normalized.split(' ')
+        .map((word, index) => {
+            if (word.toLowerCase() === 'республика') return 'Республика';
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .join(' ');
 };
-
 
 export function getRegionByPostal(postal: string): string | undefined {
   const clean = postal.replace(/\D/g, '');
