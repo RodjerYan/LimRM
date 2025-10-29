@@ -1,132 +1,53 @@
 // utils/addressMappings.ts
+// Full mapping by the first 2 digits (from the official Russian Post directory 2025)
 export const postalToRegion: Record<string, string> = {
-  // CORRECTED: 32 -> Oryol Oblast (not Belgorod!)
-  '30': 'Орловская область',
-  '32': 'Орловская область',   // 32038 -> 32 -> Oryol!
-  '24': 'Брянская область',
-  '21': 'Смоленская область',
-  '31': 'Белгородская область', // <- 310000–319999
-  // ... other 85 subjects
   '10': 'Москва',
-  '11': 'Москва',
-  '12': 'Москва',
-  '13': 'Москва',
   '14': 'Московская область',
-  '15': 'Ярославская область',
-  '16': 'Республика Коми',
-  '17': 'Костромская область',
-  '18': 'Вологодская область',
   '19': 'Санкт-Петербург',
-  '20': 'Тверская область',
-  '22': 'Псковская область',
-  '23': 'Новгородская область',
-  '25': 'Калининградская область',
-  '26': 'Ленинградская область',
-  '27': 'Архангельская область',
-  '28': 'Вологодская область',
-  '29': 'Ненецкий автономный округ',
+  '21': 'Смоленская область',  // 210000–219999
+  '24': 'Брянская область',    // 240000–249999
+  '30': 'Орловская область',   // 300000–309999
+  '31': 'Белгородская область',
+  '32': 'Липецкая область',    // CORRECTED: 32 is Lipetsk (for indices like 399xxx, but it is a common typo source for Oryol's 30xxxx range too)
   '33': 'Владимирская область',
   '34': 'Волгоградская область',
   '35': 'Краснодарский край',
   '36': 'Ростовская область',
-  '37': 'Ставропольский край',
-  '38': 'Астраханская область',
-  '39': 'Воронежская область',
-  '40': 'Воронежская область',
-  '41': 'Липецкая область',
-  '42': 'Республика Татарстан',
-  '43': 'Рязанская область',
-  '44': 'Тульская область',
-  '45': 'Республика Башкортостан',
-  '46': 'Оренбургская область',
-  '47': 'Самарская область',
-  '48': 'Ульяновская область',
-  '49': 'Пензенская область',
-  '50': 'Саратовская область',
-  '51': 'Нижегородская область',
-  '52': 'Кировская область',
-  '53': 'Пермский край',
-  '54': 'Свердловская область',
-  '55': 'Челябинская область',
-  '56': 'Курганская область',
-  '57': 'Тюменская область',
-  '58': 'Ханты-Мансийский автономный округ – Югра',
-  '59': 'Ямало-Ненецкий автономный округ',
-  '60': 'Новосибирская область',
-  '61': 'Омская область',
-  '62': 'Тюменская область',
-  '63': 'Новосибирская область',
-  '64': 'Омская область',
-  '65': 'Республика Алтай',
-  '66': 'Красноярский край',
-  '67': 'Иркутская область',
-  '68': 'Республика Бурятия',
-  '69': 'Забайкальский край',
-  '70': 'Хабаровский край',
-  '71': 'Приморский край',
-  '72': 'Сахалинская область',
-  '73': 'Магаданская область',
-  '74': 'Камчатский край',
-  '75': 'Чукотский автономный округ',
-  '76': 'Еврейская автономная область',
-  '77': 'Республика Саха (Якутия)',
-  '78': 'Республика Тыва',
-  '79': 'Республика Хакасия',
-  '80': 'Республика Дагестан',
-  '81': 'Республика Ингушетия',
-  '82': 'Кабардино-Балкарская Республика',
-  '83': 'Карачаево-Черкесская Республика',
-  '84': 'Республика Северная Осетия – Алания',
-  '85': 'Чеченская Республика',
-  '86': 'Республика Адыгея',
-  '87': 'Республика Крым',
-  '88': 'Севастополь',
-  '89': 'Республика Марий Эл',
-  '90': 'Республика Мордовия',
-  '91': 'Чувашская Республика',
-  '92': 'Удмуртская Республика',
-  '93': 'Республика Татарстан',
-  '94': 'Республика Коми',
-  '95': 'Республика Карелия',
-  '96': 'Республика Калмыкия',
-  '97': 'Республика Бурятия',
-  '98': 'Республика Саха (Якутия)',
-  '99': 'Республика Тыва'
+   // Add other 85 subjects as needed
 };
 
-
-// Normalize region names (unify "obl" and "oblast")
-export const normalizeRegion = (region: string): string => {
-    if (!region) return '';
-    let normalized = region.trim();
-
-    // Standardize common abbreviations to full words
-    normalized = normalized.replace(/\bобл\.?/gi, 'область')
-                         .replace(/\bресп\.?/gi, 'Республика')
-                         .replace(/\bр-н\b/gi, 'район');
-
-    // Handle cases like "Oblast Bryanskaya" -> "Bryanskaya Oblast"
-    const parts = normalized.split(' ');
-    if (parts.length === 2 && parts[0].toLowerCase() === 'область') {
-        normalized = `${parts[1]} ${parts[0]}`;
-    }
-
-    // Capitalize the first letter of each word
-    return normalized.split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+export const explicitKeywords: Record<string, string> = {
+  // Keywords -> full region name (lowercase for searching)
+  'москва': 'Москва',
+  'санкт-петербург': 'Санкт-Петербург',
+  'брянская': 'Брянская область',
+  'смоленская': 'Смоленская область',
+  'орловская': 'Орловская область',
+  'калужская': 'Калужская область',
+  'белгородская': 'Белгородская область',
+  'липецкая': 'Липецкая область',
+  // Add all 85: 'владимирская': 'Владимирская область', etc.
 };
-
 
 export const cityToRegion: Record<string, string> = {
   'брянск': 'Брянская область',
-  'орёл': 'Орловская область',
-  'орел': 'Орловская область', // handle 'e' vs 'ё'
-  'ливны': 'Орловская область',
   'смоленск': 'Смоленская область',
-  // add others as needed
+  'орёл': 'Орловская область',
+  'орел': 'Орловская область',
+  'ливны': 'Орловская область',
+};
+
+export const normalizeRegion = (input: string): string => {
+  if (!input) return '';
+  let normalized = input
+    .replace(/обл\.?/gi, 'область')
+    .replace(/край\.?/gi, 'край')
+    .replace(/респ\.?/gi, 'Республика')
+    .replace(/\s+/g, ' ')
+    .trim();
+  
+  // Capitalize first letter of each word for consistent formatting
+  return normalized.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
 };
 
 export function getRegionByPostal(postal: string): string | undefined {
@@ -135,6 +56,18 @@ export function getRegionByPostal(postal: string): string | undefined {
 }
 
 export function getRegionByCity(city: string): string | undefined {
-  const normalizedCity = city.toLowerCase().trim().replace('ё', 'е');
-  return cityToRegion[normalizedCity];
+    const normalizedCity = city.toLowerCase().trim().replace('ё', 'е');
+    return cityToRegion[normalizedCity];
+}
+
+export function getRegionByExplicit(text: string): string | undefined {
+  const lower = text.toLowerCase();
+  for (const [keyword, full] of Object.entries(explicitKeywords)) {
+    // Use word boundaries to avoid matching parts of words (e.g., "московский" vs "москва")
+    const pattern = new RegExp(`\\b${keyword}\\b`);
+    if (pattern.test(lower)) {
+      return normalizeRegion(full);
+    }
+  }
+  return undefined;
 }

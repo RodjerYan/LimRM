@@ -1,14 +1,14 @@
 // services/addressParser.ts
-import { getRegionByPostal, getRegionByCity, normalizeRegion } from '../utils/addressMappings';
+import { getRegionByPostal, getRegionByCity, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
 import { callGeminiForRegion } from './geminiService';
 import { ParsedAddress } from '../types';
 
 /**
  * Parses a Russian address with a strict priority order.
- * 1. Explicit "<Name> obl|oblast|krai|republic|r-n" (even without a dot or "obl" – it looks for the name + indicator word).
- * 2. By index (6 digits -> first 2).
- * 3. By city (with or without "g." prefix).
- * 4. Gemini fallback.
+ * 1. Explicit keyword search (highest priority, blocks other methods).
+ * 2. By postal index (only if no explicit region found).
+ * 3. By city (only if explicit and postal fail).
+ * 4. Gemini fallback (last resort).
  */
 export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
   let region = '';
@@ -16,42 +16,29 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
   let postal = '';
   let source: ParsedAddress['source'] = 'unknown';
 
-  // ---------- 1. Explicit (flexible) ----------
-  const explicitPatterns = [
-    /([А-Яа-яЁё\s-]+?)\s+(обл\.?|область|край|республика|р-н|ао|округ)\b/i,
-    /\b(обл|область)\s+([А-Яа-яЁё\s-]+)\b/i,
-  ];
-
-  for (const pattern of explicitPatterns) {
-    const match = address.match(pattern);
-    if (match) {
-      const name = match[1] || match[2];
-      if (name) {
-        region = normalizeRegion(name + ' область');
-        source = 'explicit';
-        break;
-      }
-    }
+  // === 1. EXPLICIT: Keyword search (ALWAYS FIRST, BLOCKS OTHERS) ===
+  const explicitRegion = getRegionByExplicit(address);
+  if (explicitRegion) {
+    region = explicitRegion;
+    source = 'explicit';
   }
 
-
-  // ---------- 2. Index (5-6 digits) ----------
-  const postalMatch = address.match(/(\d{5,6})/);
-  if (postalMatch) {
-    postal = postalMatch[1];
-    if (!region) {
+  // === 2. INDEX: ONLY IF EXPLICIT NOT FOUND ===
+  if (!region) {
+    const postalMatch = address.match(/(\d{5,6})/);
+    if (postalMatch) {
+      postal = postalMatch[1];
       const fromPostal = getRegionByPostal(postal);
       if (fromPostal) {
-          region = normalizeRegion(fromPostal);
-          source = 'postal';
+        region = normalizeRegion(fromPostal);
+        source = 'postal';
       }
     }
   }
 
-  // ---------- 3. City (with/without prefix) ----------
+  // === 3. CITY: ONLY IF EXPLICIT AND INDEX NOT FOUND ===
   if (!region) {
-    const cityPattern = /(?:,\s*|^)(?:г\.?\s*)?([А-Яа-яЁё\s-]+?)\s*(?:г\.?|город|рп|с|д)(?:,|$|\s)/i;
-    const cityMatch = address.match(cityPattern);
+    const cityMatch = address.match(/(?:г\.?\s*|,\s*)([А-Яа-яЁё\s-]+?)\s*(?:г\.?|город|рп|с|д)(?:,|$|\s)/i);
     if (cityMatch) {
       city = cityMatch[1].trim();
       const fromCity = getRegionByCity(city);
@@ -62,7 +49,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
   }
 
-  // ---------- 4. Gemini fallback ----------
+  // === 4. GEMINI: LAST RESORT ===
   if (!region) {
     const geminiResult = await callGeminiForRegion(address);
     if (geminiResult) {
@@ -85,7 +72,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     house: null,
     lat: null,
     lon: null,
-    confidence: 0,
+    confidence: source === 'explicit' ? 1.0 : (source === 'postal' ? 0.9 : 0.5),
     ambiguousCandidates: []
   };
 }
