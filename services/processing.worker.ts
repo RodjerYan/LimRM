@@ -28,15 +28,25 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         
         postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ и группировка данных...' } });
 
+        const addressCache = new Map<string, any>();
+
         for (let i = 0; i < jsonData.length; i++) {
             const row = jsonData[i];
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             
-            // Use the new async expert address parser
-            const parsedAddress = await parseRussianAddress(address);
-            const region = parsedAddress.region || 'Регион не определён';
+            let parsedAddress;
+            if (addressCache.has(address)) {
+                parsedAddress = addressCache.get(address);
+            } else {
+                // PERFORMANCE FIX: AI call is disabled by default in the parser for mass processing.
+                // It can be re-enabled in addressParser.ts if needed for specific cases.
+                parsedAddress = await parseRussianAddress(address);
+                addressCache.set(address, parsedAddress);
+            }
+            
+            const region = parsedAddress.region; // The parser now returns "Регион не определён" if it fails
             
             const factString = String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.');
             const fact = parseFloat(factString);
@@ -51,7 +61,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
                     key, clientName: `${region} (${brand})`, brand, rm,
-                    city: parsedAddress.city || region, // Use parsed city or fallback to region
+                    city: parsedAddress.city || region,
                     region: region,
                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                     clients: new Set<string>(),
