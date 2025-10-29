@@ -25,6 +25,7 @@ export interface ParsedAddress {
   confidence: number;
   source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
   ambiguousCandidates: string[];
+  formattedAddress: string; // The fully reconstructed and cleaned address string.
 }
 
 
