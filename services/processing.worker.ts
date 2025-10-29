@@ -58,7 +58,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(address);
+            aggregatedData[key].clients.add(parsedAddress.formattedAddress || address);
 
             if (hasPotentialColumn) {
                 const potentialString = String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.');
