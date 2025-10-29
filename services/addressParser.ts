@@ -31,8 +31,62 @@ const EXPANSIONS: Record<string, string> = {
     'корпус': 'к.',
 };
 
-// A list of all region names to help with removal from the address string.
-const sortedCityKeys = Object.keys(regionCenters).sort((a, b) => b.length - a.length);
+// --- Pre-computation for performance ---
+
+// 1. Create a map of normalized city names to their regions to fix the 'ё' issue.
+const normalizedCityCenters: Record<string, string> = {};
+for (const city in regionCenters) {
+    const normalizedCity = city.replace(/ё/g, 'е');
+    normalizedCityCenters[normalizedCity] = regionCenters[city];
+}
+const sortedNormalizedCityKeys = Object.keys(normalizedCityCenters).sort((a, b) => b.length - a.length);
+
+// 2. Create matchers for explicit region mentions (e.g., "Орловская обл")
+const allRegionNames = [...new Set(Object.values(regionCenters))];
+const regionMatchers = allRegionNames.map(regionName => {
+    // Creates a base keyword, e.g., "Орловская область" -> "орловская"
+    const baseKeyword = regionName
+        .toLowerCase()
+        .replace(/ё/g, 'е')
+        .replace(/\s*\(.*\)\s*/g, '') // remove content in parenthesis like (Якутия)
+        .replace(/—.*/, '') // remove content after em-dash
+        .replace(' область', '')
+        .replace(' край', '')
+        .replace(' республика', '')
+        .replace(' автономный округ', '')
+        .replace(' автономная', '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    
+    // Generates variations: "орловская", "орловской", "орловская обл"
+    const variations = new Set([
+        baseKeyword,
+        `${baseKeyword} обл`,
+        `${baseKeyword} область`,
+        `${baseKeyword} край`,
+        `респ ${baseKeyword}`,
+        `республика ${baseKeyword}`,
+    ]);
+    
+    // Handle grammatical cases like "в брянской области" -> брянской
+    if (baseKeyword.endsWith('ая')) {
+        variations.add(baseKeyword.slice(0, -2) + 'ой'); // брянская -> брянской
+    }
+    if (baseKeyword.endsWith('кий')) {
+        variations.add(baseKeyword.slice(0, -3) + 'кого'); // пермский -> пермского
+    }
+
+    // Create a robust regex that matches any variation as a whole word
+    const regex = new RegExp(`\\b(${Array.from(variations).join('|')})\\b`, 'i');
+    
+    return {
+        officialName: regionName,
+        regex,
+    };
+});
+
+// --- End of Pre-computation ---
+
 
 function capitalize(s: string): string {
     if (!s) return '';
@@ -63,30 +117,45 @@ export function parseRussianAddress(address: string | undefined | null): ParsedA
     }
 
     // --- 1. Region Detection ---
-    let workAddress = address.toLowerCase().replace(/ё/g, 'е');
+    const workAddress = address.toLowerCase().replace(/ё/g, 'е');
     let region = "Регион не определён";
     let cityForRegion: string | null = null;
     let source: ParsedAddress['source'] = 'unknown';
 
-    if (workAddress.includes('москва')) {
-        region = 'г. Москва'; cityForRegion = 'Москва'; source = 'city_lookup';
-    } else if (workAddress.includes('санкт-петербург')) {
-        region = 'г. Санкт-Петербург'; cityForRegion = 'Санкт-Петербург'; source = 'city_lookup';
-    } else if (workAddress.includes('севастополь')) {
-        region = 'г. Севастополь'; cityForRegion = 'Севастополь'; source = 'city_lookup';
-    } else {
-        for (const cityKey of sortedCityKeys) {
-            if (workAddress.includes(cityKey)) {
-                region = regionCenters[cityKey];
-                cityForRegion = capitalize(cityKey);
-                source = 'city_lookup';
-                break;
+    // PRIORITY 1: Match explicit region names first (e.g., "Брянская обл").
+    for (const matcher of regionMatchers) {
+        if (matcher.regex.test(workAddress)) {
+            region = matcher.officialName;
+            source = 'explicit_region';
+            break;
+        }
+    }
+
+    // PRIORITY 2: If no explicit region found, try matching by city.
+    if (region === "Регион не определён") {
+        if (/\bмосква\b/.test(workAddress)) {
+            region = 'г. Москва'; cityForRegion = 'Москва'; source = 'city_lookup';
+        } else if (/\bсанкт-петербург\b/.test(workAddress)) {
+            region = 'г. Санкт-Петербург'; cityForRegion = 'Санкт-Петербург'; source = 'city_lookup';
+        } else if (/\bсевастополь\b/.test(workAddress)) {
+            region = 'г. Севастополь'; cityForRegion = 'Севастополь'; source = 'city_lookup';
+        } else {
+            // Check against the list of regional centers.
+            for (const cityKey of sortedNormalizedCityKeys) {
+                // Use regex with word boundaries to avoid partial matches (e.g., "первомайск" in "первомайская").
+                const cityRegex = new RegExp(`\\b${cityKey}\\b`);
+                if (cityRegex.test(workAddress)) {
+                    region = normalizedCityCenters[cityKey];
+                    cityForRegion = capitalize(cityKey.replace(/е/g, 'ё')); // Restore ё for display
+                    source = 'city_lookup';
+                    break;
+                }
             }
         }
     }
     
     defaultResult.region = region;
-    defaultResult.city = cityForRegion;
+    defaultResult.city = cityForRegion || defaultResult.city;
     defaultResult.source = source;
 
     // --- 2. Address Formatting ---
