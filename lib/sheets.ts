@@ -1,4 +1,6 @@
 import { google } from 'googleapis';
+import { JWT } from 'google-auth-library';
+import { Buffer } from 'buffer';
 import { OkbDataRow } from '../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
@@ -16,16 +18,24 @@ async function getGoogleSheetsClient() {
   
   let credentials;
   try {
-    credentials = JSON.parse(serviceAccountKey);
+    // Vercel env vars can have issues with multiline JSON.
+    // This handles both raw JSON and base64 encoded JSON for robustness.
+    const keyData = serviceAccountKey.startsWith('{')
+      ? serviceAccountKey
+      : Buffer.from(serviceAccountKey, 'base64').toString('utf-8');
+    credentials = JSON.parse(keyData);
   } catch (error) {
     console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:", error);
     throw new Error(
-      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string without extra characters or line breaks. Check your Vercel environment variable settings.'
+      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string (or base64 encoded JSON) without extra characters or line breaks. Check your Vercel environment variable settings.'
     );
   }
 
-  const auth = new google.auth.GoogleAuth({
-    credentials,
+  // Use JWT for explicit and robust service account authentication in serverless envs.
+  const auth = new JWT({
+    email: credentials.client_email,
+    // Private keys from env vars often have escaped newlines. This handles that.
+    key: credentials.private_key.replace(/\\n/g, '\n'),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
