@@ -1,5 +1,4 @@
-// services/addressParser.ts
-import { getRegionByPostal, getRegionByCity, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
+import { getRegionByPostal, getRegionByCityInText, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
 /**
@@ -42,14 +41,11 @@ export function parseRussianAddress(address: string): ParsedAddress {
 
   // === 3. CITY NAME (ONLY IF PREVIOUS METHODS FAILED) ===
   if (!region) {
-    const cityMatch = address.match(/(?:,\s*|^)(г\.?\s*)?([А-Яа-яЁё\s-]+?)(?:\s*(?:г\.?|рп|с|д))?(?=,|$)/i);
-    if (cityMatch && cityMatch[2]) {
-      city = cityMatch[2].trim();
-      const fromCity = getRegionByCity(city);
-      if (fromCity) {
-        region = normalizeRegion(fromCity);
+    const cityResult = getRegionByCityInText(address);
+    if (cityResult) {
+        region = cityResult.region;
+        city = cityResult.city;
         source = 'city_lookup';
-      }
     }
   }
   
