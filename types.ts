@@ -15,7 +15,7 @@ export interface AggregatedDataRow {
 
 export interface ParsedAddress {
   country: string;
-  region: string;
+  region: string | null;
   city: string | null;
   street: string | null;
   house: string | null;
