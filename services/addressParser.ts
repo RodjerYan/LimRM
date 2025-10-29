@@ -1,5 +1,4 @@
-import { regionCenters } from '../utils/regionCenters';
-import { getRegionByCity, getRegionByPostal } from '../utils/addressMappings';
+import { getRegionByCity, getRegionByPostal, cityToRegion } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
 // Gemini fallback prompt
@@ -100,7 +99,7 @@ export async function parseRussianAddress(address: string | undefined | null): P
     }
 
     // 2. Extract City and attempt lookup
-    const cityMatch = cleanedAddress.match(/\b(г|город|пгт|село|деревня|д)\s*\.?\s*([А-Яа-я-\s]+)\b/i);
+    const cityMatch = cleanedAddress.match(/\b(г|город|пгт|село|деревня|д|рп)\s*\.?\s*([А-Яа-я-\s]+)\b/i);
     let cityNameForLookup: string | null = null;
     if (cityMatch) {
         cityNameForLookup = cityMatch[2].trim().toLowerCase();
@@ -129,7 +128,8 @@ export async function parseRussianAddress(address: string | undefined | null): P
 
 
     // 3. Look for explicit region keywords (e.g., "Орловская область")
-    const allRegions = [...new Set(Object.values(regionCenters))];
+    // FIX: Use the comprehensive cityToRegion map as the source of truth for all regions.
+    const allRegions = [...new Set(Object.values(cityToRegion))];
     for (const regionName of allRegions) {
         const regionKeyword = regionName.toLowerCase()
             .replace(/ё/g, 'е')
