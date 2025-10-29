@@ -15,6 +15,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
     const [etr, setEtr] = useState<number | null>(null);
+    // FIX: Correctly initialize useRef with null. The type must allow for null before the worker is created.
     const workerRef = useRef<Worker | null>(null);
     const startTimeRef = useRef<number | null>(null);
 
@@ -29,10 +30,12 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         setEtr(null);
         startTimeRef.current = Date.now();
 
+        // Terminate existing worker if any
         if (workerRef.current) {
             workerRef.current.terminate();
         }
 
+        // Create a new worker
         workerRef.current = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
 
         workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
@@ -41,12 +44,10 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                 case 'progress':
                     setProgress(payload.percentage);
                     setMessage(payload.message);
-                    if (startTimeRef.current && payload.percentage > 0 && payload.percentage < 100) {
-                        const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
+                    if (startTimeRef.current && payload.percentage > 0) {
+                        const elapsedTime = (Date.now() - startTimeRef.current) / 1000; // in seconds
                         const totalTime = (elapsedTime / payload.percentage) * 100;
                         setEtr(totalTime - elapsedTime);
-                    } else if (payload.percentage >= 100) {
-                        setEtr(0);
                     }
                     break;
                 case 'result':
@@ -54,16 +55,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Обработка завершена!`);
                     setEtr(0);
-                    // Terminate worker after successful processing to free up resources
-                    workerRef.current?.terminate();
-                    workerRef.current = null;
                     break;
                 case 'error':
                     onProcessingStateChange(false, `Ошибка при обработке файла: ${payload}`);
                     setMessage(`Ошибка: ${payload}`);
                     setEtr(null);
-                    workerRef.current?.terminate();
-                    workerRef.current = null;
                     break;
                 default:
                     break;
@@ -76,6 +72,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             setMessage(`Критическая ошибка: ${e.message}`);
         };
         
+        // Post file and OKB data to worker
         workerRef.current.postMessage({ file, okbData });
 
     }, [onFileProcessed, onProcessingStateChange, okbData]);
@@ -97,7 +94,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                         <p className="mb-2 text-sm text-gray-400">
                             <span className="font-semibold text-accent">Нажмите для загрузки</span> или перетащите файл
                         </p>
-                        <p className="text-xs text-gray-500">XLSX (макс. 50МБ)</p>
+                        <p className="text-xs text-gray-500">XLSX, XLS (макс. 50МБ)</p>
                     </div>
                     <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls" disabled={isProcessing} />
                 </label>
@@ -110,7 +107,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     </div>
                     <div className="flex justify-between items-center mt-1">
                         <p className="text-xs text-gray-400">{message}</p>
-                        {isProcessing && etr !== null && etr > 0 && (
+                        {isProcessing && etr !== null && (
                             <p className="text-xs text-gray-500 font-mono">{formatETR(etr)}</p>
                         )}
                     </div>

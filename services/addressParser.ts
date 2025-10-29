@@ -1,32 +1,22 @@
-import { getRegionByPostal, getRegionByCityInText, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
+// services/addressParser.ts
+import { getRegionByPostal, getRegionByCity, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
+import { callGeminiForRegion } from './geminiService';
 import { ParsedAddress } from '../types';
 
-/**
- * Parses a Russian address string to determine the region with a strict priority order.
- * This is a SYNCHRONOUS function optimized for high-performance batch processing.
- *
- * @param address The raw address string.
- * @returns A ParsedAddress object.
- *
- * Priority Logic:
- * 1.  **Explicit Keyword Match:** Highest priority.
- * 2.  **Postal Code Match:** Secondary priority.
- * 3.  **City Name Match:** Tertiary priority.
- */
-export function parseRussianAddress(address: string): ParsedAddress {
+export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
   let region = '';
   let city = '';
   let postal = '';
   let source: ParsedAddress['source'] = 'unknown';
 
-  // === 1. EXPLICIT KEYWORD SEARCH (HIGHEST PRIORITY) ===
+  // === 1. EXPLICIT: Поиск ключевых слов (ВСЕГДА ПЕРВЫЙ, БЛОКИРУЕТ ОСТАЛЬНОЕ) ===
   const explicitRegion = getRegionByExplicit(address);
   if (explicitRegion) {
     region = explicitRegion;
     source = 'explicit';
   }
 
-  // === 2. POSTAL CODE (ONLY IF EXPLICIT NOT FOUND) ===
+  // === 2. ИНДЕКС: ТОЛЬКО ЕСЛИ EXPLICIT НЕ НАЙДЕН ===
   if (!region) {
     const postalMatch = address.match(/(\d{5,6})/);
     if (postalMatch) {
@@ -39,18 +29,27 @@ export function parseRussianAddress(address: string): ParsedAddress {
     }
   }
 
-  // === 3. CITY NAME (ONLY IF PREVIOUS METHODS FAILED) ===
+  // === 3. ГОРОД: ТОЛЬКО ЕСЛИ EXPLICIT И ИНДЕКС НЕ НАЙДЕНЫ ===
   if (!region) {
-    const cityResult = getRegionByCityInText(address);
-    if (cityResult) {
-        region = cityResult.region;
-        city = cityResult.city;
+    const cityMatch = address.match(/,\s*([А-Яа-яЁё\s-]+)\s*(?:г\.?|г|рп|с|д)?\s*,/i);
+    if (cityMatch) {
+      city = cityMatch[1].trim();
+      const fromCity = getRegionByCity(city);
+      if (fromCity) {
+        region = normalizeRegion(fromCity);
         source = 'city_lookup';
+      }
     }
   }
-  
-  // === 4. GEMINI FALLBACK IS INTENTIONALLY DISABLED FOR PERFORMANCE ===
-  // The async version can be used for single-address parsing if needed elsewhere.
+
+  // === 4. GEMINI: ПОСЛЕДНИЙ ШАНС ===
+  if (!region) {
+    const geminiResult = await callGeminiForRegion(address);
+    if (geminiResult) {
+      region = normalizeRegion(geminiResult);
+      source = 'fuzzy';
+    }
+  }
 
   const status = region ? 'определён' : 'не определён';
   const finalRegion = region || 'Регион не определён';
@@ -66,7 +65,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     house: null,
     lat: null,
     lon: null,
-    confidence: source === 'explicit' ? 0.95 : source === 'postal' ? 0.9 : source === 'city_lookup' ? 0.8 : 0.5,
+    confidence: 0,
     ambiguousCandidates: []
   };
 }

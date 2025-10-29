@@ -10,7 +10,7 @@ import { normalizeRegion } from '../utils/addressMappings';
  * @returns The region name as a string, or an empty string if not found.
  */
 export async function callGeminiForRegion(address: string): Promise<string> {
-    const PROXY_URL = import.meta.env?.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
+    const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
   
     const prompt = `
         Ты — эксперт по адресам РФ.
