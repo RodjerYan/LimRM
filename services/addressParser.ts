@@ -44,46 +44,63 @@ const sortedNormalizedCityKeys = Object.keys(normalizedCityCenters).sort((a, b) 
 // 2. Create matchers for explicit region mentions (e.g., "Орловская обл")
 const allRegionNames = [...new Set(Object.values(regionCenters))];
 const regionMatchers = allRegionNames.map(regionName => {
-    // Creates a base keyword, e.g., "Орловская область" -> "орловская"
-    const baseKeyword = regionName
+    // Sanitize the official region name to get a base for keywords.
+    const baseName = regionName
         .toLowerCase()
         .replace(/ё/g, 'е')
-        .replace(/\s*\(.*\)\s*/g, '') // remove content in parenthesis like (Якутия)
-        .replace(/—.*/, '') // remove content after em-dash
-        .replace(' область', '')
-        .replace(' край', '')
-        .replace(' республика', '')
-        .replace(' автономный округ', '')
-        .replace(' автономная', '')
+        .replace(/\s*\(.*\)\s*/g, '') // e.g. (Якутия)
+        .replace(/—.*/, '') // e.g. — Алания
+        // More robustly remove administrative type words from anywhere in the string.
+        .replace(/\b(область|край|республика|автономный округ|автономная)\b/g, '')
         .replace(/\s+/g, ' ')
-        .trim();
-    
-    // Generates variations: "орловская", "орловской", "орловская обл"
-    const variations = new Set([
-        baseKeyword,
-        `${baseKeyword} обл`,
-        `${baseKeyword} область`,
-        `${baseKeyword} край`,
-        `респ ${baseKeyword}`,
-        `республика ${baseKeyword}`,
-    ]);
-    
-    // Handle grammatical cases like "в брянской области" -> брянской
-    if (baseKeyword.endsWith('ая')) {
-        variations.add(baseKeyword.slice(0, -2) + 'ой'); // брянская -> брянской
+        .trim(); // e.g., "брянская", "северная осетия", "ханты-мансийский"
+        
+    const keywords = new Set<string>();
+
+    if (baseName) {
+        keywords.add(baseName); // "брянская"
+
+        // Add common variations
+        keywords.add(`${baseName} обл`);
+        keywords.add(`${baseName} область`);
+        keywords.add(`${baseName} край`);
+        keywords.add(`респ ${baseName}`);
+        keywords.add(`республика ${baseName}`);
+
+        // Add grammatical variations (genitive case)
+        if (baseName.endsWith('ая') || baseName.endsWith('кая')) { // брянская -> брянской, калужская -> калужской
+            keywords.add(baseName.slice(0, -2) + 'ой');
+        }
+        if (baseName.endsWith('ий') || baseName.endsWith('кий')) { // пермский -> пермского, чукотский -> чукотского
+            keywords.add(baseName.slice(0, -2) + 'ого');
+        }
     }
-    if (baseKeyword.endsWith('кий')) {
-        variations.add(baseKeyword.slice(0, -3) + 'кого'); // пермский -> пермского
+    
+    // Filter out empty or very short keywords that might cause false positives.
+    const finalKeywords = Array.from(keywords).filter(k => k && k.trim().length > 3);
+
+    // If no keywords were generated (e.g., for "Москва", "Крым"), use the base name itself.
+    if (finalKeywords.length === 0 && baseName.length > 3) {
+        finalKeywords.push(baseName);
     }
 
-    // Create a robust regex that matches any variation as a whole word
-    const regex = new RegExp(`\\b(${Array.from(variations).join('|')})\\b`, 'i');
+    if (finalKeywords.length === 0) {
+        // Return a regex that will never match if no valid keywords could be generated.
+        return {
+            officialName: regionName,
+            regex: new RegExp('a^', 'i'), 
+        };
+    }
+    
+    // Create a robust regex that matches any of the keyword variations as whole words.
+    const regex = new RegExp(`\\b(${finalKeywords.join('|')})\\b`, 'i');
     
     return {
         officialName: regionName,
         regex,
     };
 });
+
 
 // --- End of Pre-computation ---
 
