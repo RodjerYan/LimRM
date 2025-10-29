@@ -3,7 +3,7 @@
 import { getRegionByPostal, getRegionByCity, cityToRegion } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
-// Gemini fallback prompt
+// Gemini fallback prompt - IMPROVED based on user feedback for better accuracy
 const GEMINI_FALLBACK_PROMPT = `
 Ты — эксперт по адресам РФ.  
 Из строки адреса извлеки **только субъект РФ** (область, край, республика, город федерального значения).  
@@ -47,9 +47,8 @@ async function getRegionFromGemini(address: string): Promise<string> {
         }
 
         const text = resultText.trim();
-        return text.includes('область') || text.includes('край') || text.includes('республика') || text.includes('Москва') || text.includes('Санкт-Петербург')
-            ? text
-            : '';
+        // Check if the response seems valid before returning
+        return text && text !== "Регион не определён" ? text : '';
             
     } catch (error) {
         console.error('Error during Gemini fallback:', error);
@@ -80,36 +79,30 @@ export async function parseRussianAddress(address: string | undefined | null): P
     let source: ParsedAddress['source'] = 'unknown';
     let confidence = 0;
 
-    // 1. Explicit Region Match (Highest Priority)
-    const explicitMatch = address.match(/([А-Яа-яЁё\s-]+?)\s+(обл\.?|область|край|республика|р-н|АО)\b/i);
+    // 1. Explicit Region Match (Highest Priority) - Using user's improved regex
+    const explicitMatch = address.match(/([А-Яа-яЁё\s-]+?)\s+(обл\.?|область|край|республика|р-н|АО|округ)\b/i);
     if (explicitMatch) {
-        // Construct a partial region name to find the canonical version
-        const potentialRegionName = explicitMatch[1].trim();
-        const regionType = explicitMatch[2].replace(/\./g, '');
-        
-        // Find the full official name from cityToRegion values
-        // FIX: Explicitly type `allRegions` as string[] to ensure correct type inference in the `.find()` method.
+        const potentialRegionName = explicitMatch[1].trim().toLowerCase();
+        // Keep my canonical name lookup logic
         const allRegions: string[] = [...new Set(Object.values(cityToRegion))];
-        const foundRegion = allRegions.find(r => r.toLowerCase().includes(potentialRegionName.toLowerCase()));
+        const foundRegion = allRegions.find(r => r.toLowerCase().includes(potentialRegionName));
 
         if (foundRegion) {
-            // FIX: The type of `foundRegion` is now correctly inferred as `string`, making this assignment valid.
             region = foundRegion;
             source = 'explicit_region';
             confidence = 0.99;
-        } else {
-            // Fallback to constructed name if not found in canonical list
-            region = `${potentialRegionName} ${regionType}`;
+        } else { // Fallback to constructed name
+            region = `${explicitMatch[1].trim()} ${explicitMatch[2].replace(/\./g, '')}`;
             source = 'explicit_region';
             confidence = 0.95;
         }
     }
 
-    // 2. Postal Code Match (If region not found yet)
-    const postalMatch = address.match(/(\d{6})/);
-    if (postalMatch) {
-        result.postalCode = postalMatch[1];
-        if (!region) {
+    // 2. Postal Code Match (If region not found yet) - Using user's improved regex for 5-6 digits
+    if (!region) {
+        const postalMatch = address.match(/(\d{5,6})/);
+        if (postalMatch) {
+            result.postalCode = postalMatch[1];
             const regionFromPostal = getRegionByPostal(result.postalCode);
             if (regionFromPostal) {
                 region = regionFromPostal;
@@ -120,10 +113,10 @@ export async function parseRussianAddress(address: string | undefined | null): P
     }
 
     // 3. City Name Match (If region still not found)
-    const cityMatch = address.match(/(?:г\.?|рп|с|д)\s*([А-Яа-яЁё\s-]+)(?:,|$)/i);
-    if (cityMatch) {
-        result.city = cityMatch[1].trim();
-        if (!region) {
+    if (!region) {
+        const cityMatch = address.match(/(?:г\.?|рп|с|д|город)\s*([А-Яа-яЁё\s-]+)(?:,|$|\s)/i);
+        if (cityMatch) {
+            result.city = cityMatch[1].trim();
             const regionFromCity = getRegionByCity(result.city);
             if (regionFromCity) {
                 region = regionFromCity;
