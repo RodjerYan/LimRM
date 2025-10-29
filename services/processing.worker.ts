@@ -1,15 +1,18 @@
+// services/processing.worker.ts
 import * as xlsx from 'xlsx';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage } from '../types';
-import { normalizeAddressForSearch } from '../utils/dataUtils';
-import { parseRussianAddress } from './addressParser'; // Import the new expert parser
+// FIX: The ParsedAddress type is defined in `../types.ts` and should be imported from there,
+// not from the address parser module which does not export it.
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, ParsedAddress } from '../types';
+import { parseRussianAddress } from './addressParser';
+
+const CHUNK_SIZE = 5000; // Process 5,000 rows at a time
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
     const { file, okbData } = e.data;
-    
     const postMessage = (message: WorkerMessage) => self.postMessage(message);
 
     try {
-        postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла...' } });
+        postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла в память...' } });
         const data = await file.arrayBuffer();
         const workbook = xlsx.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
@@ -18,43 +21,40 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
 
         if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
         
-        const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
-        const hasPotentialColumn = headers.some(h => normalizeAddressForSearch(h) === 'потенциал');
-        const hasFactColumn = headers.some(h => normalizeAddressForSearch(h) === 'вес кг');
+        const totalRows = jsonData.length;
+        postMessage({ type: 'progress', payload: { percentage: 5, message: `Найдено ${totalRows} строк. Начинаем анализ...` } });
+
+        const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || '').toLowerCase());
+        const hasPotentialColumn = headers.includes('потенциал');
+        const hasFactColumn = headers.includes('вес, кг');
 
         if (!hasFactColumn) throw new Error('Файл должен содержать колонку "Вес, кг".');
-        
+
         const aggregatedData: { [key: string]: Omit<AggregatedDataRow, 'clients'> & { clients: Set<string> } } = {};
+        const addressCache = new Map<string, ParsedAddress>();
         
-        postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ и группировка данных...' } });
+        let processedRows = 0;
 
-        const addressCache = new Map<string, any>();
-
-        for (let i = 0; i < jsonData.length; i++) {
+        for (let i = 0; i < totalRows; i++) {
             const row = jsonData[i];
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             
-            let parsedAddress;
+            let parsedAddress: ParsedAddress;
             if (addressCache.has(address)) {
-                parsedAddress = addressCache.get(address);
+                parsedAddress = addressCache.get(address)!;
             } else {
-                // PERFORMANCE FIX: AI call is disabled by default in the parser for mass processing.
-                // It can be re-enabled in addressParser.ts if needed for specific cases.
-                parsedAddress = await parseRussianAddress(address);
+                // PERFORMANCE FIX: AI call is disabled by default for mass processing.
+                parsedAddress = parseRussianAddress(address);
                 addressCache.set(address, parsedAddress);
             }
             
-            const region = parsedAddress.region; // The parser now returns "Регион не определён" if it fails
-            
+            const region = parsedAddress.region;
             const factString = String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.');
             const fact = parseFloat(factString);
 
-            if (isNaN(fact)) {
-                console.warn(`Invalid number for 'Вес, кг' at row ${i+2}: ${row['Вес, кг']}`);
-                continue; // Skip row if fact is not a valid number
-            }
+            if (isNaN(fact)) continue;
             
             const key = `${region}-${brand}-${rm}`.toLowerCase();
 
@@ -77,10 +77,12 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
                     aggregatedData[key].potential += potential;
                 }
             }
-
-            if ((i % 100 === 0 || i === jsonData.length - 1) && i > 0) {
-                const percentage = 5 + Math.round((i / jsonData.length) * 75);
-                postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i + 1} из ${jsonData.length} строк...` } });
+            
+            processedRows++;
+            // Report progress every 1000 rows to avoid flooding the main thread
+            if (processedRows % 1000 === 0 || processedRows === totalRows) {
+                 const percentage = 5 + Math.round((processedRows / totalRows) * 75);
+                 postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${processedRows} из ${totalRows} строк...` } });
             }
         }
         

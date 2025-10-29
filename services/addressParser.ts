@@ -1,29 +1,26 @@
 // services/addressParser.ts
 import { getRegionByPostal, getRegionByCity, getRegionByExplicit, normalizeRegion } from '../utils/addressMappings';
-import { callGeminiForRegion } from './geminiService';
 import { ParsedAddress } from '../types';
 
 /**
  * Parses a Russian address string to determine the region with a strict priority order.
- * This is the core function for address analysis.
+ * This is a SYNCHRONOUS function optimized for high-performance batch processing.
  *
  * @param address The raw address string.
- * @returns A promise that resolves to a ParsedAddress object.
+ * @returns A ParsedAddress object.
  *
  * Priority Logic:
- * 1.  **Explicit Keyword Match:** Looks for keywords like "смоленская", "брянская" first. This is the highest priority. If a match is found, parsing stops immediately.
- * 2.  **Postal Code Match:** If no explicit keyword is found, it attempts to determine the region from the 5-6 digit postal code.
- * 3.  **City Name Match:** If the above methods fail, it looks for a known city name in the address.
- * 4.  **AI Fallback (Gemini):** As a last resort for very complex or ambiguous cases. This is disabled by default in the worker for performance.
+ * 1.  **Explicit Keyword Match:** Highest priority.
+ * 2.  **Postal Code Match:** Secondary priority.
+ * 3.  **City Name Match:** Tertiary priority.
  */
-export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
+export function parseRussianAddress(address: string): ParsedAddress {
   let region = '';
   let city = '';
   let postal = '';
   let source: ParsedAddress['source'] = 'unknown';
 
   // === 1. EXPLICIT KEYWORD SEARCH (HIGHEST PRIORITY) ===
-  // This is the most reliable method. If we find an explicit mention, we trust it over any other data.
   const explicitRegion = getRegionByExplicit(address);
   if (explicitRegion) {
     region = explicitRegion;
@@ -45,7 +42,6 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
 
   // === 3. CITY NAME (ONLY IF PREVIOUS METHODS FAILED) ===
   if (!region) {
-    // Improved regex to find city names that might not have a "г." prefix
     const cityMatch = address.match(/(?:,\s*|^)(г\.?\s*)?([А-Яа-яЁё\s-]+?)(?:\s*(?:г\.?|рп|с|д))?(?=,|$)/i);
     if (cityMatch && cityMatch[2]) {
       city = cityMatch[2].trim();
@@ -56,16 +52,9 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
       }
     }
   }
-
-  // === 4. GEMINI FALLBACK (LAST RESORT - OFTEN DISABLED IN WORKER) ===
-  // This check is preserved here, but the call is commented out in the worker for performance.
-  if (!region) {
-      const geminiResult = await callGeminiForRegion(address);
-      if (geminiResult) {
-          region = normalizeRegion(geminiResult);
-          source = 'fuzzy';
-      }
-  }
+  
+  // === 4. GEMINI FALLBACK IS INTENTIONALLY DISABLED FOR PERFORMANCE ===
+  // The async version can be used for single-address parsing if needed elsewhere.
 
   const status = region ? 'определён' : 'не определён';
   const finalRegion = region || 'Регион не определён';
