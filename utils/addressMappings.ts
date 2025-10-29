@@ -96,6 +96,7 @@ const REGION_SYNONYMS: { [key: string]: string } = {
     // Federal cities
     'москва': 'Москва',
     'санкт-петербург': 'Санкт-Петербург',
+    'спб': 'Санкт-Петербург',
     'севастополь': 'Севастополь',
     // Autonomous Oblast
     'еврейская': 'Еврейская автономная область',
@@ -118,12 +119,13 @@ const POSTAL_CODE_MAP: { [prefix: string]: string } = {
     '190': 'Санкт-Петербург', '191': 'Санкт-Петербург', '192': 'Санкт-Петербург', '193': 'Санкт-Петербург', '194': 'Санкт-Петербург', '195': 'Санкт-Петербург', '196': 'Санкт-Петербург', '197': 'Санкт-Петербург', '198': 'Санкт-Петербург', '199': 'Санкт-Петербург',
     // Other regions
     '236': 'Калининградская область',
-    '241': 'Брянская область',
+    '238': 'Калининградская область',
+    '241': 'Брянская область', '242': 'Брянская область', '243': 'Брянская область',
     '248': 'Калужская область',
     '249': 'Калужская область',
     '300': 'Тульская область',
     '301': 'Тульская область',
-    '302': 'Орловская область',
+    '302': 'Орловская область', '303': 'Орловская область',
     '305': 'Курская область',
     '308': 'Белгородская область',
     '344': 'Ростовская область',
@@ -202,24 +204,28 @@ export const normalizeRegion = (regionStr: string): string => {
 /**
  * Attempts to find a region by looking for explicit keywords in the address string.
  * This is the most reliable method and has the highest priority.
+ * This version uses a Cyrillic-safe regex for word boundaries.
  * @param address The full address string.
  * @returns The normalized region name or null if not found.
  */
 export const getRegionByExplicit = (address: string): string | null => {
     const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-    
-    for (const key in REGION_SYNONYMS) {
-        if (lowerAddress.includes(key)) {
-            // Check for whole word match to avoid partial matches like "москва" in "московская область"
-            const regex = new RegExp(`\\b${key}\\b`, 'i');
-            if (regex.test(lowerAddress)) {
-                return REGION_SYNONYMS[key];
-            }
+
+    const sortedKeys = Object.keys(REGION_SYNONYMS).sort((a, b) => b.length - a.length);
+
+    for (const key of sortedKeys) {
+        // This regex creates a Cyrillic-safe word boundary.
+        // It checks for the start of the string (^) or a non-letter character ([^а-яё])
+        // before the keyword, and a non-letter character or the end of the string ($) after it.
+        const pattern = new RegExp(`(^|[^а-яё])${key}([^а-яё]|$)`, 'i');
+        if (pattern.test(lowerAddress)) {
+            return REGION_SYNONYMS[key];
         }
     }
 
     return null;
 };
+
 
 /**
  * Determines the region based on the first 3 digits of a postal code.
@@ -232,6 +238,52 @@ export const getRegionByPostal = (postalCode: string): string | null => {
     return POSTAL_CODE_MAP[prefix] || null;
 };
 
+// Expanded city list for better coverage
+const expandedCityToRegion: Record<string, string> = {
+    ...regionCenters,
+    // Kaliningrad Oblast Cities from user list
+    'гвардейск': 'Калининградская область',
+    'светлый': 'Калининградская область',
+    'зеленоградск': 'Калининградская область',
+    'советск': 'Калининградская область',
+    'пионерский': 'Калининградская область',
+    'гурьевск': 'Калининградская область',
+    'балтийск': 'Калининградская область',
+    'полесск': 'Калининградская область',
+    'черняховск': 'Калининградская область',
+    'багратионовск': 'Калининградская область',
+    'неман': 'Калининградская область',
+    'озерск': 'Калининградская область',
+    'правдинск': 'Калининградская область',
+    'гусев': 'Калининградская область',
+    'светлогорск': 'Калининградская область',
+    'славск': 'Калининградская область',
+    'янтарный': 'Калининградская область',
+    // Leningrad Oblast
+    'кингисепп': 'Ленинградская область',
+    'гатчина': 'Ленинградская область',
+    'кировск': 'Ленинградская область',
+    'кириши': 'Ленинградская область',
+    'сосновый бор': 'Ленинградская область',
+    'сланцы': 'Ленинградская область',
+    'колпино': 'Санкт-Петербург', // Technically part of SPB
+    'пушкин': 'Санкт-Петербург', // part of SPB
+    'петергоф': 'Санкт-Петербург', // part of SPB
+    'всеволожск': 'Ленинградская область',
+    'кудрово': 'Ленинградская область',
+    'мурино': 'Ленинградская область',
+    'сертолово': 'Ленинградская область',
+    'тихвин': 'Ленинградская область',
+    'луга': 'Ленинградская область',
+    'тосно': 'Ленинградская область',
+    'волосово': 'Ленинградская область',
+    // Bryansk
+    'новозыбков': 'Брянская область',
+    'клинцы': 'Брянская область',
+    // Oryol
+    'ливны': 'Орловская область',
+};
+
 /**
  * Finds the region for a given city name using the `regionCenters` mapping.
  * @param city The name of the city.
@@ -240,5 +292,5 @@ export const getRegionByPostal = (postalCode: string): string | null => {
 export const getRegionByCity = (city: string): string | null => {
     if (!city) return null;
     const lowerCity = city.toLowerCase().trim();
-    return regionCenters[lowerCity] || null;
+    return expandedCityToRegion[lowerCity] || null;
 };
