@@ -12,6 +12,8 @@ const REGION_SYNONYMS: { [key: string]: string } = {
     'башкирия': 'Республика Башкортостан',
     'бурятия': 'Республика Бурятия',
     'дагестан': 'Республика Дагестан',
+    'днр': 'Донецкая Народная Республика',
+    'донецкая': 'Донецкая Народная Республика',
     'ингушетия': 'Республика Ингушетия',
     'кбр': 'Кабардино-Балкарская Республика',
     'кабардино-балкария': 'Кабардино-Балкарская Республика',
@@ -21,6 +23,8 @@ const REGION_SYNONYMS: { [key: string]: string } = {
     'карелия': 'Республика Карелия',
     'коми': 'Республика Коми',
     'крым': 'Республика Крым',
+    'лнр': 'Луганская Народная Республика',
+    'луганская': 'Луганская Народная Республика',
     'марий эл': 'Республика Марий Эл',
     'мордовия': 'Республика Мордовия',
     'саха': 'Республика Саха (Якутия)',
@@ -55,6 +59,7 @@ const REGION_SYNONYMS: { [key: string]: string } = {
     'волгоградская': 'Волгоградская область',
     'вологодская': 'Вологодская область',
     'воронежская': 'Воронежская область',
+    'запорожская': 'Запорожская область',
     'ивановская': 'Ивановская область',
     'иркутская': 'Иркутская область',
     'калининградская': 'Калининградская область',
@@ -91,6 +96,8 @@ const REGION_SYNONYMS: { [key: string]: string } = {
     'тульская': 'Тульская область',
     'тюменская': 'Тюменская область',
     'ульяновская': 'Ульяновская область',
+    'харьковская': 'Харьковская область',
+    'херсонская': 'Херсонская область',
     'челябинская': 'Челябинская область',
     'ярославская': 'Ярославская область',
     // Federal cities
@@ -109,7 +116,6 @@ const REGION_SYNONYMS: { [key: string]: string } = {
 };
 
 // Simplified mapping of the first 3 digits of a postal code to a region.
-// This is not exhaustive but covers major regions.
 const POSTAL_CODE_MAP: { [prefix: string]: string } = {
     // Moscow and Oblast
     '101': 'Москва', '102': 'Москва', '103': 'Москва', '104': 'Москва', '105': 'Москва', '106': 'Москва', '107': 'Москва', '108': 'Москва', '109': 'Москва', '111': 'Москва', '112': 'Москва', '113': 'Москва', '114': 'Москва', '115': 'Москва', '116': 'Москва', '117': 'Москва', '118': 'Москва', '119': 'Москва', '121': 'Москва', '123': 'Москва', '124': 'Москва', '125': 'Москва', '126': 'Москва', '127': 'Москва', '128': 'Москва', '129': 'Москва', '130': 'Москва', '135': 'Москва',
@@ -117,9 +123,10 @@ const POSTAL_CODE_MAP: { [prefix: string]: string } = {
     // St. Petersburg and Oblast
     '187': 'Ленинградская область', '188': 'Ленинградская область',
     '190': 'Санкт-Петербург', '191': 'Санкт-Петербург', '192': 'Санкт-Петербург', '193': 'Санкт-Петербург', '194': 'Санкт-Петербург', '195': 'Санкт-Петербург', '196': 'Санкт-Петербург', '197': 'Санкт-Петербург', '198': 'Санкт-Петербург', '199': 'Санкт-Петербург',
-    // Other regions
+    // Kaliningrad
     '236': 'Калининградская область',
     '238': 'Калининградская область',
+    // Other regions
     '241': 'Брянская область', '242': 'Брянская область', '243': 'Брянская область',
     '248': 'Калужская область',
     '249': 'Калужская область',
@@ -172,26 +179,18 @@ const POSTAL_CODE_MAP: { [prefix: string]: string } = {
     '693': 'Сахалинская область',
 };
 
-/**
- * Normalizes a region string to a standard format.
- * Example: "орловская обл" -> "Орловская область"
- * @param regionStr The raw region string.
- * @returns The normalized region name, or the original string if no match is found.
- */
 export const normalizeRegion = (regionStr: string): string => {
     if (!regionStr) return 'Регион не определён';
 
     const lowercased = regionStr.toLowerCase().replace(/ё/g, 'е').trim();
     
-    // Direct match in synonyms
     if (REGION_SYNONYMS[lowercased]) {
         return REGION_SYNONYMS[lowercased];
     }
     
-    // Handle cases like "Орловская обл."
     const words = lowercased.split(/\s+/);
     for (let i = 0; i < words.length; i++) {
-        const word = words[i].replace(/[.,]/g, ''); // clean word
+        const word = words[i].replace(/[.,]/g, '');
         if (REGION_SYNONYMS[word]) {
             return REGION_SYNONYMS[word];
         }
@@ -201,23 +200,12 @@ export const normalizeRegion = (regionStr: string): string => {
 };
 
 
-/**
- * Attempts to find a region by looking for explicit keywords in the address string.
- * This is the most reliable method and has the highest priority.
- * This version uses a Cyrillic-safe regex for word boundaries.
- * @param address The full address string.
- * @returns The normalized region name or null if not found.
- */
 export const getRegionByExplicit = (address: string): string | null => {
     const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-
     const sortedKeys = Object.keys(REGION_SYNONYMS).sort((a, b) => b.length - a.length);
 
     for (const key of sortedKeys) {
-        // This regex creates a Cyrillic-safe word boundary.
-        // It checks for the start of the string (^) or a non-letter character ([^а-яё])
-        // before the keyword, and a non-letter character or the end of the string ($) after it.
-        const pattern = new RegExp(`(^|[^а-яё])${key}([^а-яё]|$)`, 'i');
+        const pattern = new RegExp(`(^|[^а-яё0-9])${key}([^а-яё0-9]|$)`, 'i');
         if (pattern.test(lowerAddress)) {
             return REGION_SYNONYMS[key];
         }
@@ -227,18 +215,12 @@ export const getRegionByExplicit = (address: string): string | null => {
 };
 
 
-/**
- * Determines the region based on the first 3 digits of a postal code.
- * @param postalCode The 6-digit postal code.
- * @returns The region name or null if not found in the map.
- */
 export const getRegionByPostal = (postalCode: string): string | null => {
     if (!postalCode || postalCode.length < 3) return null;
     const prefix = postalCode.substring(0, 3);
     return POSTAL_CODE_MAP[prefix] || null;
 };
 
-// Expanded city list for better coverage
 const expandedCityToRegion: Record<string, string> = {
     ...regionCenters,
     // Kaliningrad Oblast Cities from user list
@@ -259,6 +241,11 @@ const expandedCityToRegion: Record<string, string> = {
     'светлогорск': 'Калининградская область',
     'славск': 'Калининградская область',
     'янтарный': 'Калининградская область',
+    'большое исаково': 'Калининградская область',
+    'васильково': 'Калининградская область',
+    'голубево': 'Калининградская область',
+    'чкаловск': 'Калининградская область',
+
     // Leningrad Oblast
     'кингисепп': 'Ленинградская область',
     'гатчина': 'Ленинградская область',
@@ -266,9 +253,9 @@ const expandedCityToRegion: Record<string, string> = {
     'кириши': 'Ленинградская область',
     'сосновый бор': 'Ленинградская область',
     'сланцы': 'Ленинградская область',
-    'колпино': 'Санкт-Петербург', // Technically part of SPB
-    'пушкин': 'Санкт-Петербург', // part of SPB
-    'петергоф': 'Санкт-Петербург', // part of SPB
+    'колпино': 'Санкт-Петербург',
+    'пушкин': 'Санкт-Петербург',
+    'петергоф': 'Санкт-Петербург',
     'всеволожск': 'Ленинградская область',
     'кудрово': 'Ленинградская область',
     'мурино': 'Ленинградская область',
@@ -277,20 +264,80 @@ const expandedCityToRegion: Record<string, string> = {
     'луга': 'Ленинградская область',
     'тосно': 'Ленинградская область',
     'волосово': 'Ленинградская область',
+    'ивангород': 'Ленинградская область',
+    'приозерск': 'Ленинградская область',
+    'светогорск': 'Ленинградская область',
+
     // Bryansk
     'новозыбков': 'Брянская область',
     'клинцы': 'Брянская область',
+    
     // Oryol
     'ливны': 'Орловская область',
+
+    // Donetsk, Luhansk, etc.
+    'енакиево': 'Донецкая Народная Республика',
+    'горловка': 'Донецкая Народная Республика',
+    'макеевка': 'Донецкая Народная Республика',
+    'мариуполь': 'Донецкая Народная Республика',
+    'торез': 'Донецкая Народная Республика',
+    'харцызск': 'Донецкая Народная Республика',
+    'донецк': 'Донецкая Народная Республика',
+    'иловайск': 'Донецкая Народная Республика',
+    'снежное': 'Донецкая Народная Республика',
+    'докучаевск': 'Донецкая Народная Республика',
+    'волноваха': 'Донецкая Народная Республика',
+    'ясиноватая': 'Донецкая Народная Республика',
+    'шахтерск': 'Донецкая Народная Республика',
+    'кировское': 'Донецкая Народная Республика',
+    'амвросиевка': 'Донецкая Народная Республика',
+    'ждановка': 'Донецкая Народная Республика',
+    'зугрэс': 'Донецкая Народная Республика',
+    'углегорск': 'Донецкая Народная Республика',
+    'комсомольское': 'Донецкая Народная Республика',
+    
+    'луганск': 'Луганская Народная Республика',
+    'красный луч': 'Луганская Народная Республика',
+    'брянка': 'Луганская Народная Республика',
+    'лисичанск': 'Луганская Народная Республика',
+    'рубежное': 'Луганская Народная Республика',
+    'северодонецк': 'Луганская Народная Республика',
+    'стаханов': 'Луганская Народная Республика',
+    'алчевск': 'Луганская Народная Республика',
+    'антрацит': 'Луганская Народная Республика',
+    'ровеньки': 'Луганская Народная Республика',
+    'свердловск': 'Луганская Народная Республика',
+    'старобельск': 'Луганская Народная Республика',
+    'первомайск': 'Луганская Народная Республика',
+    'перевальск': 'Луганская Народная Республика',
+    'лутугино': 'Луганская Народная Республика',
+    'краснодон': 'Луганская Народная Республика',
+    'молодогвардейск': 'Луганская Народная Республика',
+    'суходольск': 'Луганская Народная Республика',
+    'сватово': 'Луганская Народная Республика',
+    'счастье': 'Луганская Народная Республика',
+    'ирмино': 'Луганская Народная Республика',
+    
+    // Zaporozhye
+    'геническ': 'Херсонская область', // Geographically, often associated
+    'бердянск': 'Запорожская область',
+    'мелитополь': 'Запорожская область',
+    'энергодар': 'Запорожская область',
+    'приморск': 'Запорожская область',
+    'токмак': 'Запорожская область',
+    'днепрорудное': 'Запорожская область',
+    
+    // Kherson
+    'каховка': 'Херсонская область',
+
+    // Others from list
+    'губкин': 'Белгородская область',
+// FIX: Removed duplicate entries for 'петрозаводск', 'сыктывкар', 'кингисепп', 'псков', 
+// 'великий новгород', and 'мурино' as they were already defined above or in regionCenters.
 };
 
-/**
- * Finds the region for a given city name using the `regionCenters` mapping.
- * @param city The name of the city.
- * @returns The region name or null if the city is not a known regional center.
- */
 export const getRegionByCity = (city: string): string | null => {
     if (!city) return null;
-    const lowerCity = city.toLowerCase().trim();
+    const lowerCity = city.toLowerCase().trim().replace(/ё/g, 'е');
     return expandedCityToRegion[lowerCity] || null;
 };
