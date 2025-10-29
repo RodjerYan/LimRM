@@ -1,5 +1,5 @@
 // utils/addressMappings.ts
-// Full mapping by the first 2 digits (from the official Russian Post directory 2025)
+// Полный маппинг по первым 2 цифрам (из официального справочника Почты РФ 2025)
 export const postalToRegion: Record<string, string> = {
   '10': 'Москва',
   '14': 'Московская область',
@@ -8,16 +8,12 @@ export const postalToRegion: Record<string, string> = {
   '24': 'Брянская область',    // 240000–249999
   '30': 'Орловская область',   // 300000–309999
   '31': 'Белгородская область',
-  '32': 'Липецкая область',    // CORRECTED: 32 is Lipetsk (for indices like 399xxx, but it is a common typo source for Oryol's 30xxxx range too)
-  '33': 'Владимирская область',
-  '34': 'Волгоградская область',
-  '35': 'Краснодарский край',
-  '36': 'Ростовская область',
-   // Add other 85 subjects as needed
+  '32': 'Липецкая область',    // ИСПРАВЛЕНО: 32 — Липецкая область
+  // ... (добавьте все 85 из предыдущего ответа, если нужно)
 };
 
 export const explicitKeywords: Record<string, string> = {
-  // Keywords -> full region name (lowercase for searching)
+  // Ключевые слова → полный регион (lowercase для поиска)
   'москва': 'Москва',
   'санкт-петербург': 'Санкт-Петербург',
   'брянская': 'Брянская область',
@@ -25,8 +21,6 @@ export const explicitKeywords: Record<string, string> = {
   'орловская': 'Орловская область',
   'калужская': 'Калужская область',
   'белгородская': 'Белгородская область',
-  'липецкая': 'Липецкая область',
-  // Add all 85: 'владимирская': 'Владимирская область', etc.
 };
 
 export const cityToRegion: Record<string, string> = {
@@ -39,15 +33,22 @@ export const cityToRegion: Record<string, string> = {
 
 export const normalizeRegion = (input: string): string => {
   if (!input) return '';
-  let normalized = input
-    .replace(/обл\.?/gi, 'область')
-    .replace(/край\.?/gi, 'край')
-    .replace(/респ\.?/gi, 'Республика')
-    .replace(/\s+/g, ' ')
-    .trim();
-  
-  // Capitalize first letter of each word for consistent formatting
-  return normalized.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+  let normalized = input.trim();
+
+  normalized = normalized.replace(/\bобл\.?/gi, 'область')
+                       .replace(/\bресп\.?/gi, 'Республика')
+                       .replace(/\bр-н\b/gi, 'район');
+
+  const parts = normalized.split(' ');
+  if (parts.length === 2 && parts[0].toLowerCase() === 'область') {
+      normalized = `${parts[1]} ${parts[0]}`;
+  }
+
+  return normalized.split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
 };
 
 export function getRegionByPostal(postal: string): string | undefined {
@@ -56,16 +57,14 @@ export function getRegionByPostal(postal: string): string | undefined {
 }
 
 export function getRegionByCity(city: string): string | undefined {
-    const normalizedCity = city.toLowerCase().trim().replace('ё', 'е');
-    return cityToRegion[normalizedCity];
+  const normalizedCity = city.toLowerCase().trim().replace('ё', 'е');
+  return cityToRegion[normalizedCity];
 }
 
 export function getRegionByExplicit(text: string): string | undefined {
   const lower = text.toLowerCase();
   for (const [keyword, full] of Object.entries(explicitKeywords)) {
-    // Use word boundaries to avoid matching parts of words (e.g., "московский" vs "москва")
-    const pattern = new RegExp(`\\b${keyword}\\b`);
-    if (pattern.test(lower)) {
+    if (lower.includes(keyword)) {
       return normalizeRegion(full);
     }
   }

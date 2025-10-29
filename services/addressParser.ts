@@ -3,27 +3,20 @@ import { getRegionByPostal, getRegionByCity, getRegionByExplicit, normalizeRegio
 import { callGeminiForRegion } from './geminiService';
 import { ParsedAddress } from '../types';
 
-/**
- * Parses a Russian address with a strict priority order.
- * 1. Explicit keyword search (highest priority, blocks other methods).
- * 2. By postal index (only if no explicit region found).
- * 3. By city (only if explicit and postal fail).
- * 4. Gemini fallback (last resort).
- */
 export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
   let region = '';
   let city = '';
   let postal = '';
   let source: ParsedAddress['source'] = 'unknown';
 
-  // === 1. EXPLICIT: Keyword search (ALWAYS FIRST, BLOCKS OTHERS) ===
+  // === 1. EXPLICIT: Поиск ключевых слов (ВСЕГДА ПЕРВЫЙ, БЛОКИРУЕТ ОСТАЛЬНОЕ) ===
   const explicitRegion = getRegionByExplicit(address);
   if (explicitRegion) {
     region = explicitRegion;
     source = 'explicit';
   }
 
-  // === 2. INDEX: ONLY IF EXPLICIT NOT FOUND ===
+  // === 2. ИНДЕКС: ТОЛЬКО ЕСЛИ EXPLICIT НЕ НАЙДЕН ===
   if (!region) {
     const postalMatch = address.match(/(\d{5,6})/);
     if (postalMatch) {
@@ -36,9 +29,9 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
   }
 
-  // === 3. CITY: ONLY IF EXPLICIT AND INDEX NOT FOUND ===
+  // === 3. ГОРОД: ТОЛЬКО ЕСЛИ EXPLICIT И ИНДЕКС НЕ НАЙДЕНЫ ===
   if (!region) {
-    const cityMatch = address.match(/(?:г\.?\s*|,\s*)([А-Яа-яЁё\s-]+?)\s*(?:г\.?|город|рп|с|д)(?:,|$|\s)/i);
+    const cityMatch = address.match(/,\s*([А-Яа-яЁё\s-]+)\s*(?:г\.?|г|рп|с|д)?\s*,/i);
     if (cityMatch) {
       city = cityMatch[1].trim();
       const fromCity = getRegionByCity(city);
@@ -49,7 +42,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
   }
 
-  // === 4. GEMINI: LAST RESORT ===
+  // === 4. GEMINI: ПОСЛЕДНИЙ ШАНС ===
   if (!region) {
     const geminiResult = await callGeminiForRegion(address);
     if (geminiResult) {
@@ -72,7 +65,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     house: null,
     lat: null,
     lon: null,
-    confidence: source === 'explicit' ? 1.0 : (source === 'postal' ? 0.9 : 0.5),
+    confidence: 0,
     ambiguousCandidates: []
   };
 }
