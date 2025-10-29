@@ -39,7 +39,11 @@ async function getGoogleSheetsClient() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  const sheets = google.sheets({ version: 'v4', auth });
+  // FIX: Set authentication globally to resolve TypeScript overload errors during build.
+  // This is a more robust pattern for initializing the API client.
+  google.options({ auth });
+  
+  const sheets = google.sheets('v4');
   return sheets;
 }
 
