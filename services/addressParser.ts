@@ -1,117 +1,89 @@
 import { regionCenters } from '../utils/regionCenters';
 import { ParsedAddress } from '../types';
 
-// Pre-build a search index for regions for efficiency. This structure is created once when the module loads.
-const regionSearchIndex = new Map<string, { keywords: RegExp[], officialName: string }>();
-
-(() => {
-    // Get a unique list of all official region names from the data source.
-    const allRegions = [...new Set(Object.values(regionCenters))];
-    for (const regionName of allRegions) {
-        // Normalize the region name for searching (lowercase, 'ё' to 'е').
-        const lowerName = regionName.toLowerCase().replace(/ё/g, 'е');
-
-        // Extract the most significant word(s) from the region name to use as a keyword.
-        // E.g., from "Республика Татарстан", extract "татарстан". From "Орловская область", extract "орловская".
-        const coreName = lowerName
-            .replace(/\s*\(.*\)\s*/g, '') // Remove parenthetical parts like "(Якутия)"
-            .replace(/—/g, ' ')           // Replace em-dashes with spaces
-            .replace('республика', '')
-            .replace('край', '')
-            .replace('область', '')
-            .replace('автономный округ', '')
-            .replace('автономная', '')
-            .replace('— кузбасс', '')      // Handle specific complex names
-            .replace('— алания', '')
-            .replace('— югра', '')
-            .trim()
-            .split(' ')[0]; // Use the first significant word.
-
-        const keywords = new Set<string>();
-        // Add the full normalized name as a keyword, allowing for multiple spaces.
-        keywords.add(lowerName.replace(/ /g, '\\s+'));
-        // Add the extracted core name as a keyword if it's valid.
-        if (coreName) {
-            keywords.add(coreName);
-        }
-        
-        // Store the compiled regular expressions for fast searching.
-        // The `\b` ensures that we match whole words only (e.g., "орел" won't match inside "теоретик").
-        regionSearchIndex.set(regionName, {
-            keywords: Array.from(keywords).map(kw => new RegExp(`\\b${kw}\\b`, 'u')),
-            officialName: regionName
-        });
-    }
-})();
+// Pre-sort city keys by length descending. This is crucial to match longer, more specific names first.
+// For example, it prevents "новгород" from matching in an address that contains "нижний новгород".
+const sortedCityKeys = Object.keys(regionCenters).sort((a, b) => b.length - a.length);
 
 /**
- * A robust function to parse a Russian address and determine the region.
- * It uses a prioritized search: first for explicit region names, then for federal cities,
- * and finally for regional centers, preventing common misidentifications.
- * @param address The raw address string.
- * @returns A structured ParsedAddress object containing the identified region.
+ * An intelligent function to parse an address string and determine its Russian Federation region (subject).
+ * It is designed to be robust against common typos, abbreviations, and formatting inconsistencies.
+ *
+ * @param address The raw address string to be parsed.
+ * @returns A ParsedAddress object. The `region` field will contain the determined Russian region
+ *          (e.g., "Московская область", "г. Москва") or "Регион не определён" if it cannot be determined.
  */
 export function parseRussianAddress(address: string | undefined | null): ParsedAddress {
-    const result: ParsedAddress = {
+    const defaultResult: ParsedAddress = {
         country: "Россия",
         region: "Регион не определён",
-        city: null, street: null, house: null, postalCode: null, lat: null, lon: null,
-        confidence: 0, source: 'unknown', ambiguousCandidates: []
+        city: null, street: null, house: null, postalCode: null,
+        lat: null, lon: null, confidence: 0,
+        source: 'unknown', ambiguousCandidates: []
     };
 
-    if (!address || typeof address !== 'string' || address.trim() === '') {
-        return result;
+    if (!address || typeof address !== 'string' || address.trim().length === 0) {
+        return defaultResult;
     }
     
-    // Normalize input address for robust matching.
+    // Normalize the address string for more reliable matching.
     const normalizedAddress = address.toLowerCase()
         .replace(/ё/g, 'е')
-        .replace(/[.,"]/g, ' ')
+        .replace(/[.,"]/g, ' ') // Replace common punctuation with spaces to treat them as separators.
+        .replace(/\b(обл|обл\.|область)\b/g, 'область')
+        .replace(/\b(респ|респ\.|республика)\b/g, 'республика')
+        .replace(/\b(край)\b/g, 'край')
+        .replace(/\b(ао)\b/g, 'автономный округ')
         .replace(/\s+/g, ' ').trim();
 
-    if (normalizedAddress.length === 0) {
-        return result;
+    // --- Identification Logic ---
+    
+    // 1. Federal Cities: These have the highest priority and specific formatting rules.
+    if (normalizedAddress.includes('москва')) {
+        return { ...defaultResult, region: 'г. Москва', city: 'Москва', confidence: 0.95, source: 'city_lookup' };
+    }
+    if (normalizedAddress.includes('санкт-петербург')) {
+        return { ...defaultResult, region: 'г. Санкт-Петербург', city: 'Санкт-Петербург', confidence: 0.95, source: 'city_lookup' };
+    }
+    if (normalizedAddress.includes('севастополь')) {
+        return { ...defaultResult, region: 'г. Севастополь', city: 'Севастополь', confidence: 0.95, source: 'city_lookup' };
     }
 
-    // --- Priority 1: Search for explicit region names ---
-    // This is the most reliable method and runs first to avoid ambiguity.
-    for (const regionInfo of regionSearchIndex.values()) {
-        for (const keywordRegex of regionInfo.keywords) {
-            if (keywordRegex.test(normalizedAddress)) {
-                result.region = regionInfo.officialName;
-                result.confidence = 0.9;
-                result.source = 'explicit_region';
-                return result; // Found a confident match, return immediately.
-            }
-        }
-    }
-
-    // --- Priority 2: Search for Russian cities from the main directory ---
-    // This runs only if no explicit region name was found.
-    // Sort keys by length descending to match multi-word names first (e.g., "нижний новгород" before "новгород").
-    const sortedCityKeys = Object.keys(regionCenters).sort((a, b) => b.length - a.length);
-
+    // 2. City-to-Region Mapping: The most reliable method is to identify a regional center.
     for (const cityKey of sortedCityKeys) {
-        // Normalize the city key from our dictionary to match the normalized address.
-        const normalizedCityKey = cityKey.replace(/ё/g, 'е');
-        const cityRegex = new RegExp(`\\b${normalizedCityKey}\\b`, 'u');
-        
-        if (cityRegex.test(normalizedAddress)) {
+        // Use word boundaries to ensure we're matching the whole city name.
+        const regex = new RegExp(`\\b${cityKey}\\b`);
+        if (regex.test(normalizedAddress)) {
             const regionName = regionCenters[cityKey];
-            result.region = regionName;
-            
-            // Special formatting for federal cities, which are their own region.
-            if (["Москва", "Санкт-Петербург", "Севастополь"].includes(regionName)) {
-                result.region = `г. ${regionName}`;
+            const cityName = cityKey.charAt(0).toUpperCase() + cityKey.slice(1);
+            // The regionCenters map for federal cities gives "Москва" not "г. Москва".
+            // Since we already handled federal cities above, we can safely ignore those matches here.
+            if (regionName !== 'Москва' && regionName !== 'Санкт-Петербург' && regionName !== 'Севастополь') {
+                 return { ...defaultResult, region: regionName, city: cityName, confidence: 0.9, source: 'city_lookup' };
             }
-
-            result.city = regionName.startsWith('г. ') ? regionName.substring(3) : cityKey.charAt(0).toUpperCase() + cityKey.slice(1);
-            result.confidence = 0.8;
-            result.source = 'city_lookup';
-            return result; // Found a match by city, return.
         }
     }
 
-    // If no region can be determined after all checks, the default "Регион не определён" is returned.
-    return result;
+    // 3. Fallback: Search for explicit region keywords (e.g., "татарстан", "краснодарский").
+    // This is less precise than city matching but useful if the city is not in our list.
+    const allRussianRegions = [...new Set(Object.values(regionCenters))];
+    for (const regionName of allRussianRegions) {
+        // Create a searchable keyword from the region name.
+        const searchKey = regionName.toLowerCase()
+            .replace(/г\.|город федерального значения/g, '')
+            .replace(/республика|край|область|автономный округ|ао/g, '')
+            .replace(/—|/g, ' ')
+            .replace(/\(.*\)/, '') // remove text in parentheses (e.g., for Sakha)
+            .trim().split(' ')[0];
+
+        if (searchKey && normalizedAddress.includes(searchKey)) {
+            // Avoid re-matching federal cities with the wrong format.
+            if (regionName !== 'Москва' && regionName !== 'Санкт-Петербург' && regionName !== 'Севастополь') {
+                 return { ...defaultResult, region: regionName, confidence: 0.7, source: 'explicit_region' };
+            }
+        }
+    }
+
+    // 4. If no reliable match is found, return the default "not defined" result.
+    return defaultResult;
 }
