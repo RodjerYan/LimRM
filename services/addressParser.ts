@@ -70,8 +70,8 @@ async function getRegionFromGemini(address: string): Promise<string | null> {
  * @param address The raw address string.
  * @returns A promise that resolves to a structured ParsedAddress object.
  */
-export async function parseRussianAddress(address: string | undefined | null): Promise<ParsedAddress> {
-    const result: ParsedAddress = {
+export async function parseRussianAddress(address: string | undefined | null): Promise<Omit<ParsedAddress, 'formattedAddress'>> {
+    const result: Omit<ParsedAddress, 'formattedAddress'> = {
         country: "Россия", region: null, city: null, street: null, house: null,
         postalCode: null, lat: null, lon: null, confidence: 0,
         source: 'unknown', ambiguousCandidates: []
@@ -95,56 +95,66 @@ export async function parseRussianAddress(address: string | undefined | null): P
             result.region = regionFromPostal;
             result.source = 'postal';
             result.confidence = 0.95;
-            return result;
+            return { ...result, region: result.region || 'Регион не определён' };
         }
     }
 
     // 2. Extract City and attempt lookup
     const cityMatch = cleanedAddress.match(/\b(г|город|пгт|село|деревня|д)\s*\.?\s*([А-Яа-я-\s]+)\b/i);
+    let cityNameForLookup: string | null = null;
     if (cityMatch) {
-        const cityName = cityMatch[2].trim().toLowerCase();
-        const regionFromCity = getRegionByCity(cityName);
-        if (regionFromCity) {
-            result.region = regionFromCity;
-            result.city = cityName.charAt(0).toUpperCase() + cityName.slice(1);
-            result.source = 'city_lookup';
-            result.confidence = 0.9;
-            return result;
+        cityNameForLookup = cityMatch[2].trim().toLowerCase();
+        result.city = cityNameForLookup.charAt(0).toUpperCase() + cityNameForLookup.slice(1);
+    } else {
+        // Fallback for city names without "г." prefix by checking against known centers
+        const words = normalizedAddress.split(' ');
+        for(const word of words) {
+            if (getRegionByCity(word)) {
+                cityNameForLookup = word;
+                result.city = word.charAt(0).toUpperCase() + word.slice(1);
+                break;
+            }
         }
     }
+
+    if (cityNameForLookup) {
+        const regionFromCity = getRegionByCity(cityNameForLookup);
+        if (regionFromCity) {
+            result.region = regionFromCity;
+            result.source = 'city_lookup';
+            result.confidence = 0.9;
+            return { ...result, region: result.region || 'Регион не определён' };
+        }
+    }
+
 
     // 3. Look for explicit region keywords (e.g., "Орловская область")
     const allRegions = [...new Set(Object.values(regionCenters))];
     for (const regionName of allRegions) {
-        // Create a searchable keyword from the region name (e.g., "орловская")
         const regionKeyword = regionName.toLowerCase()
             .replace(/ё/g, 'е')
             .replace(/\b(г|республика|край|область|автономный округ|ао)\b/g, '')
             .trim().split(' ')[0];
             
-        if (regionKeyword && normalizedAddress.includes(regionKeyword)) {
-             // More specific regex to avoid partial matches (e.g., "первомайская" -> "пермь")
+        if (regionKeyword && regionKeyword.length > 3) {
             const regionRegex = new RegExp(`\\b${regionKeyword}\\w*\\s*(область|обл|край|республика|респ)?\\b`, 'i');
             if (regionRegex.test(cleanedAddress)) {
                 result.region = regionName;
                 result.source = 'explicit_region';
                 result.confidence = 0.85;
-                return result;
+                return { ...result, region: result.region || 'Регион не определён' };
             }
         }
     }
     
     // 4. Gemini AI Fallback (if all local methods fail)
-    // Uncomment the following lines to enable the AI fallback.
-    /*
     const regionFromAI = await getRegionFromGemini(address);
     if (regionFromAI) {
         result.region = regionFromAI;
         result.source = 'fuzzy';
         result.confidence = 0.7; // Lower confidence as it's an AI guess
-        return result;
+        return { ...result, region: result.region || 'Регион не определён' };
     }
-    */
 
     return defaultUndefined;
 }

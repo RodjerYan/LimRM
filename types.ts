@@ -15,7 +15,7 @@ export interface AggregatedDataRow {
 
 export interface ParsedAddress {
   country: string;
-  region: string | null;
+  region: string;
   city: string | null;
   street: string | null;
   house: string | null;
@@ -25,6 +25,7 @@ export interface ParsedAddress {
   confidence: number;
   source: 'explicit_region' | 'explicit_city' | 'city_lookup' | 'postal' | 'fuzzy' | 'unknown';
   ambiguousCandidates: string[];
+  formattedAddress?: string;
 }
 
 

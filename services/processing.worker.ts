@@ -36,7 +36,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
             
             // Use the new async expert address parser
             const parsedAddress = await parseRussianAddress(address);
-            const region = parsedAddress.region || 'Регион не определен';
+            const region = parsedAddress.region || 'Регион не определён';
             
             const factString = String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.');
             const fact = parseFloat(factString);
