@@ -19,7 +19,7 @@ import {
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
-const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
+const isApiKeySet = import.meta.env?.VITE_GEMINI_API_KEY === 'key_is_set';
 
 const App: React.FC = () => {
     if (!isApiKeySet) {

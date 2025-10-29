@@ -3,7 +3,7 @@
 import { AggregatedDataRow } from "../types";
 
 // The proxy URL should be configured in one place, but for simplicity, we define it here.
-const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
+const PROXY_URL = import.meta.env?.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
 /**
  * Generates a prompt for Gemini based on a client's data (individual or grouped).
