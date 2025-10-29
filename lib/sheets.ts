@@ -31,8 +31,7 @@ async function getGoogleSheetsClient() {
     );
   }
 
-  // Use GoogleAuth, the recommended and type-safe method for server-to-server authentication.
-  // This resolves the TS2322 build error by providing a compatible auth object.
+  // Use GoogleAuth, the recommended method for server-to-server authentication.
   const auth = new GoogleAuth({
     credentials: {
       client_email: credentials.client_email,
@@ -42,11 +41,14 @@ async function getGoogleSheetsClient() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  // Create the Sheets client by passing the GoogleAuth instance directly.
-  const sheets = google.sheets({
-    version: 'v4',
-    auth,
-  });
+  // --- DEFINITIVE FIX ---
+  // Set the authentication globally for the googleapis library instance.
+  // This avoids the TypeScript type conflict seen in previous build failures.
+  google.options({ auth });
+
+  // Create the Sheets client using the simpler, version-only constructor.
+  // Authentication is handled by the global options set above.
+  const sheets = google.sheets('v4');
   
   return sheets;
 }
