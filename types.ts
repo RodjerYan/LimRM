@@ -20,7 +20,6 @@ export interface ParsedAddress {
   street: string | null;
   house: string | null;
   postalCode: string | null;
-  formattedAddress?: string; // The cleaned, formatted address string for display
   lat: number | null;
   lon: number | null;
   confidence: number;
