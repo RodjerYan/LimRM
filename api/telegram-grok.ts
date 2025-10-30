@@ -1,6 +1,16 @@
 // FIX: This file's content was placeholder text, leading to multiple "Cannot find name" errors. This fix implements a complete Vercel serverless function to serve as a Telegram bot powered by Grok. The function handles webhook POST requests from Telegram, validates the chat ID, calls the Grok API via the shared `callGrokApi` library function, and sends the AI-generated response back to the user.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { callGrokApi, GrokMessage } from '../lib/grok';
+import { Buffer } from 'buffer';
+
+export const maxDuration = 30;
+
+// Disable Vercel's default body parser to handle raw JSON from Telegram
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 // Base URL for the Telegram Bot API
 const TELEGRAM_API_BASE_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
@@ -15,9 +25,7 @@ async function sendTelegramMessage(chatId: string, text: string) {
     try {
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 chat_id: chatId,
                 text: text,
@@ -39,6 +47,7 @@ async function sendTelegramMessage(chatId: string, text: string) {
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
+        res.setHeader('Allow', ['POST']);
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
@@ -49,20 +58,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!GROK_API_KEY) {
         console.error('GROK_API_KEY is not set.');
-        // Acknowledge the request to Telegram before sending the error message.
         res.status(200).send('OK');
         await sendTelegramMessage(TELEGRAM_CHAT_ID, 'Server-side error: The Grok API key is not configured.');
         return;
     }
 
     try {
-        const { message } = req.body;
-        if (!message || !message.text || !message.chat) {
+        // Manually parse the request body
+        const buffers: Buffer[] = [];
+        for await (const chunk of req) {
+            buffers.push(chunk as Buffer);
+        }
+        const rawBody = Buffer.concat(buffers).toString('utf-8');
+        const data = JSON.parse(rawBody || '{}');
+        
+        const { message } = data;
+        
+        if (!message || !message.chat) {
             return res.status(200).send('OK');
         }
 
         const chatId = message.chat.id.toString();
-        const prompt = message.text;
+        const userPrompt = message.text ?? ''; // Safely handle undefined text
 
         if (chatId !== TELEGRAM_CHAT_ID) {
             console.warn(`Received message from unauthorized chat ID: ${chatId}`);
@@ -70,11 +87,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).send('OK');
         }
 
+        if (userPrompt === '/start') {
+            await sendTelegramMessage(chatId, 'Grok Bot is active. Send me a prompt.');
+            return res.status(200).send('OK');
+        }
+        if (!userPrompt) {
+            await sendTelegramMessage(chatId, 'Please send a text message.');
+            return res.status(200).send('OK');
+        }
+
         // Acknowledge Telegram immediately.
         res.status(200).send('OK');
 
         // --- Call Grok API ---
-        const messages: GrokMessage[] = [{ role: 'user', content: prompt }];
+        const messages: GrokMessage[] = [{ role: 'user', content: userPrompt }];
         const grokText = await callGrokApi(messages);
 
         // --- Send Grok's response back to the user ---

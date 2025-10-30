@@ -1,6 +1,16 @@
-// FIX: This file's content was placeholder text, causing multiple "Cannot find name" compilation errors. This fix provides a full implementation for a Vercel serverless function that acts as a Telegram bot. The bot listens for messages on a webhook, validates the chat ID for security, calls the Google Gemini API using a pooled API key, and sends the AI's response back to the configured Telegram chat.
+// FIX: This entire file's content is a fix. The original file contained placeholder text, causing multiple "Cannot find name" compilation errors. This fix provides a full implementation for a Vercel serverless function that acts as a Telegram bot. The bot listens for messages on a webhook, validates the chat ID for security, calls the Google Gemini API using a pooled API key, and sends the AI's response back to the configured Telegram chat.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
+import { Buffer } from 'buffer';
+
+export const maxDuration = 30;
+
+// Disable Vercel's default body parser to handle raw JSON from Telegram
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 // Base URL for the Telegram Bot API
 const TELEGRAM_API_BASE_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
@@ -12,21 +22,23 @@ const TELEGRAM_API_BASE_URL = `https://api.telegram.org/bot${process.env.TELEGRA
  */
 async function sendTelegramMessage(chatId: string, text: string) {
     const url = `${TELEGRAM_API_BASE_URL}/sendMessage`;
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            chat_id: chatId,
-            text: text,
-            parse_mode: 'Markdown',
-        }),
-    });
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: text,
+                parse_mode: 'Markdown',
+            }),
+        });
 
-    if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Failed to send Telegram message:', errorData);
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error('Failed to send Telegram message:', errorData);
+        }
+    } catch (error) {
+        console.error('Error sending Telegram message:', error);
     }
 }
 
@@ -36,6 +48,7 @@ async function sendTelegramMessage(chatId: string, text: string) {
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
+        res.setHeader('Allow', ['POST']);
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
@@ -43,21 +56,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID } = process.env;
     if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
         console.error('Telegram environment variables are not set.');
-        // We send a 200 OK to Telegram to prevent it from retrying,
-        // as this is a server configuration issue.
         return res.status(200).send('OK');
     }
 
     try {
-        const { message } = req.body;
+        // Manually parse the request body
+        const buffers: Buffer[] = [];
+        for await (const chunk of req) {
+            buffers.push(chunk as Buffer);
+        }
+        const rawBody = Buffer.concat(buffers).toString('utf-8');
+        const data = JSON.parse(rawBody || '{}');
+        
+        const { message } = data;
         
         // --- Basic Request Validation ---
-        if (!message || !message.text || !message.chat) {
+        if (!message || !message.chat) {
             return res.status(200).send('OK'); // Ignore non-message updates
         }
 
         const chatId = message.chat.id.toString();
-        const prompt = message.text;
+        const userPrompt = message.text ?? ''; // Safely handle undefined text
 
         // --- Security: Only respond to the configured chat ---
         if (chatId !== TELEGRAM_CHAT_ID) {
@@ -66,11 +85,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).send('OK');
         }
 
+        if (userPrompt === '/start') {
+            await sendTelegramMessage(chatId, 'Gemini Bot is active. Send me a prompt.');
+            return res.status(200).send('OK');
+        }
+        if (!userPrompt) {
+            await sendTelegramMessage(chatId, 'Please send a text message.');
+            return res.status(200).send('OK');
+        }
+
         // --- Acknowledge Telegram immediately to prevent timeouts/retries ---
         res.status(200).send('OK');
 
         // --- Call Gemini API ---
-        // Use the same key pooling strategy as the gemini-proxy for consistency.
         const apiKeys = [
             process.env.API_KEY_1,
             process.env.API_KEY_2,
@@ -89,7 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const response = await ai.models.generateContent({
             model,
-            contents: [{ parts: [{ text: prompt }] }],
+            contents: [{ parts: [{ text: userPrompt }] }],
         });
 
         const geminiText = response.text;
@@ -103,8 +130,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error) {
         console.error('Error processing Telegram update:', error);
-        // The response has already been sent, so we just log the error.
-        // We can optionally try to send an error message to the chat.
         if (process.env.TELEGRAM_CHAT_ID) {
             const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
             await sendTelegramMessage(process.env.TELEGRAM_CHAT_ID, `An internal error occurred: ${errorMessage}`);
