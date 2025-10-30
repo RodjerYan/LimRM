@@ -174,7 +174,8 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
         // Step 4: Aggregate data for the batch using cached results.
         batch.forEach((row, index) => {
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
-            const parsedAddress = addressCache.get(address)!; // Should always exist now
+            const parsedAddress = addressCache.get(address);
+            if (!parsedAddress) return; // Robustness: skip if address somehow not in cache
 
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
@@ -218,17 +219,18 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
 
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
-    const BATCH_SIZE = 1000; // Increased batch size for CSV
+    const BATCH_SIZE = 1000;
     let rowBatch: any[] = [];
     const processingPromises: Promise<void>[] = [];
     let hasPotentialColumn = false;
+    let headersChecked = false; // FIX: Ensure headers are checked only once
     let rowCounter = 0;
 
     const processAndAggregateBatch = async (batch: any[]) => {
         // Step 1: Identify unique addresses in the batch that are not yet cached.
         const addressesToParse = new Set<string>();
         batch.forEach(row => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${rowCounter - batch.length + batch.indexOf(row) + 2}`;
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
             if (address && !addressCache.has(address)) {
                 addressesToParse.add(address);
             }
@@ -246,10 +248,10 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
         });
         
         // Step 4: Aggregate data for the batch using cached results.
-        batch.forEach((row, i) => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${rowCounter - batch.length + i + 2}`;
+        batch.forEach((row) => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
             const parsedAddress = addressCache.get(address);
-            if (!parsedAddress) return; // Should not happen if address is valid
+            if (!parsedAddress) return; // Robustness: skip if address somehow not in cache
 
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
@@ -283,11 +285,15 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
             worker: true,
             step: (results) => {
                 rowCounter++;
-                if (!hasPotentialColumn && results.meta.fields) {
+                if (!headersChecked && results.meta.fields) {
                     hasPotentialColumn = results.meta.fields.some(h => (h || '').toLowerCase() === 'потенциал');
+                    headersChecked = true;
                 }
                 
-                rowBatch.push(results.data);
+                // FIX: Add original index to avoid using indexOf later
+                const dataWithIndex = { ...results.data as object, _originalIndex: rowCounter + 1 };
+                rowBatch.push(dataWithIndex);
+
                 if (rowBatch.length >= BATCH_SIZE) {
                     processingPromises.push(processAndAggregateBatch([...rowBatch]));
                     rowBatch = [];
