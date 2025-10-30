@@ -94,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { message } = req.body;
 
     // Basic validation of the incoming message
-    if (!message || !message.text || !message.chat || !message.chat.id) {
+    if (!message || !message.chat || !message.chat.id) {
       // Acknowledge webhook but do nothing if it's not a message we can handle.
       return res.status(200).send('OK');
     }
@@ -105,10 +105,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).send('OK');
     }
 
-    const userPrompt = message.text;
+    const userPrompt = message.text ?? '';
     
     // Acknowledge the request immediately to prevent Telegram from resending it
     res.status(200).send('OK');
+    
+    if (!userPrompt) {
+        // If the prompt is empty (e.g., a photo was sent), do nothing further.
+        return;
+    }
 
     // Asynchronously get the response and send it back
     // This allows the serverless function to return quickly while work continues.
