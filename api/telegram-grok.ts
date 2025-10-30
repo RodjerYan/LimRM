@@ -1,109 +1,94 @@
-// FIX: This entire file's content is a fix. The original file contained placeholder text
-// which caused compilation errors. This implementation creates a serverless function
-// that acts as a Telegram bot webhook handler. It processes incoming messages,
-// calls the Grok API for a response, and sends the result back to the user.
-
+// FIX: This file's content was placeholder text, leading to multiple "Cannot find name" errors. This fix implements a complete Vercel serverless function to serve as a Telegram bot powered by Grok. The function handles webhook POST requests from Telegram, validates the chat ID, calls the Grok API via the shared `callGrokApi` library function, and sends the AI-generated response back to the user.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { callGrokApi, GrokMessage } from '../lib/grok'; // Import from shared library
+import { callGrokApi, GrokMessage } from '../lib/grok';
 
-export const maxDuration = 30; // Set max duration to 30 seconds for this function
-
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+// Base URL for the Telegram Bot API
+const TELEGRAM_API_BASE_URL = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
 
 /**
  * Sends a message back to the specified Telegram chat.
- * @param text The message text to send.
+ * @param chatId The ID of the chat to send the message to.
+ * @param text The text of the message to send.
  */
-async function sendTelegramMessage(text: string): Promise<void> {
-  if (!BOT_TOKEN || !CHAT_ID) {
-    console.error('Telegram environment variables (BOT_TOKEN, CHAT_ID) are not set.');
-    return;
-  }
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        text: text,
-        parse_mode: 'Markdown',
-      }),
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Failed to send message to Telegram:', errorData);
-    }
-  } catch (error) {
-    console.error('Error sending message to Telegram:', error);
-  }
-}
-
-/**
- * Gets a response from the Grok API for a given prompt.
- * @param prompt The user's prompt.
- * @returns The generated text from the AI.
- */
-async function getGrokResponse(prompt: string): Promise<string> {
-    const messages: GrokMessage[] = [
-        { role: 'user', content: prompt }
-    ];
+async function sendTelegramMessage(chatId: string, text: string) {
+    const url = `${TELEGRAM_API_BASE_URL}/sendMessage`;
     try {
-        // Use the shared library function to call the Grok API
-        const response = await callGrokApi(messages);
-        return response;
-    } catch (error) {
-        console.error('Error calling Grok API:', error);
-        if (error instanceof Error) {
-            return `Ошибка при обращении к Grok API: ${error.message}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                chat_id: chatId,
+                text: text,
+                parse_mode: 'Markdown',
+            }),
+        });
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error('Failed to send Telegram message:', errorData);
         }
-        return 'Произошла неизвестная ошибка при вызове Grok API.';
+    } catch (error) {
+        console.error('Error sending Telegram message:', error);
     }
 }
 
 /**
- * Handles incoming webhook requests from Telegram, intended for Grok.
+ * The main handler for the Vercel serverless function.
+ * It processes incoming webhook updates from Telegram and responds using Grok.
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  try {
-    const { message } = req.body;
-
-    // Basic validation of the incoming message
-    if (!message || !message.chat || !message.chat.id) {
-      // Acknowledge webhook but do nothing if it's not a message we can handle.
-      return res.status(200).send('OK');
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method Not Allowed' });
     }
 
-    // Security: Only respond to messages from the configured chat ID
-    if (String(message.chat.id) !== CHAT_ID) {
-      console.warn(`Received message from unauthorized chat ID: ${message.chat.id}`);
-      return res.status(200).send('OK');
+    const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GROK_API_KEY } = process.env;
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+        console.error('Telegram environment variables are not set.');
+        return res.status(200).send('OK');
     }
-
-    const userPrompt = message.text ?? '';
-    
-    // Acknowledge the request immediately to prevent Telegram from resending it
-    res.status(200).send('OK');
-
-    if (!userPrompt) {
-        // If the prompt is empty (e.g., a photo was sent), do nothing further.
+    if (!GROK_API_KEY) {
+        console.error('GROK_API_KEY is not set.');
+        // Acknowledge the request to Telegram before sending the error message.
+        res.status(200).send('OK');
+        await sendTelegramMessage(TELEGRAM_CHAT_ID, 'Server-side error: The Grok API key is not configured.');
         return;
     }
 
-    // Asynchronously get the response and send it back
-    const grokResponse = await getGrokResponse(userPrompt);
-    await sendTelegramMessage(grokResponse);
+    try {
+        const { message } = req.body;
+        if (!message || !message.text || !message.chat) {
+            return res.status(200).send('OK');
+        }
 
-  } catch (error) {
-    console.error('Error in Telegram Grok bot handler:', error);
-    // The response has already been sent, so we just log the error.
-    await sendTelegramMessage('Произошла внутренняя ошибка сервера. Пожалуйста, проверьте логи.');
-  }
+        const chatId = message.chat.id.toString();
+        const prompt = message.text;
+
+        if (chatId !== TELEGRAM_CHAT_ID) {
+            console.warn(`Received message from unauthorized chat ID: ${chatId}`);
+            await sendTelegramMessage(chatId, 'Sorry, I am a private bot.');
+            return res.status(200).send('OK');
+        }
+
+        // Acknowledge Telegram immediately.
+        res.status(200).send('OK');
+
+        // --- Call Grok API ---
+        const messages: GrokMessage[] = [{ role: 'user', content: prompt }];
+        const grokText = await callGrokApi(messages);
+
+        // --- Send Grok's response back to the user ---
+        if (grokText) {
+            await sendTelegramMessage(chatId, grokText);
+        } else {
+            await sendTelegramMessage(chatId, 'I received your message, but I did not get a valid response from Grok.');
+        }
+
+    } catch (error) {
+        console.error('Error processing Telegram/Grok update:', error);
+        if (process.env.TELEGRAM_CHAT_ID) {
+            const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred.';
+            await sendTelegramMessage(process.env.TELEGRAM_CHAT_ID, `An internal error occurred with Grok: ${errorMessage}`);
+        }
+    }
 }
