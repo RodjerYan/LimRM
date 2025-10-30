@@ -2,6 +2,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { callGrokApi } from '../lib/grok'; // Use the new shared library
 
+export const maxDuration = 30; // Set max duration to 30 seconds for this function
+
 /**
  * Handles POST requests to proxy Grok API calls for the web UI.
  * @param {VercelRequest} req The incoming request object.

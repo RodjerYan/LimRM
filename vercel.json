@@ -1,10 +1,4 @@
 {
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs18.x",
-      "maxDuration": 30
-    }
-  },
   "rewrites": [
     { "source": "/api/gemini-proxy", "destination": "/api/gemini-proxy" },
     { "source": "/api/get-okb-status", "destination": "/api/get-okb-status" },

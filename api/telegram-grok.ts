@@ -6,6 +6,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { callGrokApi, GrokMessage } from '../lib/grok'; // Import from shared library
 
+export const maxDuration = 30; // Set max duration to 30 seconds for this function
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
