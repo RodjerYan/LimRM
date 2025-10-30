@@ -1,6 +1,6 @@
 // FIX: Implemented robust Vercel serverless function for the Telegram bot webhook using the Gemini API.
 // This version includes manual body parsing to handle raw JSON from Telegram, preventing `FUNCTION_INVOCATION_FAILED` errors.
-// It also adds a GET handler for health checks.
+// It also adds a GET handler for health checks and explicit environment variable checks to prevent build failures.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
@@ -22,7 +22,7 @@ async function sendTelegramMessage(chatId: number, text: string) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) {
         console.error("TELEGRAM_BOT_TOKEN is not configured.");
-        return;
+        return; // Exit if the token is not set
     }
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     try {
@@ -83,8 +83,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return;
         }
         
+        // FIX: Explicitly check for the API key to satisfy TypeScript's strict null checks.
         const apiKey = process.env.API_KEY_1; // Using one of the keys
         if (!apiKey) {
+            console.error("API_KEY_1 is not configured.");
             await sendTelegramMessage(chatId, 'Ошибка: Gemini API ключ не настроен на сервере.');
             return;
         }
@@ -103,6 +105,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error) {
         console.error('Error in Gemini bot handler:', error);
+        // Try to get chatId even on error, but handle potential undefined body
         const chatId = (req as any).body?.message?.chat?.id;
         if (chatId) {
             const errorMessage = error instanceof Error ? error.message : 'Произошла неизвестная ошибка.';

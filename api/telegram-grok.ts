@@ -1,9 +1,7 @@
 // FIX: Implemented robust Vercel serverless function for the Telegram bot webhook using the Grok API.
-// This version includes manual body parsing to handle raw JSON from Telegram, preventing `FUNCTION_INVOCATION_FAILED` errors.
-// It also adds a GET handler for health checks.
+// This version includes manual body parsing, a GET handler, and explicit environment variable checks.
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-// FIX: Import the `GrokMessage` type to ensure type safety for API calls.
 import { callGrokApi, GrokMessage } from '../lib/grok';
 import { Buffer } from 'buffer';
 
@@ -23,7 +21,7 @@ async function sendTelegramMessage(chatId: number, text: string) {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) {
         console.error("TELEGRAM_BOT_TOKEN is not configured.");
-        return;
+        return; // Exit if the token is not set
     }
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
     try {
@@ -84,13 +82,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return;
         }
         
+        // FIX: Explicitly check for the API key to satisfy TypeScript's strict null checks.
         if (!process.env.GROK_API_KEY) {
+            console.error("GROK_API_KEY is not configured.");
             await sendTelegramMessage(chatId, 'Ошибка: Grok API ключ не настроен на сервере.');
             return;
         }
 
-        // FIX: Explicitly type the `messages` array to match the `GrokMessage` interface,
-        // resolving the TypeScript error where `string` was not assignable to the union type for `role`.
         const messages: GrokMessage[] = [
             { role: 'system', content: 'You are a helpful and slightly witty assistant.' },
             { role: 'user', content: userPrompt }
@@ -102,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error) {
         console.error('Error in Grok bot handler:', error);
+        // Try to get chatId even on error, but handle potential undefined body
         const chatId = (req as any).body?.message?.chat?.id;
         if (chatId) {
             const errorMessage = error instanceof Error ? error.message : 'Произошла неизвестная ошибка.';
