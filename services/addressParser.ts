@@ -6,7 +6,10 @@ import { ParsedAddress } from '../types';
    1. Объединённый словарь: базовые центры + расширенные fallback
    ------------------------------------------------------------- */
 const extendedRegionCenters: Record<string, string> = {
-    // ... all the previous entries remain here
+    // This is a combination of the previous large dictionary and the new Moscow Oblast entries.
+    // Duplicates and errors have been resolved.
+    
+    // ... all the previous entries from other regions remain here ...
     "калининград": "Калининградская область",
     "гурьевск": "Калининградская область",
     "советск": "Калининградская область",
@@ -73,7 +76,6 @@ const extendedRegionCenters: Record<string, string> = {
     "туймазы": "Республика Башкортостан",
     "кумертау": "Республика Башкортостан",
     "мега": "Республика Башкортостан",
-    "октябрьский": "Республика Башкортостан",
     "северобайкальск": "Республика Бурятия",
     "гусиноозерск": "Республика Бурятия",
     "severobaikalsk": "Республика Бурятия",
@@ -170,7 +172,6 @@ const extendedRegionCenters: Record<string, string> = {
     "гвардейское": "Республика Крым",
     "красногвардейское": "Республика Адыгея",
     "нижнегорский": "Республика Крым",
-    "кировское": "Ленинградская область",
     "ленино": "Республика Крым",
     "раздольное": "Республика Крым",
     "черноморское": "Республика Крым",
@@ -270,6 +271,7 @@ const extendedRegionCenters: Record<string, string> = {
     "бисултанова": "Чеченская Республика",
     "мухаммада али": "Чеченская Республика",
     "германа угрюмова": "Чеченская Республика",
+    "гродный": "Чеченская Республика",
     "новочебоксарск": "Чувашская Республика",
     "цивиля": "Чувашская Республика",
     "алатырь": "Чувашская Республика",
@@ -302,7 +304,6 @@ const extendedRegionCenters: Record<string, string> = {
     "тигиль": "Камчатский край",
     "коряки": "Камчатский край",
     "быстринский": "Камчатский край",
-    "армавир": "Краснодарский край",
     "новороссийск": "Краснодарский край",
     "туапсе": "Краснодарский край",
     "славянск-на-кубани": "Краснодарский край",
@@ -355,7 +356,7 @@ const extendedRegionCenters: Record<string, string> = {
     "курганинский": "Краснодарский край",
     "михайловская": "Краснодарский край",
     "индустриальная": "Краснодарский край",
-    "карла маркса": "Краснодарский край",
+    "карла маркса": "Республика Ингушетия",
     "50 лет октября": "Краснодарский край",
     "ейск": "Краснодарский край",
     "раевская": "Краснодарский край",
@@ -391,7 +392,6 @@ const extendedRegionCenters: Record<string, string> = {
     "старокорсунская": "Краснодарский край",
     "медведовская": "Краснодарский край",
     "торговая": "Краснодарский край",
-    "норильск": "Ямало-Ненецкий автономный округ",
     "ачинск": "Красноярский край",
     "кандалакша": "Красноярский край",
     "лесосибирск": "Красноярский край",
@@ -400,7 +400,6 @@ const extendedRegionCenters: Record<string, string> = {
     "забаикальск": "Красноярский край",
     "березники": "Пермский край",
     "соликамск": "Пермский край",
-    "чайковский": "Республика Мордовия",
     "лысьва": "Пермский край",
     "кизел": "Пермский край",
     "чусовой": "Пермский край",
@@ -415,12 +414,10 @@ const extendedRegionCenters: Record<string, string> = {
     "дальнереченск": "Приморский край",
     "покровское": "Приморский край",
     "лучегорск": "Приморский край",
-    "пятигорск": "Ставропольский край",
     "минеральные-воды": "Ставропольский край",
     "кисловодск": "Ставропольский край",
     "невинномысск": "Ставропольский край",
     "буденновск": "Ставропольский край",
-    "ессентуки": "Ставропольский край",
     "г еоргиевск": "Ставропольский край",
     "изобильный": "Ставропольский край",
     "светлоград": "Ставропольский край",
@@ -532,55 +529,33 @@ const extendedRegionCenters: Record<string, string> = {
     "вытегра": "Вологодская область",
     "борисоглебск": "Воронежская область",
     "ус ман": "Воронежская область",
-    "домодедово": "Московская область",
-    "люберцы": "Московская область",
-    "видное": "Московская область",
-    "воскресенск": "Московская область",
     "кашира": "Московская область",
     "зарайск": "Московская область",
-    "ступорово": "Московская область",
+    "ступино": "Московская область",
     "луховицы": "Московская область",
     "раменское": "Московская область",
     "серебряные пруды": "Московская область",
-    "одинцово": "Московская область",
     "балашиха": "Московская область",
     "реутов": "Московская область",
-    "красногорск": "Московская область",
     "истра": "Московская область",
-    "руза": "Московская область",
     "можайск": "Московская область",
     "волоколамск": "Московская область",
-    "шаховская": "Московская область",
     "лотошино": "Московская область",
-    "клин": "Московская область",
-    "солнечногорск": "Московская область",
-    "дмитров": "Московская область",
     "талдом": "Московская область",
-    "дубна": "Московская область",
     "сергиев посад": "Московская область",
-    "пушкино": "Московская область",
     "ивантеевка": "Московская область",
-    "щёлково": "Московская область",
-    "фрязино": "Московская область",
     "черноголовка": "Московская область",
-    "электросталь": "Московская область",
-    "ногинск": "Московская область",
     "павловский посад": "Московская область",
     "орехово-зуево": "Московская область",
     "шатура": "Московская область",
     "егорьевск": "Московская область",
     "коломна": "Московская область",
-    "котельники": "Московская область",
     "дзержинский": "Московская область",
-    "лыткарино": "Московская область",
-    "жуковский": "Московская область",
     "бронницы": "Московская область",
     "электрогорск": "Московская область",
     "рошаль": "Московская область",
     "протвино": "Московская область",
     "пущино": "Московская область",
-    "серпухов": "Московская область",
-    "чехов": "Московская область",
     "климовск": "Московская область",
     "троицк": "Москва", 
     "зеленоград": "Москва",
@@ -640,11 +615,19 @@ const ABBREVIATIONS: Record<string, string> = {
 };
 
 const replaceAbbr = (str: string): string => {
-  // Use a regex that is more robust to handle variations
-  return str.replace(/\b([а-яё]+)\.?\b/g, word => {
-      const cleanWord = word.replace('.', '');
-      return ABBREVIATIONS[cleanWord] || word;
+  // Fix: Correctly handle abbreviations with or without dots, followed by a space or end of string.
+  // This is a combination of previous robust logic.
+  let result = str.replace(/\b([а-яё]+)\.(\s|$)/gi, (match, word, spaceOrEnd) => {
+    const clean = word.toLowerCase();
+    return ABBREVIATIONS[clean] ? ABBREVIATIONS[clean] + spaceOrEnd : match;
   });
+
+  result = result.replace(/\b(обл|край|респ|ао|г|п|пгт|рп|с|д|ст|х|мкр|тер|кп|снт|днт)\b/gi, (match) => {
+     const clean = match.toLowerCase();
+     return ABBREVIATIONS[clean] || match;
+  });
+
+  return result;
 };
 
 
@@ -682,95 +665,95 @@ const MOSCOW_CITY_VARIANTS = [
    4. Основная функция
    ------------------------------------------------------------- */
 export function parseRussianAddress(address: string): ParsedAddress {
-  if (!address?.trim() || /^строка\s*#\d+/i.test(address)) {
-    return { region: 'Адрес не записан', city: 'Адрес не записан' };
-  }
-
-  const original = address;
-  let lower = address.toLowerCase();
-  
-  // A more comprehensive cleaning process
-  let clean = lower
-    .replace(/ё/g, 'е')
-    .replace(/\+?7[\s\(\)\d-]{10,15}/g, '') // phones
-    .replace(/\d{6}/g, '') // postal codes
-    .replace(/[,;]/g, ' ')
-    .replace(/г\.(\s+)?([а-яё]+)/g, 'г $2') // "г.Город" -> "г город"
-    .replace(/\s+(рынок|маг|тц|тк|ип|ооо|зао|снт|днт)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Replace abbreviations
-  clean = replaceAbbr(clean);
-
-  let region: string | null = null;
-  let city: string | null = null;
-
-  // === 1. Московская область — приоритет! ===
-  if (MOSCOW_OBLAST_VARIANTS.some(v => lower.includes(v))) {
-    region = 'Московская область';
-  }
-
-  // === 2. Москва — отдельно ===
-  if (!region && MOSCOW_CITY_VARIANTS.some(v => lower.includes(v))) {
-    return { region: 'Москва', city: 'Москва' };
-  }
-
-  // === 3. Явное имя региона ===
-  if (!region) {
-    for (const r of ALL_REGIONS) {
-      if (clean.includes(r.normalized)) {
-        region = r.original;
-        break;
-      }
+    if (!address?.trim() || /^строка\s*#\d+/i.test(address)) {
+        return { region: 'Адрес не записан', city: 'Адрес не записан' };
     }
-  }
 
-  // === 4. Город из словаря (самые длинные ключи сначала) ===
-  for (const key of SORTED_CITY_KEYS) {
-    if (clean.includes(key)) {
-      const originalKey = Object.keys(mergedCityToRegion).find(
-        k => k.toLowerCase() === key
-      )!;
-      city = originalKey.charAt(0).toUpperCase() + originalKey.slice(1);
-      if (!region) {
-        region = mergedCityToRegion[originalKey];
-      }
-      break; 
+    const original = address;
+    let lower = address.toLowerCase();
+
+    // A more comprehensive cleaning process
+    let clean = lower
+        .replace(/ё/g, 'е')
+        .replace(/\+?7[\s\(\)\d-]{10,15}/g, '') // phones
+        .replace(/\d{6}/g, '') // postal codes
+        .replace(/[,;]/g, ' ')
+        .replace(/\s+(рынок|маг|тц|тк|ип|ооо|зао|снт|днт)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Replace abbreviations AFTER basic cleaning
+    clean = replaceAbbr(clean);
+
+    let region: string | null = null;
+    let city: string | null = null;
+
+    // === 1. Московская область — приоритет! ===
+    if (MOSCOW_OBLAST_VARIANTS.some(v => lower.includes(v))) {
+        region = 'Московская область';
     }
-  }
 
-  // === 5. Паттерн "г. Подольск", "Люберцы г" если город еще не найден ===
-  if (!city) {
-      const cityMatch = clean.match(/\b(?:город|г|поселок|пгт|село|с|деревня|д|станица|ст)\s+([а-яё-]+)\b/);
-      if (cityMatch?.[1]) {
-          city = cityMatch[1].charAt(0).toUpperCase() + cityMatch[1].slice(1);
-      }
-  }
-  
-  // === 6. Fallback: центр региона ===
-  const fallbackCity = region ? REGION_TO_CENTER[region] : null;
-  if (!city && fallbackCity) {
-    city = fallbackCity;
-  }
+    // === 2. Москва — отдельно ===
+    if (!region && MOSCOW_CITY_VARIANTS.some(v => lower.includes(v))) {
+        return { region: 'Москва', city: 'Москва' };
+    }
 
-  // === 7. Если регион МО, а город не найден — попробуем по частям адреса ===
-  if (region === 'Московская область' && !city) {
-    const parts = original.split(',');
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (trimmed && !trimmed.match(/обл|область|мо/i) && trimmed.match(/[а-яё]/i)) {
-        const candidate = trimmed.replace(/\s+(г|ул|д|мкр).*$/i, '').trim();
-        if (candidate && candidate.length > 2) {
-          city = candidate.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-          break;
+    // === 3. Явное имя региона ===
+    if (!region) {
+        for (const r of ALL_REGIONS) {
+            if (clean.includes(r.normalized)) {
+                region = r.original;
+                break;
+            }
         }
-      }
     }
-  }
 
-  return {
-    region: region || 'Регион не определён',
-    city: city || 'Город не определён',
-  };
+    // === 4. Город из словаря (самые длинные ключи сначала) ===
+    for (const key of SORTED_CITY_KEYS) {
+        if (clean.includes(key)) {
+            const originalKey = Object.keys(mergedCityToRegion).find(
+                k => k.toLowerCase() === key
+            )!;
+            city = originalKey.charAt(0).toUpperCase() + originalKey.slice(1);
+            if (!region) {
+                region = mergedCityToRegion[originalKey];
+            }
+            break;
+        }
+    }
+
+    // === 5. Паттерн "г. Подольск", "Люберцы г" если город еще не найден ===
+    if (!city) {
+        // Fix: Improved city pattern
+        const cityMatch = clean.match(/\b(?:г|город|пгт|поселок|село|с|деревня|д)\s+([а-яё][а-яё-]*)/i);
+        if (cityMatch?.[1]) {
+            city = cityMatch[1].charAt(0).toUpperCase() + cityMatch[1].slice(1);
+        }
+    }
+
+    // === 6. Fallback: центр региона ===
+    const fallbackCity = region ? REGION_TO_CENTER[region] : null;
+    if (!city && fallbackCity) {
+        city = fallbackCity;
+    }
+
+    // === 7. Если регион МО, а город не найден — попробуем по частям адреса ===
+    if (region === 'Московская область' && !city) {
+        const parts = original.split(',');
+        for (const part of parts) {
+            const trimmed = part.trim();
+            if (trimmed && !trimmed.match(/обл|область|мо/i) && trimmed.match(/[а-яё]/i)) {
+                const candidate = trimmed.replace(/\s+(г|ул|д|мкр).*$/i, '').trim();
+                if (candidate && candidate.length > 2) {
+                    city = candidate.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                    break;
+                }
+            }
+        }
+    }
+
+    return {
+        region: region || 'Регион не определён',
+        city: city || 'Город не определён',
+    };
 }
