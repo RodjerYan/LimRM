@@ -34,6 +34,22 @@ const ApiKeyErrorDisplay: React.FC = () => (
                            </li>
                            <li>
                                 <div>
+                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">TELEGRAM_BOT_TOKEN</code>
+                                </div>
+                                <div className="text-xs text-gray-400 mt-1">
+                                    **(Секрет)** Ваш токен для Telegram-бота, полученный от @BotFather.
+                                </div>
+                           </li>
+                             <li>
+                                <div>
+                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">TELEGRAM_CHAT_ID</code>
+                                </div>
+                                <div className="text-xs text-gray-400 mt-1">
+                                    **(Секрет)** ID вашего чата/канала, где бот будет работать. Узнайте его у @myidbot.
+                                </div>
+                           </li>
+                           <li>
+                                <div>
                                     <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GOOGLE_SERVICE_ACCOUNT_KEY</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1 space-y-1">

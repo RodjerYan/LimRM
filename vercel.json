@@ -17,6 +17,10 @@
       "destination": "/api/get-okb-status"
     },
     {
+      "source": "/api/telegram-grok",
+      "destination": "/api/telegram-grok"
+    },
+    {
       "source": "/:path*",
       "destination": "/index.html"
     }
