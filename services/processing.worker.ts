@@ -1,6 +1,6 @@
 import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { normalizeRegion } from '../utils/addressMappings';
 
@@ -131,10 +131,10 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
 async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn) {
     postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
     const data = await file.arrayBuffer();
-    const workbook = xlsx.read(data, { type: 'array' });
+    const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false });
+    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
 
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
     
@@ -143,19 +143,39 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     if (!headers.some(h => (h || '').toLowerCase() === 'вес, кг')) throw new Error('Файл должен содержать колонку "Вес, кг".');
     
     const aggregatedData: AggregationMap = {};
+    const addressCache = new Map<string, ParsedAddress>();
     const BATCH_SIZE = 500;
     
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ и группировка данных...' } });
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Параллельный парсинг адресов...' } });
 
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
         const batch = jsonData.slice(i, i + BATCH_SIZE);
-        const parsedAddresses = await Promise.all(
-            batch.map(row => parseRussianAddress(row['Адрес ТТ LimKorm'] || `Строка #${i + batch.indexOf(row) + 2}`))
-        );
-
+        
+        // Step 1: Identify unique addresses in the batch that are not yet cached.
+        const addressesToParse = new Set<string>();
         batch.forEach((row, index) => {
             const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
-            const parsedAddress = parsedAddresses[index];
+            if (!addressCache.has(address)) {
+                addressesToParse.add(address);
+            }
+        });
+
+        // Step 2: Parse only the new, unique addresses in parallel.
+        const uniqueAddressesArray = Array.from(addressesToParse);
+        const parsedAddressResults = await Promise.all(
+            uniqueAddressesArray.map(addr => parseRussianAddress(addr))
+        );
+
+        // Step 3: Populate the cache with the new results.
+        uniqueAddressesArray.forEach((address, index) => {
+            addressCache.set(address, parsedAddressResults[index]);
+        });
+        
+        // Step 4: Aggregate data for the batch using cached results.
+        batch.forEach((row, index) => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
+            const parsedAddress = addressCache.get(address)!; // Should always exist now
+
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
@@ -197,18 +217,40 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
     postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
 
     const aggregatedData: AggregationMap = {};
-    const BATCH_SIZE = 500;
+    const addressCache = new Map<string, ParsedAddress>();
+    const BATCH_SIZE = 1000; // Increased batch size for CSV
     let rowBatch: any[] = [];
     const processingPromises: Promise<void>[] = [];
     let hasPotentialColumn = false;
+    let rowCounter = 0;
 
     const processAndAggregateBatch = async (batch: any[]) => {
-        const parsedAddresses = await Promise.all(
-            batch.map(row => parseRussianAddress(row['Адрес ТТ LimKorm'] || ''))
+        // Step 1: Identify unique addresses in the batch that are not yet cached.
+        const addressesToParse = new Set<string>();
+        batch.forEach(row => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${rowCounter - batch.length + batch.indexOf(row) + 2}`;
+            if (address && !addressCache.has(address)) {
+                addressesToParse.add(address);
+            }
+        });
+
+        // Step 2: Parse only the new, unique addresses in parallel.
+        const uniqueAddressesArray = Array.from(addressesToParse);
+        const parsedAddressResults = await Promise.all(
+            uniqueAddressesArray.map(addr => parseRussianAddress(addr))
         );
+
+        // Step 3: Populate the cache with the new results.
+        uniqueAddressesArray.forEach((address, index) => {
+            addressCache.set(address, parsedAddressResults[index]);
+        });
         
+        // Step 4: Aggregate data for the batch using cached results.
         batch.forEach((row, i) => {
-            const parsedAddress = parsedAddresses[i];
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${rowCounter - batch.length + i + 2}`;
+            const parsedAddress = addressCache.get(address);
+            if (!parsedAddress) return; // Should not happen if address is valid
+
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
@@ -225,7 +267,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(row['Адрес ТТ LimKorm'] || `Строка #${i + 2}`);
+            aggregatedData[key].clients.add(address);
             
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -235,14 +277,12 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
     };
 
     return new Promise<void>((resolve, reject) => {
-        // FIX: Corrected typo 'letrowCount' to 'let rowCount'. This resolves the 'Cannot find name' errors for rowCount.
-        let rowCount = 0;
         Papa.parse(file, {
             header: true,
             skipEmptyLines: true,
-            worker: true, // Use PapaParse's internal worker for parsing
+            worker: true,
             step: (results) => {
-                rowCount++;
+                rowCounter++;
                 if (!hasPotentialColumn && results.meta.fields) {
                     hasPotentialColumn = results.meta.fields.some(h => (h || '').toLowerCase() === 'потенциал');
                 }
@@ -254,7 +294,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 }
                 
                 const percentage = Math.round((results.meta.cursor / file.size) * 85);
-                postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCount}...` } });
+                postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
             },
             complete: async () => {
                 try {
