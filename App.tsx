@@ -8,6 +8,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
+import GrokAnalyzer from './components/GrokAnalyzer'; // Import the new component
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -136,6 +137,8 @@ const App: React.FC = () => {
 
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
+                        {/* Add the new GrokAnalyzer component here */}
+                        {isDataLoaded && <GrokAnalyzer />}
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>

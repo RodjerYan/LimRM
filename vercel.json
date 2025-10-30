@@ -5,6 +5,10 @@
       "destination": "/api/gemini-proxy"
     },
     {
+      "source": "/api/grok-proxy",
+      "destination": "/api/grok-proxy"
+    },
+    {
       "source": "/api/get-okb",
       "destination": "/api/get-okb"
     },
