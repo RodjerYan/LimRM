@@ -10,24 +10,13 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthPercentage: number;
     potentialClients?: PotentialClient[];
-    clients?: string[]; // List of individual client names/addresses in the group
+    clients: string[]; // List of individual client names/addresses in the group
 }
 
 export interface ParsedAddress {
-    country: string;
-    region: string | null;
-    city: string | null;
-    street: string | null;
-    house: string | null;
-    postalCode: string | null;
-    lat: number | null;
-    lon: number | null;
-    confidence: number;
-    source: 'explicit' | 'postal' | 'city_lookup' | 'fuzzy' | 'unknown';
-    ambiguousCandidates: string[];
-    status?: 'определён' | 'не определён';
+    region: string;
+    city: string;
 }
-
 
 export interface PotentialClient {
     name: string;
