@@ -1,10 +1,20 @@
 {
   "rewrites": [
-    { "source": "/api/gemini-proxy", "destination": "/api/gemini-proxy" },
-    { "source": "/api/get-okb-status", "destination": "/api/get-okb-status" },
-    { "source": "/api/get-okb", "destination": "/api/get-okb" },
-    { "source": "/api/grok-proxy", "destination": "/api/grok-proxy" },
-    { "source": "/api/telegram-bot", "destination": "/api/telegram-bot" },
-    { "source": "/api/telegram-grok", "destination": "/api/telegram-grok" }
+    {
+      "source": "/api/gemini-proxy",
+      "destination": "/api/gemini-proxy"
+    },
+    {
+      "source": "/api/get-okb",
+      "destination": "/api/get-okb"
+    },
+    {
+      "source": "/api/get-okb-status",
+      "destination": "/api/get-okb-status"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
+    }
   ]
 }

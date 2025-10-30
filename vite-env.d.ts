@@ -4,8 +4,6 @@
 interface ImportMetaEnv {
   readonly VITE_GEMINI_API_KEY: string;
   readonly VITE_GEMINI_PROXY_URL: string;
-  readonly VITE_GROK_API_KEY: string;
-  readonly VITE_GROK_PROXY_URL: string;
 }
 
 interface ImportMeta {

@@ -26,30 +26,6 @@ const ApiKeyErrorDisplay: React.FC = () => (
                            </li>
                            <li>
                                 <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GROK_API_KEY</code>
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Ваш ключ API от Grok (x.ai).
-                                </div>
-                           </li>
-                           <li>
-                                <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">TELEGRAM_BOT_TOKEN</code>
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Ваш токен для Telegram-бота, полученный от @BotFather.
-                                </div>
-                           </li>
-                             <li>
-                                <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">TELEGRAM_CHAT_ID</code>
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** ID вашего чата/канала, где бот будет работать. Узнайте его у @myidbot.
-                                </div>
-                           </li>
-                           <li>
-                                <div>
                                     <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GOOGLE_SERVICE_ACCOUNT_KEY</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1 space-y-1">
@@ -74,14 +50,6 @@ const ApiKeyErrorDisplay: React.FC = () => (
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1">
                                     **(Конфигурация)** Вставьте значение <code className="bg-gray-700 px-1 rounded">/api/gemini-proxy</code>. Это путь для прокси-запросов к Gemini API.
-                                </div>
-                           </li>
-                           <li>
-                                <div>
-                                     <code className="bg-gray-800 text-cyan-400 px-2 py-1 rounded">VITE_GROK_PROXY_URL</code>
-                                </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    **(Конфигурация)** Вставьте значение <code className="bg-gray-700 px-1 rounded">/api/grok-proxy</code>. Это путь для прокси-запросов к Grok API.
                                 </div>
                            </li>
                         </ul>

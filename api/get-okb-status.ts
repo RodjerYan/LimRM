@@ -5,8 +5,6 @@ import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
 import { getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets.js';
 
-export const maxDuration = 30; // Set max duration to 30 seconds for this function
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         res.setHeader('Allow', ['POST']);
