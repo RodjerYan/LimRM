@@ -6,10 +6,9 @@ import { ParsedAddress } from '../types';
    1. Объединённый словарь: базовые центры + расширенные fallback
    ------------------------------------------------------------- */
 const extendedRegionCenters: Record<string, string> = {
-    // This is a combination of the previous large dictionary and the new Moscow Oblast entries.
-    // Duplicates and errors have been resolved.
-    
-    // ... all the previous entries from other regions remain here ...
+    ...regionCenters,
+
+    // -- Калининградская область --
     "калининград": "Калининградская область",
     "гурьевск": "Калининградская область",
     "советск": "Калининградская область",
@@ -26,6 +25,8 @@ const extendedRegionCenters: Record<string, string> = {
     "матросово": "Калининградская область",
     "неман": "Калининградская область",
     "мамоново": "Калининградская область",
+    
+    // -- Санкт-Петербург + Ленинградская область --
     "спб": "Санкт-Петербург",
     "санктпетербург": "Санкт-Петербург",
     "санкт‑петербург": "Санкт-Петербург",
@@ -47,7 +48,6 @@ const extendedRegionCenters: Record<string, string> = {
     "ло": "Ленинградская область",
     "кириши": "Ленинградская область",
     "ивангород": "Ленинградская область",
-    "кировск": "Ленинградская область",
     "лодейное-поле": "Ленинградская область",
     "луга": "Ленинградская область",
     "приозерск": "Ленинградская область",
@@ -84,7 +84,6 @@ const extendedRegionCenters: Record<string, string> = {
     "борзя": "Республика Бурятия",
     "мухоршибирь": "Республика Бурятия",
     "таксимо": "Республика Бурятия",
-    "дербент": "Республика Дагестан",
     "каспийск": "Республика Дагестан",
     "хасавюрт": "Республика Дагестан",
     "южно-сулакский": "Республика Дагестан",
@@ -159,7 +158,6 @@ const extendedRegionCenters: Record<string, string> = {
     "укта": "Республика Коми",
     "емва": "Республика Коми",
     "кослан": "Республика Коми",
-    "керчь": "Республика Крым",
     "ф еодосия": "Республика Крым",
     "феодосия": "Республика Крым",
     "ялта": "Республика Крым",
@@ -172,7 +170,7 @@ const extendedRegionCenters: Record<string, string> = {
     "гвардейское": "Республика Крым",
     "красногвардейское": "Республика Адыгея",
     "нижнегорский": "Республика Крым",
-    "ленино": "Республика Крым",
+    "ленино": "Краснодарский край",
     "раздольное": "Республика Крым",
     "черноморское": "Республика Крым",
     "джанкой": "Республика Крым",
@@ -356,7 +354,6 @@ const extendedRegionCenters: Record<string, string> = {
     "курганинский": "Краснодарский край",
     "михайловская": "Краснодарский край",
     "индустриальная": "Краснодарский край",
-    "карла маркса": "Республика Ингушетия",
     "50 лет октября": "Краснодарский край",
     "ейск": "Краснодарский край",
     "раевская": "Краснодарский край",
@@ -382,7 +379,7 @@ const extendedRegionCenters: Record<string, string> = {
     "анастасиевская": "Краснодарский край",
     "ковтюха": "Краснодарский край",
     "рыночная площадь": "Краснодарский край",
-    "запорожская": "Краснодарский край",
+    "запорожская": "Запорожская область",
     "батерейная": "Краснодарский край",
     "50 лет вклксм": "Краснодарский край",
     "новомышастовская": "Краснодарский край",
@@ -395,7 +392,6 @@ const extendedRegionCenters: Record<string, string> = {
     "ачинск": "Красноярский край",
     "кандалакша": "Красноярский край",
     "лесосибирск": "Красноярский край",
-    "минусино": "Красноярский край",
     "сосновоборск": "Республика Хакасия",
     "забаикальск": "Красноярский край",
     "березники": "Пермский край",
@@ -557,7 +553,7 @@ const extendedRegionCenters: Record<string, string> = {
     "протвино": "Московская область",
     "пущино": "Московская область",
     "климовск": "Московская область",
-    "троицк": "Москва", 
+    "троицк": "Москва",
     "зеленоград": "Москва",
     "щербинка": "Москва",
     "наро-фоминск": "Московская область",
@@ -584,11 +580,67 @@ const extendedRegionCenters: Record<string, string> = {
     "молодёжный": "Московская область",
     "звёздный городок": "Московская область",
     "лосино-петровский": "Московская область",
-};
-
-const mergedCityToRegion: Record<string, string> = {
-  ...regionCenters,
-  ...extendedRegionCenters,
+    "домодедово": "Московская область",
+    "подольск": "Московская область",
+    "люберцы": "Московская область",
+    "видное": "Московская область",
+    "чехов": "Московская область",
+    "серпухов": "Московская область",
+    "мытищи": "Московская область",
+    "королёв": "Московская область",
+    "электросталь": "Московская область",
+    "ногинск": "Московская область",
+    "щёлково": "Московская область",
+    "жуковский": "Московская область",
+    "клин": "Московская область",
+    "солнечногорск": "Московская область",
+    "дмитров": "Московская область",
+    "пушкино": "Московская область",
+    "долгопрудный": "Московская область",
+    "лобня": "Московская область",
+    "дубна": "Московская область",
+    "фрязино": "Московская область",
+    "котельники": "Московская область",
+    "красногорск": "Московская область",
+    "одинцово": "Московская область",
+    "шаховская": "Московская область",
+    "донецк": "Донецкая Народная Республика",
+    "макеевка": "Донецкая Народная Республика",
+    "мариуполь": "Донецкая Народная Республика",
+    "горловка": "Донецкая Народная Республика",
+    "енакеево": "Донецкая Народная Республика",
+    "харцызск": "Донецкая Народная Республика",
+    "шахтёрск": "Донецкая Народная Республика",
+    "снежное": "Донецкая Народная Республика",
+    "зугрес": "Донецкая Народная Республика",
+    "докучаевск": "Донецкая Народная Республика",
+    "волноваха": "Донецкая Народная Республика",
+    "ясиноватая": "Донецкая Народная Республика",
+    "тельманово": "Донецкая Народная Республика",
+    "амвросиевка": "Донецкая Народная Республика",
+    "новоазовск": "Донецкая Народная Республика",
+    "старобешево": "Донецкая Народная Республика",
+    "луганск": "Луганская Народная Республика",
+    "алчевск": "Луганская Народная Республика",
+    "красный луч": "Луганская Народная Республика",
+    "антрацит": "Луганская Народная Республика",
+    "свердловск": "Луганская Народная Республика",
+    "первомайск": "Луганская Народная Республика",
+    "стаханов": "Луганская Народная Республика",
+    "брянка": "Луганская Народная Республика",
+    "кировск": "Луганская Народная Республика",
+    "перевальск": "Луганская Народная Республика",
+    "славяносербск": "Луганская Народная Республика",
+    "рубежное": "Луганская Народная Республика",
+    "лисичанск": "Луганская Народная Республика",
+    "северодонецк": "Луганская Народная Республика",
+    "мелитополь": "Запорожская область",
+    "бердянск": "Запорожская область",
+    "энергодар": "Запорожская область",
+    "токмак": "Запорожская область",
+    "геническ": "Херсонская область",
+    "каховка": "Херсонская область",
+    "скадовск": "Херсонская область",
 };
 
 /* -------------------------------------------------------------
@@ -616,7 +668,6 @@ const ABBREVIATIONS: Record<string, string> = {
 
 const replaceAbbr = (str: string): string => {
   // Fix: Correctly handle abbreviations with or without dots, followed by a space or end of string.
-  // This is a combination of previous robust logic.
   let result = str.replace(/\b([а-яё]+)\.(\s|$)/gi, (match, word, spaceOrEnd) => {
     const clean = word.toLowerCase();
     return ABBREVIATIONS[clean] ? ABBREVIATIONS[clean] + spaceOrEnd : match;
@@ -634,11 +685,13 @@ const replaceAbbr = (str: string): string => {
 /* -------------------------------------------------------------
    3. Предвычисленные структуры
    ------------------------------------------------------------- */
-const ALL_REGIONS = [...new Set(Object.values(mergedCityToRegion))]
+// FIX: Use the defined 'extendedRegionCenters' instead of the undefined 'mergedCityToRegion'. This resolves the 'Cannot find name' error and subsequent type errors.
+const ALL_REGIONS = [...new Set(Object.values(extendedRegionCenters))]
   .map(r => ({ normalized: r.toLowerCase(), original: normalizeRegion(r) }))
   .sort((a, b) => b.normalized.length - a.normalized.length);
 
-const SORTED_CITY_KEYS = Object.keys(mergedCityToRegion)
+// FIX: Use the defined 'extendedRegionCenters' instead of the undefined 'mergedCityToRegion'.
+const SORTED_CITY_KEYS = Object.keys(extendedRegionCenters)
   .map(k => k.toLowerCase())
   .sort((a, b) => b.length - a.length);
 
@@ -648,18 +701,25 @@ for (const [city, region] of Object.entries(regionCenters)) {
 }
 
 // --- Специально для Московской области ---
-const MOSCOW_OBLAST_VARIANTS = [
-  'московская область',
-  'московская обл',
-  'мо',
-  'мособл',
-  'мос обл',
-  'моск обл',
-].map(v => v.toLowerCase());
+// FIX: Replaced a simple array of strings (including the ambiguous 'мо') with precise
+// regular expressions that use word boundaries. This prevents false positive matches
+// on strings like "Смоленская" or "Камозина ул." which was causing incorrect region detection.
+const MOSCOW_OBLAST_REGEXPS = [
+  /\bмосковская\s+(обл|область)\b/i,
+  /\bмособл\b/i,
+  /\bмос\s+обл/i,
+  /\bмоск\s+обл/i,
+];
 
 const MOSCOW_CITY_VARIANTS = [
   'москва', 'москвы', 'мск', 'моск'
 ].map(v => v.toLowerCase());
+
+const DNR_VARIANTS = ['донецкая народная республика','донецкая народная респ','днр','донецкая нр','донецкая республика'].map(v=>v.toLowerCase());
+const LNR_VARIANTS = ['луганская народная республика','луганская народная респ','лнр'].map(v=>v.toLowerCase());
+const ZAPOR_VARIANTS = ['запорожская область','запорожская обл','запорожье'].map(v=>v.toLowerCase());
+const KHERSON_VARIANTS = ['херсонская область','херсонская обл','херсон'].map(v=>v.toLowerCase());
+
 
 /* -------------------------------------------------------------
    4. Основная функция
@@ -689,7 +749,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
     let city: string | null = null;
 
     // === 1. Московская область — приоритет! ===
-    if (MOSCOW_OBLAST_VARIANTS.some(v => lower.includes(v))) {
+    // FIX: Use the new regex array for a more accurate check against the lowercase address.
+    if (MOSCOW_OBLAST_REGEXPS.some(re => re.test(lower))) {
         region = 'Московская область';
     }
 
@@ -697,6 +758,18 @@ export function parseRussianAddress(address: string): ParsedAddress {
     if (!region && MOSCOW_CITY_VARIANTS.some(v => lower.includes(v))) {
         return { region: 'Москва', city: 'Москва' };
     }
+
+    if (!region) {
+        if (DNR_VARIANTS.some(v => lower.includes(v))) {
+          region = 'Донецкая Народная Республика';
+        } else if (LNR_VARIANTS.some(v => lower.includes(v))) {
+          region = 'Луганская Народная Республика';
+        } else if (ZAPOR_VARIANTS.some(v => lower.includes(v))) {
+          region = 'Запорожская область';
+        } else if (KHERSON_VARIANTS.some(v => lower.includes(v))) {
+          region = 'Херсонская область';
+        }
+      }
 
     // === 3. Явное имя региона ===
     if (!region) {
@@ -711,12 +784,14 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // === 4. Город из словаря (самые длинные ключи сначала) ===
     for (const key of SORTED_CITY_KEYS) {
         if (clean.includes(key)) {
-            const originalKey = Object.keys(mergedCityToRegion).find(
+            // FIX: Use the defined 'extendedRegionCenters' instead of the undefined 'mergedCityToRegion'.
+            const originalKey = Object.keys(extendedRegionCenters).find(
                 k => k.toLowerCase() === key
             )!;
             city = originalKey.charAt(0).toUpperCase() + originalKey.slice(1);
             if (!region) {
-                region = mergedCityToRegion[originalKey];
+                // FIX: Use the defined 'extendedRegionCenters' instead of the undefined 'mergedCityToRegion'.
+                region = extendedRegionCenters[originalKey];
             }
             break;
         }
