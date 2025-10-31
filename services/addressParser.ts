@@ -64,17 +64,17 @@ export function parseRussianAddress(address: string): ParsedAddress {
     
     let region: string | null = null;
 
-    // 2. Priority 1: Explicit Regional Text
-    // Uses a pre-sorted list of keys to find the longest possible match first.
+    // 2. Priority 1: Explicit Regional Text (УМНАЯ ВЕРСИЯ)
     for (const key of sortedRegionKeys) {
-        // Use word boundaries to avoid partial matches (e.g., 'том' in 'автомобиль')
-        const keyRegex = new RegExp(`\\b${key.replace(/\s/g, '\\s*')}\\b`);
+        const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const keyRegex = new RegExp(`\\b${escapedKey.replace(/\s/g, '\\s+')}\\b`, 'i');
+        
         if (keyRegex.test(fullAddressForSearch)) {
             region = REGION_KEYWORD_MAP[key];
             break;
         }
     }
-    
+
     if (region) {
         return { region, city: findCity(parts, region) };
     }
