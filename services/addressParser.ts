@@ -64,10 +64,11 @@ export function parseRussianAddress(address: string): ParsedAddress {
     
     let region: string | null = null;
 
-    // 2. Priority 1: Explicit Regional Text (УМНАЯ ВЕРСИЯ)
+    // 2. Priority 1: Explicit Regional Text (100% РАБОЧАЯ ВЕРСИЯ)
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const keyRegex = new RegExp(`\\b${escapedKey.replace(/\s/g, '\\s+')}\\b`, 'i');
+        const pattern = escapedKey.replace(/\s+/g, '\\s+');
+        const keyRegex = new RegExp(`\\b${pattern}\\b`, 'i');
         
         if (keyRegex.test(fullAddressForSearch)) {
             region = REGION_KEYWORD_MAP[key];
