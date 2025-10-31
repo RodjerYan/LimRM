@@ -79,18 +79,11 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region, city: findCity(parts, region) };
     }
 
-    // 3. Priority 2: City-to-Region Mapping
-    for (const cityKey of sortedCityKeys) {
-        const cityRegex = new RegExp(`\\b${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`);
-        // Check against the full address string to catch cities mentioned anywhere.
-        if (cityRegex.test(fullAddressForSearch)) {
-            region = CITY_TO_REGION_MAP[cityKey];
-            const city = cityKey.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-            return { region, city };
-        }
-    }
+    // City-to-Region Mapping has been removed to enforce stricter parsing rules,
+    // preventing the parser from inferring a region from a city name alone.
+    // This addresses user feedback for a more precise, less "creative" parser.
 
-    // 4. Priority 3: Index Mapping (Fallback)
+    // 3. Priority 2: Index Mapping (Fallback)
     const indexMatch = address.match(/\b(\d{5,6})\b/);
     if (indexMatch) {
         const postalIndex = indexMatch[1];
@@ -115,7 +108,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
     
-    // 5. Final Default
+    // 4. Final Default
     const foundCity = findCity(parts, null);
     return { region: 'Регион не определен', city: foundCity };
 }
