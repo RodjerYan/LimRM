@@ -165,7 +165,18 @@ export function parseRussianAddress(address: string): ParsedAddress {
         region = 'Херсонская область';
     } else {
         for (const r of ALL_REGIONS) {
-            const regionRegex = new RegExp(`\\b${r.normalized.replace(/ /g, '\\s*')}\\b`, 'i');
+            const parts = r.normalized.split(' ');
+            let regexPattern: string;
+
+            if (parts.length === 2) {
+                // Allows "орловская область" OR "область орловская"
+                regexPattern = `\\b(${parts[0]}\\s+${parts[1]}|${parts[1]}\\s+${parts[0]})\\b`;
+            } else {
+                // For single-word regions or complex ones, use original logic
+                regexPattern = `\\b${r.normalized.replace(/ /g, '\\s*')}\\b`;
+            }
+            const regionRegex = new RegExp(regexPattern, 'i');
+
             if (regionRegex.test(clean)) {
                 region = r.original;
                 break;
