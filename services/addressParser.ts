@@ -60,7 +60,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     const parts = lowerAddress.split(/[,;|]/g)
         .map(p => p.trim())
         .filter(Boolean);
-    const fullAddressForSearch = parts.join(' ').toLowerCase();
+    const fullAddressForSearch = parts.join(' ');
     
     let region: string | null = null;
 
@@ -68,7 +68,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const pattern = escapedKey.replace(/\s+/g, '\\s+');
-        const keyRegex = new RegExp(`\\b${pattern}\\b`, 'i');
+        const keyRegex = new RegExp(pattern, 'i');
         
         if (keyRegex.test(fullAddressForSearch)) {
             region = REGION_KEYWORD_MAP[key];
