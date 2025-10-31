@@ -133,10 +133,15 @@ export const REGION_KEYWORD_MAP: Record<string, string> = {
 
 
 /**
- * Mapping of 2 or 3-digit postal index prefixes to their corresponding region.
+ * Mapping of postal indexes (full or prefixed) to their corresponding region.
  * Used as a Priority 3 fallback for address parsing.
  */
-export const INDEX_PREFIX_MAP: Record<string, string> = {
+export const INDEX_MAP: Record<string, string> = {
+    // Specific codes from user prompt
+    '32038': 'Орловская область',
+    '249440': 'Калужская область',
+    '249406': 'Калужская область',
+
     // Central Federal District
     '241': 'Брянская область', '242': 'Брянская область', '243': 'Брянская область',
     '302': 'Орловская область', '303': 'Орловская область',

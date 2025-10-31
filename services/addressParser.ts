@@ -1,7 +1,7 @@
 // services/addressParser.ts
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { CITY_TO_REGION_MAP } from '../utils/regionCenters';
-import { INDEX_PREFIX_MAP } from '../utils/addressMappings';
+import { INDEX_MAP } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
 // Pre-compile sorted keys for performance
@@ -91,17 +91,23 @@ export function parseRussianAddress(address: string): ParsedAddress {
     }
 
     // 4. Priority 3: Index Mapping (Fallback)
-    const indexMatch = address.match(/\b(\d{6})\b/);
+    const indexMatch = address.match(/\b(\d{5,6})\b/);
     if (indexMatch) {
         const postalIndex = indexMatch[1];
-        // Check for 3-digit and 2-digit prefixes
-        const prefix3 = postalIndex.substring(0, 3);
-        const prefix2 = postalIndex.substring(0, 2);
         
-        if (INDEX_PREFIX_MAP[prefix3]) {
-            region = INDEX_PREFIX_MAP[prefix3];
-        } else if (INDEX_PREFIX_MAP[prefix2]) {
-            region = INDEX_PREFIX_MAP[prefix2];
+        // Check for full index match first (5 or 6 digits)
+        if (INDEX_MAP[postalIndex]) {
+            region = INDEX_MAP[postalIndex];
+        } else {
+            // Fallback to prefixes if full index not found
+            const prefix3 = postalIndex.substring(0, 3);
+            const prefix2 = postalIndex.substring(0, 2);
+            
+            if (INDEX_MAP[prefix3]) {
+                region = INDEX_MAP[prefix3];
+            } else if (INDEX_MAP[prefix2]) {
+                region = INDEX_MAP[prefix2];
+            }
         }
 
         if (region) {
