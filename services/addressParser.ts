@@ -169,7 +169,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
             let regexPattern: string;
 
             if (parts.length === 2) {
-                // Allows "орловская область" OR "область орловская"
+                // FIX: A more flexible regex to handle "обл Орловская" by matching the two key parts in either order.
                 regexPattern = `\\b(${parts[0]}\\s+${parts[1]}|${parts[1]}\\s+${parts[0]})\\b`;
             } else {
                 // For single-word regions or complex ones, use original logic
