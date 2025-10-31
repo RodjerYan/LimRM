@@ -5,7 +5,10 @@ import { INDEX_MAP } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
 // Pre-compile sorted keys for performance
-const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => {
+    const lenDiff = b.length - a.length;
+    return lenDiff !== 0 ? lenDiff : a.localeCompare(b);
+});
 const sortedCityKeys = Object.keys(CITY_TO_REGION_MAP).sort((a, b) => b.length - a.length);
 
 /**
@@ -60,7 +63,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     const parts = lowerAddress.split(/[,;|]/g)
         .map(p => p.trim())
         .filter(Boolean);
-    const fullAddressForSearch = parts.join(' ');
+    const fullAddressForSearch = parts.join(' ').toLowerCase();
     
     let region: string | null = null;
 
