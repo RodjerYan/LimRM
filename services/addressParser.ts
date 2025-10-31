@@ -60,7 +60,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     const parts = lowerAddress.split(/[,;|]/g)
         .map(p => p.trim())
         .filter(Boolean);
-    const fullAddressForSearch = parts.join(' ');
+    const fullAddressForSearch = parts.join(' ').toLowerCase();
     
     let region: string | null = null;
 
