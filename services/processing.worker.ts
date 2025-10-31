@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { normalizeRegion } from '../utils/addressMappings';
+import { standardizeRegion } from '../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -16,7 +16,7 @@ const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
     const okbByRegion = new Map<string, OkbDataRow[]>();
     if (!okbData) return okbByRegion;
     for (const row of okbData) {
-        const region = normalizeRegion(row['Регион'] || '');
+        const region = standardizeRegion(row['Регион'] || '');
         if (region) {
             if (!okbByRegion.has(region)) {
                 okbByRegion.set(region, []);

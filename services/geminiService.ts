@@ -1,7 +1,7 @@
 // This file is a placeholder.
 // The application uses aiService.ts for interacting with the Gemini API via a proxy.
 
-import { normalizeRegion } from '../utils/addressMappings';
+import { standardizeRegion } from '../utils/addressMappings';
 
 /**
  * A reliable fallback function to call the Gemini AI model.
@@ -40,7 +40,7 @@ export async function callGeminiForRegion(address: string): Promise<string> {
         }
         
         const text = await response.text();
-        return text ? normalizeRegion(text) : '';
+        return text ? standardizeRegion(text) : '';
     } catch (e) {
         console.error('Gemini fetch error', e);
         return '';
