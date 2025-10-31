@@ -64,18 +64,12 @@ export function parseRussianAddress(address: string): ParsedAddress {
         .filter(Boolean);
     const fullAddressForSearch = parts.join(' ').toLowerCase();
 
-    console.log('DEBUG: Full:', fullAddressForSearch);  // ← ОТЛАДКА
-    console.log('DEBUG: Has key?', REGION_KEYWORD_MAP['брянская обл']);  // ← ОТЛАДКА
-    console.log('DEBUG: Keys first 5:', sortedRegionKeys.slice(0, 5));  // ← ОТЛАДКА
-
     let region: string | null = null;
 
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escapedKey.replace(/\s+/g, '\\s+');
+        const pattern = escapedKey.replace(/\s+/g, '\\s+'); // Corrected to 2 backslashes
         const keyRegex = new RegExp(pattern, 'i');
-
-        console.log('DEBUG: Testing key:', key, 'pattern:', pattern, 'match?', keyRegex.test(fullAddressForSearch));  // ← ОТЛАДКА
 
         if (keyRegex.test(fullAddressForSearch)) {
             region = REGION_KEYWORD_MAP[key];
