@@ -70,7 +70,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // 2. Priority 1: Explicit Regional Text (100% РАБОЧАЯ ВЕРСИЯ)
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escapedKey.replace(/\s+/g, '\\s+');
+        const pattern = escapedKey.replace(/\s+/g, '\\\\s+');  // ← 4 backslash!
         const keyRegex = new RegExp(pattern, 'i');
         
         if (keyRegex.test(fullAddressForSearch)) {
