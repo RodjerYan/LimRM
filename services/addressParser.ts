@@ -57,22 +57,26 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
 
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
+    const lowerAddress = address.toLowerCase().replace(/ё/g, 'e');
 
-    // 1. Normalization
     const parts = lowerAddress.split(/[,;|]/g)
         .map(p => p.trim())
         .filter(Boolean);
     const fullAddressForSearch = parts.join(' ').toLowerCase();
-    
+
+    console.log('DEBUG: Full:', fullAddressForSearch);  // ← ОТЛАДКА
+    console.log('DEBUG: Has key?', REGION_KEYWORD_MAP['брянская обл']);  // ← ОТЛАДКА
+    console.log('DEBUG: Keys first 5:', sortedRegionKeys.slice(0, 5));  // ← ОТЛАДКА
+
     let region: string | null = null;
 
-    // 2. Priority 1: Explicit Regional Text (100% РАБОЧАЯ ВЕРСИЯ)
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escapedKey.replace(/\s+/g, '\\\\s+');  // ← 4 backslash!
+        const pattern = escapedKey.replace(/\s+/g, '\\s+');
         const keyRegex = new RegExp(pattern, 'i');
-        
+
+        console.log('DEBUG: Testing key:', key, 'pattern:', pattern, 'match?', keyRegex.test(fullAddressForSearch));  // ← ОТЛАДКА
+
         if (keyRegex.test(fullAddressForSearch)) {
             region = REGION_KEYWORD_MAP[key];
             break;
