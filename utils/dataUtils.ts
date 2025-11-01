@@ -1,7 +1,5 @@
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
-// FIX: The import is changed from the deprecated 'regionCenters' to 'addressMappings'
-// to resolve the module export error. REGION_BY_CITY is used instead of the old CITY_TO_REGION_MAP.
-import { REGION_BY_CITY } from './addressMappings';
+import { CITY_TO_REGION_MAP } from './regionCenters';
 
 /**
  * Normalizes an address string for search and comparison purposes.
@@ -92,9 +90,8 @@ export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
     }
     
     const city = okbRow['Город']?.toLowerCase();
-    // FIX: Use the refactored REGION_BY_CITY map instead of the deprecated CITY_TO_REGION_MAP.
-    if (city && REGION_BY_CITY[city]) {
-        const region = REGION_BY_CITY[city];
+    if (city && CITY_TO_REGION_MAP[city]) {
+        const region = CITY_TO_REGION_MAP[city];
         return region.charAt(0).toUpperCase() + region.slice(1);
     }
 
