@@ -37,7 +37,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     let city: string | null = null;
 
     // --- Step 1: Normalization using aliases ---
-    // This handles common typos, abbreviations, and even explicit region mentions.
+    // This handles common typos and formatting variations.
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         if (normalized.includes(alias)) {
             normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
@@ -46,9 +46,12 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
 
     // --- Step 2: Priority 1 - Explicit Region Keyword Mapping ---
     // Look for keywords like "калининградская область", "лен.обл", etc.
+    // FIX: Sort keys by length descending to match longer phrases first (e.g., "ленинградская область" before "ло").
+    // FIX: Use word boundaries in regex to prevent matching substrings inside other words (e.g., "ло" in "Орловская").
     const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const key of sortedRegionKeys) {
-        if (normalized.includes(key)) {
+        const regex = new RegExp(`\\b${key.replace('.', '\\.')}\\b`, 'i');
+        if (regex.test(normalized)) {
             region = REGION_KEYWORD_MAP[key];
             break;
         }
@@ -59,11 +62,11 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     if (!region) {
         // Step 3a: Use regex to find city names (e.g., "г. Город", "пос. Поселок")
         const patterns = [
-            /г[\s\.,]?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // г. Город
+            /г[\s\.,]?\s*([а-яё\- ]+?)(?=\s+ул|\s+улица|\s+ш|\s+шоссе|\s+пр|\s+проспект|$|,|\s+дом|\s+д)/, // г. Город, smarter termination
             /пос\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // пос. Поселок
             /пгт\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,      // пгт. Поселок
             /дер\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,        // дер. Деревня
-            /^ул\.?\s*([а-яё\-]+)/,                   // ул. Улица (в начале строки)
+            /ст-ца\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,    // ст-ца. Станица
         ];
         for (const pattern of patterns) {
             const match = normalized.match(pattern);
@@ -132,7 +135,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     } else {
         // Final attempt with Gemini if all local methods fail
         const geminiRegion = await callGeminiForRegion(address);
-        if (geminiRegion && geminiRegion.trim() !== '') {
+        if (geminiRegion && geminiRegion.trim() !== '' && geminiRegion.trim().toLowerCase() !== 'республика беларусь') {
              const finalCity = city ? capitalize(city) : 'Город не определён';
              return { region: geminiRegion, city: finalCity };
         }
