@@ -26,11 +26,11 @@ const capitalize = (str: string | null): string => {
 function findRegionByKeyword(normalizedAddress: string): string | null {
     const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const key of sortedKeys) {
-        // FIX: The previous regex generation was flawed. This version correctly handles multi-word keys.
-        // It escapes special characters and replaces spaces with `\s+` to robustly match phrases.
+        // FIX: Replaced unreliable `\b` word boundaries with an explicit check for surrounding spaces or line edges.
+        // This ensures that phrases like "брянская обл" are matched as whole units and not as substrings within other words.
         const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
         const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
-        const regex = new RegExp(`\\b${keyPattern}\\b`, 'i');
+        const regex = new RegExp(`(^|\\s)${keyPattern}($|\\s)`, 'i');
 
         if (regex.test(normalizedAddress)) {
             return REGION_KEYWORD_MAP[key];
@@ -51,7 +51,7 @@ function findRegionByCity(normalizedAddress: string): { region: string | null, c
         // FIX: Applied the same robust regex generation as in findRegionByKeyword for consistency.
         const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
         const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
-        const cityRegex = new RegExp(`\\b${keyPattern}\\b`, 'i');
+        const cityRegex = new RegExp(`(^|\\s)${keyPattern}($|\\s)`, 'i');
 
         if (cityRegex.test(normalizedAddress)) {
             return { region: REGION_BY_CITY_MAP[key], city: key };
@@ -96,7 +96,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
 
     // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
     const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-    let normalized = lowerAddress.replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
+    let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
     // --- Step 1: Normalization using aliases for common typos ---
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
