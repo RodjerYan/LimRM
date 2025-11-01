@@ -19,17 +19,19 @@ const capitalize = (str: string | null): string => {
 
 /**
  * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
- * Uses word boundaries to prevent matching substrings inside other words.
+ * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
  * @param normalizedAddress The pre-processed, lowercased address string.
  * @returns The standardized region name or null if no match is found.
  */
 function findRegionByKeyword(normalizedAddress: string): string | null {
     const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const key of sortedKeys) {
-        // This regex correctly handles multi-word keywords (like "брянская обл") 
-        // and ensures it matches whole words/phrases, preventing partial matches inside other words.
-        const pattern = `\\b${key.replace(/[-\s]/g, '[-\\s]?')}\\b`;
-        const regex = new RegExp(pattern, 'i');
+        // FIX: The previous regex generation was flawed. This version correctly handles multi-word keys.
+        // It escapes special characters and replaces spaces with `\s+` to robustly match phrases.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
+        const regex = new RegExp(`\\b${keyPattern}\\b`, 'i');
+
         if (regex.test(normalizedAddress)) {
             return REGION_KEYWORD_MAP[key];
         }
@@ -39,13 +41,18 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 
 /**
  * Finds a region by identifying a city name in the address and looking up its corresponding region.
+ * Uses a robust regex to match whole city names.
  * @param normalizedAddress The pre-processed, lowercased address string.
  * @returns The standardized region name or null if no match is found.
  */
 function findRegionByCity(normalizedAddress: string): { region: string | null, city: string | null } {
     const sortedKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
      for (const key of sortedKeys) {
-        const cityRegex = new RegExp(`\\b${key.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
+        // FIX: Applied the same robust regex generation as in findRegionByKeyword for consistency.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
+        const cityRegex = new RegExp(`\\b${keyPattern}\\b`, 'i');
+
         if (cityRegex.test(normalizedAddress)) {
             return { region: REGION_BY_CITY_MAP[key], city: key };
         }
