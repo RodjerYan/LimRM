@@ -107,8 +107,13 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
 
     // --- Step 5: Fallbacks for unresolved cases ---
-    // Fallback 5a: Postal Index
-    if (!region) {
+    // Check if there are any explicit location clues in the address string.
+    const hasLocationClues = /область|\bобл\b|\bкрай\b|республика|\bресп\b|округ|\bао\b|\bг\b|город|поселок|\bпос\b|\bпгт\b|\bдер\b|деревня/i.test(normalized);
+
+    // Fallback 5a: Postal Index.
+    // ONLY use this if no region has been found AND there are no other location clues in the address.
+    // This is to avoid misinterpreting an index when a city is mentioned but not in our maps.
+    if (!region && !hasLocationClues) {
         const indexMatch = address.match(/\b(\d{5,6})\b/);
         if (indexMatch) {
             const postalIndex = indexMatch[1];
