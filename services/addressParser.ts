@@ -100,9 +100,11 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
 
     // --- Step 1: Normalization using aliases for common typos ---
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
-        }
+        // FIX: The original code used `includes` which is less efficient than a single replace,
+        // and did not escape regex characters in `alias`. Using a single replace with a
+        // properly escaped regex is more robust and correct to fix potential runtime errors. This also resolves the TS error.
+        const escapedAlias = alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        normalized = normalized.replace(new RegExp(escapedAlias, 'g'), canonical);
     }
 
     let region: string | null = null;
