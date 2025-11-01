@@ -1,17 +1,15 @@
 // utils/addressMappings.ts
 
-// FIX: Added a `capitalize` utility function to resolve the "Cannot find name 'capitalize'" error.
-// This function is used by `standardizeRegion` to format the final region name correctly.
 const capitalize = (str: string): string => {
     if (!str) return '';
     return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 };
 
 /**
- * A map for normalizing common address typos, abbreviations, and variations.
+ * A map for normalizing common address typos and formatting variations.
  * This is applied first to clean the input string before parsing.
- * FIX: Removed short, ambiguous abbreviations like 'ло' that caused incorrect replacements.
- * These are now handled by REGION_KEYWORD_MAP with word boundary checks.
+ * Critical: Short, ambiguous abbreviations that can be part of other words (like 'ло') are EXCLUDED.
+ * They are handled safely in REGION_KEYWORD_MAP with word boundary checks.
  */
 export const CITY_NORMALIZATION_MAP: Record<string, string> = {
   // Typos
@@ -29,9 +27,28 @@ export const CITY_NORMALIZATION_MAP: Record<string, string> = {
 /**
  * A comprehensive mapping of cities and towns to their respective regions.
  * This is the primary source for determining a region based on a found city.
- * Replaces and greatly expands the old CITY_TO_REGION_MAP.
  */
 export const REGION_BY_CITY_MAP: Record<string, string> = {
+  // === ОРЛОВСКАЯ ОБЛАСТЬ (ИЗ ПРОБЛЕМНЫХ АДРЕСОВ) ===
+  'орёл': 'Орловская область',
+  'орел': 'Орловская область',
+  'мценск': 'Орловская область',
+  'ливны': 'Орловская область',
+  'болхов': 'Орловская область',
+  'знаменка': 'Орловская область',
+  'нарышкино': 'Орловская область',
+  'зареченский': 'Орловская область',
+  'жилина': 'Орловская область',
+  'волково': 'Орловская область',
+  
+  // === БРЯНСКАЯ ОБЛАСТЬ (ИЗ ПРОБЛЕМНЫХ АДРЕСОВ) ===
+  'брянск': 'Брянская область',
+  'сельцо': 'Брянская область',
+
+  // === СМОЛЕНСКАЯ ОБЛАСТЬ (ИЗ ПРОБЛЕМНЫХ АДРЕСОВ) ===
+  'смоленск': 'Смоленская область',
+  'сафоново': 'Смоленская область',
+
   // === КАЛИНИНГРАДСКАЯ ОБЛАСТЬ ===
   'гвардейск': 'Калининградская область',
   'калининград': 'Калининградская область',
@@ -63,6 +80,7 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
   'павловск': 'Санкт-Петербург',
   'зеленогорск': 'Санкт-Петербург',
   'понтонный': 'Санкт-Петербург',
+  'паргалово': 'Санкт-Петербург',
 
   // === ЛЕНИНГРАДСКАЯ ОБЛАСТЬ ===
   'всеволожск': 'Ленинградская область',
@@ -115,8 +133,6 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
   "белгород": "Белгородская область",
   "биробиджан": "Еврейская автономная область",
   "благовещенск": "Амурская область",
-  "брянск": "Брянская область",
-  "сельцо": "Брянская область",
   "владивосток": "Приморский край",
   "владикавказ": "Республика Северная Осетия — Алания",
   "владимир": "Владимирская область",
@@ -149,7 +165,6 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
   "курск": "Курская область",
   "кызыл": "Республика Тыва",
   "липецкая": "Липецкая область",
-  "ливны": "Орловская область",
   "луганск": "Луганская Народная Республика",
   "людиново": "Калужская область",
   "магадан": "Магаданская область",
@@ -161,12 +176,6 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
   "нижний новгород": "Нижегородская область",
   "новосибирск": "Новосибирская область",
   "омск": "Омская область",
-  "орёл": "Орловская область",
-  "орел": "Орловская область",
-  "мценск": "Орловская область",
-  "знаменка": "Орловская область",
-  "нарышкино": "Орловская область",
-  "болхов": "Орловская область",
   "оренбург": "Оренбургская область",
   "пенза": "Пензенская область",
   "пермь": "Пермский край",
@@ -180,8 +189,6 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
   "саранск": "Республика Мордовия",
   "саратов": "Саратовская область",
   "симферополь": "Республика Крым",
-  "смоленск": "Смоленская область",
-  "сафоново": "Смоленская область",
   "ставрополь": "Ставропольский край",
   "сыктывкар": "Республика Коми",
   "тамбов": "Тамбовская область",
@@ -207,12 +214,13 @@ export const REGION_BY_CITY_MAP: Record<string, string> = {
 
 
 export const REGION_KEYWORD_MAP: Record<string, string> = {
-  // FIX: Added short abbreviations here, to be used with word-boundary checks
+  // Короткие и неоднозначные сокращения, которые теперь ищутся как отдельные слова
   'ло': 'Ленинградская область',
   'лен обл': 'Ленинградская область',
   'спб': 'Санкт-Петербург',
   'кал-я обл': 'Калининградская область',
   
+  // Полные и частичные названия регионов (чем длиннее и точнее, тем лучше)
   'адыгея': 'Республика Адыгея',
   'респ алтай': 'Республика Алтай',
   'башкортостан': 'Республика Башкортостан', 'башкирия': 'Республика Башкортостан',
@@ -316,9 +324,7 @@ export const REGION_KEYWORD_MAP: Record<string, string> = {
 
 
 export const INDEX_MAP: Record<string, string> = {
-    '32038': 'Орловская область',
-    '249440': 'Калужская область',
-    '249406': 'Калужская область',
+    // Префиксы индексов
     '302': 'Орловская область', '303': 'Орловская область',
     '241': 'Брянская область', '242': 'Брянская область', '243': 'Брянская область',
     '214': 'Смоленская область', '215': 'Смоленская область', '216': 'Смоленская область',
@@ -331,10 +337,23 @@ export const INDEX_MAP: Record<string, string> = {
     '187': 'Ленинградская область', '188': 'Ленинградская область',
     '173': 'Новгородская область',
     '361': 'Кабардино-Балкарская Республика',
+    // Полные индексы для уточнения
+    '302002': 'Орловская область',
+    '302001': 'Орловская область',
+    '302040': 'Орловская область',
+    '303035': 'Орловская область',
+    '241010': 'Брянская область',
 };
 
 export const standardizeRegion = (input: string | null | undefined): string => {
     if (!input) return 'Регион не определен';
+    
+    // The REGION_KEYWORD_MAP and REGION_BY_CITY_MAP already contain the standardized names.
+    // If the input is already a valid region name from one of our maps, just return it.
+    const directMatch = Object.values(REGION_KEYWORD_MAP).find(val => val.toLowerCase() === input.toLowerCase());
+    if (directMatch) return directMatch;
+    
+    // Fallback for any other cases, though the parser should handle most.
     const lowerInput = input.toLowerCase().trim().replace('обл ', 'область ');
     for (const key in REGION_KEYWORD_MAP) {
          const regex = new RegExp(`\\b${key.replace('.', '\\.')}\\b`, 'i');
