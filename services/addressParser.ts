@@ -3,6 +3,7 @@ import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings'
 import { CITY_TO_REGION_MAP } from '../utils/regionCenters';
 import { INDEX_MAP } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
+import { callGeminiForRegion } from './geminiService';
 
 // Pre-compile sorted keys for performance
 const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => {
@@ -53,7 +54,7 @@ function findCity(parts: string[], region: string | null): string {
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
+export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
@@ -64,10 +65,6 @@ export function parseRussianAddress(address: string): ParsedAddress {
         .map(p => p.trim())
         .filter(Boolean);
     const fullAddressForSearch = parts.join(' ').toLowerCase();
-
-    // --- DEBUG LOG #1: Check the input string and if the map is loaded ---
-    console.log(`[DEBUG] Parsing Address: "${fullAddressForSearch}"`);
-    console.log(`[DEBUG] Checking map for 'ставрополь': ->`, CITY_TO_REGION_MAP['ставрополь'] || 'NOT FOUND!');
     
     let region: string | null = null;
 
@@ -90,14 +87,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // 2. Priority 2: City-to-Region Mapping
     for (const cityKey of sortedCityKeys) {
         const cityRegex = new RegExp(`(?:\\b|г\\.?\\s*)${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
-        const isMatch = cityRegex.test(fullAddressForSearch);
-
-        // --- DEBUG LOG #2: Check regex matching for key cities ---
-        if (['ставрополь', 'нальчик', 'новоалександровск', 'донецк', 'черкесск'].includes(cityKey)) {
-             console.log(`[DEBUG] Regex for '${cityKey}': ${cityRegex}. Match result: ${isMatch}`);
-        }
-
-        if (isMatch) {
+        if (cityRegex.test(fullAddressForSearch)) {
             region = CITY_TO_REGION_MAP[cityKey];
             const city = cityKey.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             return { region, city };
@@ -142,12 +132,20 @@ export function parseRussianAddress(address: string): ParsedAddress {
     for (const city in KEY_CITIES_FALLBACK) {
         if (fullAddressForSearch.includes(city)) {
             const regionName = KEY_CITIES_FALLBACK[city];
-            console.log(`[DEBUG] Fallback triggered for city: ${city} -> region: ${regionName}`);
             return { region: regionName, city: findCity(parts, regionName) };
         }
     }
 
-    // 5. Final Default
+    // 5. Priority 5: Gemini AI Fallback
+    // This provides a powerful, final attempt to parse the address before giving up.
+    const geminiRegion = await callGeminiForRegion(address);
+    if (geminiRegion && geminiRegion.trim() !== '') {
+        // AI returned a valid region. Use it and let findCity try to get a city name.
+        const city = findCity(parts, geminiRegion);
+        return { region: geminiRegion, city };
+    }
+
+    // 6. Final Default
     const foundCity = findCity(parts, null);
     return { region: 'Регион не определен', city: foundCity };
 }

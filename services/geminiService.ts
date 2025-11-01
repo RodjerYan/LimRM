@@ -40,7 +40,8 @@ export async function callGeminiForRegion(address: string): Promise<string> {
         }
         
         const text = await response.text();
-        return text ? standardizeRegion(text) : '';
+        // FIX: Trim whitespace from the AI response before standardizing it.
+        return text ? standardizeRegion(text.trim()) : '';
     } catch (e) {
         console.error('Gemini fetch error', e);
         return '';
