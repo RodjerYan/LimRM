@@ -22,7 +22,8 @@ function findCity(parts: string[], region: string | null): string {
 
     // First, look for an exact match from our city map
     for (const cityKey of sortedCityKeys) {
-        const cityRegex = new RegExp(`\\b${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`);
+        // FIX: More robust regex to handle city prefixes like 'г.'
+        const cityRegex = new RegExp(`(?:\\b|г\\.?\\s*)${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`);
         if (cityRegex.test(fullAddress)) {
             // Return the canonical name from the map's key, capitalized
             return cityKey.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
@@ -64,11 +65,18 @@ export function parseRussianAddress(address: string): ParsedAddress {
         .filter(Boolean);
     const fullAddressForSearch = parts.join(' ').toLowerCase();
 
+    // --- DEBUG LOG #1: Check the input string and if the map is loaded ---
+    if (fullAddressForSearch.includes('донецк')) {
+        console.log(`[DEBUG] Parsing Address: "${fullAddressForSearch}"`);
+        console.log(`[DEBUG] Is 'донецк' in CITY_TO_REGION_MAP? ->`, CITY_TO_REGION_MAP['донецк'] || 'NOT FOUND!');
+    }
+    
     let region: string | null = null;
 
+    // 1. Priority 1: Region Keyword Mapping
     for (const key of sortedRegionKeys) {
         const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escapedKey.replace(/\s+/g, '\\s+'); // Corrected to 2 backslashes
+        const pattern = escapedKey.replace(/\s+/g, '\\s+');
         const keyRegex = new RegExp(pattern, 'i');
 
         if (keyRegex.test(fullAddressForSearch)) {
@@ -81,41 +89,44 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region, city: findCity(parts, region) };
     }
 
-    // 3. Priority 2: City-to-Region Mapping
+    // 2. Priority 2: City-to-Region Mapping
     for (const cityKey of sortedCityKeys) {
-        const cityRegex = new RegExp(`\\b${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
-        if (cityRegex.test(fullAddressForSearch)) {
+        // FIX: More robust regex to catch city names with or without prefixes like 'г.'
+        const cityRegex = new RegExp(`(?:\\b|г\\.?\\s*)${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
+        const isMatch = cityRegex.test(fullAddressForSearch);
+
+        // --- DEBUG LOG #2: Check regex matching for key cities ---
+        if (cityKey === 'донецк') {
+            console.log(`[DEBUG] Regex for 'донецк': ${cityRegex}. Match result: ${isMatch}`);
+        }
+
+        if (isMatch) {
             region = CITY_TO_REGION_MAP[cityKey];
             const city = cityKey.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
             return { region, city };
         }
     }
 
-    // 4. Priority 3: Index Mapping (Fallback)
+    // 3. Priority 3: Index Mapping (Fallback)
     const indexMatch = address.match(/\b(\d{5,6})\b/);
     if (indexMatch) {
         const postalIndex = indexMatch[1];
-        
-        // Check for full index match first (5 or 6 digits)
         if (INDEX_MAP[postalIndex]) {
             region = INDEX_MAP[postalIndex];
         } else {
-            // Fallback to prefixes if full index not found
             const prefix3 = postalIndex.substring(0, 3);
             const prefix2 = postalIndex.substring(0, 2);
-            
-            if (INDEX_MAP[prefix3]) {
-                region = INDEX_MAP[prefix3];
-            } else if (INDEX_MAP[prefix2]) {
-                region = INDEX_MAP[prefix2];
-            }
+            if (INDEX_MAP[prefix3]) region = INDEX_MAP[prefix3];
+            else if (INDEX_MAP[prefix2]) region = INDEX_MAP[prefix2];
         }
-
-        if (region) {
-            return { region, city: findCity(parts, region) };
-        }
+        if (region) return { region, city: findCity(parts, region) };
     }
     
+    // 4. Priority 4: Hardcoded Fallback for key cities (Safety Net)
+    if (fullAddressForSearch.includes('донецк') || fullAddressForSearch.includes('макеевка') || fullAddressForSearch.includes('мариуполь')) {
+        return { region: 'Донецкая Народная Республика', city: findCity(parts, 'Донецкая Народная Республика') };
+    }
+
     // 5. Final Default
     const foundCity = findCity(parts, null);
     return { region: 'Регион не определен', city: foundCity };
