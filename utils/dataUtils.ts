@@ -1,5 +1,5 @@
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
-import { CITY_TO_REGION_MAP } from './regionCenters';
+import { REGION_BY_CITY_MAP } from './addressMappings';
 
 /**
  * Normalizes an address string for search and comparison purposes.
@@ -90,8 +90,8 @@ export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
     }
     
     const city = okbRow['Город']?.toLowerCase();
-    if (city && CITY_TO_REGION_MAP[city]) {
-        const region = CITY_TO_REGION_MAP[city];
+    if (city && REGION_BY_CITY_MAP[city]) {
+        const region = REGION_BY_CITY_MAP[city];
         return region.charAt(0).toUpperCase() + region.slice(1);
     }
 
