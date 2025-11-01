@@ -66,10 +66,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
     const fullAddressForSearch = parts.join(' ').toLowerCase();
 
     // --- DEBUG LOG #1: Check the input string and if the map is loaded ---
-    if (fullAddressForSearch.includes('донецк')) {
-        console.log(`[DEBUG] Parsing Address: "${fullAddressForSearch}"`);
-        console.log(`[DEBUG] Is 'донецк' in CITY_TO_REGION_MAP? ->`, CITY_TO_REGION_MAP['донецк'] || 'NOT FOUND!');
-    }
+    console.log(`[DEBUG] Parsing Address: "${fullAddressForSearch}"`);
+    console.log(`[DEBUG] Checking map for 'ставрополь': ->`, CITY_TO_REGION_MAP['ставрополь'] || 'NOT FOUND!');
     
     let region: string | null = null;
 
@@ -91,13 +89,12 @@ export function parseRussianAddress(address: string): ParsedAddress {
 
     // 2. Priority 2: City-to-Region Mapping
     for (const cityKey of sortedCityKeys) {
-        // FIX: More robust regex to catch city names with or without prefixes like 'г.'
         const cityRegex = new RegExp(`(?:\\b|г\\.?\\s*)${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
         const isMatch = cityRegex.test(fullAddressForSearch);
 
         // --- DEBUG LOG #2: Check regex matching for key cities ---
-        if (cityKey === 'донецк') {
-            console.log(`[DEBUG] Regex for 'донецк': ${cityRegex}. Match result: ${isMatch}`);
+        if (['ставрополь', 'нальчик', 'новоалександровск', 'донецк', 'черкесск'].includes(cityKey)) {
+             console.log(`[DEBUG] Regex for '${cityKey}': ${cityRegex}. Match result: ${isMatch}`);
         }
 
         if (isMatch) {
@@ -122,9 +119,32 @@ export function parseRussianAddress(address: string): ParsedAddress {
         if (region) return { region, city: findCity(parts, region) };
     }
     
-    // 4. Priority 4: Hardcoded Fallback for key cities (Safety Net)
-    if (fullAddressForSearch.includes('донецк') || fullAddressForSearch.includes('макеевка') || fullAddressForSearch.includes('мариуполь')) {
-        return { region: 'Донецкая Народная Республика', city: findCity(parts, 'Донецкая Народная Республика') };
+    // 4. Priority 4: Hardcoded Fallback for key regions (Safety Net)
+    const KEY_CITIES_FALLBACK: Record<string, string> = {
+        'ставрополь': 'Ставропольский край',
+        'михайловск': 'Ставропольский край',
+        'пятигорск': 'Ставропольский край',
+        'нальчик': 'Кабардино-Балкарская Республика',
+        'прохладный': 'Кабардино-Балкарская Республика',
+        'черкесск': 'Карачаево-Черкесская Республика',
+        'владикавказ': 'Республика Северная Осетия — Алания',
+        'моздок': 'Республика Северная Осетия — Алания',
+        'назрань': 'Республика Ингушетия',
+        'магас': 'Республика Ингушетия',
+        'грозный': 'Чеченская Республика',
+        'гудермес': 'Чеченская Республика',
+        'махачкала': 'Республика Дагестан',
+        'дербент': 'Республика Дагестан',
+        'донецк': 'Донецкая Народная Республика',
+        'макеевка': 'Донецкая Народная Республика',
+        'мариуполь': 'Донецкая Народная Республика',
+    };
+    for (const city in KEY_CITIES_FALLBACK) {
+        if (fullAddressForSearch.includes(city)) {
+            const regionName = KEY_CITIES_FALLBACK[city];
+            console.log(`[DEBUG] Fallback triggered for city: ${city} -> region: ${regionName}`);
+            return { region: regionName, city: findCity(parts, regionName) };
+        }
     }
 
     // 5. Final Default
