@@ -26,7 +26,10 @@ const capitalize = (str: string | null): string => {
 function findRegionByKeyword(normalizedAddress: string): string | null {
     const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const key of sortedKeys) {
-        const regex = new RegExp(`\\b${key.replace('.', '\\.')}\\b`, 'i');
+        // This regex correctly handles multi-word keywords (like "брянская обл") 
+        // and ensures it matches whole words/phrases, preventing partial matches inside other words.
+        const pattern = `\\b${key.replace(/[-\s]/g, '[-\\s]?')}\\b`;
+        const regex = new RegExp(pattern, 'i');
         if (regex.test(normalizedAddress)) {
             return REGION_KEYWORD_MAP[key];
         }
@@ -57,9 +60,11 @@ function findRegionByCity(normalizedAddress: string): { region: string | null, c
  * @returns The standardized region name or null if no match is found.
  */
 function findRegionByIndex(address: string, normalizedAddress: string): string | null {
+    // This check prevents the index from incorrectly overriding a region if the address contains
+    // explicit location words but our maps don't recognize them.
     const hasLocationClues = /область|\bобл\b|\bкрай\b|республика|\bресп\b|округ|\bао\b|\bг\b|город|поселок|\bпос\b|\bпгт\b|\bдер\b|деревня/i.test(normalizedAddress);
     if (hasLocationClues) {
-        return null; // Do not use index if other clues are present
+        return null; 
     }
 
     const indexMatch = address.match(/\b(\d{5,6})\b/);
@@ -82,7 +87,8 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
 
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'e');
+    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
+    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
     let normalized = lowerAddress.replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
 
     // --- Step 1: Normalization using aliases for common typos ---
@@ -96,9 +102,11 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     let city: string | null = null;
 
     // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
+    // This is the most reliable method.
     region = findRegionByKeyword(normalized);
 
     // --- PRIORITY 2: If no region found, find it by city name (e.g., "Орёл") ---
+    // This works when the region is omitted but a known city is present.
     if (!region) {
         const result = findRegionByCity(normalized);
         if (result.region) {
@@ -108,14 +116,17 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
     
     // --- PRIORITY 3: As a last resort, use postal index ONLY if no other clues exist ---
+    // This is a fallback for addresses that are very sparse.
     if (!region) {
         region = findRegionByIndex(address, normalized);
     }
     
     // --- Finalization ---
-    // If we found a region but haven't identified a city yet, try to find the city again.
+    // If we found a region but haven't identified a city yet, try to find the city again
+    // to ensure both pieces of data are populated if possible.
     if (region && !city) {
         const result = findRegionByCity(normalized);
+        // Ensure the found city actually belongs to the already determined region.
         if (result.city && REGION_BY_CITY_MAP[result.city] === region) {
             city = result.city;
         }
