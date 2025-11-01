@@ -65,10 +65,6 @@ export function parseRussianAddress(address: string): ParsedAddress {
         .filter(Boolean);
     const fullAddressForSearch = parts.join(' ').toLowerCase();
 
-    // --- DEBUG LOG #1: Check the input string and if the map is loaded ---
-    console.log(`[DEBUG] Parsing Address: "${fullAddressForSearch}"`);
-    console.log(`[DEBUG] Checking map for 'ставрополь': ->`, CITY_TO_REGION_MAP['ставрополь'] || 'NOT FOUND!');
-    
     let region: string | null = null;
 
     // 1. Priority 1: Region Keyword Mapping
@@ -91,11 +87,6 @@ export function parseRussianAddress(address: string): ParsedAddress {
     for (const cityKey of sortedCityKeys) {
         const cityRegex = new RegExp(`(?:\\b|г\\.?\\s*)${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`, 'i');
         const isMatch = cityRegex.test(fullAddressForSearch);
-
-        // --- DEBUG LOG #2: Check regex matching for key cities ---
-        if (['ставрополь', 'нальчик', 'новоалександровск', 'донецк', 'черкесск'].includes(cityKey)) {
-             console.log(`[DEBUG] Regex for '${cityKey}': ${cityRegex}. Match result: ${isMatch}`);
-        }
 
         if (isMatch) {
             region = CITY_TO_REGION_MAP[cityKey];
@@ -142,7 +133,6 @@ export function parseRussianAddress(address: string): ParsedAddress {
     for (const city in KEY_CITIES_FALLBACK) {
         if (fullAddressForSearch.includes(city)) {
             const regionName = KEY_CITIES_FALLBACK[city];
-            console.log(`[DEBUG] Fallback triggered for city: ${city} -> region: ${regionName}`);
             return { region: regionName, city: findCity(parts, regionName) };
         }
     }
