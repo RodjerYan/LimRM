@@ -38,8 +38,8 @@ const App: React.FC = () => {
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
 
-    // REVERT: Updated filter state to use 'city' instead of 'region'
-    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], city: [] });
+    // FIX: Updated filter state to use 'region' instead of 'city'
+    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
@@ -56,8 +56,8 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
-        // REVERT: Reset filters with 'city'
-        setFilters({ rm: '', brand: [], city: [] });
+        // FIX: Reset filters with 'region'
+        setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
     
@@ -73,9 +73,9 @@ const App: React.FC = () => {
         setFilters(newFilters);
     }, []);
     
-    // REVERT: Reset filters with 'city'
+    // FIX: Reset filters with 'region'
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], city: [] });
+        setFilters({ rm: '', brand: [], region: [] });
     }, []);
 
     const handleRowClick = useCallback((row: AggregatedDataRow) => {
@@ -151,6 +151,7 @@ const App: React.FC = () => {
                     isOpen={isModalOpen} 
                     onClose={() => setIsModalOpen(false)}
                     data={selectedRow}
+                    okbData={okbData}
                 />
             </main>
         </div>
