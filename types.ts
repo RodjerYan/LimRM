@@ -23,6 +23,7 @@ export interface MapPoint {
     name: string;
     address: string;
     type: string;
+    contacts?: string;
 }
 
 export interface ParsedAddress {

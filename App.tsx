@@ -17,12 +17,29 @@ import {
     OkbStatus, 
     SummaryMetrics,
     OkbDataRow,
-    MapPoint,
-    MapPointStatus
+    MapPoint
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
+
+/**
+ * A helper function to find a value in a row object by checking multiple possible keys.
+ * Performs a case-insensitive search on the object's keys.
+ * @param row The data row object.
+ * @param keys An array of possible keys to check.
+ * @returns The found value or null.
+ */
+const findValueByKey = (row: { [key: string]: any }, keys: string[]): string | null => {
+    const lowerCaseKeys = keys.map(k => k.toLowerCase());
+    const rowKeys = Object.keys(row);
+    for (const rowKey of rowKeys) {
+        if (lowerCaseKeys.includes(rowKey.toLowerCase())) {
+            return row[rowKey];
+        }
+    }
+    return null;
+};
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -56,8 +73,7 @@ const App: React.FC = () => {
 
         return okbData
             .filter(okbRow => {
-                const address = okbRow['Юридический адрес']?.trim();
-                // Is a potential client if it has coordinates AND is not in the active list
+                const address = findValueByKey(okbRow, ['Юридический адрес', 'Адрес'])?.trim();
                 return okbRow.lat && okbRow.lon && (!address || !activeAddresses.has(address));
             })
             .map(okbRow => ({
@@ -66,8 +82,9 @@ const App: React.FC = () => {
                 lon: okbRow.lon!,
                 status: 'potential',
                 name: okbRow['Наименование'] || 'Без названия',
-                address: okbRow['Юридический адрес'] || 'Адрес не указан',
-                type: okbRow['Вид деятельности'] || 'н/д'
+                address: findValueByKey(okbRow, ['Юридический адрес', 'Адрес']) || 'Адрес не указан',
+                type: findValueByKey(okbRow, ['Вид деятельности']) || 'н/д',
+                contacts: findValueByKey(okbRow, ['Контакты']) || undefined
             }));
     }, [allData, okbData]);
 

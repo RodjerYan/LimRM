@@ -34,6 +34,23 @@ async function getGoogleSheetsClient() {
 }
 
 /**
+ * A helper function to find a header key case-insensitively from a list of possibilities.
+ * @param header - The array of header strings.
+ * @param possibilities - An array of possible header names to look for.
+ * @returns The found header key or null.
+ */
+const findHeaderKey = (header: string[], possibilities: string[]): string | null => {
+    const lowerPossibilities = possibilities.map(p => p.toLowerCase());
+    for (const h of header) {
+        if (h && lowerPossibilities.includes(h.toLowerCase())) {
+            return h;
+        }
+    }
+    return null;
+};
+
+
+/**
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
  * It parses the data into an array of structured objects compatible with the application's types.
  * This version includes robust parsing to handle empty rows and headers gracefully.
@@ -51,29 +68,21 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     return []; // No data or only a header row
   }
 
-  // Robust header parsing: treat null/undefined as an empty string.
   const header = rows[0].map(h => String(h || '').trim());
   const dataRows = rows.slice(1);
 
+  const latKey = findHeaderKey(header, ['широта', 'ширина', 'm']);
+  const lonKey = findHeaderKey(header, ['долгота', 'l']);
+  
   const okbData: OkbDataRow[] = dataRows
     .map(row => {
-        // Skip completely empty rows
-        if (row.every(cell => cell === null || cell === '' || cell === undefined)) {
-            return null;
-        }
+        if (row.every(cell => cell === null || cell === '' || cell === undefined)) return null;
 
         const rowData: { [key: string]: any } = {};
         header.forEach((key, index) => {
-            // Only map data if the header key is not empty
-            if (key) {
-                rowData[key] = row[index] || null; // Use null for empty cells
-            }
+            if (key) rowData[key] = row[index] || null;
         });
         
-        // Dynamically find and parse coordinate columns, including 'L' and 'M' as headers.
-        const latKey = header.find(h => ['широта', 'ширина', 'm'].includes(h.toLowerCase()));
-        const lonKey = header.find(h => ['долгота', 'l'].includes(h.toLowerCase()));
-
         if (latKey && lonKey && rowData[latKey] && rowData[lonKey]) {
             const latStr = String(rowData[latKey]).replace(',', '.');
             const lonStr = String(rowData[lonKey]).replace(',', '.');
@@ -81,19 +90,15 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             const lon = parseFloat(lonStr);
 
             if (!isNaN(lat) && !isNaN(lon)) {
-                // Attach parsed coordinates directly to the object
                 rowData.lat = lat;
                 rowData.lon = lon;
             }
         }
 
-        // Ensure the object is not empty if all header keys were blank for this row
-        if (Object.keys(rowData).length === 0) {
-            return null;
-        }
+        if (Object.keys(rowData).length === 0) return null;
         return rowData as OkbDataRow;
     })
-    .filter((row): row is OkbDataRow => row !== null); // Filter out any null (empty) rows
+    .filter((row): row is OkbDataRow => row !== null);
 
   return okbData;
 }

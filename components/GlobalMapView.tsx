@@ -101,7 +101,11 @@ const GlobalMapView: React.FC<HybridMapViewProps> = ({ activeRegions, potentialP
 
         potentialPoints.forEach(point => {
             const marker = L.marker([point.lat, point.lon], { icon: createMarkerIcon() });
-            marker.bindPopup(`<b>${point.name}</b><br>${point.type}<br><small>${point.address}</small>`);
+            let popupContent = `<b>${point.name}</b><br><small>${point.address}</small>`;
+            if (point.contacts) {
+                popupContent += `<br><i>${point.contacts}</i>`;
+            }
+            marker.bindPopup(popupContent);
             layer.addLayer(marker);
         });
 
