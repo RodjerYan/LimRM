@@ -35,6 +35,10 @@ export interface OkbDataRow {
     'Вид деятельности'?: string;
     'ИНН'?: string;
     'Статус'?: string;
+    'Широта'?: string | number;
+    'Долгота'?: string | number;
+    'lat'?: string | number;
+    'lon'?: string | number;
 }
 
 export interface FilterOptions {
@@ -87,3 +91,15 @@ export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
     | { type: 'result', payload: WorkerResultPayload }
     | { type: 'error', payload: WorkerErrorPayload };
+
+// Types for the new Global Map View
+export type MapPointStatus = 'active' | 'potential' | 'matched';
+
+export interface MapPoint {
+    key: string;
+    lat: number;
+    lon: number;
+    name: string;
+    address: string;
+    status: MapPointStatus;
+}

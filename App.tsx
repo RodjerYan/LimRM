@@ -8,6 +8,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
+import GlobalMapView from './components/GlobalMapView'; // Import the new map component
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -15,9 +16,11 @@ import {
     NotificationMessage, 
     OkbStatus, 
     SummaryMetrics,
-    OkbDataRow
+    OkbDataRow,
+    MapPoint,
+    MapPointStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddressForSearch } from './utils/dataUtils';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -37,8 +40,8 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
+    const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
 
-    // FIX: Updated filter state to use 'region' instead of 'city'
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
@@ -56,7 +59,6 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
-        // FIX: Reset filters with 'region'
         setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
@@ -73,7 +75,6 @@ const App: React.FC = () => {
         setFilters(newFilters);
     }, []);
     
-    // FIX: Reset filters with 'region'
     const resetFilters = useCallback(() => {
         setFilters({ rm: '', brand: [], region: [] });
     }, []);
@@ -98,6 +99,64 @@ const App: React.FC = () => {
         }, 100);
         return () => clearTimeout(timer);
     }, [allData, filters]);
+
+    // Effect to process data for the global map view
+    useEffect(() => {
+        if (!okbData.length) {
+            setMapPoints([]);
+            return;
+        }
+
+        // Create a set of normalized addresses from the uploaded file for quick lookups
+        const activeAddresses = new Set<string>();
+        allData.forEach(group => {
+            group.clients.forEach(clientAddress => {
+                activeAddresses.add(normalizeAddressForSearch(clientAddress));
+            });
+        });
+
+        const newMapPoints: MapPoint[] = [];
+        const processedOkbAddresses = new Set<string>();
+
+        // Process OKB data to create map points
+        okbData.forEach((okbRow, index) => {
+            const latStr = okbRow['lat'] || okbRow['Широта'];
+            const lonStr = okbRow['lon'] || okbRow['Долгота'];
+
+            const lat = typeof latStr === 'string' ? parseFloat(latStr.replace(',', '.')) : latStr;
+            const lon = typeof lonStr === 'string' ? parseFloat(lonStr.replace(',', '.')) : lonStr;
+
+            if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
+                const address = okbRow['Юридический адрес'] || `ОКБ #${index + 1}`;
+                const normalizedAddress = normalizeAddressForSearch(address);
+
+                // Avoid duplicate points from the same OKB address
+                if (processedOkbAddresses.has(normalizedAddress)) return;
+
+                const name = okbRow['Наименование'] || 'Без имени';
+                
+                // Determine the status: 'matched' (green) or 'potential' (blue)
+                const status: MapPointStatus = activeAddresses.has(normalizedAddress) ? 'matched' : 'potential';
+
+                newMapPoints.push({
+                    key: `${lat}-${lon}-${index}`,
+                    lat,
+                    lon,
+                    name,
+                    address,
+                    status,
+                });
+                processedOkbAddresses.add(normalizedAddress);
+            }
+        });
+        
+        // Per the user request, red dots (active but not in OKB) are not possible to map
+        // as we only have guaranteed coordinates for clients within the OKB.
+
+        setMapPoints(newMapPoints);
+
+    }, [allData, okbData]);
+
 
     const isDataLoaded = allData.length > 0;
     const isControlPanelLocked = isLoading;
@@ -136,6 +195,7 @@ const App: React.FC = () => {
 
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
+                        <GlobalMapView points={mapPoints} disabled={!isDataLoaded || isLoading} />
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>
