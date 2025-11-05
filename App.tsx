@@ -147,11 +147,11 @@ const App: React.FC = () => {
                     ))}
                 </div>
 
+                {/* FIX: Removed the 'okbData' prop, as the DetailsModal component does not accept it. The required client data is already part of the 'data' prop (selectedRow). */}
                 <DetailsModal 
                     isOpen={isModalOpen} 
                     onClose={() => setIsModalOpen(false)}
                     data={selectedRow}
-                    okbData={okbData}
                 />
             </main>
         </div>

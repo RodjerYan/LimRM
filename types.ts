@@ -1,16 +1,17 @@
 export interface AggregatedDataRow {
     key: string;
     rm: string;
-    clientName: string;
-    brand: string;
+    groupName: string; // Will hold the RM's name
+    brand: string; // Still useful for context, maybe as an aggregation of brands
     city: string; 
     region: string;
     fact: number;
     potential: number;
     growthPotential: number;
     growthPercentage: number;
-    potentialClients?: PotentialClient[];
-    clients: string[]; // List of individual client names/addresses in the group
+    potentialClients: PotentialClient[];
+    currentClients: PotentialClient[];
+    clients: string[]; // List of individual client addresses in the group
 }
 
 export interface ParsedAddress {
@@ -27,7 +28,7 @@ export interface PotentialClient {
 }
 
 export interface OkbDataRow {
-    [key: string]: any;
+    [key:string]: any;
     'Наименование': string;
     'Юридический адрес'?: string;
     'Регион'?: string;
@@ -35,6 +36,8 @@ export interface OkbDataRow {
     'Вид деятельности'?: string;
     'ИНН'?: string;
     'Статус'?: string;
+    'Широта'?: number;
+    'Долгота'?: number;
 }
 
 export interface FilterOptions {

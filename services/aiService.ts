@@ -19,7 +19,8 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const subject = isGroup ? 'группе клиентов' : 'клиенту';
     const subjectDataHeader = isGroup ? 'Данные о группе' : 'Данные о клиенте';
     const clientIdentifier = isGroup ? `Группа (${clientData.clients?.length} ТТ)` : 'Клиент';
-    const clientName = isGroup ? `${clientData.clientName} (РМ: ${clientData.rm})` : clientData.clientName;
+    // FIX: Replaced non-existent 'clientName' property with 'groupName' to correctly identify the client group (RM) in the prompt.
+    const clientName = isGroup ? `${clientData.groupName} (РМ: ${clientData.rm})` : clientData.groupName;
 
     return `
         Проанализируй данные по ${subject} и дай краткие, действенные рекомендации по увеличению продаж.
