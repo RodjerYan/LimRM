@@ -114,13 +114,12 @@ export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
 /**
  * Filters the main dataset based on the current filter state.
  */
+// FIX: Removed filtering by `brand` and `region` as they are not part of the `FilterState` type.
+// The UI only supports filtering by `rm`, so this function now correctly reflects that.
 export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
     return allData.filter(row => {
         const rmMatch = filters.rm ? row.rm === filters.rm : true;
-        const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
-        // FIX: Filter by region instead of city
-        const regionMatch = filters.region.length > 0 ? filters.region.includes(row.region) : true;
-        return rmMatch && brandMatch && regionMatch;
+        return rmMatch;
     });
 };
 

@@ -48,8 +48,6 @@ export interface FilterOptions {
 
 export interface FilterState {
     rm: string;
-    brand: string[];
-    region: string[];
 }
 
 export interface SummaryMetrics {
