@@ -15,9 +15,9 @@ const ResultsTable: React.FC<{
 
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['Группа', 'РМ', 'Регион', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
+            ['Группа', 'РМ', 'Город', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
             ...sortedData.map(row => [
-                row.clientName, row.rm, row.region, row.brand,
+                row.clientName, row.rm, row.city, row.brand,
                 row.fact, row.potential, row.growthPotential, row.growthPercentage.toFixed(2),
             ].join('\t'))
         ].join('\n');
@@ -33,7 +33,7 @@ const ResultsTable: React.FC<{
         return data.filter(item =>
             item.clientName.toLowerCase().includes(lowercasedFilter) ||
             item.rm.toLowerCase().includes(lowercasedFilter) ||
-            item.region.toLowerCase().includes(lowercasedFilter) ||
+            item.city.toLowerCase().includes(lowercasedFilter) ||
             item.brand.toLowerCase().includes(lowercasedFilter)
         );
     }, [data, searchTerm]);
@@ -110,7 +110,7 @@ const ResultsTable: React.FC<{
                         <tr>
                             <th scope="col" className="px-4 py-3">Группа/Клиент</th>
                             <SortableHeader sortKey="rm">РМ</SortableHeader>
-                            <SortableHeader sortKey="region">Регион</SortableHeader>
+                            <SortableHeader sortKey="city">Город</SortableHeader>
                             <SortableHeader sortKey="brand">Бренд</SortableHeader>
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
@@ -123,7 +123,7 @@ const ResultsTable: React.FC<{
                             <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
                                 <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
                                 <td className="px-4 py-3">{row.rm}</td>
-                                <td className="px-4 py-3">{row.region}</td>
+                                <td className="px-4 py-3">{row.city}</td>
                                 <td className="px-4 py-3">{row.brand}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>

@@ -1,10 +1,10 @@
 export interface AggregatedDataRow {
     key: string;
     rm: string;
-    groupName: string; // Will hold the RM's name
-    brand: string; // Still useful for context, maybe as an aggregation of brands
+    groupName: string; // Will hold the RM's name or Client Name
+    clientName: string; // Explicitly add client name for table display
+    brand: string; // Can be an aggregation of brands
     city: string; 
-    region: string;
     fact: number;
     potential: number;
     growthPotential: number;
@@ -43,11 +43,13 @@ export interface OkbDataRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    regions: string[];
+    cities: string[];
 }
 
 export interface FilterState {
     rm: string;
+    brand: string[];
+    city: string[];
 }
 
 export interface SummaryMetrics {

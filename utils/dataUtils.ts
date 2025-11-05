@@ -1,138 +1,74 @@
-// services/addressParser.ts
-import { 
-    standardizeRegion, 
-    REGION_KEYWORD_MAP, 
-    CITY_NORMALIZATION_MAP,
-    REGION_BY_CITY_MAP,
-    INDEX_MAP 
-} from '../utils/addressMappings';
-import { ParsedAddress } from '../types';
-import { callGeminiForRegion } from './geminiService';
+import { AggregatedDataRow, FilterState, FilterOptions, SummaryMetrics } from '../types';
 
-/**
- * Capitalizes the first letter of each word in a string.
- * @param str The input string.
- * @returns The capitalized string.
- */
-const capitalize = (str: string | null): string => {
-    if (!str) return '';
-    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
+    return data.filter(row => {
+        const rmMatch = !filters.rm || row.rm === filters.rm;
+        
+        const brandMatch = filters.brand.length === 0 || 
+            (row.brand && filters.brand.some(b => row.brand.toLowerCase().includes(b.toLowerCase())));
+
+        const cityMatch = filters.city.length === 0 || 
+            (row.city && filters.city.some(c => row.city.toLowerCase().includes(c.toLowerCase())));
+
+        return rmMatch && brandMatch && cityMatch;
+    });
 };
 
-/**
- * Parses a Russian address string to extract the region and city using a multi-layered approach.
- * It handles typos, abbreviations, and various address formats to provide the most accurate result.
- * @param address The raw address string.
- * @returns A ParsedAddress object with the determined region and city.
- */
-export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
-    if (!address?.trim()) {
-        return { region: 'Регион не определен', city: 'Город не определён' };
+export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
+    const rms = new Set<string>();
+    const brands = new Set<string>();
+    const cities = new Set<string>();
+
+    data.forEach(row => {
+        if (row.rm) rms.add(row.rm);
+        if (row.brand) {
+            row.brand.split(',').forEach(b => {
+                const trimmed = b.trim();
+                if(trimmed) brands.add(trimmed);
+            });
+        }
+        if (row.city) {
+            row.city.split(',').forEach(c => {
+                const trimmed = c.trim();
+                if(trimmed) cities.add(trimmed);
+            });
+        }
+    });
+
+    return {
+        rms: Array.from(rms).sort(),
+        brands: Array.from(brands).sort(),
+        cities: Array.from(cities).sort(),
+    };
+};
+
+export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics | null => {
+    if (data.length === 0) {
+        return null;
     }
 
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'e');
-    let normalized = lowerAddress.replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
+    const metrics = data.reduce((acc, row) => {
+        acc.totalFact += row.fact;
+        acc.totalPotential += row.potential;
+        acc.totalGrowth += row.growthPotential;
+        acc.totalClients += row.potentialClients.length;
+        acc.totalActiveClients += row.currentClients.length;
+        return acc;
+    }, { totalFact: 0, totalPotential: 0, totalGrowth: 0, totalClients: 0, totalActiveClients: 0 });
 
-    let region: string | null = null;
-    let city: string | null = null;
+    const totalGrowthPercentage = data.reduce((sum, row) => sum + row.growthPercentage, 0);
+    const averageGrowthPercentage = data.length > 0 ? totalGrowthPercentage / data.length : 0;
 
-    // --- Step 1: Normalization using aliases ---
-    // This handles common typos, abbreviations, and even explicit region mentions.
-    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
+    const topPerformingRM = data.reduce((top, row) => {
+        if (row.growthPotential > top.value) {
+            return { name: row.rm, value: row.growthPotential };
         }
-    }
+        return top;
+    }, { name: 'N/A', value: -Infinity });
 
-    // --- Step 2: Priority 1 - Explicit Region Keyword Mapping ---
-    // Look for keywords like "калининградская область", "лен.обл", etc.
-    const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
-    for (const key of sortedRegionKeys) {
-        if (normalized.includes(key)) {
-            region = REGION_KEYWORD_MAP[key];
-            break;
-        }
-    }
-
-    // --- Step 3: Find City and Determine Region from it ---
-    // This block runs if no explicit region was found in step 2.
-    if (!region) {
-        // Step 3a: Use regex to find city names (e.g., "г. Город", "пос. Поселок")
-        const patterns = [
-            /г[\s\.,]?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // г. Город
-            /пос\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // пос. Поселок
-            /пгт\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,      // пгт. Поселок
-            /дер\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,        // дер. Деревня
-            /^ул\.?\s*([а-яё\-]+)/,                   // ул. Улица (в начале строки)
-        ];
-        for (const pattern of patterns) {
-            const match = normalized.match(pattern);
-            if (match && match[1]) {
-                const potentialCity = match[1].trim();
-                // Check if this city is in our map
-                if (REGION_BY_CITY_MAP[potentialCity]) {
-                    city = potentialCity;
-                    break;
-                }
-            }
-        }
-        
-        // Step 3b: If no city found via regex, do a general search in the string
-        if (!city) {
-            const sortedCityKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
-            for (const cityKey of sortedCityKeys) {
-                 const cityRegex = new RegExp(`\\b${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`);
-                 if(cityRegex.test(normalized)) {
-                     city = cityKey;
-                     break;
-                 }
-            }
-        }
-
-        // Step 3c: Determine region from the found city
-        if (city) {
-            region = REGION_BY_CITY_MAP[city] || null;
-        }
-    }
-    
-    // --- Step 4: Find city if we only have the region so far ---
-    if (region && !city) {
-        const sortedCityKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
-        for (const cityKey of sortedCityKeys) {
-            if (normalized.includes(cityKey) && REGION_BY_CITY_MAP[cityKey] === region) {
-                city = cityKey;
-                break;
-            }
-        }
-    }
-
-    // --- Step 5: Fallbacks for unresolved cases ---
-    // Fallback 5a: Postal Index
-    if (!region) {
-        const indexMatch = address.match(/\b(\d{5,6})\b/);
-        if (indexMatch) {
-            const postalIndex = indexMatch[1];
-            if (INDEX_MAP[postalIndex]) region = INDEX_MAP[postalIndex];
-            else {
-                const prefix3 = postalIndex.substring(0, 3);
-                if (INDEX_MAP[prefix3]) region = INDEX_MAP[prefix3];
-            }
-        }
-    }
-    
-    // --- Step 6: Finalization & Gemini Last Resort ---
-    if (region) {
-        const finalCity = city ? capitalize(city) : 'Город не определён';
-        return { region: standardizeRegion(region), city: finalCity };
-    } else {
-        // Final attempt with Gemini if all local methods fail
-        const geminiRegion = await callGeminiForRegion(address);
-        if (geminiRegion && geminiRegion.trim() !== '') {
-             const finalCity = city ? capitalize(city) : 'Город не определён';
-             return { region: geminiRegion, city: finalCity };
-        }
-    }
-
-    // Default if nothing worked
-    return { region: 'Регион не определен', city: capitalize(city) || 'Город не определён' };
-}
+    return { 
+        ...metrics, 
+        averageGrowthPercentage, 
+        topPerformingRM: topPerformingRM.value === -Infinity ? { name: 'N/A', value: 0 } : topPerformingRM 
+    };
+};
