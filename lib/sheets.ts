@@ -1,120 +1,113 @@
 import { google } from 'googleapis';
 import { OkbDataRow } from '../types';
-// FIX: Explicitly import `Buffer` to handle Base64 decoding reliably.
 import { Buffer } from 'buffer';
-
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const SHEET_NAME = 'Base';
 
 /**
  * Creates and returns an authenticated Google Sheets API client.
- * It uses service account credentials stored in an environment variable.
- * FIX: This function now expects the service account key to be Base64-encoded
- * to prevent parsing errors with multi-line JSON in Vercel environment variables.
+ * This version is hardened with multiple layers of validation for the service account key
+ * to prevent catastrophic crashes on Vercel and provide clear error messages.
  */
 async function getGoogleSheetsClient() {
-  const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!serviceAccountKey) {
-    throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
-  }
-  
-  let credentialsJson;
-  try {
-    // Decode the base64 encoded key first. This is a robust way to handle JSON keys.
-    credentialsJson = Buffer.from(serviceAccountKey, 'base64').toString('utf-8');
-  } catch (error) {
-    console.error("Failed to decode base64 GOOGLE_SERVICE_ACCOUNT_KEY:", error);
-    throw new Error(
-      'Failed to decode GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid base64 encoded string. Check your Vercel environment variable settings.'
-    );
-  }
+    const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    if (!serviceAccountKey) {
+        throw new Error('Критическая ошибка: Переменная окружения GOOGLE_SERVICE_ACCOUNT_KEY не установлена на сервере.');
+    }
 
-  let credentials;
-  try {
-    credentials = JSON.parse(credentialsJson);
-  } catch (error) {
-    console.error("Failed to parse the decoded JSON from GOOGLE_SERVICE_ACCOUNT_KEY:", error);
-    throw new Error(
-      'Failed to parse the decoded JSON. The base64 string might not represent a valid JSON object.'
-    );
-  }
+    try {
+        let credentialsJson;
+        try {
+            credentialsJson = Buffer.from(serviceAccountKey, 'base64').toString('utf-8');
+        } catch (e) {
+            throw new Error('Не удалось декодировать ключ из Base64. Убедитесь, что переменная окружения содержит корректную Base64-строку.');
+        }
 
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
+        if (!credentialsJson) {
+            throw new Error('Декодированный ключ оказался пустой строкой. Проверьте правильность Base64-кодирования.');
+        }
 
-  const sheets = google.sheets({ version: 'v4', auth });
-  return sheets;
+        let credentials;
+        try {
+            credentials = JSON.parse(credentialsJson);
+        } catch (e) {
+            throw new Error('Не удалось разобрать декодированный ключ как JSON. Base64-строка может не представлять собой валидный JSON-объект.');
+        }
+
+        if (!credentials.client_email || !credentials.private_key) {
+            throw new Error('Разобранный JSON-ключ не содержит обязательных полей: "client_email" и/или "private_key". Проверьте целостность исходного JSON-файла перед кодированием.');
+        }
+
+        const auth = new google.auth.GoogleAuth({
+            credentials,
+            scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+        });
+
+        return google.sheets({ version: 'v4', auth });
+
+    } catch (error) {
+        console.error("--- КРИТИЧЕСКАЯ ОШИБКА АУТЕНТИФИКАЦИИ В GOOGLE SHEETS ---");
+        console.error(error);
+        // Re-throw a clear, consolidated error message to be caught by the API handler.
+        throw new Error(`Ошибка аутентификации Google Sheets: ${(error as Error).message}`);
+    }
 }
+
 
 /**
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
- * It parses the data into an array of structured objects compatible with the application's types.
- * This version includes robust parsing to handle empty rows and headers gracefully.
- * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
  */
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:J`, // Fetch all relevant columns for full data compatibility
+    range: `${SHEET_NAME}!A:J`,
   });
 
   const rows = res.data.values;
   if (!rows || rows.length < 2) {
-    return []; // No data or only a header row
+    return [];
   }
 
-  // Robust header parsing: treat null/undefined as an empty string.
   const header = rows[0].map(h => String(h || '').trim());
   const dataRows = rows.slice(1);
 
-  const okbData: OkbDataRow[] = dataRows
+  return dataRows
     .map(row => {
-        // Skip completely empty rows
         if (row.every(cell => cell === null || cell === '' || cell === undefined)) {
             return null;
         }
-
         const rowData: { [key: string]: any } = {};
         header.forEach((key, index) => {
-            // Only map data if the header key is not empty
             if (key) {
-                rowData[key] = row[index] || null; // Use null for empty cells
+                rowData[key] = row[index] || null;
             }
         });
-        // Ensure the object is not empty if all header keys were blank for this row
         if (Object.keys(rowData).length === 0) {
             return null;
         }
         return rowData as OkbDataRow;
     })
-    .filter((row): row is OkbDataRow => row !== null); // Filter out any null (empty) rows
-
-  return okbData;
+    .filter((row): row is OkbDataRow => row !== null);
 }
 
 /**
- * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
- * @returns {Promise<string[]>} A promise that resolves to an array of address strings.
+ * Fetches only the client addresses from column C of the Google Sheet.
  */
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!C2:C`, // FIX: Fetch from column C (Юридический адрес)
+        range: `${SHEET_NAME}!C2:C`,
     });
 
     const rows = res.data.values || [];
     return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
 }
 
-
 /**
- * Updates client statuses in the Google Sheet in a single batch request for efficiency.
- * @param {Array<{rowIndex: number, status: string}>} updates - An array of update objects.
+ * Updates client statuses in the Google Sheet in a single batch request.
  */
 export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: string }[]) {
     if (updates.length === 0) return;
@@ -122,7 +115,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     const sheets = await getGoogleSheetsClient();
 
     const data = updates.map(update => ({
-        range: `${SHEET_NAME}!F${update.rowIndex}`, // FIX: Column F is 'Статус'
+        range: `${SHEET_NAME}!F${update.rowIndex}`,
         values: [[update.status]],
     }));
 
