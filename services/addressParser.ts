@@ -1,7 +1,7 @@
 // services/addressParser.ts
 import {
     REGION_BY_CITY_WITH_INDEXES
-} from '../utils/regionMap';
+} from '../utils/regionMap.ts';
 import { ParsedAddress } from '../types';
 
 // Сопоставление нормализованных ключевых слов с каноническими названиями стран
@@ -97,7 +97,7 @@ export async function parseAddressData(row: { [key: string]: any }): Promise<Par
         const cityResult = findRegionByCity(normalizedContext);
         return {
             region: country,
-            city: capitalize(cityResult?.city) || 'Город не определён'
+            city: capitalize(cityResult?.city ?? null) || 'Город не определён'
         };
     }
     
