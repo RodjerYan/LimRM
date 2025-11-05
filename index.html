@@ -63,40 +63,31 @@
             background: #6366f1; /* indigo-500 */
         }
 
-        /* Custom Map Marker styles */
-        .marker-pin {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            border: 2px solid rgba(255, 255, 255, 0.8);
-            box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
-            transition: transform 0.2s ease-in-out;
-        }
-        .leaflet-marker-icon:hover .marker-pin {
-             transform: scale(1.5);
-        }
-        /* Leaflet popup customization */
-        .leaflet-popup-content-wrapper {
+        /* Leaflet Map Legend Styles */
+        .leaflet-container {
             background-color: #1F2937; /* card-bg */
-            color: #e2e8f0; /* slate-200 */
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-            border: 1px solid #4f46e5; /* indigo-600 */
         }
-        .leaflet-popup-content {
-            font-family: 'Inter', sans-serif;
-            margin: 12px;
+        .legend {
+            line-height: 18px;
+            color: #E5E7EB; /* gray-200 */
+            background-color: rgba(31, 41, 55, 0.8); /* card-bg with opacity */
+            backdrop-filter: blur(5px);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #4B5563; /* gray-600 */
         }
-        .leaflet-popup-tip {
-            background-color: #1F2937;
+        .legend h4 {
+            margin: 0 0 5px;
+            font-weight: bold;
+            color: white;
         }
-        .leaflet-popup-close-button {
-             color: #e2e8f0 !important;
-             padding: 4px 4px 0 0 !important;
-        }
-        .leaflet-popup-close-button:hover {
-             background-color: transparent !important;
-             color: #fff !important;
+        .legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.8;
+            border-radius: 3px;
         }
     </style>
 <script type="importmap">
