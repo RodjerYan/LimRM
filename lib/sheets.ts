@@ -70,9 +70,9 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
         
-        // Dynamically find and parse coordinate columns
-        const latKey = header.find(h => h.toLowerCase() === 'широта' || h.toLowerCase() === 'ширина');
-        const lonKey = header.find(h => h.toLowerCase() === 'долгота');
+        // Dynamically find and parse coordinate columns, including 'L' and 'M' as headers.
+        const latKey = header.find(h => ['широта', 'ширина', 'm'].includes(h.toLowerCase()));
+        const lonKey = header.find(h => ['долгота', 'l'].includes(h.toLowerCase()));
 
         if (latKey && lonKey && rowData[latKey] && rowData[lonKey]) {
             const latStr = String(rowData[latKey]).replace(',', '.');
