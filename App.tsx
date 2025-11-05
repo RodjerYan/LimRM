@@ -217,7 +217,7 @@ const App: React.FC = () => {
                     isOpen={isModalOpen} 
                     onClose={() => setIsModalOpen(false)}
                     data={selectedRow}
-                    okbData={okbData}
+                    okbStatus={okbStatus}
                 />
             </main>
         </div>

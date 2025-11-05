@@ -3,18 +3,43 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
-import { AggregatedDataRow, OkbDataRow } from '../types';
+import { AggregatedDataRow, OkbStatus } from '../types';
 import { streamClientInsights } from '../services/aiService';
-import { LoaderIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon } from './icons';
 
 interface DetailsModalProps {
     isOpen: boolean;
     onClose: () => void;
     data: AggregatedDataRow | null;
-    okbData: OkbDataRow[]; // Kept for potential future use, but not used in the grouped view
+    okbStatus: OkbStatus | null;
 }
 
-const formatNumber = (num: number) => new Intl.NumberFormat('ru-RU').format(num);
+// Local formatNumber utility
+const formatNumber = (num: number, short = false) => {
+    if (isNaN(num)) return '0';
+    if (short) {
+        if (Math.abs(num) >= 1_000_000) return `${(num / 1_000_000).toFixed(2)} млн`;
+        if (Math.abs(num) >= 1_000) return `${(num / 1_000).toFixed(1)} тыс.`;
+    }
+    return num.toLocaleString('ru-RU', { maximumFractionDigits: 0 });
+};
+
+// Local MetricCard component for modal-specific display
+const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; color: string; tooltip: string }> = ({ title, value, icon, color, tooltip }) => (
+    <div title={tooltip} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 flex items-start space-x-3">
+        <div className={`p-2 rounded-md ${color} bg-opacity-10`}>
+           {/* FIX: Add a more specific type assertion to React.cloneElement to resolve the TypeScript error.
+               This informs the compiler that the cloned element can accept a `small` prop, which is true
+               for all icons used in this context. */}
+           {React.cloneElement(icon as React.ReactElement<{ small?: boolean }>, { small: true })}
+        </div>
+        <div>
+            <p className="text-xs text-gray-400">{title}</p>
+            <p className="text-lg font-bold text-white">{value}</p>
+        </div>
+    </div>
+);
+
 
 const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [insight, setInsight] = useState('');
@@ -106,8 +131,12 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
     );
 };
 
-const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) => {
+const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
     if (!data) return null;
+
+    const activeClients = data.clients?.length || 0;
+    const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
+    const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
@@ -117,35 +146,26 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) =>
                     <div className="space-y-4">
                         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
                              <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
-                             <div className="grid grid-cols-2 gap-4 text-center">
-                                 <div>
-                                     <p className="text-sm text-gray-400">Суммарный Факт</p>
-                                     <p className="text-2xl font-bold text-success">{formatNumber(data.fact)}</p>
-                                 </div>
-                                 <div>
-                                     <p className="text-sm text-gray-400">Суммарный Потенциал</p>
-                                     <p className="text-2xl font-bold text-accent">{formatNumber(data.potential)}</p>
-                                 </div>
-                                 <div>
-                                     <p className="text-sm text-gray-400">Рост (абс.)</p>
-                                     <p className="text-2xl font-bold text-warning">{formatNumber(data.growthPotential)}</p>
-                                 </div>
-                                 <div>
-                                     <p className="text-sm text-gray-400">Рост (%)</p>
-                                     <p className="text-2xl font-bold text-warning">{data.growthPercentage.toFixed(1)}%</p>
-                                 </div>
+                             <div className="grid grid-cols-2 gap-3">
+                                <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
+                                <MetricCard title="Общий Потенциал" value={formatNumber(data.potential, true)} icon={<PotentialIcon />} color="text-accent" tooltip={`Прогнозируемый объем рынка для группы: ${formatNumber(data.potential, false)} кг/ед`} />
+                                <MetricCard title="Потенциал Роста" value={formatNumber(data.growthPotential, false)} icon={<GrowthIcon />} color="text-warning" tooltip={`Неосвоенный объем рынка для группы: ${formatNumber(data.growthPotential, false)} кг/ед`} />
+                                <MetricCard title="Средний Рост" value={`${data.growthPercentage.toFixed(1)}%`} icon={<TrendingUpIcon />} color="text-yellow-400" tooltip="Средний процент неосвоенного потенциала по клиентам в группе" />
+                                <MetricCard title="Активных Клиентов" value={formatNumber(activeClients, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
+                                <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
+                                <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClients} из ${okbStatus?.rowCount || 0})`} />
                              </div>
                         </div>
                         <GroupedClientsList clients={data.clients} />
                     </div>
-                     <AiInsightSection data={data} />
+                    <AiInsightSection data={data} />
                 </div>
-
+                
                 {/* Bottom Section: Chart */}
-                <div>
-                    <h4 className="font-bold text-lg mb-2 text-indigo-400">Факт vs Потенциал</h4>
-                    <div className="h-64 bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                         <DetailChart fact={data.fact} potential={data.potential} />
+                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                    <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
+                    <div className="h-64">
+                        <DetailChart fact={data.fact} potential={data.potential} />
                     </div>
                 </div>
             </div>

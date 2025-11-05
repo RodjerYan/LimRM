@@ -34,23 +34,6 @@ async function getGoogleSheetsClient() {
 }
 
 /**
- * A helper function to find a header key case-insensitively from a list of possibilities.
- * @param header - The array of header strings.
- * @param possibilities - An array of possible header names to look for.
- * @returns The found header key or null.
- */
-const findHeaderKey = (header: string[], possibilities: string[]): string | null => {
-    const lowerPossibilities = possibilities.map(p => p.toLowerCase());
-    for (const h of header) {
-        if (h && lowerPossibilities.includes(h.toLowerCase())) {
-            return h;
-        }
-    }
-    return null;
-};
-
-
-/**
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
  * It parses the data into an array of structured objects compatible with the application's types.
  * This version includes robust parsing to handle empty rows and headers gracefully.
@@ -68,34 +51,48 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     return []; // No data or only a header row
   }
 
-  const header = rows[0].map(h => String(h || '').trim());
+  const originalHeader = rows[0].map(h => String(h || '').trim());
+  const lowerCaseHeader = originalHeader.map(h => h.toLowerCase());
   const dataRows = rows.slice(1);
 
-  const latKey = findHeaderKey(header, ['широта', 'ширина', 'm']);
-  const lonKey = findHeaderKey(header, ['долгота', 'l']);
+  // Find column indices directly. This is more robust than matching string keys later.
+  const latIndex = lowerCaseHeader.findIndex(h => ['широта', 'ширина', 'm'].includes(h));
+  const lonIndex = lowerCaseHeader.findIndex(h => ['долгота', 'l'].includes(h));
   
   const okbData: OkbDataRow[] = dataRows
     .map(row => {
-        if (row.every(cell => cell === null || cell === '' || cell === undefined)) return null;
+        // Skip rows that are completely empty to avoid processing useless data.
+        if (row.every(cell => cell === null || cell === '' || cell === undefined)) {
+            return null;
+        }
 
+        // Create the base row object by mapping original headers to row values.
         const rowData: { [key: string]: any } = {};
-        header.forEach((key, index) => {
-            if (key) rowData[key] = row[index] || null;
+        originalHeader.forEach((key, index) => {
+            if (key) { // Only add properties for columns with a header
+                rowData[key] = row[index] || null;
+            }
         });
         
-        if (latKey && lonKey && rowData[latKey] && rowData[lonKey]) {
-            const latStr = String(rowData[latKey]).replace(',', '.');
-            const lonStr = String(rowData[lonKey]).replace(',', '.');
+        // Now, robustly parse coordinates using the determined indices.
+        // This logic is now independent of the `rowData` object's keys.
+        if (latIndex !== -1 && lonIndex !== -1 && row[latIndex] && row[lonIndex]) {
+            const latStr = String(row[latIndex]).replace(',', '.').trim();
+            const lonStr = String(row[lonIndex]).replace(',', '.').trim();
+
             const lat = parseFloat(latStr);
             const lon = parseFloat(lonStr);
 
+            // Only add coordinates if they are valid numbers.
             if (!isNaN(lat) && !isNaN(lon)) {
                 rowData.lat = lat;
                 rowData.lon = lon;
             }
         }
 
-        if (Object.keys(rowData).length === 0) return null;
+        if (Object.keys(rowData).length === 0) {
+            return null;
+        }
         return rowData as OkbDataRow;
     })
     .filter((row): row is OkbDataRow => row !== null);
