@@ -2,7 +2,7 @@ import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { normalizeAddressForSearch, findBestFuzzyMatchByName } from '../utils/dataUtils';
+import { normalizeAddressForSearch, findBestFuzzyMatchByName, extractRegionFromOkb } from '../utils/dataUtils';
 
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -30,8 +30,8 @@ const prepareOkbData = (okbData: OkbDataRow[]): {
 
     for (const row of okbData) {
         // Prepare for region-based lookup
-        const region = (row['Регион'] || '').trim();
-        if (region) {
+        const region = extractRegionFromOkb(row);
+        if (region !== 'Регион не определен') {
             if (!okbByRegion.has(region)) okbByRegion.set(region, []);
             okbByRegion.get(region)!.push(row);
         }
@@ -106,7 +106,7 @@ const finalizeProcessing = (
         const growthPotential = Math.max(0, potential - item.fact);
         const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
         
-        const existingClientAddresses = new Set(Array.from(item.clients).map(addr => normalizeAddressForSearch(addr)));
+        const existingClientAddresses = new Set(Array.from(item.currentClients.keys()));
         const potentialClients = findPotentialClients(item.regions, existingClientAddresses, okbByRegion);
         
         finalData.push({
@@ -155,7 +155,11 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
+    // FIX: Add original index for better error reporting and context
+    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' })
+      .map((row, index) => (row ? { ...row, _originalIndex: index + 2 } : null))
+      .filter(Boolean);
+
 
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
     
@@ -172,9 +176,8 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
         const batch = jsonData.slice(i, i + BATCH_SIZE);
         
-        const addressParsingJobs = batch.map(async (row, index) => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
-            
+        const addressParsingJobs = batch.map(async (row) => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
             if (addressCache.has(address)) return { row, parsedAddress: addressCache.get(address)! };
             
             let parsedAddress = await parseRussianAddress(address);
@@ -195,7 +198,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
         const resolvedAddresses = await Promise.all(addressParsingJobs);
 
         resolvedAddresses.forEach(({ row, parsedAddress }) => {
-            if (!parsedAddress) return;
+            if (!row || !parsedAddress) return;
 
             const rm = row['РМ'] || 'Неизвестный РМ';
             const key = rm.toLowerCase();
@@ -203,9 +206,9 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
             const region = parsedAddress.region;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${jsonData.indexOf(row) + 2}`;
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
 
-            if (isNaN(fact) || region === 'Регион не определен') return;
+            if (isNaN(fact)) return;
 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
@@ -221,23 +224,34 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
             const agg = aggregatedData[key];
             agg.fact += fact;
             agg.clients.add(address);
-            agg.regions.add(region);
             agg.brands.add(brand);
-
+            
             const normalizedAddress = normalizeAddressForSearch(address);
-            if (!agg.currentClients.has(normalizedAddress)) {
-                let okbMatch = okbByAddress.get(normalizedAddress);
 
-                // --- Fallback Logic: Fuzzy search by name if address match fails ---
-                if (!okbMatch) {
-                    const regionClients = okbByRegion.get(region) || [];
+            if (!agg.currentClients.has(normalizedAddress)) {
+                let okbMatch: OkbDataRow | undefined = undefined;
+                let foundRegion = region; 
+
+                const directMatch = okbByAddress.get(normalizedAddress);
+                if (directMatch) {
+                    okbMatch = directMatch;
+                    const regionFromOKB = extractRegionFromOkb(directMatch);
+                    if (regionFromOKB !== 'Регион не определен') {
+                        foundRegion = regionFromOKB;
+                    }
+                } 
+                else if (foundRegion !== 'Регион не определен') {
+                    const regionClients = okbByRegion.get(foundRegion) || [];
                     if (regionClients.length > 0) {
                         const clientName = row['Наименование ТТ'] || '';
                         okbMatch = findBestFuzzyMatchByName(clientName, regionClients);
                     }
                 }
-                // --- End Fallback ---
-
+                
+                if (foundRegion !== 'Регион не определен') {
+                    agg.regions.add(foundRegion);
+                }
+                
                 agg.currentClients.set(normalizedAddress, {
                     name: row['Наименование ТТ'] || 'Без названия',
                     address: address,
@@ -246,7 +260,6 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
                     lon: okbMatch ? parseFloat(String(okbMatch['Долгота']).replace(',', '.')) || undefined : undefined
                 });
             }
-
 
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -300,7 +313,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, ok
         const resolvedAddresses = await Promise.all(addressParsingJobs);
 
         resolvedAddresses.forEach(({ row, parsedAddress }) => {
-            if (!parsedAddress) return;
+            if (!row || !parsedAddress) return;
             
             const rm = row['РМ'] || 'Неизвестный РМ';
             const key = rm.toLowerCase();
@@ -309,7 +322,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, ok
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
 
-            if (isNaN(fact) || region === 'Регион не определен') return;
+            if (isNaN(fact)) return;
 
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
@@ -326,22 +339,32 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, ok
             const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
             agg.fact += fact;
             agg.clients.add(address);
-            agg.regions.add(region);
             agg.brands.add(brand);
 
             const normalizedAddress = normalizeAddressForSearch(address);
             if (!agg.currentClients.has(normalizedAddress)) {
-                 let okbMatch = okbByAddress.get(normalizedAddress);
+                let okbMatch: OkbDataRow | undefined = undefined;
+                let foundRegion = region;
 
-                // --- Fallback Logic: Fuzzy search by name if address match fails ---
-                if (!okbMatch) {
-                    const regionClients = okbByRegion.get(region) || [];
+                const directMatch = okbByAddress.get(normalizedAddress);
+                if (directMatch) {
+                    okbMatch = directMatch;
+                    const regionFromOKB = extractRegionFromOkb(directMatch);
+                    if (regionFromOKB !== 'Регион не определен') {
+                        foundRegion = regionFromOKB;
+                    }
+                }
+                else if (foundRegion !== 'Регион не определен') {
+                    const regionClients = okbByRegion.get(foundRegion) || [];
                     if (regionClients.length > 0) {
                         const clientName = row['Наименование ТТ'] || '';
                         okbMatch = findBestFuzzyMatchByName(clientName, regionClients);
                     }
                 }
-                // --- End Fallback ---
+
+                if (foundRegion !== 'Регион не определен') {
+                    agg.regions.add(foundRegion);
+                }
 
                 agg.currentClients.set(normalizedAddress, {
                     name: row['Наименование ТТ'] || 'Без названия',
@@ -366,11 +389,22 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, ok
                 rowCounter++;
                 if (!headersChecked && results.meta.fields) {
                     hasPotentialColumn = results.meta.fields.some(h => (h || '').toLowerCase() === 'потенциал');
+                    if (!results.meta.fields.some(h => (h || '').toLowerCase() === 'вес, кг')) {
+                        // Stop parsing and reject if critical column is missing
+                        reject(new Error('CSV-файл должен содержать колонку "Вес, кг".'));
+                        // PapaParse worker needs a way to be stopped, this is a soft way.
+                        // @ts-ignore
+                        results.meta.aborted = true; 
+                        return;
+                    }
                     headersChecked = true;
                 }
                 
-                const dataWithIndex = { ...results.data as object, _originalIndex: rowCounter + 1 };
-                rowBatch.push(dataWithIndex);
+                const dataWithIndex = (results.data && typeof results.data === 'object') ? { ...results.data as object, _originalIndex: rowCounter + 1 } : null;
+
+                if (dataWithIndex) {
+                    rowBatch.push(dataWithIndex);
+                }
 
                 if (rowBatch.length >= BATCH_SIZE) {
                     processingPromises.push(processAndAggregateBatch([...rowBatch]));

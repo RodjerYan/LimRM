@@ -32,15 +32,20 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ currentClients, potenti
     const markersLayer = useRef<L.FeatureGroup | null>(null);
 
     useEffect(() => {
-        if (!mapContainer.current) return;
+        // --- DIAGNOSTICS ---
+        console.log(`[Map] Received ${currentClients?.length ?? 0} current clients.`);
+        console.log(`[Map] Received ${potentialClients?.length ?? 0} potential clients.`);
+        // -------------------
+
+        if (!mapContainer.current || !currentClients || !potentialClients) return;
 
         // Initialize map only once
         if (mapInstance.current === null) {
+            console.log('[Map] Initializing Leaflet map instance.');
             mapInstance.current = L.map(mapContainer.current, {
                 scrollWheelZoom: true,
             });
             
-            // Using a dark theme tile layer from CartoDB
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
             }).addTo(mapInstance.current);
@@ -56,28 +61,47 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ currentClients, potenti
         }
 
         const addClientMarkers = (clients: PotentialClient[], icon: L.Icon, type: string) => {
-            clients.forEach(client => {
-                if (client.lat && client.lon) {
-                    const marker = L.marker([client.lat, client.lon], { icon });
+            let addedCount = 0;
+            clients.forEach((client, index) => {
+                // --- ROBUST COORDINATE VALIDATION ---
+                const lat = client.lat;
+                const lon = client.lon;
+                const areCoordsValid = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+
+                if (areCoordsValid) {
+                    const marker = L.marker([lat, lon], { icon });
                     marker.bindPopup(`<b>${client.name}</b><br><span style="color: ${icon === greenIcon ? '#34d399' : '#f87171'};">${type}</span><br><small>${client.address}</small>`);
                     markersLayer.current?.addLayer(marker);
+                    addedCount++;
+                } else if (client.lat !== undefined || client.lon !== undefined) {
+                    console.warn(`[Map] Invalid coordinates for client #${index} (${client.name}): lat=${lat}, lon=${lon}`);
                 }
             });
+            console.log(`[Map] Added ${addedCount} markers for type: ${type}`);
         };
 
         addClientMarkers(currentClients, greenIcon, 'Текущий клиент');
         addClientMarkers(potentialClients, redIcon, 'Потенциальный клиент');
         
-        // Fit map to markers bounds if there are any markers
         if (markersLayer.current && markersLayer.current.getLayers().length > 0) {
             const bounds = markersLayer.current.getBounds();
             if (bounds.isValid()) {
-                map.fitBounds(bounds.pad(0.1));
+                // If there's only one point, fitBounds might zoom in too much.
+                // In that case, we set a specific zoom level.
+                const northEast = bounds.getNorthEast();
+                const southWest = bounds.getSouthWest();
+                if (northEast.equals(southWest)) {
+                    map.setView(northEast, 13); // Zoom level 13 for a single point
+                } else {
+                    map.fitBounds(bounds.pad(0.1));
+                }
             } else {
-                 map.setView([55.75, 37.61], 5); // Fallback view
+                 console.warn('[Map] Bounds are invalid, falling back to default view.');
+                 map.setView([55.75, 37.61], 5);
             }
         } else {
-            map.setView([55.75, 37.61], 5); // Default view if no clients
+            console.log('[Map] No markers to display, setting default view.');
+            map.setView([55.75, 37.61], 5);
         }
 
     }, [currentClients, potentialClients]);
@@ -86,6 +110,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ currentClients, potenti
     useEffect(() => {
         return () => {
             if (mapInstance.current) {
+                console.log('[Map] Cleaning up map instance.');
                 mapInstance.current.remove();
                 mapInstance.current = null;
             }
