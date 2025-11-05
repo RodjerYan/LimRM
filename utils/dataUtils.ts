@@ -3,24 +3,24 @@ import { REGION_BY_CITY_MAP, standardizeRegion } from './addressMappings';
 
 /**
  * Normalizes an address string for search and comparison purposes.
- * It converts to lower case, handles 'ё', removes punctuation and legal forms,
- * and standardizes or removes common address parts for better matching.
+ * It converts to lower case, removes punctuation and common address parts,
+ * and then tokenizes and sorts the words to make it order-independent.
  * @param str The string to normalize.
- * @returns The normalized string.
+ * @returns The normalized, order-independent string.
  */
 export const normalizeAddressForSearch = (str: string | undefined | null): string => {
     if (!str) return '';
-    return str
+    const cleaned = str
         .toLowerCase()
         .replace(/ё/g, 'е')
-        .replace(/["'«»`.,;:[\]()]/g, '')
+        .replace(/["'«»`.,;:[\]()]/g, ' ')
         .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
-        .replace(/\b(обл|обл\.)/g, 'область')
-        .replace(/\b(р-н|р-н\.)/g, 'район')
-        .replace(/\b(респ|респ\.)/g, 'республика')
-        .replace(/\b(г|г\.|город|ул|ул\.|улица|д|д\.|дом|к|к\.|корп|корп\.|корпус|кв|кв\.|квартира|стр|стр\.|строение|пом|пом\.|помещение)\b/g, '')
+        .replace(/\b(обл|обл\.|область|р-н|р-н\.|район|респ|респ\.|республика|г|г\.|город|ул|ул\.|улица|д|д\.|дом|к|к\.|корп|корп\.|корпус|кв|кв\.|квартира|стр|стр\.|строение|пом|пом\.|помещение)\b/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+
+    // Tokenize, sort, and join for order-independent matching
+    return cleaned.split(' ').filter(Boolean).sort().join(' ');
 };
 
 
@@ -56,25 +56,32 @@ export const levenshteinDistance = (a: string, b: string): number => {
 };
 
 /**
- * Finds the best matching record from the OKB data for a given client name and city.
+ * Finds the best matching record from a list of OKB entries based on name similarity.
+ * @param clientName - The name of the client to match from the sales data.
+ * @param okbCandidates - An array of potential matches from the OKB data (e.g., from the same region).
+ * @returns The best matching OKB row or null if no match exceeds the similarity threshold.
  */
-export const findBestOkbMatch = (clientName: string, city: string, okbData: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
-    const normalizedClientName = normalizeAddressForSearch(clientName);
-    const lowercasedCity = city.toLowerCase();
-    
+export const findBestFuzzyMatchByName = (clientName: string, okbCandidates: OkbDataRow[]): OkbDataRow | null => {
+    if (!clientName || okbCandidates.length === 0) {
+        return null;
+    }
+
+    const normalizedClientName = normalizeString(clientName);
     let bestMatch: OkbDataRow | null = null;
-    let maxScore = 0.8; // Set a threshold to avoid bad matches
+    let minDistance = Infinity;
+    // Set a dynamic threshold: the name must be at least 70% similar.
+    const threshold = Math.floor(normalizedClientName.length * 0.3); 
 
-    const potentialMatches = okbData.filter(okb =>
-        okb['Город']?.toLowerCase() === lowercasedCity || okb['Юридический адрес']?.toLowerCase().includes(lowercasedCity)
-    );
-
-    for (const okb of potentialMatches) {
-        const distance = levenshteinDistance(normalizedClientName, okb.normalizedName);
-        const score = 1 - distance / Math.max(normalizedClientName.length, okb.normalizedName.length);
-        if (score > maxScore) {
-            maxScore = score;
-            bestMatch = okb;
+    for (const okb of okbCandidates) {
+        const okbName = okb['Наименование'];
+        if (okbName) {
+            const normalizedOkbName = normalizeString(okbName);
+            const distance = levenshteinDistance(normalizedClientName, normalizedOkbName);
+            
+            if (distance < minDistance && distance <= threshold) {
+                minDistance = distance;
+                bestMatch = okb;
+            }
         }
     }
     

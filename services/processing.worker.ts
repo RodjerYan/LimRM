@@ -2,8 +2,7 @@ import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddressForSearch, extractRegionFromOkb } from '../utils/dataUtils';
+import { normalizeAddressForSearch, findBestFuzzyMatchByName } from '../utils/dataUtils';
 
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -21,19 +20,23 @@ type AggregationMap = {
  * @param okbData - The raw OKB data array.
  * @returns Maps for lookup by region and by normalized address.
  */
-const prepareOkbData = (okbData: OkbDataRow[]): { okbByRegion: Map<string, OkbDataRow[]>, okbByAddress: Map<string, OkbDataRow> } => {
+const prepareOkbData = (okbData: OkbDataRow[]): { 
+    okbByRegion: Map<string, OkbDataRow[]>, 
+    okbByAddress: Map<string, OkbDataRow> 
+} => {
     const okbByRegion = new Map<string, OkbDataRow[]>();
     const okbByAddress = new Map<string, OkbDataRow>();
     if (!okbData) return { okbByRegion, okbByAddress };
 
     for (const row of okbData) {
-        const region = extractRegionFromOkb(row);
-        if (region && region !== 'Регион не определен') {
-            if (!okbByRegion.has(region)) {
-                okbByRegion.set(region, []);
-            }
+        // Prepare for region-based lookup
+        const region = (row['Регион'] || '').trim();
+        if (region) {
+            if (!okbByRegion.has(region)) okbByRegion.set(region, []);
             okbByRegion.get(region)!.push(row);
         }
+        
+        // Prepare for direct address lookup
         const address = row['Юридический адрес'];
         if(address) {
             okbByAddress.set(normalizeAddressForSearch(address), row);
@@ -223,15 +226,27 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
 
             const normalizedAddress = normalizeAddressForSearch(address);
             if (!agg.currentClients.has(normalizedAddress)) {
-                const okbMatch = okbByAddress.get(normalizedAddress);
+                let okbMatch = okbByAddress.get(normalizedAddress);
+
+                // --- Fallback Logic: Fuzzy search by name if address match fails ---
+                if (!okbMatch) {
+                    const regionClients = okbByRegion.get(region) || [];
+                    if (regionClients.length > 0) {
+                        const clientName = row['Наименование ТТ'] || '';
+                        okbMatch = findBestFuzzyMatchByName(clientName, regionClients);
+                    }
+                }
+                // --- End Fallback ---
+
                 agg.currentClients.set(normalizedAddress, {
                     name: row['Наименование ТТ'] || 'Без названия',
                     address: address,
                     type: okbMatch?.['Вид деятельности'] || 'н/д',
-                    lat: parseFloat(String(okbMatch?.['Широта']).replace(',', '.')) || undefined,
-                    lon: parseFloat(String(okbMatch?.['Долгота']).replace(',', '.')) || undefined
+                    lat: okbMatch ? parseFloat(String(okbMatch['Широта']).replace(',', '.')) || undefined : undefined,
+                    lon: okbMatch ? parseFloat(String(okbMatch['Долгота']).replace(',', '.')) || undefined : undefined
                 });
             }
+
 
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -316,13 +331,24 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, ok
 
             const normalizedAddress = normalizeAddressForSearch(address);
             if (!agg.currentClients.has(normalizedAddress)) {
-                const okbMatch = okbByAddress.get(normalizedAddress);
+                 let okbMatch = okbByAddress.get(normalizedAddress);
+
+                // --- Fallback Logic: Fuzzy search by name if address match fails ---
+                if (!okbMatch) {
+                    const regionClients = okbByRegion.get(region) || [];
+                    if (regionClients.length > 0) {
+                        const clientName = row['Наименование ТТ'] || '';
+                        okbMatch = findBestFuzzyMatchByName(clientName, regionClients);
+                    }
+                }
+                // --- End Fallback ---
+
                 agg.currentClients.set(normalizedAddress, {
                     name: row['Наименование ТТ'] || 'Без названия',
                     address: address,
                     type: okbMatch?.['Вид деятельности'] || 'н/д',
-                    lat: parseFloat(String(okbMatch?.['Широта']).replace(',', '.')) || undefined,
-                    lon: parseFloat(String(okbMatch?.['Долгота']).replace(',', '.')) || undefined,
+                    lat: okbMatch ? parseFloat(String(okbMatch['Широта']).replace(',', '.')) || undefined : undefined,
+                    lon: okbMatch ? parseFloat(String(okbMatch['Долгота']).replace(',', '.')) || undefined : undefined
                 });
             }
             
