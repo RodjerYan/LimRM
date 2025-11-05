@@ -59,15 +59,15 @@ export const levenshteinDistance = (a: string, b: string): number => {
  * Finds the best matching record from a list of OKB entries based on name similarity.
  * @param clientName - The name of the client to match from the sales data.
  * @param okbCandidates - An array of potential matches from the OKB data (e.g., from the same region).
- * @returns The best matching OKB row or null if no match exceeds the similarity threshold.
+ * @returns The best matching OKB row or undefined if no match exceeds the similarity threshold.
  */
-export const findBestFuzzyMatchByName = (clientName: string, okbCandidates: OkbDataRow[]): OkbDataRow | null => {
+export const findBestFuzzyMatchByName = (clientName: string, okbCandidates: OkbDataRow[]): OkbDataRow | undefined => {
     if (!clientName || okbCandidates.length === 0) {
-        return null;
+        return undefined;
     }
 
     const normalizedClientName = normalizeString(clientName);
-    let bestMatch: OkbDataRow | null = null;
+    let bestMatch: OkbDataRow | undefined = undefined;
     let minDistance = Infinity;
     // Set a dynamic threshold: the name must be at least 70% similar.
     const threshold = Math.floor(normalizedClientName.length * 0.3); 
