@@ -7,7 +7,7 @@ const ResultsTable: React.FC<{
     onRowClick: (row: AggregatedDataRow) => void;
     disabled: boolean;
 }> = ({ data, onRowClick, disabled }) => {
-    const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow | 'activeClients' | 'potentialClientsCount'; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
+    const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [rowsPerPage, setRowsPerPage] = useState(15);
@@ -15,9 +15,9 @@ const ResultsTable: React.FC<{
 
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['РМ', 'Активных ТТ', 'Потенциальных ТТ', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
+            ['Группа', 'РМ', 'Регион', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
             ...sortedData.map(row => [
-                row.groupName, row.currentClients.length, row.potentialClients.length,
+                row.clientName, row.rm, row.region, row.brand,
                 row.fact, row.potential, row.growthPotential, row.growthPercentage.toFixed(2),
             ].join('\t'))
         ].join('\n');
@@ -31,7 +31,10 @@ const ResultsTable: React.FC<{
         if (!searchTerm) return data;
         const lowercasedFilter = searchTerm.toLowerCase();
         return data.filter(item =>
-            item.groupName.toLowerCase().includes(lowercasedFilter)
+            item.clientName.toLowerCase().includes(lowercasedFilter) ||
+            item.rm.toLowerCase().includes(lowercasedFilter) ||
+            item.region.toLowerCase().includes(lowercasedFilter) ||
+            item.brand.toLowerCase().includes(lowercasedFilter)
         );
     }, [data, searchTerm]);
 
@@ -39,19 +42,8 @@ const ResultsTable: React.FC<{
         let sortableItems = [...filteredData];
         if (sortConfig !== null) {
             sortableItems.sort((a, b) => {
-                let aValue, bValue;
-
-                if (sortConfig.key === 'activeClients') {
-                    aValue = a.currentClients.length;
-                    bValue = b.currentClients.length;
-                } else if (sortConfig.key === 'potentialClientsCount') {
-                    aValue = a.potentialClients.length;
-                    bValue = b.potentialClients.length;
-                } else {
-                    aValue = a[sortConfig.key as keyof AggregatedDataRow];
-                    bValue = b[sortConfig.key as keyof AggregatedDataRow];
-                }
-
+                const aValue = a[sortConfig.key];
+                const bValue = b[sortConfig.key];
                 if (typeof aValue === 'number' && typeof bValue === 'number') {
                     return sortConfig.direction === 'ascending' ? aValue - bValue : bValue - aValue;
                 }
@@ -64,7 +56,7 @@ const ResultsTable: React.FC<{
         return sortableItems;
     }, [filteredData, sortConfig]);
 
-    const requestSort = (key: keyof AggregatedDataRow | 'activeClients' | 'potentialClientsCount') => {
+    const requestSort = (key: keyof AggregatedDataRow) => {
         let direction: 'ascending' | 'descending' = 'ascending';
         if (sortConfig?.key === key && sortConfig.direction === 'ascending') {
             direction = 'descending';
@@ -76,7 +68,7 @@ const ResultsTable: React.FC<{
     const totalPages = Math.ceil(sortedData.length / rowsPerPage);
     const paginatedData = sortedData.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
 
-    const SortableHeader: React.FC<{ sortKey: keyof AggregatedDataRow | 'activeClients' | 'potentialClientsCount'; children: React.ReactNode }> = ({ sortKey, children }) => {
+    const SortableHeader: React.FC<{ sortKey: keyof AggregatedDataRow; children: React.ReactNode }> = ({ sortKey, children }) => {
         const isSorted = sortConfig?.key === sortKey;
         const icon = isSorted ? (sortConfig?.direction === 'ascending' ? <SortUpIcon /> : <SortDownIcon />) : <SortIcon />;
         return (
@@ -100,10 +92,10 @@ const ResultsTable: React.FC<{
     return (
         <div className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
             <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700">
-                <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты по РМ</h2>
+                <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты Анализа</h2>
                 <div className="w-full md:w-auto flex items-center gap-3">
                     <div className="relative w-full md:w-64">
-                        <input type="text" placeholder="Поиск по РМ..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                        <input type="text" placeholder="Поиск по таблице..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
                             className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition" />
                          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
                     </div>
@@ -116,9 +108,10 @@ const ResultsTable: React.FC<{
                 <table className="w-full text-sm text-left text-gray-300">
                     <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 backdrop-blur-sm">
                         <tr>
-                            <SortableHeader sortKey="groupName">Региональный Менеджер</SortableHeader>
-                            <SortableHeader sortKey="activeClients">Активных ТТ</SortableHeader>
-                            <SortableHeader sortKey="potentialClientsCount">Потенциал. ТТ</SortableHeader>
+                            <th scope="col" className="px-4 py-3">Группа/Клиент</th>
+                            <SortableHeader sortKey="rm">РМ</SortableHeader>
+                            <SortableHeader sortKey="region">Регион</SortableHeader>
+                            <SortableHeader sortKey="brand">Бренд</SortableHeader>
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
                             <SortableHeader sortKey="growthPotential">Рост (абс.)</SortableHeader>
@@ -128,9 +121,10 @@ const ResultsTable: React.FC<{
                     <tbody>
                          {paginatedData.map((row) => (
                             <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
-                                <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.groupName}</th>
-                                <td className="px-4 py-3 text-center">{row.currentClients.length}</td>
-                                <td className="px-4 py-3 text-center">{row.potentialClients.length}</td>
+                                <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
+                                <td className="px-4 py-3">{row.rm}</td>
+                                <td className="px-4 py-3">{row.region}</td>
+                                <td className="px-4 py-3">{row.brand}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
                                 <td className="px-4 py-3 text-warning font-bold">{formatNumber(row.growthPotential)}</td>

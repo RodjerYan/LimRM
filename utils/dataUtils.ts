@@ -1,175 +1,138 @@
-import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
-import { REGION_BY_CITY_MAP, standardizeRegion } from './addressMappings';
+// services/addressParser.ts
+import { 
+    standardizeRegion, 
+    REGION_KEYWORD_MAP, 
+    CITY_NORMALIZATION_MAP,
+    REGION_BY_CITY_MAP,
+    INDEX_MAP 
+} from '../utils/addressMappings';
+import { ParsedAddress } from '../types';
+import { callGeminiForRegion } from './geminiService';
 
 /**
- * Normalizes an address string for search and comparison purposes.
- * It converts to lower case, removes punctuation and common address parts,
- * and then tokenizes and sorts the words to make it order-independent.
- * @param str The string to normalize.
- * @returns The normalized, order-independent string.
+ * Capitalizes the first letter of each word in a string.
+ * @param str The input string.
+ * @returns The capitalized string.
  */
-export const normalizeAddressForSearch = (str: string | undefined | null): string => {
+const capitalize = (str: string | null): string => {
     if (!str) return '';
-    const cleaned = str
-        .toLowerCase()
-        .replace(/ё/g, 'е')
-        .replace(/["'«»`.,;:[\]()]/g, ' ')
-        .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
-        .replace(/\b(обл|обл\.|область|р-н|р-н\.|район|респ|респ\.|республика|г|г\.|город|ул|ул\.|улица|д|д\.|дом|к|к\.|корп|корп\.|корпус|кв|кв\.|квартира|стр|стр\.|строение|пом|пом\.|помещение)\b/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    // Tokenize, sort, and join for order-independent matching
-    return cleaned.split(' ').filter(Boolean).sort().join(' ');
+    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 };
 
-
-// For compatibility with older parts of the codebase if needed.
-export const normalizeString = normalizeAddressForSearch;
-
 /**
- * Calculates the Levenshtein distance between two strings.
- * This is a measure of the difference between two sequences.
- * @param a The first string.
- * @param b The second string.
- * @returns The Levenshtein distance (number of edits).
+ * Parses a Russian address string to extract the region and city using a multi-layered approach.
+ * It handles typos, abbreviations, and various address formats to provide the most accurate result.
+ * @param address The raw address string.
+ * @returns A ParsedAddress object with the determined region and city.
  */
-export const levenshteinDistance = (a: string, b: string): number => {
-    const an = a ? a.length : 0;
-    const bn = b ? b.length : 0;
-    if (an === 0) return bn;
-    if (bn === 0) return an;
-    const matrix = Array.from({ length: bn + 1 }, (_, i) => [i]);
-    for (let j = 1; j <= an; j++) matrix[0][j] = j;
+export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
+    if (!address?.trim()) {
+        return { region: 'Регион не определен', city: 'Город не определён' };
+    }
 
-    for (let i = 1; i <= bn; i++) {
-        for (let j = 1; j <= an; j++) {
-            const cost = a[j - 1] === b[i - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,      // deletion
-                matrix[i][j - 1] + 1,      // insertion
-                matrix[i - 1][j - 1] + cost // substitution
-            );
+    const lowerAddress = address.toLowerCase().replace(/ё/g, 'e');
+    let normalized = lowerAddress.replace(/[,;]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    let region: string | null = null;
+    let city: string | null = null;
+
+    // --- Step 1: Normalization using aliases ---
+    // This handles common typos, abbreviations, and even explicit region mentions.
+    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+        if (normalized.includes(alias)) {
+            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
-    return matrix[bn][an];
-};
 
-/**
- * Finds the best matching record from a list of OKB entries based on name similarity.
- * @param clientName - The name of the client to match from the sales data.
- * @param okbCandidates - An array of potential matches from the OKB data (e.g., from the same region).
- * @returns The best matching OKB row or undefined if no match exceeds the similarity threshold.
- */
-export const findBestFuzzyMatchByName = (clientName: string, okbCandidates: OkbDataRow[]): OkbDataRow | undefined => {
-    if (!clientName || okbCandidates.length === 0) {
-        return undefined;
+    // --- Step 2: Priority 1 - Explicit Region Keyword Mapping ---
+    // Look for keywords like "калининградская область", "лен.обл", etc.
+    const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    for (const key of sortedRegionKeys) {
+        if (normalized.includes(key)) {
+            region = REGION_KEYWORD_MAP[key];
+            break;
+        }
     }
 
-    const normalizedClientName = normalizeString(clientName);
-    let bestMatch: OkbDataRow | undefined = undefined;
-    let minDistance = Infinity;
-    // Set a dynamic threshold: the name must be at least 70% similar.
-    const threshold = Math.floor(normalizedClientName.length * 0.3); 
+    // --- Step 3: Find City and Determine Region from it ---
+    // This block runs if no explicit region was found in step 2.
+    if (!region) {
+        // Step 3a: Use regex to find city names (e.g., "г. Город", "пос. Поселок")
+        const patterns = [
+            /г[\s\.,]?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // г. Город
+            /пос\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,       // пос. Поселок
+            /пгт\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,      // пгт. Поселок
+            /дер\.?\s*([а-яё\- ]+?)(?=\s|$|,)/,        // дер. Деревня
+            /^ул\.?\s*([а-яё\-]+)/,                   // ул. Улица (в начале строки)
+        ];
+        for (const pattern of patterns) {
+            const match = normalized.match(pattern);
+            if (match && match[1]) {
+                const potentialCity = match[1].trim();
+                // Check if this city is in our map
+                if (REGION_BY_CITY_MAP[potentialCity]) {
+                    city = potentialCity;
+                    break;
+                }
+            }
+        }
+        
+        // Step 3b: If no city found via regex, do a general search in the string
+        if (!city) {
+            const sortedCityKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
+            for (const cityKey of sortedCityKeys) {
+                 const cityRegex = new RegExp(`\\b${cityKey.replace(/[-\s]/g, '[-\\s]?')}\\b`);
+                 if(cityRegex.test(normalized)) {
+                     city = cityKey;
+                     break;
+                 }
+            }
+        }
 
-    for (const okb of okbCandidates) {
-        const okbName = okb['Наименование'];
-        if (okbName) {
-            const normalizedOkbName = normalizeString(okbName);
-            const distance = levenshteinDistance(normalizedClientName, normalizedOkbName);
-            
-            if (distance < minDistance && distance <= threshold) {
-                minDistance = distance;
-                bestMatch = okb;
+        // Step 3c: Determine region from the found city
+        if (city) {
+            region = REGION_BY_CITY_MAP[city] || null;
+        }
+    }
+    
+    // --- Step 4: Find city if we only have the region so far ---
+    if (region && !city) {
+        const sortedCityKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
+        for (const cityKey of sortedCityKeys) {
+            if (normalized.includes(cityKey) && REGION_BY_CITY_MAP[cityKey] === region) {
+                city = cityKey;
+                break;
+            }
+        }
+    }
+
+    // --- Step 5: Fallbacks for unresolved cases ---
+    // Fallback 5a: Postal Index
+    if (!region) {
+        const indexMatch = address.match(/\b(\d{5,6})\b/);
+        if (indexMatch) {
+            const postalIndex = indexMatch[1];
+            if (INDEX_MAP[postalIndex]) region = INDEX_MAP[postalIndex];
+            else {
+                const prefix3 = postalIndex.substring(0, 3);
+                if (INDEX_MAP[prefix3]) region = INDEX_MAP[prefix3];
             }
         }
     }
     
-    return bestMatch;
-};
-
-
-/**
- * Extracts a standardized region name from an OKB data row using a priority system.
- */
-export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
-    // Priority 1: Use the 'Регион' column if it's valid
-    if (okbRow['Регион']) {
-        const standardized = standardizeRegion(okbRow['Регион']);
-        if (standardized !== 'Регион не определен') {
-            return standardized;
+    // --- Step 6: Finalization & Gemini Last Resort ---
+    if (region) {
+        const finalCity = city ? capitalize(city) : 'Город не определён';
+        return { region: standardizeRegion(region), city: finalCity };
+    } else {
+        // Final attempt with Gemini if all local methods fail
+        const geminiRegion = await callGeminiForRegion(address);
+        if (geminiRegion && geminiRegion.trim() !== '') {
+             const finalCity = city ? capitalize(city) : 'Город не определён';
+             return { region: geminiRegion, city: finalCity };
         }
     }
-    
-    // Priority 2: Infer region from 'Город' column if 'Регион' failed or was absent
-    const city = okbRow['Город']?.toLowerCase();
-    if (city && REGION_BY_CITY_MAP[city]) {
-        return REGION_BY_CITY_MAP[city]; // This already returns a standardized name
-    }
 
-    return 'Регион не определен';
-};
-
-
-/**
- * Filters the main dataset based on the current filter state.
- */
-// FIX: Removed filtering by `brand` and `region` as they are not part of the `FilterState` type.
-// The UI only supports filtering by `rm`, so this function now correctly reflects that.
-export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
-    return allData.filter(row => {
-        const rmMatch = filters.rm ? row.rm === filters.rm : true;
-        return rmMatch;
-    });
-};
-
-/**
- * Extracts unique values for all filterable columns from the dataset.
- */
-export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
-    const rms = new Set<string>();
-    const brands = new Set<string>();
-    const regions = new Set<string>(); // FIX: Extract regions instead of cities
-
-    data.forEach(row => {
-        rms.add(row.rm);
-        brands.add(row.brand);
-        regions.add(row.region);
-    });
-
-    return {
-        rms: Array.from(rms).sort(),
-        brands: Array.from(brands).sort(),
-        regions: Array.from(regions).sort(), // FIX: Return sorted regions
-    };
-};
-
-/**
- * Calculates summary metrics for a given dataset.
- */
-export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics => {
-    const totalFact = data.reduce((sum, row) => sum + row.fact, 0);
-    const totalPotential = data.reduce((sum, row) => sum + row.potential, 0);
-    const totalGrowth = data.reduce((sum, row) => sum + row.growthPotential, 0);
-
-    const totalClients = data.length;
-    const totalActiveClients = data.reduce((sum, row) => sum + (row.clients?.length || 1), 0);
-    
-    const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
-    
-    const rmGrowth: { [key: string]: number } = {};
-    data.forEach(row => {
-        if (!rmGrowth[row.rm]) rmGrowth[row.rm] = 0;
-        rmGrowth[row.rm] += row.growthPotential;
-    });
-
-    const topPerformingRM = Object.entries(rmGrowth).reduce(
-        (top, [name, value]) => (value > top.value ? { name, value } : top),
-        { name: 'N/A', value: -1 }
-    );
-
-    return {
-        totalFact, totalPotential, totalGrowth, totalClients, totalActiveClients,
-        averageGrowthPercentage, topPerformingRM,
-    };
-};
+    // Default if nothing worked
+    return { region: 'Регион не определен', city: capitalize(city) || 'Город не определён' };
+}

@@ -4,7 +4,6 @@ import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
-import PMAnalysisModal from './components/PMAnalysisModal'; // Импорт нового модального окна
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
@@ -18,7 +17,7 @@ import {
     SummaryMetrics,
     OkbDataRow
 } from './types';
-import { getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -33,20 +32,14 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    
-    // Состояние для старого модального окна (детали по строке)
-    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
-    const [selectedRowForDetails, setSelectedRowForDetails] = useState<AggregatedDataRow | null>(null);
-
-    // Состояние для нового модального окна (анализ РМ)
-    const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
-    const [selectedRmForAnalysis, setSelectedRmForAnalysis] = useState<AggregatedDataRow | null>(null);
-
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
 
-    const [filters, setFilters] = useState<FilterState>({ rm: '' });
+    // FIX: Updated filter state to use 'region' instead of 'city'
+    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
@@ -63,7 +56,8 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
-        setFilters({ rm: '' });
+        // FIX: Reset filters with 'region'
+        setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
     
@@ -77,31 +71,17 @@ const App: React.FC = () => {
 
     const handleFilterChange = useCallback((newFilters: FilterState) => {
         setFilters(newFilters);
-        if (newFilters.rm) {
-            const selectedRMData = allData.find(d => d.rm === newFilters.rm);
-            setSelectedRmForAnalysis(selectedRMData || null);
-        } else {
-            setSelectedRmForAnalysis(null);
-        }
-    }, [allData]);
+    }, []);
     
+    // FIX: Reset filters with 'region'
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '' });
-        setSelectedRmForAnalysis(null);
+        setFilters({ rm: '', brand: [], region: [] });
     }, []);
 
     const handleRowClick = useCallback((row: AggregatedDataRow) => {
-        setSelectedRowForDetails(row);
-        setIsDetailsModalOpen(true);
+        setSelectedRow(row);
+        setIsModalOpen(true);
     }, []);
-
-    const handleOpenAnalysisModal = useCallback(() => {
-        if (selectedRmForAnalysis) {
-            setIsAnalysisModalOpen(true);
-        } else {
-            addNotification('Сначала выберите РМ для анализа.', 'info');
-        }
-    }, [selectedRmForAnalysis, addNotification]);
 
     const handleOkbStatusChange = (status: OkbStatus) => {
         setOkbStatus(status);
@@ -112,10 +92,7 @@ const App: React.FC = () => {
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
-            const result = allData.filter(row => {
-                // Фильтрация на главной странице теперь только по РМ
-                return filters.rm ? row.rm === filters.rm : true;
-            });
+            const result = applyFilters(allData, filters);
             setFilteredData(result);
             setIsLoading(false);
         }, 100);
@@ -153,7 +130,6 @@ const App: React.FC = () => {
                             currentFilters={filters}
                             onFilterChange={handleFilterChange}
                             onReset={resetFilters}
-                            onOpenAnalysisModal={handleOpenAnalysisModal}
                             disabled={!isDataLoaded || isLoading}
                         />
                     </aside>
@@ -170,19 +146,13 @@ const App: React.FC = () => {
                         <Notification key={n.id} message={n.message} type={n.type} />
                     ))}
                 </div>
-                
+
                 <DetailsModal 
-                    isOpen={isDetailsModalOpen} 
-                    onClose={() => setIsDetailsModalOpen(false)}
-                    data={selectedRowForDetails}
+                    isOpen={isModalOpen} 
+                    onClose={() => setIsModalOpen(false)}
+                    data={selectedRow}
+                    okbData={okbData}
                 />
-
-                <PMAnalysisModal
-                    isOpen={isAnalysisModalOpen}
-                    onClose={() => setIsAnalysisModalOpen(false)}
-                    data={selectedRmForAnalysis}
-                />
-
             </main>
         </div>
     );
