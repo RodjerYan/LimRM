@@ -72,7 +72,11 @@ const GlobalMapView: React.FC<HybridMapViewProps> = ({ activeRegions, potentialP
 
         const highlightFeature = (e: L.LeafletMouseEvent) => {
             const layer = e.target;
-            layer.setStyle({ weight: 3, color: '#818cf8', fillOpacity: 0.8 });
+            layer.setStyle({
+                weight: 2,
+                color: '#c4b5fd', // Lighter accent for better visibility
+                fillOpacity: 0.85
+            });
             layer.bringToFront();
         };
 
@@ -80,9 +84,23 @@ const GlobalMapView: React.FC<HybridMapViewProps> = ({ activeRegions, potentialP
             geoJsonLayerRef.current?.resetStyle(e.target);
         };
         
+        const onRegionClick = (e: L.LeafletMouseEvent) => {
+            const layer = e.target;
+            const feature = layer.feature;
+            const regionName = feature.properties.name || 'Неизвестный регион';
+            
+            L.popup()
+                .setLatLng(e.latlng)
+                .setContent(`<b>${regionName}</b>`)
+                .openOn(map);
+        };
+
         const onEachFeature = (feature: any, layer: L.Layer) => {
-            layer.bindPopup(`<b>${feature.properties.name}</b>`);
-            layer.on({ mouseover: highlightFeature, mouseout: resetHighlight });
+            layer.on({
+                mouseover: highlightFeature,
+                mouseout: resetHighlight,
+                click: onRegionClick
+            });
         };
 
         geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style, onEachFeature }).addTo(map);
