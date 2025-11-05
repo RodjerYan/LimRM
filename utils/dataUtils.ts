@@ -1,10 +1,10 @@
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
-import { REGION_BY_CITY_MAP } from './addressMappings';
+import { REGION_BY_CITY_MAP, standardizeRegion } from './addressMappings';
 
 /**
  * Normalizes an address string for search and comparison purposes.
  * It converts to lower case, handles 'ё', removes punctuation and legal forms,
- * and standardizes common abbreviations.
+ * and standardizes or removes common address parts for better matching.
  * @param str The string to normalize.
  * @returns The normalized string.
  */
@@ -13,14 +13,16 @@ export const normalizeAddressForSearch = (str: string | undefined | null): strin
     return str
         .toLowerCase()
         .replace(/ё/g, 'е')
-        .replace(/["'«»`.,;:[\]()]/g, '') // remove common punctuation
-        .replace(/\s+/g, ' ') // collapse whitespace
-        .replace(/\b(обл|обл\.)/g, 'область')
-        .replace(/\b(респ|респ\.)/g, 'республика')
-        .replace(/\b(г|г\.)/g, 'город')
+        .replace(/["'«»`.,;:[\]()]/g, '')
         .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
+        .replace(/\b(обл|обл\.)/g, 'область')
+        .replace(/\b(р-н|р-н\.)/g, 'район')
+        .replace(/\b(респ|респ\.)/g, 'республика')
+        .replace(/\b(г|г\.|город|ул|ул\.|улица|д|д\.|дом|к|к\.|корп|корп\.|корпус|кв|кв\.|квартира|стр|стр\.|строение|пом|пом\.|помещение)\b/g, '')
+        .replace(/\s+/g, ' ')
         .trim();
 };
+
 
 // For compatibility with older parts of the codebase if needed.
 export const normalizeString = normalizeAddressForSearch;
@@ -81,18 +83,21 @@ export const findBestOkbMatch = (clientName: string, city: string, okbData: (Okb
 
 
 /**
- * Extracts a standardized region name from an OKB data row.
+ * Extracts a standardized region name from an OKB data row using a priority system.
  */
 export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
+    // Priority 1: Use the 'Регион' column if it's valid
     if (okbRow['Регион']) {
-        const region = normalizeAddressForSearch(okbRow['Регион']);
-        return region.charAt(0).toUpperCase() + region.slice(1);
+        const standardized = standardizeRegion(okbRow['Регион']);
+        if (standardized !== 'Регион не определен') {
+            return standardized;
+        }
     }
     
+    // Priority 2: Infer region from 'Город' column if 'Регион' failed or was absent
     const city = okbRow['Город']?.toLowerCase();
     if (city && REGION_BY_CITY_MAP[city]) {
-        const region = REGION_BY_CITY_MAP[city];
-        return region.charAt(0).toUpperCase() + region.slice(1);
+        return REGION_BY_CITY_MAP[city]; // This already returns a standardized name
     }
 
     return 'Регион не определен';

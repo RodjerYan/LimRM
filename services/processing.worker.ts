@@ -3,7 +3,7 @@ import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddressForSearch } from '../utils/dataUtils';
+import { normalizeAddressForSearch, extractRegionFromOkb } from '../utils/dataUtils';
 
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -27,8 +27,8 @@ const prepareOkbData = (okbData: OkbDataRow[]): { okbByRegion: Map<string, OkbDa
     if (!okbData) return { okbByRegion, okbByAddress };
 
     for (const row of okbData) {
-        const region = standardizeRegion(row['Регион'] || '');
-        if (region) {
+        const region = extractRegionFromOkb(row);
+        if (region && region !== 'Регион не определен') {
             if (!okbByRegion.has(region)) {
                 okbByRegion.set(region, []);
             }
