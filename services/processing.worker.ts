@@ -238,7 +238,12 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, o
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' }).map((row, index) => ({ ...row, _originalIndex: index + 2 }));
+    // FIX: Check if `row` is a valid object before spreading to prevent errors on empty rows.
+    // Malformed or empty rows can be parsed as `null` by the library, which would cause a "Spread types may only be created from object types" error.
+    // We map invalid rows to `null` and then filter them out, preserving the correct `_originalIndex` for valid rows.
+    const jsonData: any[] = (xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: null }) as any[])
+        .map((row, index) => (row && typeof row === 'object' ? { ...row, _originalIndex: index + 2 } : null))
+        .filter(Boolean);
 
 
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');

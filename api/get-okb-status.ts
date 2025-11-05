@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 // FIX: Explicitly import `Buffer` to resolve the "Cannot find name 'Buffer'" TypeScript error.
 // This ensures the type is available even if Node.js globals are not automatically included in the compilation scope.
 import { Buffer } from 'buffer';
-import { getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets.js';
+import { getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
