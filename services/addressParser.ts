@@ -1,7 +1,7 @@
 // services/addressParser.ts
 import {
     REGION_BY_CITY_WITH_INDEXES
-} from '../utils/regionMap.ts';
+} from '../utils/regionMap';
 import { ParsedAddress } from '../types';
 
 // Сопоставление нормализованных ключевых слов с каноническими названиями стран
