@@ -29,11 +29,19 @@ const ApiKeyErrorDisplay: React.FC = () => (
                                     <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">GOOGLE_SERVICE_ACCOUNT_KEY</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1 space-y-1">
-                                    <p>**(Секрет)** Полный JSON-ключ вашего сервисного аккаунта Google.</p>
-                                    <p className="text-yellow-500">
-                                        **Важно:** Скопируйте все содержимое JSON-файла и вставьте его как одну строку. Убедитесь, что нет переносов строк.
+                                    <p>**(Секрет)** JSON-ключ вашего сервисного аккаунта Google, закодированный в **Base64**.</p>
+                                    <p className="text-yellow-500 font-semibold">
+                                        **Важно: Выполните эти шаги:**
                                     </p>
-                                     <p>Не забудьте "поделиться" вашей Google Таблицей с адресом `client_email` из этого JSON-ключа, выдав ему права **Редактора**.</p>
+                                    <ol className="list-decimal list-inside ml-4 mt-2 space-y-2 text-slate-300">
+                                        <li>Откройте ваш JSON-файл ключа в текстовом редакторе.</li>
+                                        <li>
+                                            Перейдите на сайт <a href="https://www.base64encode.org/" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline">base64encode.org</a>, скопируйте <strong>всё содержимое</strong> JSON-файла и вставьте в верхнее поле для кодирования.
+                                        </li>
+                                        <li>Нажмите кнопку **"ENCODE"**.</li>
+                                        <li>Скопируйте <strong>полученную длинную Base64-строку</strong> из нижнего поля и вставьте её как значение для этой переменной в Vercel.</li>
+                                    </ol>
+                                     <p className="mt-2">Не забудьте "поделиться" вашей Google Таблицей с адресом <code className="text-xs bg-gray-700 px-1 rounded">client_email</code> из вашего JSON-ключа, выдав ему права **Редактора**.</p>
                                 </div>
                            </li>
                             <li>

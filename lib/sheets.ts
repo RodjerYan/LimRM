@@ -1,5 +1,8 @@
 import { google } from 'googleapis';
 import { OkbDataRow } from '../types';
+// FIX: Explicitly import `Buffer` to handle Base64 decoding reliably.
+import { Buffer } from 'buffer';
+
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const SHEET_NAME = 'Base';
@@ -7,6 +10,8 @@ const SHEET_NAME = 'Base';
 /**
  * Creates and returns an authenticated Google Sheets API client.
  * It uses service account credentials stored in an environment variable.
+ * FIX: This function now expects the service account key to be Base64-encoded
+ * to prevent parsing errors with multi-line JSON in Vercel environment variables.
  */
 async function getGoogleSheetsClient() {
   const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -14,13 +19,24 @@ async function getGoogleSheetsClient() {
     throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
   }
   
+  let credentialsJson;
+  try {
+    // Decode the base64 encoded key first. This is a robust way to handle JSON keys.
+    credentialsJson = Buffer.from(serviceAccountKey, 'base64').toString('utf-8');
+  } catch (error) {
+    console.error("Failed to decode base64 GOOGLE_SERVICE_ACCOUNT_KEY:", error);
+    throw new Error(
+      'Failed to decode GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid base64 encoded string. Check your Vercel environment variable settings.'
+    );
+  }
+
   let credentials;
   try {
-    credentials = JSON.parse(serviceAccountKey);
+    credentials = JSON.parse(credentialsJson);
   } catch (error) {
-    console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:", error);
+    console.error("Failed to parse the decoded JSON from GOOGLE_SERVICE_ACCOUNT_KEY:", error);
     throw new Error(
-      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string without extra characters or line breaks. Check your Vercel environment variable settings.'
+      'Failed to parse the decoded JSON. The base64 string might not represent a valid JSON object.'
     );
   }
 
