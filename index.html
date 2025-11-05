@@ -63,32 +63,58 @@
             background: #6366f1; /* indigo-500 */
         }
 
-        /* Leaflet Map Legend Styles */
+        /* Leaflet Map Overrides */
         .leaflet-container {
             background-color: #1F2937; /* card-bg */
         }
-        .legend {
-            line-height: 18px;
-            color: #E5E7EB; /* gray-200 */
-            background-color: rgba(31, 41, 55, 0.8); /* card-bg with opacity */
-            backdrop-filter: blur(5px);
-            padding: 10px;
-            border-radius: 5px;
-            border: 1px solid #4B5563; /* gray-600 */
+        .leaflet-popup-content-wrapper {
+            background-color: #1F2937;
+            color: #E5E7EB;
+            border: 1px solid #4B5563;
         }
-        .legend h4 {
-            margin: 0 0 5px;
-            font-weight: bold;
-            color: white;
+        .leaflet-popup-tip {
+            background-color: #1F2937;
         }
-        .legend i {
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 8px;
-            opacity: 0.8;
-            border-radius: 3px;
+        
+        /* Custom Leaflet Marker Pins */
+        .marker-pin {
+            width: 30px;
+            height: 30px;
+            border-radius: 50% 50% 50% 0;
+            position: absolute;
+            transform: rotate(-45deg);
+            border: 1px solid #111827;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s ease-in-out;
         }
+        .marker-pin::after {
+            content: '';
+            width: 14px;
+            height: 14px;
+            margin: 8px 0 0 8px;
+            background: #111827;
+            position: absolute;
+            border-radius: 50%;
+            border: 2px solid #E5E7EB;
+        }
+        .leaflet-marker-icon:hover .marker-pin {
+            transform: rotate(-45deg) scale(1.2);
+        }
+
+        .marker-pin.green {
+            background-color: #34d399; /* success */
+        }
+        .marker-pin.green::after {
+             border-color: #a7f3d0;
+        }
+
+        .marker-pin.blue {
+            background-color: #3b82f6; /* blue-500 */
+        }
+        .marker-pin.blue::after {
+            border-color: #93c5fd;
+        }
+
     </style>
 <script type="importmap">
 {

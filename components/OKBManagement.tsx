@@ -36,6 +36,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                 message: `ОКБ успешно загружена.`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
+                coordsCount: data.filter(d => d.lat && d.lon).length,
             });
         } catch (error) {
             onStatusChange({ status: 'error', message: (error as Error).message });
@@ -87,6 +88,12 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                      <div className="flex justify-between items-center">
                         <span className="text-gray-400">Записей:</span>
                         <span className="text-white font-semibold">{status.rowCount.toLocaleString('ru-RU')}</span>
+                    </div>
+                )}
+                 {status?.coordsCount !== undefined && (
+                     <div className="flex justify-between items-center">
+                        <span className="text-gray-400">С координатами:</span>
+                        <span className="text-white font-semibold">{status.coordsCount.toLocaleString('ru-RU')}</span>
                     </div>
                 )}
             </div>

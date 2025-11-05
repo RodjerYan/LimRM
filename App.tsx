@@ -8,7 +8,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
-import ChoroplethMap from './components/ChoroplethMap'; // Import the new map component
+import GlobalMapView from './components/GlobalMapView'; // Import the new point map component
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -16,7 +16,9 @@ import {
     NotificationMessage, 
     OkbStatus, 
     SummaryMetrics,
-    OkbDataRow
+    OkbDataRow,
+    MapPoint,
+    MapPointStatus
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
@@ -38,8 +40,8 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
+    const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
 
-    // FIX: Updated filter state to use 'region' instead of 'city'
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
@@ -55,9 +57,60 @@ const App: React.FC = () => {
         }, 5000);
     }, []);
 
+    // Effect to process data for the map
+    useEffect(() => {
+        if (okbData.length === 0 || allData.length === 0) {
+            // If only OKB is loaded, show all its points as potential
+            if (okbData.length > 0 && allData.length === 0) {
+                const potentialPoints: MapPoint[] = okbData
+                    .filter(okbRow => okbRow.lat && okbRow.lon)
+                    .map(okbRow => ({
+                        key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
+                        lat: okbRow.lat!,
+                        lon: okbRow.lon!,
+                        status: 'potential',
+                        name: okbRow['Наименование'] || 'Без названия',
+                        address: okbRow['Юридический адрес'] || 'Адрес не указан',
+                        type: okbRow['Вид деятельности'] || 'н/д'
+                    }));
+                setMapPoints(potentialPoints);
+            } else {
+                 setMapPoints([]); // Clear points if no data
+            }
+            return;
+        }
+
+        const activeAddresses = new Set<string>();
+        allData.forEach(group => {
+            group.clients.forEach(clientAddress => {
+                if (clientAddress) activeAddresses.add(clientAddress.trim());
+            });
+        });
+        
+        const newMapPoints: MapPoint[] = okbData
+            .filter(okbRow => okbRow.lat && okbRow.lon) // Only use rows with coordinates
+            .map(okbRow => {
+                const address = okbRow['Юридический адрес']?.trim();
+                const status: MapPointStatus = address && activeAddresses.has(address) ? 'match' : 'potential';
+                
+                return {
+                    key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
+                    lat: okbRow.lat!,
+                    lon: okbRow.lon!,
+                    status,
+                    name: okbRow['Наименование'] || 'Без названия',
+                    address: okbRow['Юридический адрес'] || 'Адрес не указан',
+                    type: okbRow['Вид деятельности'] || 'н/д'
+                };
+            });
+
+        setMapPoints(newMapPoints);
+
+    }, [allData, okbData]);
+
+
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
-        // FIX: Reset filters with 'region'
         setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
     }, [addNotification]);
@@ -74,7 +127,6 @@ const App: React.FC = () => {
         setFilters(newFilters);
     }, []);
     
-    // FIX: Reset filters with 'region'
     const resetFilters = useCallback(() => {
         setFilters({ rm: '', brand: [], region: [] });
     }, []);
@@ -137,7 +189,21 @@ const App: React.FC = () => {
 
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
-                        {isDataLoaded && <ChoroplethMap data={filteredData} />}
+                        
+                        {okbStatus?.status === 'ready' && (
+                            okbStatus.coordsCount && okbStatus.coordsCount > 0 ? (
+                                <GlobalMapView points={mapPoints} />
+                            ) : (
+                                <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+                                    <h2 className="text-xl font-bold mb-4 text-white">Карта торговых точек</h2>
+                                    <div className="text-center py-10 text-gray-400">
+                                        <p>В базе ОКБ не найдено точек с координатами.</p>
+                                        <p className="text-sm mt-2">Убедитесь, что в вашей Google Таблице есть столбцы "Широта" и "Долгота", и они заполнены.</p>
+                                    </div>
+                                </div>
+                            )
+                        )}
+
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>

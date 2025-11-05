@@ -43,7 +43,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:J`, // Fetch all relevant columns for full data compatibility
+    range: `${SHEET_NAME}!A:P`, // Fetch a wider range to include potential coordinate columns
   });
 
   const rows = res.data.values;
@@ -69,6 +69,24 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
                 rowData[key] = row[index] || null; // Use null for empty cells
             }
         });
+        
+        // Dynamically find and parse coordinate columns
+        const latKey = header.find(h => h.toLowerCase() === 'широта' || h.toLowerCase() === 'ширина');
+        const lonKey = header.find(h => h.toLowerCase() === 'долгота');
+
+        if (latKey && lonKey && rowData[latKey] && rowData[lonKey]) {
+            const latStr = String(rowData[latKey]).replace(',', '.');
+            const lonStr = String(rowData[lonKey]).replace(',', '.');
+            const lat = parseFloat(latStr);
+            const lon = parseFloat(lonStr);
+
+            if (!isNaN(lat) && !isNaN(lon)) {
+                // Attach parsed coordinates directly to the object
+                rowData.lat = lat;
+                rowData.lon = lon;
+            }
+        }
+
         // Ensure the object is not empty if all header keys were blank for this row
         if (Object.keys(rowData).length === 0) {
             return null;

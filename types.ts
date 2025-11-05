@@ -13,6 +13,18 @@ export interface AggregatedDataRow {
     clients: string[]; // List of individual client names/addresses in the group
 }
 
+export type MapPointStatus = 'match' | 'potential';
+
+export interface MapPoint {
+    key: string;
+    lat: number;
+    lon: number;
+    status: MapPointStatus;
+    name: string;
+    address: string;
+    type: string;
+}
+
 export interface ParsedAddress {
     region: string;
     city: string;
@@ -35,6 +47,8 @@ export interface OkbDataRow {
     'Вид деятельности'?: string;
     'ИНН'?: string;
     'Статус'?: string;
+    lat?: number;
+    lon?: number;
 }
 
 export interface FilterOptions {
@@ -73,6 +87,7 @@ export type OkbStatus = {
     message: string | null;
     timestamp?: string;
     rowCount?: number;
+    coordsCount?: number;
 };
 
 // Types for the Web Worker communication
