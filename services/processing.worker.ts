@@ -1,7 +1,7 @@
 import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
-import { parseAddressData } from './addressParser';
+import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -151,36 +151,44 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
         const batch = jsonData.slice(i, i + BATCH_SIZE);
         
-        // Caching key is the primary address string to avoid reprocessing identical rows.
-        // The parser itself will look at the whole row object for context.
-        const cacheKeysAndRows: { cacheKey: string, row: any }[] = batch.map((row, index) => ({
-            cacheKey: row['Адрес ТТ LimKorm'] || JSON.stringify(row) || `Строка #${i + index + 2}`,
-            row
-        }));
-        
-        const uncachedItems = cacheKeysAndRows.filter(item => !addressCache.has(item.cacheKey));
+        const addressParsingJobs = batch.map(async (row, index) => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
+            
+            if (addressCache.has(address)) {
+                return { row, parsedAddress: addressCache.get(address)! };
+            }
+            
+            let parsedAddress = await parseRussianAddress(address);
 
-        if (uncachedItems.length > 0) {
-            const parsedAddressResults = await Promise.all(
-                uncachedItems.map(item => parseAddressData(item.row))
-            );
+            // NEW: Fallback logic using the distributor column
+            if (parsedAddress.region === 'Регион не определен') {
+                const distributor = row['Дистрибьютор'] || '';
+                const cityMatch = distributor.match(/\(([^)]+)\)/);
+                if (cityMatch && cityMatch[1]) {
+                    const cityFromDistributor = cityMatch[1];
+                    const fallbackParsed = await parseRussianAddress(cityFromDistributor);
+                    if (fallbackParsed.region !== 'Регион не определен') {
+                        parsedAddress = fallbackParsed;
+                    }
+                }
+            }
 
-            uncachedItems.forEach((item, index) => {
-                addressCache.set(item.cacheKey, parsedAddressResults[index]);
-            });
-        }
-        
-        // Aggregate data for the batch using cached results.
-        cacheKeysAndRows.forEach(({ cacheKey, row }) => {
-            const parsedAddress = addressCache.get(cacheKey);
-            if (!parsedAddress) return; // Should not happen
+            addressCache.set(address, parsedAddress);
+            return { row, parsedAddress };
+        });
 
-            const region = parsedAddress.region || 'Регион не определён';
+        const resolvedAddresses = await Promise.all(addressParsingJobs);
+
+        resolvedAddresses.forEach(({ row, parsedAddress }) => {
+            if (!parsedAddress) return;
+
+            const region = parsedAddress.region;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${jsonData.indexOf(row) + 2}`;
 
-            if (isNaN(fact)) return;
+            if (isNaN(fact) || region === 'Регион не определен') return;
 
             const key = `${region}-${brand}-${rm}`.toLowerCase();
             if (!aggregatedData[key]) {
@@ -191,9 +199,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
                 };
             }
             aggregatedData[key].fact += fact;
-            // Use a more descriptive client identifier than just the address.
-            const clientIdentifier = row['Клиент'] || row['Наименование'] || row['Адрес ТТ LimKorm'] || cacheKey;
-            aggregatedData[key].clients.add(clientIdentifier);
+            aggregatedData[key].clients.add(address);
 
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -221,39 +227,47 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
     const addressCache = new Map<string, ParsedAddress>();
     const BATCH_SIZE = 1000;
     let rowBatch: any[] = [];
-    const processingPromises: Promise<void>[] = [];
+    let processingPromises: Promise<void>[] = [];
     let hasPotentialColumn = false;
     let headersChecked = false;
     let rowCounter = 0;
 
     const processAndAggregateBatch = async (batch: any[]) => {
-        const cacheKeysAndRows: { cacheKey: string, row: any }[] = batch.map(row => ({
-            cacheKey: row['Адрес ТТ LimKorm'] || JSON.stringify(row) || `Строка #${row._originalIndex}`,
-            row
-        }));
+        const addressParsingJobs = batch.map(async (row) => {
+            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
+             if (addressCache.has(address)) {
+                return { row, parsedAddress: addressCache.get(address)! };
+            }
+            
+            let parsedAddress = await parseRussianAddress(address);
 
-        const uncachedItems = cacheKeysAndRows.filter(item => !addressCache.has(item.cacheKey));
-        
-        if (uncachedItems.length > 0) {
-            const parsedAddressResults = await Promise.all(
-                uncachedItems.map(item => parseAddressData(item.row))
-            );
+            if (parsedAddress.region === 'Регион не определен') {
+                const distributor = row['Дистрибьютор'] || '';
+                const cityMatch = distributor.match(/\(([^)]+)\)/);
+                if (cityMatch && cityMatch[1]) {
+                    const cityFromDistributor = cityMatch[1];
+                    const fallbackParsed = await parseRussianAddress(cityFromDistributor);
+                    if (fallbackParsed.region !== 'Регион не определен') {
+                        parsedAddress = fallbackParsed;
+                    }
+                }
+            }
 
-            uncachedItems.forEach((item, index) => {
-                addressCache.set(item.cacheKey, parsedAddressResults[index]);
-            });
-        }
-        
-        cacheKeysAndRows.forEach(({ cacheKey, row }) => {
-            const parsedAddress = addressCache.get(cacheKey);
+            addressCache.set(address, parsedAddress);
+            return { row, parsedAddress };
+        });
+
+        const resolvedAddresses = await Promise.all(addressParsingJobs);
+
+        resolvedAddresses.forEach(({ row, parsedAddress }) => {
             if (!parsedAddress) return;
 
-            const region = parsedAddress.region || 'Регион не определён';
+            const region = parsedAddress.region;
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
 
-            if (isNaN(fact)) return;
+            if (isNaN(fact) || region === 'Регион не определен') return;
 
             const key = `${region}-${brand}-${rm}`.toLowerCase();
             if (!aggregatedData[key]) {
@@ -264,8 +278,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 };
             }
             aggregatedData[key].fact += fact;
-            const clientIdentifier = row['Клиент'] || row['Наименование'] || row['Адрес ТТ LimKorm'] || cacheKey;
-            aggregatedData[key].clients.add(clientIdentifier);
+            aggregatedData[key].clients.add(row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`);
             
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -290,19 +303,28 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 rowBatch.push(dataWithIndex);
 
                 if (rowBatch.length >= BATCH_SIZE) {
-                    processingPromises.push(processAndAggregateBatch([...rowBatch]));
+                    const batchToProcess = [...rowBatch];
                     rowBatch = [];
+                    processingPromises.push(processAndAggregateBatch(batchToProcess));
                 }
                 
                 const percentage = Math.round((results.meta.cursor / file.size) * 85);
-                postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
+                 if (rowCounter % BATCH_SIZE === 0) { // Update progress less frequently
+                    postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
+                }
             },
             complete: async () => {
                 try {
                     if (rowBatch.length > 0) {
                         processingPromises.push(processAndAggregateBatch(rowBatch));
                     }
-                    await Promise.all(processingPromises);
+                    
+                    // Throttle promises to avoid overwhelming the system
+                    const CONCURRENCY_LIMIT = 4;
+                    for (let i = 0; i < processingPromises.length; i += CONCURRENCY_LIMIT) {
+                        const batch = processingPromises.slice(i, i + CONCURRENCY_LIMIT);
+                        await Promise.all(batch);
+                    }
 
                     const finalData = finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
                     

@@ -1,115 +1,146 @@
-// services/addressParser.ts
-import {
-    REGION_BY_CITY_WITH_INDEXES
-} from '../utils/regionMap';
+import { 
+    standardizeRegion, 
+    REGION_KEYWORD_MAP, 
+    CITY_NORMALIZATION_MAP,
+    REGION_BY_CITY_MAP,
+    INDEX_MAP 
+} from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 
-// Сопоставление нормализованных ключевых слов с каноническими названиями стран
-const COUNTRY_KEYWORD_MAP: Record<string, string> = {
-    'беларусь': 'Республика Беларусь',
-    'белоруссия': 'Республика Беларусь',
-    'рб': 'Республика Беларусь',
-    'казахстан': 'Республика Казахстан',
-    'рк': 'Республика Казахстан',
-    'абхазия': 'Республика Абхазия',
-};
-
 /**
- * Капитализирует первую букву каждого слова в строке.
- * @param str Входная строка.
- * @returns Строка с заглавными буквами.
+ * Capitalizes the first letter of each word in a string.
+ * @param str The input string.
+ * @returns The capitalized string.
  */
 const capitalize = (str: string | null): string => {
     if (!str) return '';
-    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 };
 
 /**
- * Нормализует строку для поиска: приводит к нижнему регистру, заменяет 'ё' на 'е', удаляет лишние символы.
- * @param text Входная строка.
- * @returns Нормализованная строка.
+ * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
+ * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
  */
-const normalizeText = (text: string): string => {
-    return text.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
-};
+function findRegionByKeyword(normalizedAddress: string): string | null {
+    const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
+        // FIX: Replaced unreliable `\b` word boundaries with an explicit check for surrounding spaces or line edges.
+        // This ensures that phrases like "брянская обл" are matched as whole units and not as substrings within other words.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
+        const regex = new RegExp(`(^|\\s)${keyPattern}($|\\s)`, 'i');
 
-/**
- * Ищет страну по ключевым словам в тексте.
- * @param normalizedText Нормализованный текст для поиска.
- * @returns Название страны или null.
- */
-function findCountry(normalizedText: string): string | null {
-    for (const keyword in COUNTRY_KEYWORD_MAP) {
-        if (new RegExp(`\\b${keyword}\\b`).test(normalizedText)) {
-            return COUNTRY_KEYWORD_MAP[keyword];
+        if (regex.test(normalizedAddress)) {
+            return REGION_KEYWORD_MAP[key];
         }
     }
     return null;
 }
 
 /**
- * Ищет регион по названию города из карты `REGION_BY_CITY_WITH_INDEXES`.
- * @param normalizedText Нормализованный текст для поиска.
- * @returns Объект с регионом и найденным городом, или null.
+ * Finds a region by identifying a city name in the address and looking up its corresponding region.
+ * Uses a robust regex to match whole city names.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
  */
-function findRegionByCity(normalizedText: string): { region: string; city: string } | null {
-    // Сортируем ключи от длинных к коротким, чтобы избежать частичных совпадений (например, "саки" вместо "сакский район")
-    const sortedCities = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
+function findRegionByCity(normalizedAddress: string): { region: string | null, city: string | null } {
+    const sortedKeys = Object.keys(REGION_BY_CITY_MAP).sort((a, b) => b.length - a.length);
+     for (const key of sortedKeys) {
+        // FIX: Applied the same robust regex generation as in findRegionByKeyword for consistency.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const keyPattern = escapedKey.replace(/\s+/g, '\\s+');
+        const cityRegex = new RegExp(`(^|\\s)${keyPattern}($|\\s)`, 'i');
 
-    for (const city of sortedCities) {
-        // Ищем город как отдельное слово
-        if (new RegExp(`\\b${city}\\b`).test(normalizedText)) {
-            return {
-                region: REGION_BY_CITY_WITH_INDEXES[city].region,
-                city: city
-            };
+        if (cityRegex.test(normalizedAddress)) {
+            return { region: REGION_BY_CITY_MAP[key], city: key };
         }
+    }
+    return { region: null, city: null };
+}
+
+/**
+ * Finds a region using the postal index as a last resort, but only if no other geographic clues are present.
+ * @param address The original address string.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
+ */
+function findRegionByIndex(address: string, normalizedAddress: string): string | null {
+    // This check prevents the index from incorrectly overriding a region if the address contains
+    // explicit location words but our maps don't recognize them.
+    const hasLocationClues = /область|\bобл\b|\bкрай\b|республика|\bресп\b|округ|\bао\b|\bг\b|город|поселок|\bпос\b|\bпгт\b|\bдер\b|деревня/i.test(normalizedAddress);
+    if (hasLocationClues) {
+        return null; 
+    }
+
+    const indexMatch = address.match(/\b(\d{5,6})\b/);
+    if (indexMatch) {
+        const postalIndex = indexMatch[1];
+        if (INDEX_MAP[postalIndex]) return INDEX_MAP[postalIndex];
+        const prefix3 = postalIndex.substring(0, 3);
+        if (INDEX_MAP[prefix3]) return INDEX_MAP[prefix3];
     }
     return null;
 }
 
 /**
- * Интеллектуально парсит адрес, используя данные из всей строки (включая дистрибьютора, клиента и т.д.).
- * @param row Объект, представляющий строку из файла.
- * @returns Объект `ParsedAddress` с регионом и городом.
+ * Parses a Russian address string to extract the region and city using a multi-layered, priority-based approach.
+ * @param address The raw address string.
+ * @returns A ParsedAddress object with the determined region and city.
  */
-export async function parseAddressData(row: { [key: string]: any }): Promise<ParsedAddress> {
-    // 1. Собираем весь возможный текстовый контекст из строки
-    const contextFields = [
-        row['Адрес ТТ LimKorm'],
-        row['Юридический адрес'],
-        row['Дистрибьютор'],
-        row['Клиент'],
-        row['Наименование']
-    ];
-    
-    const combinedContext = contextFields.filter(Boolean).join(' ');
-    
-    if (!combinedContext.trim()) {
+export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
+    if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
 
-    const normalizedContext = normalizeText(combinedContext);
+    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
+    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
+    let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // 2. Приоритетный поиск: сначала ищем страну
-    const country = findCountry(normalizedContext);
-    if (country) {
-        const cityResult = findRegionByCity(normalizedContext);
-        return {
-            region: country,
-            city: capitalize(cityResult?.city ?? null) || 'Город не определён'
-        };
+    // --- Step 1: Normalization using aliases for common typos ---
+    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+        if (normalized.includes(alias)) {
+            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
+        }
+    }
+
+    let region: string | null = null;
+    let city: string | null = null;
+
+    // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
+    // This is the most reliable method.
+    region = findRegionByKeyword(normalized);
+
+    // --- PRIORITY 2: If no region found, find it by city name (e.g., "Орёл") ---
+    // This works when the region is omitted but a known city is present.
+    if (!region) {
+        const result = findRegionByCity(normalized);
+        if (result.region) {
+            region = result.region;
+            city = result.city;
+        }
     }
     
-    // 3. Если страна не найдена, ищем город и по нему определяем регион РФ/СНГ
-    const cityResult = findRegionByCity(normalizedContext);
-    if (cityResult) {
-        return {
-            region: cityResult.region,
-            city: capitalize(cityResult.city)
-        };
+    // --- PRIORITY 3: As a last resort, use postal index ONLY if no other clues exist ---
+    // This is a fallback for addresses that are very sparse.
+    if (!region) {
+        region = findRegionByIndex(address, normalized);
     }
     
-    // 4. Если ничего не найдено, возвращаем значение по умолчанию
-    return { region: 'Регион не определен', city: 'Город не определён' };
+    // --- Finalization ---
+    // If we found a region but haven't identified a city yet, try to find the city again
+    // to ensure both pieces of data are populated if possible.
+    if (region && !city) {
+        const result = findRegionByCity(normalized);
+        // Ensure the found city actually belongs to the already determined region.
+        if (result.city && REGION_BY_CITY_MAP[result.city] === region) {
+            city = result.city;
+        }
+    }
+
+    return {
+        region: standardizeRegion(region),
+        city: capitalize(city) || 'Город не определён'
+    };
 }
