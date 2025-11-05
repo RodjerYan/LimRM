@@ -15,11 +15,15 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const formattedPotential = new Intl.NumberFormat('ru-RU').format(clientData.potential);
     const formattedGrowth = new Intl.NumberFormat('ru-RU').format(clientData.growthPotential);
 
-    const isGroup = !!clientData.clients && clientData.clients.length > 0;
+    const isGroup = !!clientData.clients && clientData.clients.length > 1;
     const subject = isGroup ? 'группе клиентов' : 'клиенту';
     const subjectDataHeader = isGroup ? 'Данные о группе' : 'Данные о клиенте';
-    const clientIdentifier = isGroup ? `Группа (${clientData.clients?.length} ТТ)` : 'Клиент';
+    const clientIdentifier = isGroup ? 'Группа' : 'Клиент';
     const clientName = isGroup ? `${clientData.clientName} (РМ: ${clientData.rm})` : clientData.clientName;
+    
+    const clientListInfo = isGroup && clientData.clients
+    ? `\n        - **Клиенты в группе (${clientData.clients.length} ТТ). Примеры:**\n${clientData.clients.slice(0, 5).map(c => `          - ${c.trim()}`).join('\n')}`
+    : '';
 
     return `
         Проанализируй данные по ${subject} и дай краткие, действенные рекомендации по увеличению продаж.
@@ -34,6 +38,7 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
         - **Текущие продажи (Факт):** ${formattedFact} кг/ед.
         - **Общий потенциал рынка:** ${formattedPotential} кг/ед.
         - **Потенциал роста:** ${formattedGrowth} кг/ед. (${clientData.growthPercentage.toFixed(1)}%)
+        ${clientListInfo}
 
         **Задача:**
         1.  Определи 2-3 ключевых фактора, которые могут способствовать росту для этой ${isGroup ? 'группы' : 'ТТ'}.

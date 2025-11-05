@@ -2,6 +2,7 @@ import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
 import { parseRussianAddress } from './addressParser';
+import { callGeminiForRegion } from './geminiService';
 import { standardizeRegion } from '../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -32,6 +33,58 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
+};
+
+/**
+ * A multi-stage function to determine the address and region for a given row,
+ * with fallbacks including an AI call for maximum reliability.
+ * @param row The data row from the file.
+ * @param addressCache A cache to store results for identical addresses.
+ * @returns A promise that resolves to the parsed address information.
+ */
+const getAddressInfoForRow = async (row: { [key: string]: any }, addressCache: Map<string, ParsedAddress>): Promise<ParsedAddress> => {
+    // Step 1: Try the primary, most reliable address column first.
+    const primaryAddress = findAddressInRow(row);
+    if (primaryAddress) {
+        if (addressCache.has(primaryAddress)) return addressCache.get(primaryAddress)!;
+        const parsed = await parseRussianAddress(primaryAddress);
+        if (parsed.region !== 'Регион не определен') {
+            addressCache.set(primaryAddress, parsed);
+            return parsed;
+        }
+    }
+
+    // Step 2: If primary parsing fails, build a composite string from multiple potential columns.
+    const rowKeys = Object.keys(row);
+    const findKey = (searchTerms: string[]) => rowKeys.find(k => searchTerms.some(term => k.toLowerCase().includes(term)));
+    
+    const compositeAddress = [
+        row[findKey(['адрес'])!],
+        row[findKey(['город'])!],
+        row[findKey(['регион'])!],
+        row[findKey(['дистрибьютор'])!],
+        row[findKey(['клиент', 'наименование'])!],
+    ].filter(Boolean).join(', ');
+
+    if (!compositeAddress) {
+        return { region: 'Регион не определен', city: 'Город не определён' };
+    }
+    
+    if (addressCache.has(compositeAddress)) return addressCache.get(compositeAddress)!;
+    
+    let parsedAddress = await parseRussianAddress(compositeAddress);
+
+    // Step 3: As a last resort, if local parsing of the composite string still fails, use Gemini AI.
+    if (parsedAddress.region === 'Регион не определен') {
+        const geminiRegion = await callGeminiForRegion(compositeAddress);
+        if (geminiRegion && geminiRegion !== 'Регион не определен') {
+            parsedAddress.region = geminiRegion;
+        }
+    }
+
+    // Cache the result to avoid re-parsing identical composite strings.
+    addressCache.set(compositeAddress, parsedAddress);
+    return parsedAddress;
 };
 
 
@@ -179,29 +232,8 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
         const batch = jsonData.slice(i, i + BATCH_SIZE);
         
-        const addressParsingJobs = batch.map(async (row, index) => {
-            const address = findAddressInRow(row) || `Строка #${i + index + 2}`;
-            
-            if (addressCache.has(address)) {
-                return { row, parsedAddress: addressCache.get(address)! };
-            }
-            
-            let parsedAddress = await parseRussianAddress(address);
-
-            // NEW: Fallback logic using the distributor column
-            if (parsedAddress.region === 'Регион не определен') {
-                const distributor = row['Дистрибьютор'] || '';
-                const cityMatch = distributor.match(/\(([^)]+)\)/);
-                if (cityMatch && cityMatch[1]) {
-                    const cityFromDistributor = cityMatch[1];
-                    const fallbackParsed = await parseRussianAddress(cityFromDistributor);
-                    if (fallbackParsed.region !== 'Регион не определен') {
-                        parsedAddress = fallbackParsed;
-                    }
-                }
-            }
-
-            addressCache.set(address, parsedAddress);
+        const addressParsingJobs = batch.map(async (row) => {
+            const parsedAddress = await getAddressInfoForRow(row, addressCache);
             return { row, parsedAddress };
         });
 
@@ -262,26 +294,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
 
     const processAndAggregateBatch = async (batch: any[]) => {
         const addressParsingJobs = batch.map(async (row) => {
-            const address = findAddressInRow(row) || `Строка #${row._originalIndex}`;
-             if (addressCache.has(address)) {
-                return { row, parsedAddress: addressCache.get(address)! };
-            }
-            
-            let parsedAddress = await parseRussianAddress(address);
-
-            if (parsedAddress.region === 'Регион не определен') {
-                const distributor = row['Дистрибьютор'] || '';
-                const cityMatch = distributor.match(/\(([^)]+)\)/);
-                if (cityMatch && cityMatch[1]) {
-                    const cityFromDistributor = cityMatch[1];
-                    const fallbackParsed = await parseRussianAddress(cityFromDistributor);
-                    if (fallbackParsed.region !== 'Регион не определен') {
-                        parsedAddress = fallbackParsed;
-                    }
-                }
-            }
-
-            addressCache.set(address, parsedAddress);
+            const parsedAddress = await getAddressInfoForRow(row, addressCache);
             return { row, parsedAddress };
         });
 
@@ -325,6 +338,11 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 rowCounter++;
                 if (!headersChecked && results.meta.fields) {
                     hasPotentialColumn = results.meta.fields.some(h => (h || '').toLowerCase() === 'потенциал');
+                    if (!results.meta.fields.some(h => (h || '').toLowerCase() === 'вес, кг')) {
+                        reject(new Error('Файл должен содержать колонку "Вес, кг".'));
+                        // @ts-ignore - Abort parsing
+                        results.meta.aborted = true; 
+                    }
                     headersChecked = true;
                 }
                 

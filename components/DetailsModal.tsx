@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import Modal from './Modal';
@@ -22,13 +22,10 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [error, setError] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    useEffect(() => {
-        if (!data) return;
-
+    const fetchInsights = useCallback(() => {
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
         }
-
         abortControllerRef.current = new AbortController();
         const signal = abortControllerRef.current.signal;
 
@@ -40,32 +37,53 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
             data,
             (chunk) => setInsight(prev => prev + chunk),
             (err) => {
-                setError(`Не удалось получить рекомендации от AI: ${err.message}`);
+                if (err.name !== 'AbortError') {
+                    setError(`Не удалось получить рекомендации от AI: ${err.message}. Попробуйте еще раз.`);
+                }
                 setIsLoading(false);
             },
             signal
         ).finally(() => {
             setIsLoading(false);
         });
+    }, [data]);
+
+    useEffect(() => {
+        if (!data) return;
+
+        fetchInsights();
 
         return () => {
             abortControllerRef.current?.abort();
         };
-    }, [data]);
+    }, [data, fetchInsights]);
 
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(insight) as string);
 
     return (
-        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px]">
+        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col">
             <h4 className="font-bold text-lg mb-2 text-accent">Рекомендации от Gemini</h4>
-            {isLoading && !insight && (
-                <div className="flex items-center justify-center h-full text-gray-400">
-                    <LoaderIcon />
-                    <span className="ml-2">Анализ данных...</span>
-                </div>
-            )}
-            {error && <p className="text-danger text-sm">{error}</p>}
-            <div className="prose prose-invert prose-sm max-w-none text-slate-300" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+            <div className="flex-grow flex flex-col justify-center">
+                {isLoading && !insight && (
+                    <div className="flex items-center justify-center h-full text-gray-400">
+                        <LoaderIcon />
+                        <span className="ml-2">Анализ данных...</span>
+                    </div>
+                )}
+                {error && (
+                    <div className="text-center">
+                        <p className="text-danger text-sm mb-3">{error}</p>
+                        <button
+                            onClick={fetchInsights}
+                            disabled={isLoading}
+                            className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm disabled:bg-gray-600"
+                        >
+                            {isLoading ? 'Загрузка...' : 'Попробовать снова'}
+                        </button>
+                    </div>
+                )}
+                <div className="prose prose-invert prose-sm max-w-none text-slate-300" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+            </div>
         </div>
     );
 };
