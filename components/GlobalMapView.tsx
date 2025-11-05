@@ -2,26 +2,30 @@ import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapPoint } from '../types';
+import { geoJsonData } from '../data/russia_regions_geojson';
 
-interface GlobalMapViewProps {
-    points: MapPoint[];
+interface HybridMapViewProps {
+    activeRegions: Set<string>;
+    potentialPoints: MapPoint[];
 }
 
-const createMarkerIcon = (status: MapPoint['status']) => {
-    const colorClass = status === 'match' ? 'green' : 'blue';
+// Function to create custom styled markers for potential clients
+const createMarkerIcon = () => {
     return L.divIcon({
-        html: `<div class="marker-pin ${colorClass}"></div>`,
-        className: 'marker-container', // Use a container class to avoid Leaflet overriding styles
+        html: `<div class="marker-pin blue"></div>`,
+        className: 'marker-container',
         iconSize: [30, 42],
         iconAnchor: [15, 42]
     });
 };
 
-const GlobalMapView: React.FC<GlobalMapViewProps> = ({ points }) => {
+const GlobalMapView: React.FC<HybridMapViewProps> = ({ activeRegions, potentialPoints }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
-    const markersLayer = useRef<L.LayerGroup | null>(null);
+    const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
+    const markersLayerRef = useRef<L.LayerGroup | null>(null);
 
+    // Initialize map
     useEffect(() => {
         if (!mapContainer.current || mapInstance.current) return;
 
@@ -37,7 +41,7 @@ const GlobalMapView: React.FC<GlobalMapViewProps> = ({ points }) => {
             maxZoom: 19
         }).addTo(mapInstance.current);
         
-        markersLayer.current = L.layerGroup().addTo(mapInstance.current);
+        markersLayerRef.current = L.layerGroup().addTo(mapInstance.current);
 
         return () => {
             mapInstance.current?.remove();
@@ -45,37 +49,68 @@ const GlobalMapView: React.FC<GlobalMapViewProps> = ({ points }) => {
         };
     }, []);
 
+    // Update GeoJSON layer (colored regions)
     useEffect(() => {
-        const layer = markersLayer.current;
+        const map = mapInstance.current;
+        if (!map) return;
+
+        if (geoJsonLayerRef.current) {
+            map.removeLayer(geoJsonLayerRef.current);
+        }
+
+        const style = (feature?: any): L.PathOptions => {
+            const regionName = feature?.properties.name || '';
+            const isActive = activeRegions.has(regionName);
+            return {
+                fillColor: isActive ? '#22c55e' : '#374151', // green-500 for active, gray-700 for inactive
+                weight: 1,
+                opacity: 1,
+                color: '#1F2937', // card-bg for borders
+                fillOpacity: isActive ? 0.65 : 0.3
+            };
+        };
+
+        const highlightFeature = (e: L.LeafletMouseEvent) => {
+            const layer = e.target;
+            layer.setStyle({ weight: 3, color: '#818cf8', fillOpacity: 0.8 });
+            layer.bringToFront();
+        };
+
+        const resetHighlight = (e: L.LeafletMouseEvent) => {
+            geoJsonLayerRef.current?.resetStyle(e.target);
+        };
+        
+        const onEachFeature = (feature: any, layer: L.Layer) => {
+            layer.bindPopup(`<b>${feature.properties.name}</b>`);
+            layer.on({ mouseover: highlightFeature, mouseout: resetHighlight });
+        };
+
+        geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style, onEachFeature }).addTo(map);
+
+    }, [activeRegions]);
+
+    // Update potential client markers
+    useEffect(() => {
+        const layer = markersLayerRef.current;
         const map = mapInstance.current;
         if (!layer || !map) return;
 
         layer.clearLayers();
         
-        if (points.length === 0) {
-            // Reset view if no points
-            map.flyTo([60, 90], 3);
-            return;
-        }
+        if (potentialPoints.length === 0) return;
 
-        const markers: L.Marker[] = [];
-        points.forEach(point => {
-            const marker = L.marker([point.lat, point.lon], { icon: createMarkerIcon(point.status) });
+        potentialPoints.forEach(point => {
+            const marker = L.marker([point.lat, point.lon], { icon: createMarkerIcon() });
             marker.bindPopup(`<b>${point.name}</b><br>${point.type}<br><small>${point.address}</small>`);
-            markers.push(marker);
             layer.addLayer(marker);
         });
 
-        if (markers.length > 0) {
-            const featureGroup = L.featureGroup(markers);
-            map.fitBounds(featureGroup.getBounds().pad(0.1), { maxZoom: 15 });
-        }
+    }, [potentialPoints]);
 
-    }, [points]);
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-             <h2 className="text-xl font-bold mb-4 text-white">Карта торговых точек</h2>
+             <h2 className="text-xl font-bold mb-4 text-white">Карта присутствия и потенциала</h2>
              <div ref={mapContainer} className="h-[60vh] w-full rounded-lg z-10" />
         </div>
     );

@@ -8,7 +8,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
-import GlobalMapView from './components/GlobalMapView'; // Import the new point map component
+import GlobalMapView from './components/GlobalMapView'; 
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -40,7 +40,37 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
-    const [mapPoints, setMapPoints] = useState<MapPoint[]>([]);
+    
+    // Derived state for the map
+    const activeRegions = useMemo(() => new Set(allData.map(row => row.region)), [allData]);
+
+    const potentialPoints = useMemo<MapPoint[]>(() => {
+        if (okbData.length === 0) return [];
+        
+        const activeAddresses = new Set<string>();
+        allData.forEach(group => {
+            group.clients.forEach(clientAddress => {
+                if (clientAddress) activeAddresses.add(clientAddress.trim());
+            });
+        });
+
+        return okbData
+            .filter(okbRow => {
+                const address = okbRow['Юридический адрес']?.trim();
+                // Is a potential client if it has coordinates AND is not in the active list
+                return okbRow.lat && okbRow.lon && (!address || !activeAddresses.has(address));
+            })
+            .map(okbRow => ({
+                key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
+                lat: okbRow.lat!,
+                lon: okbRow.lon!,
+                status: 'potential',
+                name: okbRow['Наименование'] || 'Без названия',
+                address: okbRow['Юридический адрес'] || 'Адрес не указан',
+                type: okbRow['Вид деятельности'] || 'н/д'
+            }));
+    }, [allData, okbData]);
+
 
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
@@ -56,58 +86,6 @@ const App: React.FC = () => {
             setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 5000);
     }, []);
-
-    // Effect to process data for the map
-    useEffect(() => {
-        if (okbData.length === 0 || allData.length === 0) {
-            // If only OKB is loaded, show all its points as potential
-            if (okbData.length > 0 && allData.length === 0) {
-                const potentialPoints: MapPoint[] = okbData
-                    .filter(okbRow => okbRow.lat && okbRow.lon)
-                    .map(okbRow => ({
-                        key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
-                        lat: okbRow.lat!,
-                        lon: okbRow.lon!,
-                        status: 'potential',
-                        name: okbRow['Наименование'] || 'Без названия',
-                        address: okbRow['Юридический адрес'] || 'Адрес не указан',
-                        type: okbRow['Вид деятельности'] || 'н/д'
-                    }));
-                setMapPoints(potentialPoints);
-            } else {
-                 setMapPoints([]); // Clear points if no data
-            }
-            return;
-        }
-
-        const activeAddresses = new Set<string>();
-        allData.forEach(group => {
-            group.clients.forEach(clientAddress => {
-                if (clientAddress) activeAddresses.add(clientAddress.trim());
-            });
-        });
-        
-        const newMapPoints: MapPoint[] = okbData
-            .filter(okbRow => okbRow.lat && okbRow.lon) // Only use rows with coordinates
-            .map(okbRow => {
-                const address = okbRow['Юридический адрес']?.trim();
-                const status: MapPointStatus = address && activeAddresses.has(address) ? 'match' : 'potential';
-                
-                return {
-                    key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
-                    lat: okbRow.lat!,
-                    lon: okbRow.lon!,
-                    status,
-                    name: okbRow['Наименование'] || 'Без названия',
-                    address: okbRow['Юридический адрес'] || 'Адрес не указан',
-                    type: okbRow['Вид деятельности'] || 'н/д'
-                };
-            });
-
-        setMapPoints(newMapPoints);
-
-    }, [allData, okbData]);
-
 
     const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
         setAllData(data);
@@ -191,8 +169,11 @@ const App: React.FC = () => {
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         
                         {okbStatus?.status === 'ready' && (
-                            okbStatus.coordsCount && okbStatus.coordsCount > 0 ? (
-                                <GlobalMapView points={mapPoints} />
+                             okbStatus.coordsCount !== undefined && okbStatus.coordsCount > 0 ? (
+                                <GlobalMapView 
+                                    activeRegions={activeRegions}
+                                    potentialPoints={potentialPoints}
+                                />
                             ) : (
                                 <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                                     <h2 className="text-xl font-bold mb-4 text-white">Карта торговых точек</h2>
