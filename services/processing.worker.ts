@@ -8,20 +8,29 @@ type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 
 /**
- * A helper function to find a value in a row object by checking multiple possible keys.
- * Performs a case-insensitive search on the object's keys.
+ * A robust helper function to find an address value within a data row.
+ * It searches for keys in a prioritized order, using both exact and partial matches.
  * @param row The data row object.
- * @param keys An array of possible keys to check.
- * @returns The found value or null.
+ * @returns The found address string or null.
  */
-const findValueByKey = (row: { [key: string]: any }, keys: string[]): string | null => {
-    const lowerCaseKeys = keys.map(k => k.toLowerCase());
+const findAddressInRow = (row: { [key: string]: any }): string | null => {
     const rowKeys = Object.keys(row);
-    for (const rowKey of rowKeys) {
-        if (lowerCaseKeys.includes(rowKey.toLowerCase())) {
-            return row[rowKey];
-        }
+    const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
+
+    // 1. Prioritized exact match (case-insensitive)
+    for (const pKey of prioritizedKeys) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase() === pKey);
+        if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
+
+    // 2. Substring match for 'адрес'
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
+    if (addressKey && row[addressKey]) return String(row[addressKey]);
+    
+    // 3. Fallback to 'город' or 'регион'
+    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
+    if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
+
     return null;
 };
 
@@ -63,7 +72,7 @@ function findPotentialClients(
 
     const potential: PotentialClient[] = [];
     for (const okbRow of potentialForRegion) {
-        const okbAddress = findValueByKey(okbRow, ['Юридический адрес', 'Адрес']) || '';
+        const okbAddress = findAddressInRow(okbRow) || '';
         if (okbAddress && !existingClients.has(okbAddress)) {
             potential.push({
                 name: okbRow['Наименование'] || 'Без названия',
@@ -171,7 +180,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
         const batch = jsonData.slice(i, i + BATCH_SIZE);
         
         const addressParsingJobs = batch.map(async (row, index) => {
-            const address = findValueByKey(row, ['Адрес ТТ LimKorm', 'Юридический адрес', 'Адрес']) || `Строка #${i + index + 2}`;
+            const address = findAddressInRow(row) || `Строка #${i + index + 2}`;
             
             if (addressCache.has(address)) {
                 return { row, parsedAddress: addressCache.get(address)! };
@@ -205,7 +214,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
-            const address = findValueByKey(row, ['Адрес ТТ LimKorm', 'Юридический адрес', 'Адрес']) || `Строка #${jsonData.indexOf(row) + 2}`;
+            const clientAddress = findAddressInRow(row) || `Строка #${jsonData.indexOf(row) + 2}`;
 
             if (isNaN(fact) || region === 'Регион не определен') return;
 
@@ -218,7 +227,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(address);
+            aggregatedData[key].clients.add(clientAddress);
 
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -253,7 +262,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
 
     const processAndAggregateBatch = async (batch: any[]) => {
         const addressParsingJobs = batch.map(async (row) => {
-            const address = findValueByKey(row, ['Адрес ТТ LimKorm', 'Юридический адрес', 'Адрес']) || `Строка #${row._originalIndex}`;
+            const address = findAddressInRow(row) || `Строка #${row._originalIndex}`;
              if (addressCache.has(address)) {
                 return { row, parsedAddress: addressCache.get(address)! };
             }
@@ -285,7 +294,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
-            const address = findValueByKey(row, ['Адрес ТТ LimKorm', 'Юридический адрес', 'Адрес']) || `Строка #${row._originalIndex}`;
+            const clientAddress = findAddressInRow(row) || `Строка #${row._originalIndex}`;
 
             if (isNaN(fact) || region === 'Регион не определен') return;
 
@@ -298,7 +307,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(address);
+            aggregatedData[key].clients.add(clientAddress);
             
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
