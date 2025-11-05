@@ -51,6 +51,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onFileProcessed(payload);
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Обработка завершена!`);
+                    setProgress(100); // Ensure progress is 100 on completion
                     setEtr(0);
                     break;
                 case 'error':
@@ -117,19 +118,29 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onDragOver={handleDragEnter}
                     onDrop={handleDrop}
                     className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg transition-colors ${
-                        isProcessing ? 'cursor-not-allowed' : 'cursor-pointer'
+                        isProcessing ? 'cursor-wait' : 'cursor-pointer'
                     } ${
                         isDragging ? 'border-accent bg-indigo-900/40' : 'border-gray-600 bg-gray-900/50 hover:bg-gray-800/60'
                     }`}
                 >
-                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                        <svg className="w-8 h-8 mb-4 text-gray-500" aria-hidden="true" xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 20 16">
-                            <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
-                        </svg>
-                        <p className="mb-2 text-sm text-gray-400">
-                            <span className="font-semibold text-accent">{isDragging ? 'Отпустите файл' : 'Нажмите для загрузки'}</span> или перетащите
-                        </p>
-                        <p className="text-xs text-gray-500">XLSX, XLS, CSV</p>
+                    <div className="flex flex-col items-center justify-center text-center h-full">
+                        {isProcessing ? (
+                             <div className="pt-5 pb-6">
+                                <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mx-auto"></div>
+                                <p className="mt-3 text-base font-semibold text-white">Обработка...</p>
+                                <p className="text-xs text-gray-400 max-w-xs truncate">{fileName}</p>
+                            </div>
+                        ) : (
+                            <div className="pt-5 pb-6">
+                                <svg className="w-8 h-8 mb-4 text-gray-500 mx-auto" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                                    <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
+                                </svg>
+                                <p className="mb-2 text-sm text-gray-400">
+                                    <span className="font-semibold text-accent">{isDragging ? 'Отпустите файл' : 'Нажмите для загрузки'}</span> или перетащите
+                                </p>
+                                <p className="text-xs text-gray-500">XLSX, XLS, CSV</p>
+                            </div>
+                        )}
                     </div>
                     <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing} />
                 </label>
@@ -138,15 +149,27 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                 💡 **Совет:** Для файлов размером более 10МБ рекомендуется использовать формат **CSV** для значительного ускорения обработки.
             </div>
             {fileName && (
-                 <div className="mt-4">
-                    <p className="text-sm text-gray-400 truncate">Файл: {fileName}</p>
-                    <div className="w-full bg-gray-700 rounded-full h-2.5 mt-2">
-                        <div className="bg-accent h-2.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                 <div className="mt-4 space-y-2">
+                    <div className="flex justify-between items-center text-sm">
+                        <p className="text-gray-300 truncate font-medium max-w-[70%]">Файл: {fileName}</p>
+                        <p className="font-mono text-accent font-semibold">{Math.round(progress)}%</p>
                     </div>
-                    <div className="flex justify-between items-center mt-1">
-                        <p className="text-xs text-gray-400">{message}</p>
+                    <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden border border-gray-600/50">
+                        <div 
+                            className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
+                            style={{ width: `${progress}%` }}
+                        ></div>
+                    </div>
+                    <div className="flex justify-between items-center text-xs min-h-[1.25rem]">
+                        <p className="text-gray-400">{message}</p>
                         {isProcessing && etr !== null && (
-                            <p className="text-xs text-gray-500 font-mono">{formatETR(etr)}</p>
+                            <p className="text-indigo-400 font-mono">{formatETR(etr)}</p>
+                        )}
+                        {progress === 100 && message.includes("заверш") && (
+                            <p className="text-success font-semibold flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
+                                Завершено!
+                            </p>
                         )}
                     </div>
                 </div>
