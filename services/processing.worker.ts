@@ -83,9 +83,16 @@ const processData = async (
 
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                // FIX: Removed 'region' property which does not exist on the AggregatedDataRow type.
-                key, groupName: rm, brand: '', rm, city: '',
-                fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                key, 
+                groupName: rm, 
+                clientName: rm, // FIX: Added missing required property 'clientName'
+                brand: '', 
+                rm, 
+                city: '',
+                fact: 0, 
+                potential: 0, 
+                growthPotential: 0, 
+                growthPercentage: 0,
                 clients: new Set<string>(),
                 cities: new Set<string>(),
                 brands: new Set<string>(),
@@ -185,8 +192,11 @@ async function processCsv(file: File, okbData: OkbDataRow[], postMessage: PostMe
             worker: true,
             complete: async (results) => {
                 try {
-                    // FIX: Added a check to ensure `row` is an object before spreading to prevent "Spread types may only be created from object types" error.
-                    const jsonData = (results.data as any[]).map((row, index) => (row ? {...row, _originalIndex: index + 2} : null)).filter(Boolean);
+                    // FIX: Replaced the simple truthy check with a more robust type check (`typeof row === 'object' && row !== null`).
+                    // This ensures that `row` is a non-null object before attempting to spread its properties, which resolves the
+                    // "Spread types may only be created from object types" TypeScript error that can occur if papaparse returns
+                    // primitives, nulls, or other non-object values in its results.
+                    const jsonData = (results.data as any[]).map((row, index) => (typeof row === 'object' && row !== null ? {...row, _originalIndex: index + 2} : null)).filter(Boolean);
                     await processData(jsonData, okbData, postMessage);
                     resolve();
                 } catch (e) {
