@@ -128,7 +128,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                              <div className="pt-5 pb-6">
                                 <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mx-auto"></div>
                                 <p className="mt-3 text-base font-semibold text-white">Обработка...</p>
-                                <p className="text-xs text-gray-400 max-w-xs truncate">{fileName}</p>
+                                <p className="text-sm text-gray-300 max-w-xs truncate">{fileName}</p>
                             </div>
                         ) : (
                             <div className="pt-5 pb-6">
@@ -161,7 +161,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                         ></div>
                     </div>
                     <div className="flex justify-between items-center text-xs min-h-[1.25rem]">
-                        <p className="text-gray-400">{message}</p>
+                        <p className="text-gray-300">{message}</p>
                         {isProcessing && etr !== null && (
                             <p className="text-indigo-400 font-mono">{formatETR(etr)}</p>
                         )}
