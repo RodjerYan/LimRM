@@ -1,7 +1,7 @@
 import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
-import { parseRussianAddress } from './addressParser';
+import { parseAddressData } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -151,31 +151,29 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
         const batch = jsonData.slice(i, i + BATCH_SIZE);
         
-        // Step 1: Identify unique addresses in the batch that are not yet cached.
-        const addressesToParse = new Set<string>();
-        batch.forEach((row, index) => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
-            if (!addressCache.has(address)) {
-                addressesToParse.add(address);
-            }
-        });
-
-        // Step 2: Parse only the new, unique addresses in parallel.
-        const uniqueAddressesArray = Array.from(addressesToParse);
-        const parsedAddressResults = await Promise.all(
-            uniqueAddressesArray.map(addr => parseRussianAddress(addr))
-        );
-
-        // Step 3: Populate the cache with the new results.
-        uniqueAddressesArray.forEach((address, index) => {
-            addressCache.set(address, parsedAddressResults[index]);
-        });
+        // Caching key is the primary address string to avoid reprocessing identical rows.
+        // The parser itself will look at the whole row object for context.
+        const cacheKeysAndRows: { cacheKey: string, row: any }[] = batch.map((row, index) => ({
+            cacheKey: row['Адрес ТТ LimKorm'] || JSON.stringify(row) || `Строка #${i + index + 2}`,
+            row
+        }));
         
-        // Step 4: Aggregate data for the batch using cached results.
-        batch.forEach((row, index) => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${i + index + 2}`;
-            const parsedAddress = addressCache.get(address);
-            if (!parsedAddress) return; // Robustness: skip if address somehow not in cache
+        const uncachedItems = cacheKeysAndRows.filter(item => !addressCache.has(item.cacheKey));
+
+        if (uncachedItems.length > 0) {
+            const parsedAddressResults = await Promise.all(
+                uncachedItems.map(item => parseAddressData(item.row))
+            );
+
+            uncachedItems.forEach((item, index) => {
+                addressCache.set(item.cacheKey, parsedAddressResults[index]);
+            });
+        }
+        
+        // Aggregate data for the batch using cached results.
+        cacheKeysAndRows.forEach(({ cacheKey, row }) => {
+            const parsedAddress = addressCache.get(cacheKey);
+            if (!parsedAddress) return; // Should not happen
 
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
@@ -193,7 +191,9 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(address);
+            // Use a more descriptive client identifier than just the address.
+            const clientIdentifier = row['Клиент'] || row['Наименование'] || row['Адрес ТТ LimKorm'] || cacheKey;
+            aggregatedData[key].clients.add(clientIdentifier);
 
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -223,35 +223,30 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
     let rowBatch: any[] = [];
     const processingPromises: Promise<void>[] = [];
     let hasPotentialColumn = false;
-    let headersChecked = false; // FIX: Ensure headers are checked only once
+    let headersChecked = false;
     let rowCounter = 0;
 
     const processAndAggregateBatch = async (batch: any[]) => {
-        // Step 1: Identify unique addresses in the batch that are not yet cached.
-        const addressesToParse = new Set<string>();
-        batch.forEach(row => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
-            if (address && !addressCache.has(address)) {
-                addressesToParse.add(address);
-            }
-        });
+        const cacheKeysAndRows: { cacheKey: string, row: any }[] = batch.map(row => ({
+            cacheKey: row['Адрес ТТ LimKorm'] || JSON.stringify(row) || `Строка #${row._originalIndex}`,
+            row
+        }));
 
-        // Step 2: Parse only the new, unique addresses in parallel.
-        const uniqueAddressesArray = Array.from(addressesToParse);
-        const parsedAddressResults = await Promise.all(
-            uniqueAddressesArray.map(addr => parseRussianAddress(addr))
-        );
-
-        // Step 3: Populate the cache with the new results.
-        uniqueAddressesArray.forEach((address, index) => {
-            addressCache.set(address, parsedAddressResults[index]);
-        });
+        const uncachedItems = cacheKeysAndRows.filter(item => !addressCache.has(item.cacheKey));
         
-        // Step 4: Aggregate data for the batch using cached results.
-        batch.forEach((row) => {
-            const address = row['Адрес ТТ LimKorm'] || `Строка #${row._originalIndex}`;
-            const parsedAddress = addressCache.get(address);
-            if (!parsedAddress) return; // Robustness: skip if address somehow not in cache
+        if (uncachedItems.length > 0) {
+            const parsedAddressResults = await Promise.all(
+                uncachedItems.map(item => parseAddressData(item.row))
+            );
+
+            uncachedItems.forEach((item, index) => {
+                addressCache.set(item.cacheKey, parsedAddressResults[index]);
+            });
+        }
+        
+        cacheKeysAndRows.forEach(({ cacheKey, row }) => {
+            const parsedAddress = addressCache.get(cacheKey);
+            if (!parsedAddress) return;
 
             const region = parsedAddress.region || 'Регион не определён';
             const brand = row['Торговая марка'] || 'Неизвестный бренд';
@@ -269,7 +264,8 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                 };
             }
             aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(address);
+            const clientIdentifier = row['Клиент'] || row['Наименование'] || row['Адрес ТТ LimKorm'] || cacheKey;
+            aggregatedData[key].clients.add(clientIdentifier);
             
             if (hasPotentialColumn) {
                 const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
@@ -290,7 +286,6 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                     headersChecked = true;
                 }
                 
-                // FIX: Add original index to avoid using indexOf later
                 const dataWithIndex = { ...results.data as object, _originalIndex: rowCounter + 1 };
                 rowBatch.push(dataWithIndex);
 
