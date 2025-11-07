@@ -1,4 +1,5 @@
 
+
 export interface Capital {
     name: string;
     lat: number;
@@ -13,6 +14,12 @@ export const capitals: Capital[] = [
     { name: 'Астана', lat: 51.1694, lon: 71.4491, type: 'country' },
     { name: 'Бишкек', lat: 42.8746, lon: 74.5698, type: 'country' },
     { name: 'Сухум', lat: 43.0013, lon: 41.0234, type: 'country' },
+    { name: 'Ереван', lat: 40.1792, lon: 44.4991, type: 'country' },
+    { name: 'Баку', lat: 40.4093, lon: 49.8671, type: 'country' },
+    { name: 'Кишинёв', lat: 47.0105, lon: 28.8638, type: 'country' },
+    { name: 'Душанбе', lat: 38.5598, lon: 68.7870, type: 'country' },
+    { name: 'Ташкент', lat: 41.2995, lon: 69.2401, type: 'country' },
+    { name: 'Ашхабад', lat: 37.9601, lon: 58.3261, type: 'country' },
 
     // === Регионы РФ ===
     // ЦФО
@@ -129,4 +136,22 @@ export const capitals: Capital[] = [
     { name: 'Ош', lat: 40.5167, lon: 72.8000, type: 'regional' },
     // Абхазия
     { name: 'Гагра', lat: 43.2800, lon: 40.2600, type: 'regional' },
+    // Армения
+    { name: 'Гюмри', lat: 40.7895, lon: 43.8449, type: 'regional' },
+    { name: 'Ванадзор', lat: 40.8122, lon: 44.4912, type: 'regional' },
+    // Азербайджан
+    { name: 'Гянджа', lat: 40.6828, lon: 46.3606, type: 'regional' },
+    { name: 'Сумгаит', lat: 40.5917, lon: 49.6686, type: 'regional' },
+    // Молдова
+    { name: 'Тирасполь', lat: 46.8403, lon: 29.6133, type: 'regional' },
+    { name: 'Бельцы', lat: 47.7618, lon: 27.9252, type: 'regional' },
+    // Таджикистан
+    { name: 'Худжанд', lat: 40.2858, lon: 69.6231, type: 'regional' },
+    { name: 'Куляб', lat: 37.9125, lon: 69.7831, type: 'regional' },
+    // Узбекистан
+    { name: 'Самарканд', lat: 39.6542, lon: 66.9597, type: 'regional' },
+    { name: 'Бухара', lat: 39.7747, lon: 64.4286, type: 'regional' },
+    // Туркменистан
+    { name: 'Туркменабад', lat: 39.0941, lon: 63.5786, type: 'regional' },
+    { name: 'Дашогуз', lat: 41.8333, lon: 59.9667, type: 'regional' },
 ];
