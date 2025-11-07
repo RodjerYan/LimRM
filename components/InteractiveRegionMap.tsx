@@ -342,7 +342,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-center gap-2 max-w-sm">
                     <div className="w-6 h-6 flex-shrink-0 text-danger"><ErrorIcon/></div>
                     <div>
-                        <strong>ОСТОРОЖНО!</strong> Отображены зоны проведения СВО и приграничные территории с высоким риском. Данные основаны на открытых источниках и предназначены для информационных целей безопасности. Планируйте маршруты с особой осторожностью.
+                        <strong>ОСТОРОЖНО!</strong> На карте отображена зона проведения СВО. Данные основаны на открытых источниках (zaschitnikiotechestva.ru) и предназначены для информационных целей. Планируйте маршруты с максимальной осторожностью.
                     </div>
                 </div>
             )}

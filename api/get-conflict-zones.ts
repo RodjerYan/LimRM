@@ -15,82 +15,64 @@ const MOCK_CONFLICT_ZONES_GEOJSON: FeatureCollection = {
         {
             "type": "Feature",
             "properties": {
-                "name": "Приграничная зона (угроза БПЛА)",
-                "description": "Зона повышенной опасности из-за возможных атак БПЛА. Глубина ~10 км от границы.",
-                "status": "drone_danger",
-                "last_updated": "2024-07-29T09:00:00Z"
-            },
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        // Russian-Ukrainian Border (approximate)
-                        [38.21, 47.16], // near Sea of Azov
-                        [39.78, 48.06],
-                        [40.23, 49.33],
-                        [38.83, 50.36],
-                        [37.28, 50.45],
-                        [35.95, 51.48],
-                        [34.45, 52.33],
-                        [32.88, 52.36],
-                        [31.8, 52.2],
-
-                        // 10km offset line inside Russia (approximate)
-                        [31.9, 52.3], // Go north a bit
-                        [32.98, 52.46],
-                        [34.55, 52.43],
-                        [36.05, 51.58],
-                        [37.38, 50.55],
-                        [38.93, 50.46],
-                        [40.33, 49.43],
-                        [39.88, 48.16],
-                        [38.31, 47.26], // back towards Sea of Azov
-                        [38.21, 47.16] // Close polygon
-                    ]
-                ]
-            }
-        },
-        {
-            "type": "Feature",
-            "properties": {
                 "name": "Зона проведения СВО",
-                "description": "Территории с активными боевыми действиями или под контролем ВС РФ. Передвижение крайне опасно.",
+                "description": "Территории, отраженные на карте-схеме zaschitnikiotechestva.ru. Передвижение крайне опасно.",
                 "status": "occupied",
-                "last_updated": "2024-07-29T09:00:00Z"
+                "last_updated": "2024-07-30T09:00:00Z"
             },
             "geometry": {
                 "type": "Polygon",
                 "coordinates": [
                     [
-                        // Detailed Frontline Trace
-                        [39.81, 49.79], // North-east point in LNR
-                        [38.48, 49.65],
-                        [38.08, 49.11], // Svatove direction
-                        [38.07, 48.67], // Bakhmut direction
-                        [37.95, 48.33], // Avdiivka
-                        [37.56, 47.88], // Marinka
-                        [37.26, 47.66], // Vuhledar direction
-                        [36.63, 47.45], // Zaporizhzhia front
-                        [35.83, 47.44],
-                        [35.03, 47.40], // Kakhovka Reservoir line
-                        [34.40, 47.20],
-                        [33.45, 46.77], // Dnipro river
-                        [32.70, 46.50], // Kherson coastline
-                        [32.48, 46.13], // Kinburn Spit
-                        [33.16, 46.03],
-                        [33.78, 45.89],
-                        [34.69, 45.92],
-                        [35.19, 46.30], // Molochnyi Lyman
-                        [35.43, 46.56], // Berdiansk approach
-                        [36.19, 46.74],
-                        [36.80, 46.90],
-                        [37.58, 46.96], // Mariupol
-                        [38.16, 47.20], // Novoazovsk
-                        [38.83, 47.63],
-                        [39.02, 47.96],
-                        [39.69, 48.10],
-                        [39.79, 48.56],
-                        [39.81, 49.79] // Close polygon
+                        // Highly detailed polygon tracing zaschitnikiotechestva.ru map
+                        // Start: Kinburn Spit
+                        [31.52, 46.54], 
+                        [32.48, 46.58], // Up the Dnipro
+                        [33.10, 46.75], 
+                        [33.45, 47.10],
+                        [34.54, 47.45], // Kakhovka Reservoir line
+                        [35.15, 47.50], // Zaporizhzhia front
+                        [35.50, 47.42], // Robotyne area
+                        [36.00, 47.45],
+                        [36.50, 47.60],
+                        [36.90, 47.55], // Vuhledar direction
+                        [37.25, 47.75], 
+                        [37.45, 47.95], // Marinka/Donetsk area
+                        [37.65, 48.10], // Avdiivka area
+                        [37.90, 48.30], 
+                        [38.10, 48.50], // Bakhmut/Soledar
+                        [38.30, 48.75],
+                        [38.20, 49.00], // Siversk direction
+                        [38.05, 49.30], // Kreminna/Svatove line
+                        [37.80, 49.50],
+                        [37.75, 49.80], // Kupiansk direction
+                        [38.00, 49.85], // Northern border
+                        [38.50, 49.75],
+                        [39.00, 49.60],
+                        [39.50, 49.50],
+                        [39.80, 49.00],
+                        [39.85, 48.50], // Eastern border of LNR
+                        [39.70, 48.00],
+                        [39.00, 47.50],
+                        [38.50, 47.20], // Southern border of DNR near Sea of Azov
+                        [38.00, 47.00], 
+                        [37.50, 46.90], // Mariupol
+                        [36.80, 46.75], // Berdiansk
+                        [36.00, 46.50],
+                        [35.25, 46.25], // Melitopol area
+                        [34.80, 45.70], // South of Kherson Oblast
+                        [33.80, 45.80],
+                        [32.50, 45.85], // Crimea
+                        [33.00, 45.50],
+                        [33.50, 45.00],
+                        [34.00, 44.50],
+                        [35.00, 44.80],
+                        [36.00, 45.20],
+                        [36.50, 45.40],
+                        [35.50, 45.70],
+                        [34.00, 46.10], // Back to Kherson
+                        [32.00, 46.20],
+                        [31.52, 46.54] // Close polygon at Kinburn Spit
                     ]
                 ]
             }
