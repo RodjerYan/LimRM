@@ -131,18 +131,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         
         if (!searchControl.current) {
             searchControl.current = new (L.Control as any).Search({
-                sourceData: (text: string, callResponse: (data: any) => void) => {
+                sourceData: (text: string, callResponse: (data: Array<{title: string, loc: L.LatLng}>) => void) => {
                     const lowerText = text.toLowerCase();
-                    const filtered = dataForSearch.filter(item => item.title.toLowerCase().includes(lowerText));
-                    const responseData: {[key: string]: L.LatLng} = {};
-                    filtered.forEach(item => {
+                    const filtered = dataForSearch.filter(item => 
+                        item.title.toLowerCase().includes(lowerText)
+                    );
+                    
+                    const responseData = filtered.map(item => {
+                        let loc: L.LatLng;
                         if (item.type === 'region') {
                             const tempLayer = L.geoJSON(item.feature);
-                            responseData[item.title] = tempLayer.getBounds().getCenter();
-                        } else if (item.type === 'city') {
-                            responseData[item.title] = L.latLng(item.lat, item.lon);
+                            loc = tempLayer.getBounds().getCenter();
+                        } else { // 'city'
+                            loc = L.latLng(item.lat, item.lon);
                         }
+                        return { title: item.title, loc };
                     });
+                    
                     callResponse(responseData);
                 },
                 marker: false,
@@ -151,7 +156,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     if (foundItem?.type === 'region') {
                         const regionLayer = Object.values(regionLayers.current).find(l => (l as any).feature.properties.name === title);
                         if (regionLayer) map.fitBounds((regionLayer as L.GeoJSON).getBounds());
-                    } else if (foundItem?.type === 'city') map.flyTo(latlng, 10);
+                    } else if (foundItem?.type === 'city') {
+                        map.flyTo(latlng, 10);
+                    }
                 },
                 textPlaceholder: 'Поиск регионов и городов...',
                 textErr: 'Не найдено',
