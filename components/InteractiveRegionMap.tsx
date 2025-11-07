@@ -26,7 +26,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
-    // FIX: Use L.FeatureGroup instead of L.LayerGroup to get access to methods like `bringToFront`.
     const capitalsLayer = useRef<L.FeatureGroup | null>(null);
     const regionLayers = useRef<{[key: string]: L.Layer}>({});
     const searchControl = useRef<any>(null);
@@ -55,15 +54,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const dataForSearch = useMemo(() => [
         ...(russiaRegionsGeoJSON as any).features.map((feature: any) => ({
             title: feature.properties.name,
-            layer: L.geoJSON(feature),
-            type: 'region',
+            feature: feature,
+            type: 'region' as const,
         })),
         ...capitals.map(capital => ({
             title: capital.name,
-            layer: L.marker([capital.lat, capital.lon]),
-            type: 'city',
             lat: capital.lat,
-            lon: capital.lon
+            lon: capital.lon,
+            type: 'city' as const,
         }))
     ], []);
 
@@ -89,7 +87,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map) return;
 
-        // --- Initialize Layers ---
         if (!geoJsonLayer.current) {
             geoJsonLayer.current = L.geoJSON(undefined, {
                 style: { fillColor: '#374151', weight: 1, opacity: 1, color: '#6B7280', fillOpacity: 0.2 },
@@ -114,7 +111,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
 
         if (!capitalsLayer.current) {
-            // FIX: Use L.featureGroup to allow `bringToFront` to be called on the layer group.
             capitalsLayer.current = L.featureGroup().addTo(map);
             const capitalsRenderer = L.svg({ padding: 0.5 });
             capitals.forEach(capital => {
@@ -133,17 +129,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
         }
         
-        // --- Initialize Search Control ---
         if (!searchControl.current) {
-            const searchLayer = L.layerGroup();
             searchControl.current = new (L.Control as any).Search({
-                layer: searchLayer,
                 sourceData: (text: string, callResponse: (data: any) => void) => {
                     const lowerText = text.toLowerCase();
                     const filtered = dataForSearch.filter(item => item.title.toLowerCase().includes(lowerText));
-                    callResponse(filtered);
+                    const responseData: {[key: string]: L.LatLng} = {};
+                    filtered.forEach(item => {
+                        if (item.type === 'region') {
+                            const tempLayer = L.geoJSON(item.feature);
+                            responseData[item.title] = tempLayer.getBounds().getCenter();
+                        } else if (item.type === 'city') {
+                            responseData[item.title] = L.latLng(item.lat, item.lon);
+                        }
+                    });
+                    callResponse(responseData);
                 },
-                propertyName: 'title', marker: false,
+                marker: false,
                 moveToLocation: (latlng: L.LatLng, title: string, map: L.Map) => {
                     const foundItem = dataForSearch.find(item => item.title === title);
                     if (foundItem?.type === 'region') {
@@ -151,7 +153,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         if (regionLayer) map.fitBounds((regionLayer as L.GeoJSON).getBounds());
                     } else if (foundItem?.type === 'city') map.flyTo(latlng, 10);
                 },
-                textPlaceholder: 'Поиск по карте...',
+                textPlaceholder: 'Поиск регионов и городов...',
                 textErr: 'Не найдено',
             });
             map.addControl(searchControl.current);
@@ -159,7 +161,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         
         capitalsLayer.current?.bringToFront();
 
-    }, [dataForSearch]);
+    }, [dataForSearch, selectedRegions]);
 
     useEffect(() => {
         Object.entries(regionLayers.current).forEach(([name, layer]) => {
