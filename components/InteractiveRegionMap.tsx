@@ -94,7 +94,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 if (layer instanceof L.Path && featureLayer.feature?.properties) {
                     if (normalizeString(featureLayer.feature.properties.name) === normalizedQuery) {
                         layer.setStyle(highlightStyle);
-                        targetBounds = layer.getBounds();
+                        // FIX: Cast layer to L.Polygon to access getBounds() and resolve TypeScript error TS2339.
+                        // This is safe because our GeoJSON features are polygons.
+                        targetBounds = (layer as L.Polygon).getBounds();
                         regionFound = true;
                     } else {
                         layer.setStyle(defaultStyle);
