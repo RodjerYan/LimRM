@@ -7,7 +7,6 @@ import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { ExportIcon, SearchIcon } from './icons';
 import { Feature } from 'geojson';
 
-
 // Fix for default Leaflet icons in Vite/React
 // @ts-ignore
 delete L.Icon.Default.prototype._getIconUrl;
@@ -30,101 +29,120 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
     const [searchTerm, setSearchTerm] = useState('');
     const [searchError, setSearchError] = useState('');
 
-    const dataMap = new Map(data.map(d => [d.region, d]));
+    // --- Map Initialization Effect ---
+    useEffect(() => {
+        if (mapContainer.current && !mapInstance.current) {
+            mapInstance.current = L.map(mapContainer.current, {
+                center: [60, 90],
+                zoom: 3,
+                scrollWheelZoom: true,
+                attributionControl: false, // Use the Carto attribution
+            });
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+            }).addTo(mapInstance.current);
 
-    const getColor = (growthPotential: number | undefined, maxGrowth: number) => {
-        if (growthPotential === undefined || maxGrowth === 0) return '#4B5563'; // Gray for no data
-        const intensity = Math.sqrt(growthPotential / maxGrowth); // Use sqrt for better visual distribution
-        if (intensity > 0.8) return '#c026d3'; // Fuchsia 600
-        if (intensity > 0.6) return '#9333ea'; // Purple 600
-        if (intensity > 0.4) return '#7c3aed'; // Violet 600
-        if (intensity > 0.2) return '#6366f1'; // Indigo 500
-        if (intensity > 0)   return '#4f46e5';   // Indigo 600
-        return '#4B5563';
-    };
-
-    const maxGrowth = Math.max(...data.map(d => d.growthPotential), 0);
-    
-    // FIX: Correctly type the style function to accept an optional feature
-    const styleFeature = (feature?: Feature) => {
-        if (!feature || !feature.properties) {
-             return {
-                fillColor: '#4B5563', weight: 1, opacity: 1, color: '#111827', fillOpacity: 0.3
+            // Add a resize observer to handle container size changes
+            const resizeObserver = new ResizeObserver(() => {
+                setTimeout(() => mapInstance.current?.invalidateSize(), 0);
+            });
+            resizeObserver.observe(mapContainer.current);
+            
+            // Cleanup on component unmount
+            return () => {
+                resizeObserver.disconnect();
+                mapInstance.current?.remove();
+                mapInstance.current = null;
             };
         }
-        const regionName = feature.properties.name;
-        const regionData = dataMap.get(regionName);
-        return {
-            fillColor: getColor(regionData?.growthPotential, maxGrowth),
-            weight: 1,
-            opacity: 1,
-            color: '#111827', // Dark border
-            fillOpacity: regionData ? 0.8 : 0.3
+    }, []); // Empty dependency array ensures this runs only once
+
+    // --- Data Layer Update Effect ---
+    useEffect(() => {
+        if (!mapInstance.current) return;
+
+        if (geoJsonLayer.current) {
+            mapInstance.current.removeLayer(geoJsonLayer.current);
+        }
+
+        const dataMap = new Map(data.map(d => [d.region, d]));
+        const maxGrowth = Math.max(...data.map(d => d.growthPotential), 0);
+
+        const getColor = (growthPotential?: number) => {
+            if (growthPotential === undefined || maxGrowth === 0) return '#4B5563'; // Gray
+            const intensity = Math.sqrt(growthPotential / maxGrowth);
+            if (intensity > 0.8) return '#c026d3'; 
+            if (intensity > 0.6) return '#9333ea';
+            if (intensity > 0.4) return '#7c3aed';
+            if (intensity > 0.2) return '#6366f1';
+            if (intensity > 0) return '#4f46e5';
+            return '#4B5563';
         };
-    };
+
+        const styleFeature = (feature?: Feature) => {
+            if (!feature?.properties) return { weight: 0, opacity: 0, fillOpacity: 0 };
+            const regionName = feature.properties.name;
+            const regionData = dataMap.get(regionName);
+            return {
+                fillColor: getColor(regionData?.growthPotential),
+                weight: 1,
+                opacity: 1,
+                color: '#111827',
+                fillOpacity: regionData ? 0.8 : 0.3
+            };
+        };
+
+        const onEachFeature = (feature: Feature, layer: L.Layer) => {
+            if (feature.properties) {
+                const regionName = feature.properties.name;
+                const regionData = dataMap.get(regionName);
+                let popupContent = `<b>${regionName}</b>`;
+                if (regionData) {
+                    popupContent += `<br/>Потенциал роста: <b>${formatNumber(regionData.growthPotential)}</b>`;
+                    popupContent += `<br/>Факт: ${formatNumber(regionData.fact)}`;
+                    popupContent += `<br/>Общий потенциал: ${formatNumber(regionData.potential)}`;
+                } else {
+                    popupContent += `<br/><i>Нет данных по продажам</i>`;
+                }
+                layer.bindPopup(popupContent);
+                
+                layer.on({
+                    mouseover: (e) => e.target.setStyle({ weight: 3, color: '#f87171' }),
+                    mouseout: (e) => geoJsonLayer.current?.resetStyle(e.target),
+                });
+            }
+        };
+
+        geoJsonLayer.current = L.geoJSON(regionsGeoJson as any, {
+            style: styleFeature,
+            onEachFeature: onEachFeature,
+        }).addTo(mapInstance.current);
+
+    }, [data]);
 
     const handleSearch = () => {
         setSearchError('');
-        if (!searchTerm.trim()) return;
+        if (!searchTerm.trim() || !geoJsonLayer.current) return;
 
         let foundLayer: L.Layer | null = null;
-        geoJsonLayer.current?.eachLayer(layer => {
-            // @ts-ignore
-            if (layer.feature.properties.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+        geoJsonLayer.current.eachLayer(layer => {
+            // FIX: Correctly type the layer's `feature` property. Layers within a GeoJSON
+            // group are dynamically assigned a `feature` property. The original cast was
+            // incorrect, leading to a type error.
+            const layerFeature = (layer as any).feature as Feature;
+            if (layerFeature.properties?.name.toLowerCase().includes(searchTerm.toLowerCase())) {
                 foundLayer = layer;
             }
         });
 
         if (foundLayer && mapInstance.current) {
-            // @ts-ignore
-            mapInstance.current.fitBounds(foundLayer.getBounds());
+            // FIX: A `foundLayer` is a vector layer (e.g., L.Path), not an L.GeoJSON group.
+            // Cast to a more appropriate type to get its bounds.
+            mapInstance.current.fitBounds((foundLayer as L.Path).getBounds());
         } else {
             setSearchError('Регион не найден');
         }
     };
-    
-    useEffect(() => {
-        if (!mapContainer.current) return;
-
-        if (mapInstance.current === null) {
-            mapInstance.current = L.map(mapContainer.current, {
-                center: [60, 90],
-                zoom: 3,
-                scrollWheelZoom: true,
-            });
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
-            }).addTo(mapInstance.current);
-        }
-
-        if (geoJsonLayer.current) {
-            geoJsonLayer.current.clearLayers();
-        }
-
-        geoJsonLayer.current = L.geoJSON(regionsGeoJson as any, {
-            style: styleFeature,
-            onEachFeature: (feature, layer) => {
-                // FIX: Check if properties exist to prevent 'possibly null' error
-                if (feature.properties) {
-                    const regionName = feature.properties.name;
-                    const regionData = dataMap.get(regionName);
-                    let popupContent = `<b>${regionName}</b>`;
-                    if (regionData) {
-                        popupContent += `<br/>Потенциал роста: <b>${formatNumber(regionData.growthPotential)}</b>`;
-                        popupContent += `<br/>Факт: ${formatNumber(regionData.fact)}`;
-                        popupContent += `<br/>Общий потенциал: ${formatNumber(regionData.potential)}`;
-                    }
-                    layer.bindPopup(popupContent);
-                    
-                    layer.on({
-                        mouseover: (e) => e.target.setStyle({ weight: 3, color: '#f87171' }),
-                        mouseout: () => geoJsonLayer.current?.resetStyle(layer),
-                    });
-                }
-            },
-        }).addTo(mapInstance.current);
-
-    }, [data]); // Re-render GeoJSON when data changes
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
