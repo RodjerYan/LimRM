@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { OkbDataRow } from '../types';
+import { OkbDataRow, AggregatedDataRow } from '../types';
 
 /**
  * Exports an array of OKB data to an XLSX file.
@@ -45,5 +45,29 @@ export const exportToExcel = (data: OkbDataRow[], fileName: string): void => {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'ТорговыеТочки');
 
     // Write the workbook and trigger a download
+    XLSX.writeFile(workbook, `${fileName}.xlsx`);
+};
+
+/**
+ * Exports an array of aggregated analysis data to an XLSX file.
+ * @param data The array of AggregatedDataRow to export.
+ * @param fileName The base name for the downloaded file.
+ */
+export const exportAggregatedToExcel = (data: AggregatedDataRow[], fileName: string): void => {
+    const worksheetData = data.map(row => ({
+        'Группа/Клиент': row.clientName,
+        'РМ': row.rm,
+        'Регион': row.region,
+        'Бренд': row.brand,
+        'Факт (кг/ед)': row.fact,
+        'Потенциал (кг/ед)': row.potential,
+        'Потенциал Роста (кг/ед)': row.growthPotential,
+        'Рост (%)': row.growthPercentage.toFixed(2),
+        'Кол-во клиентов в группе': row.clients.length,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Анализ Потенциала');
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
 };

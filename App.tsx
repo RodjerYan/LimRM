@@ -136,19 +136,7 @@ const App: React.FC = () => {
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         
-                        {okbStatus?.status === 'ready' && (
-                             okbStatus.coordsCount !== undefined && okbStatus.coordsCount > 0 ? (
-                                <InteractiveRegionMap okbData={okbData} />
-                            ) : (
-                                <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-                                    <h2 className="text-xl font-bold mb-4 text-white">Карта торговых точек</h2>
-                                    <div className="text-center py-10 text-gray-400">
-                                        <p>В базе ОКБ не найдено точек с координатами.</p>
-                                        <p className="text-sm mt-2">Убедитесь, что в вашей Google Таблице есть столбцы "Широта" и "Долгота", и они заполнены.</p>
-                                    </div>
-                                </div>
-                            )
-                        )}
+                        {isDataLoaded && <InteractiveRegionMap data={filteredData} />}
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}

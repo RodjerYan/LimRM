@@ -1,5 +1,18 @@
 // utils/addressMappings.ts
 
+// FIX: Export REGION_BY_CITY_MAP to resolve the compilation error in `dataUtils.ts`.
+// This map is derived from the comprehensive REGION_BY_CITY_WITH_INDEXES data source,
+// providing a simple city-to-region lookup as intended by the application's design.
+import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
+
+/**
+ * A simple city-to-region map derived from the more detailed REGION_BY_CITY_WITH_INDEXES.
+ * This is used for quick lookups where only the region is needed.
+ */
+export const REGION_BY_CITY_MAP: Record<string, string> = Object.fromEntries(
+    Object.entries(REGION_BY_CITY_WITH_INDEXES).map(([city, data]) => [city, data.region])
+);
+
 const capitalize = (str: string): string => {
     if (!str) return '';
     return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
