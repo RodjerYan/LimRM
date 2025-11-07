@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { WorkerMessage, AggregatedDataRow, OkbStatus } from '../types';
+import { WorkerMessage, AggregatedDataRow, OkbStatus, WorkerResultPayload } from '../types';
 import { formatETR } from '../utils/timeUtils';
 
 interface FileUploadProps {
-    onFileProcessed: (data: AggregatedDataRow[]) => void;
+    onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
     okbData: any[];
     okbStatus: OkbStatus | null;

@@ -1,10 +1,12 @@
 import React from 'react';
 import FileUpload from './FileUpload';
 import OKBManagement from './OKBManagement';
-import { AggregatedDataRow, OkbStatus } from '../types';
+// Fix: Import WorkerResultPayload to correctly type the onDataLoaded prop, resolving the type mismatch with the FileUpload component.
+import { AggregatedDataRow, OkbStatus, WorkerResultPayload } from '../types';
 
 interface DataControlProps {
-    onDataLoaded: (data: AggregatedDataRow[]) => void;
+    // Fix: Changed the type of 'data' from 'AggregatedDataRow[]' to 'WorkerResultPayload' to match the expected signature of the 'onFileProcessed' prop in the FileUpload component.
+    onDataLoaded: (data: WorkerResultPayload) => void;
     onLoadingStateChange: (isLoading: boolean, message: string) => void;
     onOkbStatusChange: (status: OkbStatus) => void;
     onOkbDataChange: (data: any[]) => void;

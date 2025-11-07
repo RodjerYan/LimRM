@@ -21,6 +21,17 @@ export const normalizeAddressForSearch = (str: string | undefined | null): strin
         .trim();
 };
 
+/**
+ * Gets a reliable address from an OKB data row for comparison.
+ * @param row The OKB data row.
+ * @returns The address string.
+ */
+export const getOkbAddress = (row: OkbDataRow): string => {
+    // Юридический адрес is the most reliable source.
+    return row['Юридический адрес'] || row['Адрес'] || '';
+};
+
+
 // For compatibility with older parts of the codebase if needed.
 export const normalizeString = normalizeAddressForSearch;
 

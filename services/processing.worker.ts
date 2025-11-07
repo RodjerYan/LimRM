@@ -4,6 +4,7 @@ import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAd
 import { parseRussianAddress } from './addressParser';
 import { callGeminiForRegion } from './geminiService';
 import { standardizeRegion } from '../utils/addressMappings';
+import { normalizeAddressForSearch } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -225,6 +226,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
+    const activeAddresses = new Set<string>();
     const BATCH_SIZE = 500;
     
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Параллельный парсинг адресов...' } });
@@ -247,6 +249,10 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
             const clientAddress = findAddressInRow(row) || `Строка #${jsonData.indexOf(row) + 2}`;
+            
+            if (clientAddress) {
+                activeAddresses.add(normalizeAddressForSearch(clientAddress));
+            }
 
             if (isNaN(fact) || region === 'Регион не определен') return;
 
@@ -274,7 +280,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     const finalData = finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
     
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-    postMessage({ type: 'result', payload: finalData });
+    postMessage({ type: 'result', payload: { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) } });
 }
 
 /**
@@ -285,6 +291,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
 
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
+    const activeAddresses = new Set<string>();
     const BATCH_SIZE = 1000;
     let rowBatch: any[] = [];
     let processingPromises: Promise<void>[] = [];
@@ -308,6 +315,10 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
             const rm = row['РМ'] || 'Неизвестный РМ';
             const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
             const clientAddress = findAddressInRow(row) || `Строка #${row._originalIndex}`;
+
+            if(clientAddress) {
+                activeAddresses.add(normalizeAddressForSearch(clientAddress));
+            }
 
             if (isNaN(fact) || region === 'Регион не определен') return;
 
@@ -376,7 +387,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                     const finalData = finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
                     
                     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-                    postMessage({ type: 'result', payload: finalData });
+                    postMessage({ type: 'result', payload: { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) } });
                     resolve();
                 } catch (e) {
                     reject(e);

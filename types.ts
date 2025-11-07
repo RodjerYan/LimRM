@@ -96,7 +96,10 @@ export type WorkerProgressPayload = {
     percentage: number;
     message: string;
 };
-export type WorkerResultPayload = AggregatedDataRow[];
+export type WorkerResultPayload = {
+    aggregatedData: AggregatedDataRow[];
+    activeAddresses: string[];
+};
 export type WorkerErrorPayload = string;
 
 export type WorkerMessage =

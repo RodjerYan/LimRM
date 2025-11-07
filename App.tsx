@@ -17,8 +17,9 @@ import {
     OkbStatus, 
     SummaryMetrics,
     OkbDataRow,
+    WorkerResultPayload,
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, getOkbAddress, normalizeAddressForSearch } from './utils/dataUtils';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -39,6 +40,7 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
+    const [activeAddresses, setActiveAddresses] = useState<Set<string>>(new Set());
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
@@ -46,6 +48,27 @@ const App: React.FC = () => {
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
         return filteredData.length > 0 ? calculateSummaryMetrics(filteredData) : null;
     }, [filteredData]);
+
+    const { potentialClients, activeClients } = useMemo(() => {
+        if (!okbData.length || activeAddresses.size === 0) {
+            return { potentialClients: okbData, activeClients: [] };
+        }
+        
+        const potential: OkbDataRow[] = [];
+        const active: OkbDataRow[] = [];
+
+        for (const okb of okbData) {
+            const address = getOkbAddress(okb);
+            const normalizedAddress = normalizeAddressForSearch(address);
+            if (activeAddresses.has(normalizedAddress)) {
+                active.push(okb);
+            } else {
+                potential.push(okb);
+            }
+        }
+        
+        return { potentialClients: potential, activeClients: active };
+    }, [okbData, activeAddresses]);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
@@ -55,10 +78,11 @@ const App: React.FC = () => {
         }, 5000);
     }, []);
 
-    const handleFileProcessed = useCallback((data: AggregatedDataRow[]) => {
-        setAllData(data);
+    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
+        setAllData(data.aggregatedData);
+        setActiveAddresses(new Set(data.activeAddresses));
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно загружены. Найдено ${data.length} уникальных групп.`, 'success');
+        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп.`, 'success');
     }, [addNotification]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
@@ -136,7 +160,12 @@ const App: React.FC = () => {
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         
-                        <InteractiveRegionMap data={filteredData} selectedRegions={filters.region} okbData={okbData} />
+                        <InteractiveRegionMap 
+                            data={filteredData} 
+                            selectedRegions={filters.region} 
+                            potentialClients={potentialClients}
+                            activeClients={activeClients}
+                        />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}

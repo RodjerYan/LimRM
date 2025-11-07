@@ -9,7 +9,8 @@ import { SearchIcon } from './icons';
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
-    okbData: OkbDataRow[];
+    potentialClients: OkbDataRow[];
+    activeClients: OkbDataRow[];
 }
 
 interface SearchableLocation {
@@ -19,25 +20,23 @@ interface SearchableLocation {
     lon?: number;
 }
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, okbData }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
-    const ttMarkersLayer = useRef<L.LayerGroup | null>(null);
+    const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
+    const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
 
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
 
-    // FIX: The search list is now built from definitive sources (GeoJSON for regions, capitals.ts for cities)
-    // to ensure all possible locations are searchable, regardless of the loaded data file.
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
-        // 1. Add all regions from the GeoJSON file. This is the single source of truth for regions.
         russiaRegionsGeoJSON.features.forEach(feature => {
             const name = feature.properties?.name;
             if (name && !addedNames.has(name)) {
@@ -46,7 +45,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // 2. Add all capitals from the dedicated capitals file.
         capitals.forEach(capital => {
             if (!addedNames.has(capital.name)) {
                 locations.push({ 
@@ -160,47 +158,68 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         };
     }, [resetHighlight]);
+    
+    const createClientMarker = (tt: OkbDataRow, options: L.CircleMarkerOptions) => {
+        const name = tt['Наименование'] || 'Без названия';
+        const address = tt['Юридический адрес'] || 'Адрес не указан';
+        const activity = tt['Вид деятельности'] || 'н/д';
+        const contacts = tt['Контакты'] || '';
+        
+        const popupContent = `
+            <b>${name}</b><br>
+            ${address}<br>
+            <small>${activity}</small>
+            ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+        `;
 
+        const marker = L.circleMarker([tt.lat!, tt.lon!], {
+            ...options,
+            radius: 4,
+            weight: 1,
+            opacity: 1,
+            fillOpacity: 0.8,
+        }).bindPopup(popupContent);
+        
+        marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(7); });
+        marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
+
+        return marker;
+    };
+    
     useEffect(() => {
         const map = mapInstance.current;
-        if (!map || !okbData) return;
+        if (!map) return;
 
-        if (ttMarkersLayer.current) {
-            map.removeLayer(ttMarkersLayer.current);
-        }
-
-        ttMarkersLayer.current = L.layerGroup().addTo(map);
-        const ttWithCoords = okbData.filter(tt => tt.lat && tt.lon);
-
-        ttWithCoords.forEach(tt => {
-            const name = tt['Наименование'] || 'Без названия';
-            const address = tt['Адрес'] || tt['Юридический адрес'] || 'Адрес не указан';
-            const activity = tt['Вид деятельности'] || 'н/д';
-            const contacts = tt['Контакты'] || '';
-            
-            const popupContent = `
-                <b>${name}</b><br>
-                ${address}<br>
-                <small>${activity}</small>
-                ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-            `;
-
-            const marker = L.circleMarker([tt.lat!, tt.lon!], {
-                radius: 3,
-                fillColor: '#22d3ee', // cyan-400
-                color: '#06b6d4', // cyan-500
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.7,
-            }).bindPopup(popupContent);
-            
-            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(6); });
-            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(3); });
-
-            ttMarkersLayer.current?.addLayer(marker);
+        // Clear existing client layers
+        if (potentialClientMarkersLayer.current) map.removeLayer(potentialClientMarkersLayer.current);
+        if (activeClientMarkersLayer.current) map.removeLayer(activeClientMarkersLayer.current);
+        
+        // Draw Potential Clients (Blue)
+        potentialClientMarkersLayer.current = L.layerGroup().addTo(map);
+        potentialClients.forEach(tt => {
+            if (tt.lat && tt.lon) {
+                const marker = createClientMarker(tt, {
+                    fillColor: '#3b82f6', // blue-500
+                    color: '#2563eb', // blue-600
+                });
+                potentialClientMarkersLayer.current?.addLayer(marker);
+            }
         });
 
-    }, [okbData]);
+        // Draw Active Clients (Green)
+        activeClientMarkersLayer.current = L.layerGroup().addTo(map);
+        activeClients.forEach(tt => {
+            if (tt.lat && tt.lon) {
+                const marker = createClientMarker(tt, {
+                    fillColor: '#22c55e', // green-500
+                    color: '#16a34a', // green-600
+                });
+                activeClientMarkersLayer.current?.addLayer(marker);
+            }
+        });
+        
+    }, [potentialClients, activeClients]);
+
 
     useEffect(() => {
         const map = mapInstance.current;
@@ -254,6 +273,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
+            <div className="absolute top-4 left-4 z-[1000] bg-card-bg/70 backdrop-blur-sm p-2 rounded-lg border border-gray-700/50 text-xs text-gray-300 space-y-1">
+                <div className='flex items-center'><div className='w-3 h-3 rounded-full bg-[#3b82f6] mr-2'></div>Потенциальный клиент</div>
+                <div className='flex items-center'><div className='w-3 h-3 rounded-full bg-[#22c55e] mr-2'></div>Активный клиент</div>
+            </div>
             <div className="absolute top-4 right-4 z-[1000]">
                 <div className="relative">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
