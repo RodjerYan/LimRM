@@ -24,55 +24,46 @@ const MOCK_CONFLICT_ZONES_GEOJSON: FeatureCollection = {
                 "type": "Polygon",
                 "coordinates": [
                     [
-                        // Highly detailed polygon tracing zaschitnikiotechestva.ru map
-                        // Start: Kinburn Spit
-                        [31.52, 46.54], 
-                        [32.48, 46.58], // Up the Dnipro
-                        [33.10, 46.75], 
-                        [33.45, 47.10],
-                        [34.54, 47.45], // Kakhovka Reservoir line
-                        [35.15, 47.50], // Zaporizhzhia front
-                        [35.50, 47.42], // Robotyne area
-                        [36.00, 47.45],
-                        [36.50, 47.60],
-                        [36.90, 47.55], // Vuhledar direction
-                        [37.25, 47.75], 
-                        [37.45, 47.95], // Marinka/Donetsk area
-                        [37.65, 48.10], // Avdiivka area
-                        [37.90, 48.30], 
-                        [38.10, 48.50], // Bakhmut/Soledar
-                        [38.30, 48.75],
-                        [38.20, 49.00], // Siversk direction
-                        [38.05, 49.30], // Kreminna/Svatove line
-                        [37.80, 49.50],
-                        [37.75, 49.80], // Kupiansk direction
-                        [38.00, 49.85], // Northern border
-                        [38.50, 49.75],
-                        [39.00, 49.60],
-                        [39.50, 49.50],
-                        [39.80, 49.00],
-                        [39.85, 48.50], // Eastern border of LNR
-                        [39.70, 48.00],
-                        [39.00, 47.50],
-                        [38.50, 47.20], // Southern border of DNR near Sea of Azov
-                        [38.00, 47.00], 
-                        [37.50, 46.90], // Mariupol
-                        [36.80, 46.75], // Berdiansk
-                        [36.00, 46.50],
-                        [35.25, 46.25], // Melitopol area
-                        [34.80, 45.70], // South of Kherson Oblast
-                        [33.80, 45.80],
-                        [32.50, 45.85], // Crimea
-                        [33.00, 45.50],
-                        [33.50, 45.00],
-                        [34.00, 44.50],
-                        [35.00, 44.80],
-                        [36.00, 45.20],
-                        [36.50, 45.40],
-                        [35.50, 45.70],
-                        [34.00, 46.10], // Back to Kherson
-                        [32.00, 46.20],
-                        [31.52, 46.54] // Close polygon at Kinburn Spit
+                        // Highly detailed polygon tracing zaschitnikiotechestva.ru map as of late July 2024
+                        // Start: North of Kharkiv Oblast near Russian border
+                        [36.93, 50.41], [37.52, 50.33], [37.94, 50.15],
+                        // Kupyansk direction
+                        [37.78, 49.80], [38.01, 49.65],
+                        // Svatove-Kreminna line
+                        [38.15, 49.42], [38.25, 49.17], [38.10, 48.94], // Bilohorivka
+                        // Bakhmut/Soledar area
+                        [38.08, 48.71], [38.26, 48.49], [38.02, 48.40],
+                        // Avdiivka/Donetsk area
+                        [37.76, 48.24], [37.60, 48.15], [37.51, 48.00], [37.68, 47.90],
+                        // Vuhledar direction
+                        [37.31, 47.77],
+                        // Zaporizhzhia front (Robotyne, Huliaipole)
+                        [36.60, 47.66], [36.27, 47.69], [35.85, 47.45], [35.41, 47.49],
+                        // Kakhovka Reservoir line, down to Dnipro delta
+                        [35.10, 47.53], [34.72, 47.42], [34.02, 47.28], [33.46, 46.80], [32.88, 46.70], [32.55, 46.57],
+                        // Kinburn Spit (westernmost point)
+                        [31.52, 46.54],
+                        // Following the coastline east
+                        [31.85, 46.33], [32.32, 46.12],
+                        // Skadovsk
+                        [32.90, 46.10],
+                        // Southern border of Kherson Oblast
+                        [33.54, 46.06], [34.18, 46.07], [34.82, 45.93],
+                        // Through Crimea Isthmus
+                        [34.90, 46.22], [35.15, 46.25],
+                        // Along Arabat Spit
+                        [35.45, 45.80],
+                        // Kerch Peninsula
+                        [36.00, 45.20], [36.65, 45.39],
+                        // Sea of Azov coastline
+                        [36.8, 46.75], // Berdiansk area
+                        [37.50, 46.90], // Mariupol area
+                        // Eastern border of DNR/LNR
+                        [38.50, 47.20], [39.00, 47.50], [39.70, 48.00], [39.85, 48.50], [39.80, 49.00],
+                        // Northern border of LNR back towards Kharkiv
+                        [39.50, 49.50], [39.00, 49.60], [38.50, 49.75], [38.00, 49.85],
+                        // Closing loop at Russian border
+                        [37.8, 50.0], [37.2, 50.25], [36.93, 50.41]
                     ]
                 ]
             }

@@ -288,18 +288,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             conflictZonesLayer.current = L.geoJSON(conflictZones, {
                 style: (feature) => {
                     const status = feature?.properties?.status;
-                    switch (status) {
-                        case 'occupied':
-                            return { color: '#dc2626', weight: 1, fillColor: '#b91c1c', fillOpacity: 0.4 };
-                        case 'liberated':
-                            return { color: '#059669', weight: 1, fillColor: '#065f46', fillOpacity: 0.45 };
-                        case 'special_risk':
-                             return { color: '#facc15', weight: 1, fillColor: '#facc15', fillOpacity: 0.3, dashArray: '5, 5' };
-                        case 'drone_danger':
-                            return { color: '#f97316', weight: 1, fillColor: '#fb923c', fillOpacity: 0.4, dashArray: '4, 4' };
-                        default:
-                            return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
+                    if (status === 'occupied') {
+                        // Style for the main SVO zone
+                        return { color: '#dc2626', weight: 1.5, fillColor: '#b91c1c', fillOpacity: 0.45 };
                     }
+                    // Default/fallback style
+                    return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
                 },
                 onEachFeature: (feature, layer) => {
                     const props = feature.properties;
@@ -339,10 +333,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             </div>
              {conflictZones && (
-                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-center gap-2 max-w-sm">
-                    <div className="w-6 h-6 flex-shrink-0 text-danger"><ErrorIcon/></div>
+                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">
+                    <div className="w-6 h-6 flex-shrink-0 text-danger mt-0.5"><ErrorIcon/></div>
                     <div>
-                        <strong>ОСТОРОЖНО!</strong> На карте отображена зона проведения СВО. Данные основаны на открытых источниках (zaschitnikiotechestva.ru) и предназначены для информационных целей. Планируйте маршруты с максимальной осторожностью.
+                        <p className="font-bold">ОСТОРОЖНО! ЗОНА ПРОВЕДЕНИЯ СВО</p>
+                        <p className="mt-1">
+                            Данные основаны на открытых источниках (zaschitnikiotechestva.ru). Планируйте маршруты с максимальной осторожностью.
+                        </p>
+                        <p className="mt-2 text-yellow-200/80">
+                            Торговые точки в зоне или в непосредственной близости могут не соответствовать действительности. Они не участвуют в расчете ОКБ и выведены на карту в качестве информации.
+                        </p>
                     </div>
                 </div>
             )}
