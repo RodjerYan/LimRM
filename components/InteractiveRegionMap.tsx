@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow } from '../types';
+import { AggregatedDataRow, OkbDataRow } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
 import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
@@ -10,6 +10,7 @@ import { SearchIcon } from './icons';
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
+    okbData: OkbDataRow[];
 }
 
 interface SearchableLocation {
@@ -19,23 +20,22 @@ interface SearchableLocation {
     lon?: number;
 }
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
+    const ttMarkersLayer = useRef<L.LayerGroup | null>(null);
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
 
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
 
-    // Memoize searchable locations to prevent recalculation on every render
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
-        // Add capitals
         capitals.forEach(capital => {
             if (!addedNames.has(capital.name)) {
                 locations.push({ name: capital.name, type: capital.type, lat: capital.lat, lon: capital.lon });
@@ -43,7 +43,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // Add regions from GeoJSON and keyword map
         const regionNamesFromMap = new Set(Object.values(REGION_KEYWORD_MAP));
         russiaRegionsGeoJSON.features.forEach(feature => {
             const name = feature.properties?.name;
@@ -56,7 +55,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // Add regions from the current dataset
         data.forEach(row => {
             const regionName = row.region;
             if (regionName && regionName !== 'Регион не определен' && !addedNames.has(regionName)) {
@@ -68,7 +66,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     }, [data]);
 
-    // Update search results based on the search term
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
             const lowerSearchTerm = searchTerm.toLowerCase();
@@ -81,7 +78,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [searchTerm, searchableLocations]);
 
-    // Memoize aggregated data for performance
     const regionalData = useMemo(() => {
         const aggregation = new Map<string, {
             totalGrowth: number;
@@ -106,15 +102,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
 
-    // Define styles for different layer states - ALL ARE INVISIBLE
     const invisibleStyle = { weight: 0, opacity: 0, fillOpacity: 0 };
-    const highlightStyle = invisibleStyle;
-    const baseStyle = invisibleStyle;
-    const dataStyle = invisibleStyle;
-    const filterSelectedStyle = invisibleStyle;
 
-
-    // Function to reset the previously highlighted layer
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
@@ -122,16 +111,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         highlightedLayer.current = null;
     }, []);
 
-    // Function to highlight a specific layer
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle(highlightStyle).bringToFront();
+             layer.setStyle(invisibleStyle).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
 
-    // Handler for when a location is selected from the search results
     const handleLocationSelect = useCallback((location: SearchableLocation) => {
         const map = mapInstance.current;
         if (!map) return;
@@ -158,7 +145,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [highlightRegion]);
     
-    // Initialize map
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
@@ -178,16 +164,42 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, [resetHighlight]);
 
-    // Update GeoJSON layer and markers when data changes
+    useEffect(() => {
+        const map = mapInstance.current;
+        if (!map || !okbData) return;
+
+        if (ttMarkersLayer.current) {
+            map.removeLayer(ttMarkersLayer.current);
+        }
+
+        ttMarkersLayer.current = L.layerGroup().addTo(map);
+        const ttWithCoords = okbData.filter(tt => tt.lat && tt.lon);
+
+        ttWithCoords.forEach(tt => {
+            const marker = L.circleMarker([tt.lat!, tt.lon!], {
+                radius: 3,
+                fillColor: '#22d3ee',
+                color: '#06b6d4',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.7,
+            }).bindPopup(`<b>${tt['Наименование']}</b><br>${tt['Юридический адрес'] || ''}<br><small>${tt['Вид деятельности'] || ''}</small>`);
+            
+            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(6); });
+            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(3); });
+
+            ttMarkersLayer.current?.addLayer(marker);
+        });
+
+    }, [okbData]);
+
     useEffect(() => {
         const map = mapInstance.current;
         if (!map) return;
 
-        // Clear existing layers to redraw
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         if (capitalsLayer.current) map.removeLayer(capitalsLayer.current);
 
-        // Add capital markers
         capitalsLayer.current = L.layerGroup().addTo(map);
         capitals.forEach(capital => {
             const marker = L.circleMarker([capital.lat, capital.lon], {
@@ -197,7 +209,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 weight: 1,
                 opacity: 1,
                 fillOpacity: 0.8,
-                className: 'pulsing-marker' // Add class for animation
+                className: 'pulsing-marker'
             }).bindTooltip(capital.name);
             marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(8); });
             marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
@@ -205,20 +217,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             capitalMarkersRef.current.set(capital.name, marker);
         });
 
-        // Add region boundaries (now invisible)
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
-            style: (feature) => {
-                const regionName = feature?.properties?.name;
-                if (selectedRegions.includes(regionName)) return filterSelectedStyle;
-                if (regionalData.has(regionName)) return dataStyle;
-                return baseStyle;
-            },
+            style: invisibleStyle,
             onEachFeature: (feature, layer) => {
                 const regionName = feature.properties.name;
                 layer.bindTooltip(regionName, { sticky: true, className: 'leaflet-tooltip-custom' });
 
                 layer.on({
-                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle(highlightStyle); },
+                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle(invisibleStyle); },
                     mouseout: (e) => { if (e.target !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(e.target); },
                     click: (e) => {
                         L.DomEvent.stop(e);

@@ -136,7 +136,7 @@ const App: React.FC = () => {
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
                         
-                        <InteractiveRegionMap data={filteredData} selectedRegions={filters.region} />
+                        <InteractiveRegionMap data={filteredData} selectedRegions={filters.region} okbData={okbData} />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
