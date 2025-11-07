@@ -126,9 +126,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
 
         let foundLayer: L.Layer | null = null;
         geoJsonLayer.current.eachLayer(layer => {
-            // FIX: Correctly type the layer's `feature` property. Layers within a GeoJSON
-            // group are dynamically assigned a `feature` property. The original cast was
-            // incorrect, leading to a type error.
             const layerFeature = (layer as any).feature as Feature;
             if (layerFeature.properties?.name.toLowerCase().includes(searchTerm.toLowerCase())) {
                 foundLayer = layer;
@@ -136,9 +133,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
         });
 
         if (foundLayer && mapInstance.current) {
-            // FIX: A `foundLayer` is a vector layer (e.g., L.Path), not an L.GeoJSON group.
-            // Cast to a more appropriate type to get its bounds.
-            mapInstance.current.fitBounds((foundLayer as L.Path).getBounds());
+            // FIX: A `foundLayer` is a vector layer (e.g., L.Polygon) which has getBounds().
+            // Casting to L.Path was incorrect as the base class does not have the method.
+            // L.Polygon is the correct type for this feature.
+            mapInstance.current.fitBounds((foundLayer as L.Polygon).getBounds());
         } else {
             setSearchError('Регион не найден');
         }
