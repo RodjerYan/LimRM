@@ -1,4 +1,4 @@
-import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
+import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../../types';
 
 /**
  * Normalizes an address string for search and comparison purposes.
