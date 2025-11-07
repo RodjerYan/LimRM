@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow } from '../types';
+import { AggregatedDataRow, OkbDataRow } from '../types';
 // @ts-ignore
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
+    okbData: OkbDataRow[];
 }
 
 // Function to determine color based on growth potential
@@ -102,7 +103,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     },
                 });
 
-                const regionName = feature.properties.name;
+                const regionName = feature?.properties?.name;
+                if (!regionName) return;
+
                 const metrics = regionalMetrics[regionName];
                 let popupContent = `<strong class="text-base">${regionName}</strong><br/>Нет данных`;
                 if (metrics) {
