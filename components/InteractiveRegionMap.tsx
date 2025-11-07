@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-import 'leaflet.control.search';
+import 'leaflet-search';
 import { GeoJsonObject } from 'geojson';
 
 interface InteractiveRegionMapProps {
