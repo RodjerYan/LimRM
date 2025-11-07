@@ -76,6 +76,50 @@
             background-color: #1F2937;
         }
         
+        /* Custom Leaflet Marker Clusters */
+        .marker-cluster {
+            background-clip: padding-box;
+            border-radius: 50%;
+            background-color: rgba(79, 70, 229, 0.8); /* accent-dark with opacity */
+            border: 2px solid rgba(165, 180, 252, 0.8); /* accent-light with opacity */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            font-family: Inter, sans-serif;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+            transition: all 0.2s ease-out;
+            cursor: pointer;
+        }
+        .marker-cluster:hover {
+            transform: scale(1.1);
+        }
+        .marker-cluster span {
+            line-height: 1;
+        }
+        .marker-cluster-small {
+            width: 32px;
+            height: 32px;
+        }
+        .marker-cluster-small span {
+            font-size: 13px;
+        }
+        .marker-cluster-medium {
+            width: 42px;
+            height: 42px;
+        }
+        .marker-cluster-medium span {
+            font-size: 15px;
+        }
+        .marker-cluster-large {
+            width: 52px;
+            height: 52px;
+        }
+        .marker-cluster-large span {
+            font-size: 17px;
+        }
+        
         /* Custom Leaflet Marker Pins */
         .marker-pin {
             width: 30px;
@@ -145,7 +189,9 @@
     "date-fns": "https://aistudiocdn.com/date-fns@^4.1.0",
     "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
     "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
-    "googleapis": "https://aistudiocdn.com/googleapis@^164.1.0"
+    "googleapis": "https://aistudiocdn.com/googleapis@^164.1.0",
+    "leaflet.markercluster/": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3/",
+    "leaflet.markercluster": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3"
   }
 }
 </script>

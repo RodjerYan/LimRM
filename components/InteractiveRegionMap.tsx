@@ -1,12 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import L from 'leaflet';
+// FIX: Changed import to `import * as L from 'leaflet'` to ensure proper namespace augmentation
+// by plugins like leaflet.markercluster, which resolves type errors for `L.markerClusterGroup`.
+import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster'; // Import JS for clustering
+// FIX: Added required CSS imports for leaflet.markercluster for correct visual rendering of clusters.
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { OkbDataRow } from '../types';
 import { geoJsonData } from '../data/russia_regions_geojson';
 import { exportToExcel } from '../utils/exportUtils';
 import { SearchIcon, ExportIcon } from './icons';
 
-// Интерфейс для корректной работы с типами слоев Leaflet, созданными из GeoJSON
+// Interface for correct typing of Leaflet layers created from GeoJSON
 interface FeatureLayer extends L.Path {
     feature?: GeoJSON.Feature;
 }
@@ -16,87 +22,76 @@ interface InteractiveRegionMapProps {
 }
 
 const normalizeString = (str: string) => str ? str.toLowerCase().replace(/ё/g, 'е').trim() : '';
-
 const findValue = (row: OkbDataRow, keys: string[]): string => {
-    for (const key of keys) {
-        if (row[key]) return String(row[key]);
-    }
+    for (const key of keys) { if (row[key]) return String(row[key]); }
     return '';
 };
+
+// Custom DivIcon for individual markers to avoid default icon loading issues
+const customMarkerIcon = L.divIcon({
+    html: `<div class="marker-pin blue"></div>`,
+    className: 'custom-marker-div-icon', // Wrapper class for scoping
+    iconSize: [30, 42],
+    iconAnchor: [15, 42] // Point of the pin
+});
 
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
-    // FIX: Changed LayerGroup to FeatureGroup to support getBounds() method for fitting the map view to markers.
-    const markersLayerRef = useRef<L.FeatureGroup | null>(null);
+    // FIX: The type `L.MarkerClusterGroup` is now correctly resolved from the augmented L namespace.
+    const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [filteredPoints, setFilteredPoints] = useState<OkbDataRow[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    const defaultStyle = {
-        color: '#4b5563', // gray-600
-        weight: 1,
-        opacity: 0.6,
-        fillColor: '#374151', // gray-700
-        fillOpacity: 0.1,
-    };
-
-    const highlightStyle = {
-        color: '#f97316', // orange-500
-        weight: 3,
-        opacity: 0.9,
-        fillColor: '#f97316',
-        fillOpacity: 0.2,
-    };
+    const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#374151', fillOpacity: 0.1 };
+    const highlightStyle = { color: '#f97316', weight: 3, opacity: 0.9, fillColor: '#f97316', fillOpacity: 0.2 };
 
     const updateMapDisplay = useCallback((query: string, data: OkbDataRow[]) => {
         const map = mapInstance.current;
         const markersLayer = markersLayerRef.current;
         const geoJsonLayer = geoJsonLayerRef.current;
-
         if (!map || !markersLayer || !geoJsonLayer) return;
 
         markersLayer.clearLayers();
         setError(null);
         const normalizedQuery = normalizeString(query);
+        const pointsWithCoords = data.filter(p => p.lat && p.lon);
 
-        if (!normalizedQuery) {
-            // --- РЕЖИМ "ПОКАЗАТЬ ВСЁ" ---
-            geoJsonLayer.setStyle(defaultStyle);
-            const allPoints = data.filter(p => p.lat && p.lon);
-            setFilteredPoints(allPoints);
-
-            allPoints.forEach(point => {
-                const marker = L.marker([point.lat!, point.lon!]);
+        const addMarkers = (points: OkbDataRow[]) => {
+            const markers: L.Marker[] = [];
+            points.forEach(point => {
+                const marker = L.marker([point.lat!, point.lon!], { icon: customMarkerIcon });
                 const address = findValue(point, ['Юридический адрес', 'Адрес']);
                 marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
-                markersLayer.addLayer(marker);
+                markers.push(marker);
             });
+            markersLayer.addLayers(markers);
+        };
 
-            if (allPoints.length > 0) {
-                // FIX: Property 'getBounds' does not exist on type 'LayerGroup<any>'. 
-                // This is now valid because markersLayerRef is a FeatureGroup.
-                map.fitBounds(markersLayer.getBounds().pad(0.1));
+        if (!normalizedQuery) {
+            geoJsonLayer.eachLayer(layer => {
+                if (layer instanceof L.Path) layer.setStyle(defaultStyle);
+            });
+            setFilteredPoints(pointsWithCoords);
+            addMarkers(pointsWithCoords);
+            if (pointsWithCoords.length > 0) {
+                // A small delay ensures that the map container has rendered before fitting bounds
+                setTimeout(() => map.fitBounds(markersLayer.getBounds().pad(0.1)), 100);
             } else {
-                map.setView([60, 90], 3);
+                map.setView([60, 90], 3); // Default view of Russia
             }
         } else {
-            // --- РЕЖИМ ПОИСКА И ФИЛЬТРАЦИИ ---
-            let targetBounds: L.LatLngBounds | null = null;
             let regionFound = false;
-
             geoJsonLayer.eachLayer(layer => {
                 const featureLayer = layer as FeatureLayer;
-                // FIX: Property 'getBounds' does not exist on type 'FeatureLayer'.
-                // Use a type guard to ensure the layer is a Path (like a Polygon) before accessing Path-specific methods.
                 if (layer instanceof L.Path && featureLayer.feature?.properties) {
                     if (normalizeString(featureLayer.feature.properties.name) === normalizedQuery) {
                         layer.setStyle(highlightStyle);
-                        // FIX: Cast layer to L.Polygon to access getBounds() and resolve TypeScript error TS2339.
-                        // This is safe because our GeoJSON features are polygons.
-                        targetBounds = (layer as L.Polygon).getBounds();
+                        layer.bringToFront();
+                        map.fitBounds((layer as L.Polygon).getBounds());
                         regionFound = true;
                     } else {
                         layer.setStyle(defaultStyle);
@@ -105,25 +100,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
             });
 
             if (regionFound) {
-                const pointsInRegion = data.filter(
-                    (row) => row.lat && row.lon && normalizeString(findValue(row, ['Регион'])) === normalizedQuery
+                const pointsInRegion = pointsWithCoords.filter(
+                    (row) => normalizeString(findValue(row, ['Регион'])) === normalizedQuery
                 );
                 setFilteredPoints(pointsInRegion);
-
-                pointsInRegion.forEach(point => {
-                    const marker = L.marker([point.lat!, point.lon!]);
-                    const address = findValue(point, ['Юридический адрес', 'Адрес']);
-                    marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
-                    markersLayer.addLayer(marker);
-                });
-
-                if (targetBounds) {
-                    map.fitBounds(targetBounds);
-                }
+                addMarkers(pointsInRegion);
             } else {
                 setError(`Регион "${query}" не найден. Проверьте название.`);
                 setFilteredPoints([]);
-                geoJsonLayer.setStyle(defaultStyle);
+                geoJsonLayer.eachLayer(layer => {
+                    if (layer instanceof L.Path) layer.setStyle(defaultStyle);
+                });
+                map.setView([60, 90], 3);
             }
         }
     }, []);
@@ -141,16 +129,43 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
             }).addTo(map);
             
-            // FIX: Initialize as a FeatureGroup instead of a LayerGroup.
-            markersLayerRef.current = L.featureGroup().addTo(map);
+            // FIX: The function `L.markerClusterGroup` is now correctly found on the L namespace.
+            markersLayerRef.current = L.markerClusterGroup({
+                chunkedLoading: true,
+                maxClusterRadius: 80,
+                iconCreateFunction: (cluster) => {
+                    const count = cluster.getChildCount();
+                    let sizeClass = 'small';
+                    if (count >= 100) sizeClass = 'large';
+                    else if (count >= 10) sizeClass = 'medium';
+                    return L.divIcon({
+                        html: `<span>${count}</span>`,
+                        className: `marker-cluster marker-cluster-${sizeClass}`,
+                        iconSize: undefined // Let CSS control the size
+                    });
+                }
+            }).addTo(map);
+
             geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style: defaultStyle }).addTo(map);
+
+            const resizeObserver = new ResizeObserver(() => {
+                mapInstance.current?.invalidateSize(true);
+            });
+            resizeObserver.observe(mapContainer.current);
+
+            return () => {
+                resizeObserver.disconnect();
+                map.remove();
+                mapInstance.current = null;
+            };
         }
-        
-        // Показываем все точки при первой загрузке данных
-        if (okbData.length > 0) {
+    }, []);
+
+    useEffect(() => {
+        if (okbData.length > 0 && mapInstance.current) {
             updateMapDisplay(searchQuery, okbData);
         }
-    }, [okbData, updateMapDisplay, searchQuery]);
+    }, [okbData, searchQuery, updateMapDisplay]);
 
     const handleSearch = () => {
         updateMapDisplay(searchQuery, okbData);
@@ -168,33 +183,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
             <div className="flex flex-col sm:flex-row gap-4 mb-4">
                 <div className="relative flex-grow">
                     <input
-                        type="text"
-                        value={searchQuery}
+                        type="text" value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                         placeholder="Введите название региона (напр., Крым)..."
                         className="w-full p-2.5 pl-10 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
                     />
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <SearchIcon />
-                    </div>
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
                 </div>
-                <button
-                    onClick={handleSearch}
-                    className="px-5 py-2.5 bg-accent hover:bg-accent-dark text-white font-bold rounded-lg transition duration-200"
-                >
-                    Найти
-                </button>
-                <button
-                    onClick={handleExport}
-                    disabled={filteredPoints.length === 0}
-                    className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-600 disabled:cursor-not-allowed"
-                >
-                    <ExportIcon />
-                    <span>Выгрузить (.xlsx)</span>
+                <button onClick={handleSearch} className="px-5 py-2.5 bg-accent hover:bg-accent-dark text-white font-bold rounded-lg transition duration-200">Найти</button>
+                <button onClick={handleExport} disabled={filteredPoints.length === 0} className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition duration-200 flex items-center justify-center gap-2 disabled:bg-gray-600 disabled:cursor-not-allowed">
+                    <ExportIcon /><span>Выгрузить (.xlsx)</span>
                 </button>
             </div>
-             {error && <p className="text-danger text-center mb-2">{error}</p>}
+            {error && <p className="text-danger text-center mb-2">{error}</p>}
             <div ref={mapContainer} className="h-[65vh] w-full rounded-lg z-10" />
         </div>
     );
