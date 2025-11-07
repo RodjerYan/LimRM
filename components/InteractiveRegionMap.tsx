@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
-// FIX: Explicitly import the 'Feature' type from 'geojson' to resolve the 'Cannot find namespace "GeoJSON"' error.
-// This ensures the type definitions for GeoJSON objects are available to TypeScript.
 import type { Feature } from 'geojson';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
@@ -11,15 +9,6 @@ import { OkbDataRow } from '../types';
 import { geoJsonData } from '../data/russia_regions_geojson';
 import { exportToExcel } from '../utils/exportUtils';
 import { SearchIcon, ExportIcon } from './icons';
-
-// FIX: Correctly type FeatureLayer as a Polygon, which is a Path layer that Leaflet
-// creates for GeoJSON polygon features, not the GeoJSON container itself. This resolves
-// type incompatibilities for the 'feature' property and allows direct access
-// to Path methods like setStyle without unsafe casting, fixing both reported errors.
-interface FeatureLayer extends L.Polygon {
-    // FIX: Use the imported 'Feature' type instead of the unresolved 'GeoJSON.Feature' namespace.
-    feature?: Feature;
-}
 
 interface InteractiveRegionMapProps {
     okbData: OkbDataRow[];
@@ -90,9 +79,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 map.fitBounds(geoJsonLayer.getBounds());
             }
         } else {
-            let targetLayer: FeatureLayer | undefined;
+            let targetLayer: L.Polygon | undefined;
             geoJsonLayer.eachLayer(layer => {
-                const featureLayer = layer as FeatureLayer;
+                const featureLayer = layer as L.Polygon;
                 if (!targetLayer && featureLayer.feature?.properties) {
                     const regionName = normalizeString(featureLayer.feature.properties.name);
                     if (regionName.includes(normalizedQuery)) {
@@ -142,23 +131,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 }
             }).addTo(map);
 
-            // FIX: Use the imported 'Feature' type instead of the unresolved 'GeoJSON.Feature' namespace.
             const onEachFeature = (feature: Feature, layer: L.Layer) => {
-                layer.on({
-                    mouseover: (e) => {
-                        if (layer !== highlightedLayerRef.current) {
-                           (e.target as L.Path).setStyle(highlightStyle);
-                           layer.bindTooltip(feature.properties.name).openTooltip();
-                        }
-                    },
-                    mouseout: (e) => {
-                        if (layer !== highlightedLayerRef.current) {
-                           (e.target as L.Path).setStyle(defaultStyle);
-                           layer.closeTooltip();
-                        }
-                    },
-                    click: () => setSearchQuery(feature.properties.name),
-                });
+                if (feature.properties) {
+                    layer.on({
+                        mouseover: (e) => {
+                            if (layer !== highlightedLayerRef.current) {
+                               (e.target as L.Path).setStyle(highlightStyle);
+                               layer.bindTooltip(feature.properties!.name).openTooltip();
+                            }
+                        },
+                        mouseout: (e) => {
+                            if (layer !== highlightedLayerRef.current) {
+                               (e.target as L.Path).setStyle(defaultStyle);
+                               layer.closeTooltip();
+                            }
+                        },
+                        click: () => setSearchQuery(feature.properties!.name),
+                    });
+                }
             };
 
             geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style: defaultStyle, onEachFeature }).addTo(map);
