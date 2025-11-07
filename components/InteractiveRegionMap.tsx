@@ -9,7 +9,9 @@ import { regionsGeoJson } from '../data/russia_regions_geojson';
 import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { ExportIcon, SearchIcon } from './icons';
 import { Feature } from 'geojson';
-import { standardizeRegion } from '../utils/addressMappings';
+import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
+
 
 // Fix for default Leaflet icons in Vite/React
 // @ts-ignore
@@ -32,11 +34,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const markersLayer = useRef<L.MarkerClusterGroup | null>(null);
+    const cityMarker = useRef<L.CircleMarker | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [searchError, setSearchError] = useState('');
     
-    // FIX: Standardize region names when creating the lookup map to ensure consistency.
-    // This resolves the issue where markers were not appearing due to mismatched region names.
     const okbDataByRegion = React.useMemo(() => {
         const map = new Map<string, OkbDataRow[]>();
         okbData.forEach(row => {
@@ -87,7 +88,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             map.removeLayer(geoJsonLayer.current);
         }
 
-        const dataMap = new Map(data.map(d => [d.region, d]));
+        const dataMap = new Map(data.map(d => [standardizeRegion(d.region), d]));
         const maxGrowth = Math.max(...data.map(d => d.growthPotential), 0);
 
         const getColor = (growthPotential?: number) => {
@@ -103,7 +104,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
 
         const styleFeature = (feature?: Feature) => {
             if (!feature?.properties) return { weight: 0, opacity: 0, fillOpacity: 0 };
-            const regionData = dataMap.get(feature.properties.name);
+            const regionData = dataMap.get(standardizeRegion(feature.properties.name));
             return {
                 fillColor: getColor(regionData?.growthPotential),
                 weight: 1, opacity: 1, color: '#111827',
@@ -113,7 +114,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
 
         const onEachFeature = (feature: Feature, layer: L.Layer) => {
             if (feature.properties) {
-                const regionName = feature.properties.name;
+                const regionName = standardizeRegion(feature.properties.name);
                 const regionData = dataMap.get(regionName);
                 let popupContent = `<b>${regionName}</b>`;
                 if (regionData) {
@@ -139,7 +140,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             map.addLayer(markersLayer.current);
         }
         
-        const activeRegions = new Set(data.map(d => d.region));
+        const activeRegions = new Set(data.map(d => standardizeRegion(d.region)));
         
         activeRegions.forEach(region => {
             const regionOkb = okbDataByRegion.get(region) || [];
@@ -154,46 +155,88 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
 
     }, [data, okbDataByRegion]);
 
-    // FIX: A more robust search function that prioritizes exact matches and handles errors gracefully.
-    // This resolves the "Не удалось определить границы региона" error.
     const handleSearch = () => {
         setSearchError('');
-        if (!searchTerm.trim() || !geoJsonLayer.current || !mapInstance.current) return;
+        if (!mapInstance.current || !searchTerm.trim()) return;
 
-        let exactMatchLayer: L.Layer | null = null;
-        let partialMatchLayer: L.Layer | null = null;
-        const lowerCaseSearch = searchTerm.toLowerCase();
+        const map = mapInstance.current;
+        const lowerTerm = searchTerm.toLowerCase().trim().replace('г.', '').trim();
+        
+        // --- Cleanup previous search visuals ---
+        if (cityMarker.current) {
+            map.removeLayer(cityMarker.current);
+            cityMarker.current = null;
+        }
+        if (geoJsonLayer.current) {
+            geoJsonLayer.current.eachLayer(layer => {
+                geoJsonLayer.current!.resetStyle(layer as L.Path);
+            });
+        }
+        
+        // --- PRIORITY 1: SEARCH FOR A CITY ---
+        const cityData = REGION_BY_CITY_WITH_INDEXES[lowerTerm];
+        if (cityData && cityData.lat && cityData.lon) {
+            const cityCoords: L.LatLngTuple = [cityData.lat, cityData.lon];
+            map.flyTo(cityCoords, 11, { animate: true, duration: 1 }); // Zoom level 11 is good for a city
 
-        geoJsonLayer.current.eachLayer(layer => {
-            const feature = (layer as any).feature as Feature;
-            const regionName = feature?.properties?.name?.toLowerCase();
-            if (regionName) {
-                if (regionName === lowerCaseSearch) {
-                    exactMatchLayer = layer;
-                } else if (regionName.includes(lowerCaseSearch) && !partialMatchLayer) {
-                    partialMatchLayer = layer;
+            cityMarker.current = L.circleMarker(cityCoords, {
+                radius: 15,
+                color: '#fbbf24',
+                fillColor: '#fbbf24',
+                fillOpacity: 0.5,
+                weight: 2
+            }).addTo(map);
+            
+            setTimeout(() => {
+                if (cityMarker.current) {
+                    map.removeLayer(cityMarker.current);
+                    cityMarker.current = null;
                 }
+            }, 4000);
+            return;
+        }
+
+        // --- PRIORITY 2: SEARCH FOR A REGION ---
+        let targetRegionName: string | null = null;
+        const regionFromAlias = Object.entries(REGION_KEYWORD_MAP).find(([key]) => key.toLowerCase() === lowerTerm);
+        if (regionFromAlias) {
+            targetRegionName = regionFromAlias[1];
+        } else {
+            const allCanonicalNames = [...new Set(Object.values(REGION_KEYWORD_MAP))];
+            const bestMatch = allCanonicalNames.find(name => name.toLowerCase().startsWith(lowerTerm))
+                           || allCanonicalNames.find(name => name.toLowerCase().includes(lowerTerm));
+            if (bestMatch) {
+                targetRegionName = bestMatch;
+            }
+        }
+        
+        if (!targetRegionName) {
+            setSearchError('Объект не найден. Уточните запрос.');
+            return;
+        }
+
+        let foundLayer: L.Layer | null = null;
+        const targetRegionLower = standardizeRegion(targetRegionName).toLowerCase();
+
+        geoJsonLayer.current?.eachLayer(layer => {
+            const feature = (layer as any).feature as Feature;
+            const regionName = standardizeRegion(feature?.properties?.name).toLowerCase();
+            if (regionName === targetRegionLower) {
+                foundLayer = layer;
             }
         });
 
-        const foundLayer = exactMatchLayer || partialMatchLayer;
-
         if (foundLayer && typeof (foundLayer as L.GeoJSON).getBounds === 'function') {
-            const bounds = (foundLayer as L.GeoJSON).getBounds();
+            const bounds = (foundLayer as L.Polygon).getBounds();
             if (bounds.isValid()) {
-                mapInstance.current.fitBounds(bounds, { paddingTopLeft: [20, 20], paddingBottomRight: [20, 20] });
+                map.fitBounds(bounds, { paddingTopLeft: [20, 20], paddingBottomRight: [20, 20], maxZoom: 10 });
                 const pathLayer = foundLayer as L.Path;
                 pathLayer.setStyle({ weight: 4, color: '#fbbf24' });
-                setTimeout(() => {
-                    if (geoJsonLayer.current) {
-                        geoJsonLayer.current.resetStyle(pathLayer);
-                    }
-                }, 3000);
             } else {
-                 setSearchError('Не удалось определить границы региона');
+                setSearchError('Не удалось определить границы региона');
             }
         } else {
-            setSearchError('Регион не найден');
+            setSearchError(`Границы для региона '${targetRegionName}' не найдены`);
         }
     };
     
@@ -207,7 +250,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
                             type="text" value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                            placeholder="Введите название региона..."
+                            placeholder="Введите регион или город..."
                             className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
                         />
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
