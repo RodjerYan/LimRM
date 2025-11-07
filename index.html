@@ -66,6 +66,24 @@
         border-radius: 10px;
         border: 2px solid #1f2937; /* card-bg */
       }
+      /* Animation for capital markers */
+      @keyframes pulse-animation {
+        0% {
+            fill-opacity: 0.8;
+            filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.5));
+        }
+        50% {
+            fill-opacity: 1.0;
+            filter: drop-shadow(0 0 5px rgba(251, 191, 36, 0.9));
+        }
+        100% {
+            fill-opacity: 0.8;
+            filter: drop-shadow(0 0 2px rgba(251, 191, 36, 0.5));
+        }
+      }
+      .pulsing-marker {
+        animation: pulse-animation 2.5s infinite ease-in-out;
+      }
     </style>
   </head>
   <body>

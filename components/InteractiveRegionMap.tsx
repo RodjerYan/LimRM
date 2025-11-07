@@ -191,7 +191,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         capitalsLayer.current = L.layerGroup().addTo(map);
         capitals.forEach(capital => {
             const marker = L.circleMarker([capital.lat, capital.lon], {
-                radius: 4, fillColor: '#fbbf24', color: '#f59e0b', weight: 1, opacity: 1, fillOpacity: 0.8
+                radius: 4,
+                fillColor: '#fbbf24',
+                color: '#f59e0b',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8,
+                className: 'pulsing-marker' // Add class for animation
             }).bindTooltip(capital.name);
             marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(8); });
             marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
