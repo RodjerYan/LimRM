@@ -1,11 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-// FIX: Changed the Leaflet import from `import * as L from 'leaflet'` to `import L from 'leaflet'`.
-// This aligns with the import style used in other components of the project and allows TypeScript
-// to correctly resolve the types for the `leaflet.markercluster` plugin, fixing errors related
-// to `L.MarkerClusterGroup` and `L.markerClusterGroup`.
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet.markercluster'; // Import JS for clustering
+import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { OkbDataRow } from '../types';
@@ -28,12 +24,11 @@ const findValue = (row: OkbDataRow, keys: string[]): string => {
     return '';
 };
 
-// Custom DivIcon for individual markers to avoid default icon loading issues
 const customMarkerIcon = L.divIcon({
     html: `<div class="marker-pin blue"></div>`,
-    className: 'custom-marker-div-icon', // Wrapper class for scoping
+    className: 'custom-marker-div-icon',
     iconSize: [30, 42],
-    iconAnchor: [15, 42] // Point of the pin
+    iconAnchor: [15, 42]
 });
 
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) => {
@@ -47,7 +42,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
     const [error, setError] = useState<string | null>(null);
 
     const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#374151', fillOpacity: 0.1 };
-    const highlightStyle = { color: '#f97316', weight: 3, opacity: 0.9, fillColor: '#f97316', fillOpacity: 0.2 };
+    const highlightStyle = { color: '#f97316', weight: 3, opacity: 1, fillColor: '#f97316', fillOpacity: 0.3 };
 
     const updateMapDisplay = useCallback((query: string, data: OkbDataRow[]) => {
         const map = mapInstance.current;
@@ -83,39 +78,47 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 map.setView([60, 90], 3); // Default view of Russia
             }
         } else {
-            let foundLayer: L.Path | null = null;
-            let foundRegionName: string | null = null;
-
+            let targetLayer: FeatureLayer | undefined;
+            
             geoJsonLayer.eachLayer(layer => {
                 const featureLayer = layer as FeatureLayer;
-                if (!foundLayer && layer instanceof L.Path && featureLayer.feature?.properties) {
+                if (!targetLayer && featureLayer.feature?.properties) {
                     const regionName = normalizeString(featureLayer.feature.properties.name);
                     if (regionName.includes(normalizedQuery)) {
-                        foundLayer = layer;
-                        foundRegionName = regionName;
+                        targetLayer = featureLayer;
                     }
                 }
             });
 
             geoJsonLayer.eachLayer(layer => {
                 if (layer instanceof L.Path) {
-                    layer.setStyle(layer === foundLayer ? highlightStyle : defaultStyle);
+                    layer.setStyle(layer === targetLayer ? highlightStyle : defaultStyle);
                 }
             });
 
-            if (foundLayer && foundRegionName) {
-                foundLayer.bringToFront();
-                map.fitBounds((foundLayer as L.Polygon).getBounds());
+            if (targetLayer) {
+                targetLayer.bringToFront();
+                // FIX: Use a type guard (`instanceof L.Polygon`) to confirm that the `targetLayer` has a `getBounds` method.
+                // This resolves the TypeScript error because `L.Path` itself doesn't guarantee this method, but concrete
+                // shapes like `L.Polygon` (which are created from the GeoJSON) do.
+                if (targetLayer instanceof L.Polygon) {
+                    map.fitBounds(targetLayer.getBounds());
+                }
                 
+                const foundRegionName = normalizeString(targetLayer.feature!.properties!.name);
                 const pointsInRegion = pointsWithCoords.filter(
-                    (row) => normalizeString(findValue(row, ['Регион'])) === foundRegionName
+                    (row) => {
+                         const sheetRegion = normalizeString(findValue(row, ['Регион']));
+                         return sheetRegion && foundRegionName.includes(sheetRegion);
+                    }
                 );
                 setFilteredPoints(pointsInRegion);
                 addMarkers(pointsInRegion);
             } else {
-                setError(`Регион "${query}" не найден. Проверьте название.`);
-                setFilteredPoints([]);
-                map.setView([60, 90], 3);
+                 setError(`Регион "${query}" не найден. Проверьте название.`);
+                 setFilteredPoints([]);
+                 geoJsonLayer.eachLayer(layer => { if (layer instanceof L.Path) layer.setStyle(defaultStyle); });
+                 map.setView([60, 90], 3);
             }
         }
     }, []);
@@ -144,7 +147,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                     return L.divIcon({
                         html: `<span>${count}</span>`,
                         className: `marker-cluster marker-cluster-${sizeClass}`,
-                        iconSize: undefined // Let CSS control the size
+                        iconSize: undefined
                     });
                 }
             }).addTo(map);
