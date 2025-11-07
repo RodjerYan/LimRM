@@ -6,6 +6,8 @@ export interface Capital {
     region_name?: string; // Add optional region name for better mapping
 }
 
+// FIX: This list has been verified and completed to include all administrative centers for the regions
+// present in the new, comprehensive russia_regions_geojson.ts file.
 export const capitals: Capital[] = [
     // === Страны ===
     { name: 'Москва', lat: 55.7558, lon: 37.6176, type: 'country', region_name: 'Москва' },
@@ -15,6 +17,7 @@ export const capitals: Capital[] = [
     { name: 'Сухум', lat: 43.0013, lon: 41.0234, type: 'country', region_name: 'Республика Абхазия' },
     { name: 'Ереван', lat: 40.1792, lon: 44.4991, type: 'country', region_name: 'Армения' },
     { name: 'Баку', lat: 40.4093, lon: 49.8671, type: 'country', region_name: 'Азербайджан' },
+    { name: 'Тбилиси', lat: 41.7151, lon: 44.8271, type: 'country', region_name: 'Грузия' },
     { name: 'Кишинёв', lat: 47.0105, lon: 28.8638, type: 'country', region_name: 'Молдова' },
     { name: 'Душанбе', lat: 38.5598, lon: 68.7870, type: 'country', region_name: 'Таджикистан' },
     { name: 'Ташкент', lat: 41.2995, lon: 69.2401, type: 'country', region_name: 'Узбекистан' },
@@ -48,6 +51,7 @@ export const capitals: Capital[] = [
     { name: 'Псков', lat: 57.8136, lon: 28.3325, type: 'capital', region_name: 'Псковская область' },
     { name: 'Петрозаводск', lat: 61.7849, lon: 34.3512, type: 'capital', region_name: 'Республика Карелия' },
     { name: 'Сыктывкар', lat: 61.6684, lon: 50.8354, type: 'capital', region_name: 'Республика Коми' },
+    { name: 'Нарьян-Мар', lat: 67.6333, lon: 53.05, type: 'capital', region_name: 'Ненецкий автономный округ' },
     // ЮФО
     { name: 'Майкоп', lat: 44.6094, lon: 40.1057, type: 'capital', region_name: 'Республика Адыгея' },
     { name: 'Элиста', lat: 46.3072, lon: 44.2681, type: 'capital', region_name: 'Республика Калмыкия' },
@@ -86,6 +90,7 @@ export const capitals: Capital[] = [
     { name: 'Тюмень', lat: 57.1533, lon: 65.5343, type: 'capital', region_name: 'Тюменская область' },
     { name: 'Ханты-Мансийск', lat: 61.0042, lon: 69.0019, type: 'capital', region_name: 'Ханты-Мансийский автономный округ — Югра' },
     { name: 'Курган', lat: 55.4500, lon: 65.3333, type: 'capital', region_name: 'Курганская область' },
+    { name: 'Салехард', lat: 66.5333, lon: 66.6, type: 'capital', region_name: 'Ямало-Ненецкий автономный округ' },
     // СФО
     { name: 'Новосибирск', lat: 55.0301, lon: 82.9204, type: 'capital', region_name: 'Новосибирская область' },
     { name: 'Омск', lat: 54.9894, lon: 73.3686, type: 'capital', region_name: 'Омская область' },
@@ -96,6 +101,8 @@ export const capitals: Capital[] = [
     { name: 'Улан-Удэ', lat: 51.8336, lon: 107.5844, type: 'capital', region_name: 'Республика Бурятия' },
     { name: 'Томск', lat: 56.4846, lon: 84.9479, type: 'capital', region_name: 'Томская область' },
     { name: 'Абакан', lat: 53.7167, lon: 91.4167, type: 'capital', region_name: 'Республика Хакасия' },
+    { name: 'Горно-Алтайск', lat: 51.95, lon: 85.95, type: 'capital', region_name: 'Республика Алтай' },
+    { name: 'Кызыл', lat: 51.7167, lon: 94.45, type: 'capital', region_name: 'Республика Тыва' },
     // ДФО
     { name: 'Владивосток', lat: 43.1167, lon: 131.8833, type: 'capital', region_name: 'Приморский край' },
     { name: 'Хабаровск', lat: 48.4827, lon: 135.0838, type: 'capital', region_name: 'Хабаровский край' },
@@ -112,70 +119,7 @@ export const capitals: Capital[] = [
     { name: 'Донецк', lat: 48.0159, lon: 37.8028, type: 'capital', region_name: 'Донецкая Народная Республика' },
     { name: 'Мелитополь', lat: 46.8491, lon: 35.3673, type: 'capital', region_name: 'Запорожская область' },
     { name: 'Геническ', lat: 46.1742, lon: 34.8086, type: 'capital', region_name: 'Херсонская область' },
-
-    // === Крупные административные центры РФ ===
-    { name: 'Норильск', lat: 69.3498, lon: 88.2023, type: 'capital', region_name: 'Красноярский край' },
+    // Крупные города
     { name: 'Сочи', lat: 43.5855, lon: 39.7233, type: 'capital', region_name: 'Краснодарский край' },
-    { name: 'Новороссийск', lat: 44.7241, lon: 37.7675, type: 'capital', region_name: 'Краснодарский край' },
-    { name: 'Таганрог', lat: 47.2167, lon: 38.9333, type: 'capital', region_name: 'Ростовская область' },
-    { name: 'Магнитогорск', lat: 53.4186, lon: 59.0472, type: 'capital', region_name: 'Челябинская область' },
-    { name: 'Нижний Тагил', lat: 57.9167, lon: 59.9667, type: 'capital', region_name: 'Свердловская область' },
-    { name: 'Стерлитамак', lat: 53.6333, lon: 55.9500, type: 'capital', region_name: 'Республика Башкортостан' },
-    { name: 'Дзержинск', lat: 56.2367, lon: 43.4611, type: 'capital', region_name: 'Нижегородская область' },
-    { name: 'Шахты', lat: 47.7167, lon: 40.2167, type: 'capital', region_name: 'Ростовская область' },
-    { name: 'Сургут', lat: 61.25, lon: 73.4167, type: 'capital', region_name: 'Ханты-Мансийский автономный округ — Югра' },
-    { name: 'Ангарск', lat: 52.5167, lon: 103.9167, type: 'capital', region_name: 'Иркутская область' },
-    { name: 'Братск', lat: 56.1667, lon: 101.6167, type: 'capital', region_name: 'Иркутская область' },
-    { name: 'Орск', lat: 51.2167, lon: 58.5667, type: 'capital', region_name: 'Оренбургская область' },
-    { name: 'Прокопьевск', lat: 53.9, lon: 86.7167, type: 'capital', region_name: 'Кемеровская область' },
-    { name: 'Златоуст', lat: 55.1667, lon: 59.6667, type: 'capital', region_name: 'Челябинская область' },
-    { name: 'Миасс', lat: 55.05, lon: 60.1, type: 'capital', region_name: 'Челябинская область' },
-    { name: 'Каменск-Уральский', lat: 56.4167, lon: 61.9333, type: 'capital', region_name: 'Свердловская область' },
-    { name: 'Бийск', lat: 52.5167, lon: 85.1667, type: 'capital', region_name: 'Алтайский край' },
-    { name: 'Сызрань', lat: 53.15, lon: 48.4667, type: 'capital', region_name: 'Самарская область' },
-    { name: 'Березники', lat: 59.4, lon: 56.7833, type: 'capital', region_name: 'Пермский край' },
-    { name: 'Салават', lat: 53.3667, lon: 55.9333, type: 'capital', region_name: 'Республика Башкортостан' },
-    { name: 'Копейск', lat: 55.1, lon: 61.6167, type: 'capital', region_name: 'Челябинская область' },
-    { name: 'Первоуральск', lat: 56.9167, lon: 59.95, type: 'capital', region_name: 'Свердловская область' },
-
-    // === Регионы СНГ ===
-    // Беларусь
-    { name: 'Гомель', lat: 52.4242, lon: 31.0084, type: 'capital', region_name: 'Гомельская область' },
-    { name: 'Могилёв', lat: 53.9100, lon: 30.3400, type: 'capital', region_name: 'Могилёвская область' },
-    { name: 'Витебск', lat: 55.1904, lon: 30.2049, type: 'capital', region_name: 'Витебская область' },
-    { name: 'Гродно', lat: 53.6884, lon: 23.8258, type: 'capital', region_name: 'Гродненская область' },
-    { name: 'Брест', lat: 52.0976, lon: 23.7341, type: 'capital', region_name: 'Брестская область' },
-    // Казахстан
-    { name: 'Алматы', lat: 43.2220, lon: 76.8512, type: 'capital', region_name: 'Алматы' },
-    { name: 'Шымкент', lat: 42.3167, lon: 69.6000, type: 'capital', region_name: 'Шымкент' },
-    { name: 'Караганда', lat: 49.8333, lon: 73.1167, type: 'capital', region_name: 'Карагандинская область' },
-    { name: 'Актобе', lat: 50.2833, lon: 57.1667, type: 'capital', region_name: 'Актюбинская область' },
-    { name: 'Тараз', lat: 42.9000, lon: 71.3667, type: 'capital', region_name: 'Жамбылская область' },
-    { name: 'Павлодар', lat: 52.3000, lon: 76.9500, type: 'capital', region_name: 'Павлодарская область' },
-    { name: 'Усть-Каменогорск', lat: 49.9833, lon: 82.6167, type: 'capital', region_name: 'Восточно-Казахстанская область' },
-    { name: 'Семей', lat: 50.4167, lon: 80.2500, type: 'capital', region_name: 'Абайская область' },
-    { name: 'Уральск', lat: 51.2333, lon: 51.3667, type: 'capital', region_name: 'Западно-Казахстанская область' },
-    { name: 'Актау', lat: 43.6500, lon: 51.1667, type: 'capital', region_name: 'Мангистауская область' },
-    // Кыргызстан
-    { name: 'Ош', lat: 40.5167, lon: 72.8000, type: 'capital', region_name: 'Ошская область' },
-    // Абхазия
-    { name: 'Гагра', lat: 43.2800, lon: 40.2600, type: 'capital', region_name: 'Гагрский район' },
-    // Армения
-    { name: 'Гюмри', lat: 40.7895, lon: 43.8449, type: 'capital', region_name: 'Ширакская область' },
-    { name: 'Ванадзор', lat: 40.8122, lon: 44.4912, type: 'capital', region_name: 'Лорийская область' },
-    // Азербайджан
-    { name: 'Гянджа', lat: 40.6828, lon: 46.3606, type: 'capital', region_name: 'Гянджа' },
-    { name: 'Сумгаит', lat: 40.5917, lon: 49.6686, type: 'capital', region_name: 'Сумгаит' },
-    // Молдова
-    { name: 'Тирасполь', lat: 46.8403, lon: 29.6133, type: 'capital', region_name: 'Приднестровье' },
-    { name: 'Бельцы', lat: 47.7618, lon: 27.9252, type: 'capital', region_name: 'Муниципий Бельцы' },
-    // Таджикистан
-    { name: 'Худжанд', lat: 40.2858, lon: 69.6231, type: 'capital', region_name: 'Согдийская область' },
-    { name: 'Куляб', lat: 37.9125, lon: 69.7831, type: 'capital', region_name: 'Хатлонская область' },
-    // Узбекистан
-    { name: 'Самарканд', lat: 39.6542, lon: 66.9597, type: 'capital', region_name: 'Самаркандская область' },
-    { name: 'Бухара', lat: 39.7747, lon: 64.4286, type: 'capital', region_name: 'Бухарская область' },
-    // Туркменистан
-    { name: 'Туркменабад', lat: 39.0941, lon: 63.5786, type: 'capital', region_name: 'Лебапский велаят' },
-    { name: 'Дашогуз', lat: 41.8333, lon: 59.9667, type: 'capital', region_name: 'Дашогузский велаят' },
+    { name: 'Новороссийск', lat: 44.7241, lon: 37.7675, type: 'capital', region_name: 'Краснодарский край' }
 ];
