@@ -16,6 +16,11 @@ const findValue = (row: OkbDataRow, keys: string[]): string => {
     return '';
 };
 
+// FIX: Define the props interface for the component to resolve the "Cannot find name" error.
+interface InteractiveRegionMapProps {
+    okbData: OkbDataRow[];
+}
+
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
@@ -88,14 +93,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
         let bounds: L.LatLngBounds | null = null;
     
         allRegionsLayerRef.current?.eachLayer(layer => {
-            const feature = (layer as L.GeoJSON).feature;
-            if (feature && normalizeString(feature.properties.name) === normalizedQuery) {
+            // FIX: Cast the generic layer to L.Path to safely access its `feature`
+            // property and methods like `setStyle` and `getBounds`. This resolves
+            // TypeScript errors related to incorrect type assumptions.
+            const pathLayer = layer as L.Path;
+            const feature = pathLayer.feature;
+
+            if (feature && feature.properties && normalizeString(feature.properties.name) === normalizedQuery) {
                 regionFound = true;
-                if ((layer as L.Path).setStyle) {
-                     (layer as L.Path).setStyle(highlightedRegionStyle);
-                }
-                if ((layer as L.GeoJSON).getBounds) {
-                    bounds = (layer as L.GeoJSON).getBounds();
+                pathLayer.setStyle(highlightedRegionStyle);
+                if (typeof pathLayer.getBounds === 'function') {
+                    bounds = pathLayer.getBounds();
                 }
             }
         });
