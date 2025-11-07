@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
+import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { SearchIcon } from './icons';
 
 interface InteractiveRegionMapProps {
@@ -33,24 +34,34 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
+        // Add capitals
         capitals.forEach(capital => {
             if (!addedNames.has(capital.name)) {
                 locations.push({ name: capital.name, type: capital.type, lat: capital.lat, lon: capital.lon });
                 addedNames.add(capital.name);
             }
         });
-        
-        if (russiaRegionsGeoJSON?.features) {
-            russiaRegionsGeoJSON.features.forEach(feature => {
-                const name = feature.properties?.name;
-                if (name && !addedNames.has(name)) {
-                    locations.push({ name, type: 'region' });
-                    addedNames.add(name);
-                }
-            });
-        }
+
+        // Add regions from the comprehensive map to make them searchable
+        const regionNamesFromMap = new Set(Object.values(REGION_KEYWORD_MAP));
+        regionNamesFromMap.forEach(name => {
+            if (name && !addedNames.has(name)) {
+                locations.push({ name, type: 'region' });
+                addedNames.add(name);
+            }
+        });
+
+        // Add regions from the current dataset, as it might contain regions not in the static map
+        data.forEach(row => {
+            const regionName = row.region;
+            if (regionName && regionName !== 'Регион не определен' && !addedNames.has(regionName)) {
+                locations.push({ name: regionName, type: 'region' });
+                addedNames.add(regionName);
+            }
+        });
+
         return locations.sort((a, b) => a.name.localeCompare(b.name));
-    }, []);
+    }, [data]);
     
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
@@ -78,9 +89,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 setTimeout(() => marker.openPopup(), 500);
             }
         } else if (location.type === 'region') {
+            let foundInGeoJSON = false; // Flag to check if we found a polygon
             geoJsonLayer.current?.eachLayer(layer => {
                 const featureName = (layer as any).feature?.properties?.name;
                 if (featureName === location.name) {
+                    foundInGeoJSON = true;
                     // Fix: Cast layer to L.Polygon to access getBounds() method. The type definitions for L.Path do not include it.
                     map.fitBounds((layer as L.Polygon).getBounds());
                     (layer as L.Polygon).setStyle({ color: '#fbbf24', weight: 3 });
@@ -89,6 +102,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }, 3000);
                 }
             });
+
+             // Fallback if no polygon was found (because russiaRegionsGeoJSON is empty)
+            if (!foundInGeoJSON) {
+                const capitalForRegion = capitals.find(c => c.name === location.name);
+                if (capitalForRegion) {
+                    // Fly to the region's capital city with a wider zoom
+                    map.flyTo([capitalForRegion.lat, capitalForRegion.lon], 7);
+                }
+            }
         }
     };
 
