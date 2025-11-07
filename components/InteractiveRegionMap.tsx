@@ -25,6 +25,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
     const legendControl = useRef<L.Control | null>(null);
+    const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -34,7 +35,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
-        // Add capitals
         capitals.forEach(capital => {
             if (!addedNames.has(capital.name)) {
                 locations.push({ name: capital.name, type: capital.type, lat: capital.lat, lon: capital.lon });
@@ -42,8 +42,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // Add regions from the comprehensive map to make them searchable
         const regionNamesFromMap = new Set(Object.values(REGION_KEYWORD_MAP));
+        russiaRegionsGeoJSON.features.forEach(feature => {
+            const name = feature.properties?.name;
+            if (name) regionNamesFromMap.add(name);
+        });
         regionNamesFromMap.forEach(name => {
             if (name && !addedNames.has(name)) {
                 locations.push({ name, type: 'region' });
@@ -51,7 +54,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // Add regions from the current dataset, as it might contain regions not in the static map
         data.forEach(row => {
             const regionName = row.region;
             if (regionName && regionName !== 'Регион не определен' && !addedNames.has(regionName)) {
@@ -62,7 +64,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         return locations.sort((a, b) => a.name.localeCompare(b.name));
     }, [data]);
-    
+
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
             const lowerSearchTerm = searchTerm.toLowerCase();
@@ -74,45 +76,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             setSearchResults([]);
         }
     }, [searchTerm, searchableLocations]);
-    
-    const handleLocationSelect = (location: SearchableLocation) => {
-        const map = mapInstance.current;
-        if (!map) return;
-    
-        setSearchTerm('');
-        setSearchResults([]);
-    
-        if (location.type === 'capital' || location.type === 'country') {
-            const marker = capitalMarkersRef.current.get(location.name);
-            map.flyTo([location.lat!, location.lon!], 10);
-            if (marker) {
-                setTimeout(() => marker.openPopup(), 500);
-            }
-        } else if (location.type === 'region') {
-            let foundInGeoJSON = false; // Flag to check if we found a polygon
-            geoJsonLayer.current?.eachLayer(layer => {
-                const featureName = (layer as any).feature?.properties?.name;
-                if (featureName === location.name) {
-                    foundInGeoJSON = true;
-                    // Fix: Cast layer to L.Polygon to access getBounds() method. The type definitions for L.Path do not include it.
-                    map.fitBounds((layer as L.Polygon).getBounds());
-                    (layer as L.Polygon).setStyle({ color: '#fbbf24', weight: 3 });
-                    setTimeout(() => {
-                        geoJsonLayer.current?.resetStyle(layer as L.Polygon);
-                    }, 3000);
-                }
-            });
-
-             // Fallback if no polygon was found (because russiaRegionsGeoJSON is empty)
-            if (!foundInGeoJSON) {
-                const capitalForRegion = capitals.find(c => c.name === location.name);
-                if (capitalForRegion) {
-                    // Fly to the region's capital city with a wider zoom
-                    map.flyTo([capitalForRegion.lat, capitalForRegion.lon], 7);
-                }
-            }
-        }
-    };
 
     const regionalData = useMemo(() => {
         if (!data || data.length === 0) return new Map();
@@ -138,14 +101,62 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
         return aggregation;
     }, [data]);
+    
+    const highlightStyle = { color: '#FF4500', weight: 3, opacity: 1 };
+    const defaultStyle = { weight: 1, color: '#4B5563', fillOpacity: 0.7 };
+
+    const resetHighlight = () => {
+        if (highlightedLayer.current && geoJsonLayer.current) {
+            geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
+        }
+        highlightedLayer.current = null;
+    };
+
+    const highlightRegion = (layer: L.Layer) => {
+        resetHighlight();
+        (layer as L.Path).setStyle(highlightStyle).bringToFront();
+        highlightedLayer.current = layer;
+    };
+
+    const handleLocationSelect = (location: SearchableLocation) => {
+        const map = mapInstance.current;
+        if (!map) return;
+
+        setSearchTerm('');
+        setSearchResults([]);
+
+        resetHighlight();
+
+        if (location.type === 'capital' || location.type === 'country') {
+            const marker = capitalMarkersRef.current.get(location.name);
+            map.flyTo([location.lat!, location.lon!], 10);
+            if (marker) setTimeout(() => marker.openPopup(), 500);
+        } else if (location.type === 'region') {
+            let foundLayer: L.Layer | null = null;
+            geoJsonLayer.current?.eachLayer(layer => {
+                if ((layer as any).feature?.properties?.name === location.name) {
+                    foundLayer = layer;
+                }
+            });
+
+            if (foundLayer) {
+                map.fitBounds((foundLayer as L.Polygon).getBounds());
+                highlightRegion(foundLayer);
+            } else {
+                const capitalForRegion = capitals.find(c => c.name === location.name);
+                if (capitalForRegion) map.flyTo([capitalForRegion.lat, capitalForRegion.lon], 7);
+            }
+        }
+    };
 
     useEffect(() => {
         if (mapContainer.current && mapInstance.current === null) {
-            const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true });
+            const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
             mapInstance.current = map;
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
             }).addTo(map);
+
             capitalsLayer.current = L.layerGroup().addTo(map);
             capitals.forEach(capital => {
                 const marker = L.circleMarker([capital.lat, capital.lon], {
@@ -169,12 +180,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         const map = mapInstance.current;
         if (!map) return;
+
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         if (legendControl.current) map.removeControl(legendControl.current);
         capitalMarkersRef.current.forEach((marker, name) => marker.bindPopup(`<b>${name}</b>`));
 
         if (regionalData.size === 0 && selectedRegions.length === 0) {
-            if (map.getZoom() > 4) map.flyTo([60, 90], 3);
+            map.flyTo([60, 90], 3);
             return;
         }
 
@@ -196,29 +208,43 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 style: (feature) => {
                     const regionName = feature?.properties?.name;
                     const regionStats = regionalData.get(regionName);
-                    const isSelected = selectedRegions.includes(regionName);
+                    const isSelectedByFilter = selectedRegions.includes(regionName);
                     return {
+                        ...defaultStyle,
                         fillColor: regionStats ? getColor(regionStats.totalGrowth) : '#1F2937',
-                        weight: isSelected ? 3 : 1,
-                        opacity: 1,
-                        color: isSelected ? '#818cf8' : '#4B5563',
-                        fillOpacity: isSelected ? 0.8 : 0.7,
+                        weight: isSelectedByFilter ? 3 : 1,
+                        color: isSelectedByFilter ? '#818cf8' : defaultStyle.color,
                     };
                 },
                 onEachFeature: (feature, layer) => {
                     const regionName = feature.properties.name;
                     const regionStats = regionalData.get(regionName);
-                    layer.bindPopup(regionStats ?
+                    const popupContent = regionStats ?
                         `<b>${regionName}</b><br/>Потенциал роста: ${formatNumber(regionStats.totalGrowth)}` :
-                        `<b>${regionName}</b><br/>Нет данных`
-                    );
+                        `<b>${regionName}</b><br/>Нет данных`;
+                    layer.bindPopup(popupContent);
+
+                    layer.on({
+                        mouseover: (e) => {
+                            if (e.target !== highlightedLayer.current) {
+                                e.target.setStyle(highlightStyle).bringToFront();
+                            }
+                        },
+                        mouseout: (e) => {
+                           if (e.target !== highlightedLayer.current) {
+                                geoJsonLayer.current?.resetStyle(e.target);
+                           }
+                        },
+                        click: (e) => {
+                            map.fitBounds(e.target.getBounds());
+                            highlightRegion(e.target);
+                        }
+                    });
                 }
             }).addTo(map);
         }
 
         const dataBounds = L.latLngBounds([]);
-        const selectionBounds = L.latLngBounds([]);
-
         regionalData.forEach((stats, regionName) => {
             const marker = capitalMarkersRef.current.get(regionName);
             if (marker) {
@@ -228,18 +254,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        if (selectedRegions.length > 0 && geoJsonLayer.current) {
-            geoJsonLayer.current.eachLayer(layer => {
+        if (selectedRegions.length > 0) {
+            const selectionBounds = L.latLngBounds([]);
+            geoJsonLayer.current?.eachLayer(layer => {
                 const featureName = (layer as any).feature?.properties?.name;
                 if (featureName && selectedRegions.includes(featureName)) {
-                    // Fix: Cast layer to L.Polygon to access getBounds() method. The type definitions for L.Path do not include it.
                     selectionBounds.extend((layer as L.Polygon).getBounds());
                 }
             });
-        }
-        
-        if (selectionBounds.isValid()) {
-            map.fitBounds(selectionBounds.pad(0.1));
+            if (selectionBounds.isValid()) map.fitBounds(selectionBounds.pad(0.1));
         } else if (dataBounds.isValid()) {
             map.fitBounds(dataBounds.pad(0.2), { maxZoom: 8 });
         }
