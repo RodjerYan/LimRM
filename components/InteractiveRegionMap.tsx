@@ -42,7 +42,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
     const [error, setError] = useState<string | null>(null);
 
     const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#374151', fillOpacity: 0.1 };
-    const highlightStyle = { color: '#f97316', weight: 3, opacity: 1, fillColor: '#f97316', fillOpacity: 0.3 };
+    // FIX: Set fillOpacity to 0 to only show the border, as requested by the user.
+    const highlightStyle = { color: '#f97316', weight: 3, opacity: 1, fillOpacity: 0 };
 
     const updateMapDisplay = useCallback((query: string, data: OkbDataRow[]) => {
         const map = mapInstance.current;
@@ -98,18 +99,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
 
             if (targetLayer) {
                 targetLayer.bringToFront();
-                // FIX: Use a type guard (`instanceof L.Polygon`) to confirm that the `targetLayer` has a `getBounds` method.
-                // This resolves the TypeScript error because `L.Path` itself doesn't guarantee this method, but concrete
-                // shapes like `L.Polygon` (which are created from the GeoJSON) do.
                 if (targetLayer instanceof L.Polygon) {
                     map.fitBounds(targetLayer.getBounds());
                 }
                 
                 const foundRegionName = normalizeString(targetLayer.feature!.properties!.name);
+                // FIX: Make comparison robust to fix disappearing markers. Check if either name contains the other.
+                // This handles cases like "Крым" vs "Республика Крым".
                 const pointsInRegion = pointsWithCoords.filter(
                     (row) => {
                          const sheetRegion = normalizeString(findValue(row, ['Регион']));
-                         return sheetRegion && foundRegionName.includes(sheetRegion);
+                         return sheetRegion && (foundRegionName.includes(sheetRegion) || sheetRegion.includes(foundRegionName));
                     }
                 );
                 setFilteredPoints(pointsInRegion);
