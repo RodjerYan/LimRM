@@ -66,6 +66,24 @@
         border-radius: 10px;
         border: 2px solid #1f2937; /* card-bg */
       }
+      
+      /* Glow effect for capital markers */
+      .capital-marker {
+        filter: drop-shadow(0 0 3px #fef08a) drop-shadow(0 0 8px #facc15);
+        animation: pulse-glow 2.5s infinite ease-in-out;
+        transform-origin: center;
+      }
+
+      @keyframes pulse-glow {
+        0%, 100% {
+          filter: drop-shadow(0 0 3px #fef08a) drop-shadow(0 0 8px #facc15);
+          transform: scale(1);
+        }
+        50% {
+          filter: drop-shadow(0 0 6px #fef08a) drop-shadow(0 0 15px #facc15);
+          transform: scale(1.05);
+        }
+      }
     </style>
   </head>
   <body>
