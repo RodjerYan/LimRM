@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow } from '../types';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+// FIX: The `leaflet.markercluster` library extends the global `L` object. It is imported for its side effects and then `L.markerClusterGroup()` is used to create an instance. This resolves the TypeScript error "This expression is not callable" by correcting the import and instantiation of the marker cluster group.
+import 'leaflet.markercluster';
+import { AggregatedDataRow, OkbDataRow } from '../types';
 import { regionsGeoJson } from '../data/russia_regions_geojson';
 import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { ExportIcon, SearchIcon } from './icons';
@@ -18,16 +22,32 @@ L.Icon.Default.mergeOptions({
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
+    okbData: OkbDataRow[];
 }
 
 const formatNumber = (num: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num);
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
+    const markersLayer = useRef<L.MarkerClusterGroup | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [searchError, setSearchError] = useState('');
+    
+    // Create a memoized lookup for OKB data by region for performance
+    const okbDataByRegion = React.useMemo(() => {
+        const map = new Map<string, OkbDataRow[]>();
+        okbData.forEach(row => {
+            const region = row['Регион'];
+            if (region) {
+                if (!map.has(region)) map.set(region, []);
+                map.get(region)!.push(row);
+            }
+        });
+        return map;
+    }, [okbData]);
+
 
     // --- Map Initialization Effect ---
     useEffect(() => {
@@ -36,33 +56,34 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
                 center: [60, 90],
                 zoom: 3,
                 scrollWheelZoom: true,
-                attributionControl: false, // Use the Carto attribution
+                attributionControl: false,
             });
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>',
             }).addTo(mapInstance.current);
 
-            // Add a resize observer to handle container size changes
             const resizeObserver = new ResizeObserver(() => {
                 setTimeout(() => mapInstance.current?.invalidateSize(), 0);
             });
             resizeObserver.observe(mapContainer.current);
             
-            // Cleanup on component unmount
             return () => {
                 resizeObserver.disconnect();
                 mapInstance.current?.remove();
                 mapInstance.current = null;
             };
         }
-    }, []); // Empty dependency array ensures this runs only once
+    }, []);
 
     // --- Data Layer Update Effect ---
     useEffect(() => {
         if (!mapInstance.current) return;
 
+        const map = mapInstance.current;
+
+        // --- 1. Update GeoJSON Polygons ---
         if (geoJsonLayer.current) {
-            mapInstance.current.removeLayer(geoJsonLayer.current);
+            map.removeLayer(geoJsonLayer.current);
         }
 
         const dataMap = new Map(data.map(d => [d.region, d]));
@@ -81,13 +102,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
 
         const styleFeature = (feature?: Feature) => {
             if (!feature?.properties) return { weight: 0, opacity: 0, fillOpacity: 0 };
-            const regionName = feature.properties.name;
-            const regionData = dataMap.get(regionName);
+            const regionData = dataMap.get(feature.properties.name);
             return {
                 fillColor: getColor(regionData?.growthPotential),
-                weight: 1,
-                opacity: 1,
-                color: '#111827',
+                weight: 1, opacity: 1, color: '#111827',
                 fillOpacity: regionData ? 0.8 : 0.3
             };
         };
@@ -99,49 +117,74 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
                 let popupContent = `<b>${regionName}</b>`;
                 if (regionData) {
                     popupContent += `<br/>Потенциал роста: <b>${formatNumber(regionData.growthPotential)}</b>`;
-                    popupContent += `<br/>Факт: ${formatNumber(regionData.fact)}`;
-                    popupContent += `<br/>Общий потенциал: ${formatNumber(regionData.potential)}`;
                 } else {
                     popupContent += `<br/><i>Нет данных по продажам</i>`;
                 }
                 layer.bindPopup(popupContent);
-                
                 layer.on({
                     mouseover: (e) => e.target.setStyle({ weight: 3, color: '#f87171' }),
-                    mouseout: (e) => geoJsonLayer.current?.resetStyle(e.target),
+                    mouseout: () => geoJsonLayer.current?.resetStyle(layer as L.Path),
                 });
             }
         };
 
-        geoJsonLayer.current = L.geoJSON(regionsGeoJson as any, {
-            style: styleFeature,
-            onEachFeature: onEachFeature,
-        }).addTo(mapInstance.current);
+        geoJsonLayer.current = L.geoJSON(regionsGeoJson as any, { style: styleFeature, onEachFeature }).addTo(map);
 
-    }, [data]);
+        // --- 2. Update Markers for Trade Points ---
+        if (markersLayer.current) {
+            map.removeLayer(markersLayer.current);
+        }
+        
+        markersLayer.current = L.markerClusterGroup();
+        const activeRegions = new Set(data.map(d => d.region));
+
+        activeRegions.forEach(region => {
+            const regionOkb = okbDataByRegion.get(region) || [];
+            regionOkb.forEach(client => {
+                if (client.lat && client.lon) {
+                    const marker = L.marker([client.lat, client.lon]);
+                    marker.bindPopup(`<b>${client['Наименование']}</b><br>${client['Юридический адрес']}`);
+                    markersLayer.current!.addLayer(marker);
+                }
+            });
+        });
+
+        if (markersLayer.current) {
+             map.addLayer(markersLayer.current);
+        }
+
+    }, [data, okbDataByRegion]);
 
     const handleSearch = () => {
         setSearchError('');
-        if (!searchTerm.trim() || !geoJsonLayer.current) return;
+        if (!searchTerm.trim() || !geoJsonLayer.current || !mapInstance.current) return;
 
         let foundLayer: L.Layer | null = null;
+        const lowerCaseSearch = searchTerm.toLowerCase();
+
         geoJsonLayer.current.eachLayer(layer => {
-            const layerFeature = (layer as any).feature as Feature;
-            if (layerFeature.properties?.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+            const feature = (layer as any).feature as Feature;
+            if (feature.properties?.name.toLowerCase().includes(lowerCaseSearch)) {
                 foundLayer = layer;
             }
         });
 
-        if (foundLayer && mapInstance.current) {
-            // FIX: A `foundLayer` is a vector layer (e.g., L.Polygon) which has getBounds().
-            // Casting to L.Path was incorrect as the base class does not have the method.
-            // L.Polygon is the correct type for this feature.
-            mapInstance.current.fitBounds((foundLayer as L.Polygon).getBounds());
+        if (foundLayer) {
+            const bounds = (foundLayer as L.GeoJSON).getBounds();
+            if (bounds.isValid()) {
+                mapInstance.current.fitBounds(bounds);
+                (foundLayer as L.Path).setStyle({ weight: 4, color: '#fbbf24' });
+                setTimeout(() => {
+                    geoJsonLayer.current?.resetStyle(foundLayer as L.Path);
+                }, 3000);
+            } else {
+                 setSearchError('Не удалось определить границы региона');
+            }
         } else {
             setSearchError('Регион не найден');
         }
     };
-
+    
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
             <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
@@ -149,8 +192,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
                 <div className="w-full md:w-auto flex items-center gap-3">
                     <div className="relative w-full md:w-64">
                          <input
-                            type="text"
-                            value={searchTerm}
+                            type="text" value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             placeholder="Введите название региона..."
