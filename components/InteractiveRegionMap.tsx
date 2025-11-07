@@ -9,8 +9,11 @@ import { geoJsonData } from '../data/russia_regions_geojson';
 import { exportToExcel } from '../utils/exportUtils';
 import { SearchIcon, ExportIcon } from './icons';
 
-// Interface for correct typing of Leaflet layers created from GeoJSON
-interface FeatureLayer extends L.Path {
+// FIX: Correctly type FeatureLayer as a Polygon, which is a Path layer that Leaflet
+// creates for GeoJSON polygon features, not the GeoJSON container itself. This resolves
+// type incompatibilities for the 'feature' property and allows direct access
+// to Path methods like setStyle without unsafe casting, fixing both reported errors.
+interface FeatureLayer extends L.Polygon {
     feature?: GeoJSON.Feature;
 }
 
@@ -36,13 +39,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
     const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
+    const highlightedLayerRef = useRef<L.Layer | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
     const [filteredPoints, setFilteredPoints] = useState<OkbDataRow[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#111827', fillOpacity: 0.7 };
-    const highlightStyle = { color: '#f97316', weight: 2.5, opacity: 1, fillOpacity: 0.1, fillColor: '#f97316' };
+    const defaultStyle: L.PathOptions = { color: '#6b7280', weight: 1, opacity: 0.6, fillColor: '#374151', fillOpacity: 0.4 };
+    const highlightStyle: L.PathOptions = { color: '#f97316', weight: 3, opacity: 1, fillColor: '#fdba74', fillOpacity: 0.3 };
 
     const updateMapDisplay = useCallback((query: string, data: OkbDataRow[]) => {
         const map = mapInstance.current;
@@ -52,34 +56,37 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
 
         markersLayer.clearLayers();
         setError(null);
+        highlightedLayerRef.current = null;
+        
         const normalizedQuery = normalizeString(query);
         const pointsWithCoords = data.filter(p => p.lat && p.lon);
 
         const addMarkers = (points: OkbDataRow[]) => {
-            const markers: L.Marker[] = [];
-            points.forEach(point => {
+            const markers = points.map(point => {
                 const marker = L.marker([point.lat!, point.lon!], { icon: customMarkerIcon });
                 const address = findValue(point, ['Юридический адрес', 'Адрес']);
                 marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
-                markers.push(marker);
+                return marker;
             });
             markersLayer.addLayers(markers);
         };
+        
+        geoJsonLayer.eachLayer(l => { (l as L.Path).setStyle(defaultStyle); });
 
         if (!normalizedQuery) {
-            geoJsonLayer.eachLayer(layer => {
-                if (layer instanceof L.Path) layer.setStyle(defaultStyle);
-            });
             setFilteredPoints(pointsWithCoords);
             addMarkers(pointsWithCoords);
             if (pointsWithCoords.length > 0) {
-                setTimeout(() => map.fitBounds(markersLayer.getBounds().pad(0.1)), 100);
+                 setTimeout(() => {
+                    if (map && markersLayer.getLayers().length > 0) {
+                        map.fitBounds(markersLayer.getBounds().pad(0.1));
+                    }
+                 }, 100);
             } else {
-                map.setView([60, 90], 3); // Default view of Russia
+                map.fitBounds(geoJsonLayer.getBounds());
             }
         } else {
             let targetLayer: FeatureLayer | undefined;
-            
             geoJsonLayer.eachLayer(layer => {
                 const featureLayer = layer as FeatureLayer;
                 if (!targetLayer && featureLayer.feature?.properties) {
@@ -90,49 +97,33 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 }
             });
 
-            geoJsonLayer.eachLayer(layer => {
-                if (layer instanceof L.Path) {
-                    layer.setStyle(layer === targetLayer ? highlightStyle : defaultStyle);
-                }
-            });
-
             if (targetLayer) {
-                targetLayer.bringToFront();
-                if (targetLayer instanceof L.Polygon) {
-                    map.fitBounds(targetLayer.getBounds());
-                }
+                targetLayer.setStyle(highlightStyle).bringToFront();
+                highlightedLayerRef.current = targetLayer;
+                map.fitBounds(targetLayer.getBounds());
                 
                 const foundRegionName = normalizeString(targetLayer.feature!.properties!.name);
-                // FIX: Make comparison robust to fix disappearing markers. Check if either name contains the other.
-                // This handles cases like "Крым" vs "Республика Крым".
-                const pointsInRegion = pointsWithCoords.filter(
-                    (row) => {
-                         const sheetRegion = normalizeString(findValue(row, ['Регион']));
-                         return sheetRegion && (foundRegionName.includes(sheetRegion) || sheetRegion.includes(foundRegionName));
-                    }
-                );
+                const pointsInRegion = pointsWithCoords.filter(row => {
+                     const sheetRegion = normalizeString(findValue(row, ['Регион']));
+                     return sheetRegion && (foundRegionName.includes(sheetRegion) || sheetRegion.includes(foundRegionName));
+                });
                 setFilteredPoints(pointsInRegion);
                 addMarkers(pointsInRegion);
             } else {
                  setError(`Регион "${query}" не найден. Проверьте название.`);
                  setFilteredPoints([]);
-                 geoJsonLayer.eachLayer(layer => { if (layer instanceof L.Path) layer.setStyle(defaultStyle); });
-                 map.setView([60, 90], 3);
+                 map.fitBounds(geoJsonLayer.getBounds());
             }
         }
     }, [defaultStyle, highlightStyle]);
 
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
-            const map = L.map(mapContainer.current, {
-                center: [60, 90],
-                zoom: 3,
-                scrollWheelZoom: true,
-            });
+            const map = L.map(mapContainer.current, { scrollWheelZoom: true });
             mapInstance.current = map;
 
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             }).addTo(map);
             
             markersLayerRef.current = L.markerClusterGroup({
@@ -143,38 +134,42 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                     let sizeClass = 'small';
                     if (count >= 100) sizeClass = 'large';
                     else if (count >= 10) sizeClass = 'medium';
-                    return L.divIcon({
-                        html: `<span>${count}</span>`,
-                        className: `marker-cluster marker-cluster-${sizeClass}`,
-                        iconSize: undefined
-                    });
+                    return L.divIcon({ html: `<span>${count}</span>`, className: `marker-cluster marker-cluster-${sizeClass}`, iconSize: undefined });
                 }
             }).addTo(map);
 
-            geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style: defaultStyle }).addTo(map);
-
-            const resizeObserver = new ResizeObserver(() => {
-                mapInstance.current?.invalidateSize(true);
-            });
-            resizeObserver.observe(mapContainer.current);
-
-            return () => {
-                resizeObserver.disconnect();
-                map.remove();
-                mapInstance.current = null;
+            const onEachFeature = (feature: GeoJSON.Feature, layer: L.Layer) => {
+                layer.on({
+                    mouseover: (e) => {
+                        if (layer !== highlightedLayerRef.current) {
+                           (e.target as L.Path).setStyle(highlightStyle);
+                           layer.bindTooltip(feature.properties.name).openTooltip();
+                        }
+                    },
+                    mouseout: (e) => {
+                        if (layer !== highlightedLayerRef.current) {
+                           (e.target as L.Path).setStyle(defaultStyle);
+                           layer.closeTooltip();
+                        }
+                    },
+                    click: () => setSearchQuery(feature.properties.name),
+                });
             };
+
+            geoJsonLayerRef.current = L.geoJSON(geoJsonData as any, { style: defaultStyle, onEachFeature }).addTo(map);
+            map.fitBounds(geoJsonLayerRef.current.getBounds());
+
+            return () => { map.remove(); mapInstance.current = null; };
         }
-    }, [defaultStyle]);
+    }, [defaultStyle, highlightStyle]);
 
     useEffect(() => {
-        if (okbData.length > 0 && mapInstance.current) {
+        if (okbData.length > 0) {
             updateMapDisplay(searchQuery, okbData);
         }
     }, [okbData, searchQuery, updateMapDisplay]);
 
-    const handleSearch = () => {
-        updateMapDisplay(searchQuery, okbData);
-    };
+    const handleSearch = () => updateMapDisplay(searchQuery, okbData);
     
     const handleExport = () => {
         if (filteredPoints.length > 0) {

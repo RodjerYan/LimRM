@@ -24,8 +24,11 @@ export const exportToExcel = (data: OkbDataRow[], fileName: string): void => {
     const worksheetData = data.map(row => {
         const newRow: { [key: string]: any } = {};
         headers.forEach(h => {
-            // Check for the key directly in the row object
-            newRow[h.header] = row[h.key] ?? (row[h.header] ?? ''); // Fallback to header name if key is different
+            // FIX: Improved robustness by checking if the property exists before accessing.
+            // This prevents errors if a row object has a different structure.
+            const value = Object.prototype.hasOwnProperty.call(row, h.key) ? row[h.key] :
+                          Object.prototype.hasOwnProperty.call(row, h.header) ? row[h.header] : '';
+            newRow[h.header] = value ?? ''; // Ensure value is not null/undefined
         });
         return newRow;
     });
