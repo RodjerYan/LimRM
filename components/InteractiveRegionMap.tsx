@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -14,6 +15,7 @@ import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { SearchIcon, ExportIcon } from './icons';
+import { capitals } from '../utils/capitals';
 
 // Fix for default icon path issue with bundlers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -50,6 +52,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
     const markerClusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
+    const capitalsLayerRef = useRef<L.LayerGroup | null>(null);
     const tempMarkerRef = useRef<L.Marker | null>(null);
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -74,6 +77,27 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             
             geoJsonLayerRef.current = L.geoJSON(undefined, { style: () => ({ weight: 0 }) }).addTo(mapInstance.current);
             markerClusterGroupRef.current = L.markerClusterGroup().addTo(mapInstance.current);
+            
+            // Add capitals layer
+            capitalsLayerRef.current = L.layerGroup().addTo(mapInstance.current);
+            capitals.forEach(capital => {
+                const radius = capital.type === 'country' ? 6 : 4;
+                const marker = L.circleMarker([capital.lat, capital.lon], {
+                    radius: radius,
+                    fillColor: "#fbbf24", // yellow-400
+                    color: "#f59e0b",     // yellow-500
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8
+                });
+
+                marker.bindTooltip(capital.name, {
+                    permanent: false,
+                    direction: 'top'
+                });
+
+                capitalsLayerRef.current?.addLayer(marker);
+            });
         }
     }, []);
 
