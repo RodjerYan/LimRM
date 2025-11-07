@@ -29,6 +29,8 @@
       }
     </script>
     <link rel="stylesheet" href="/index.css">
+    <!-- FIX: Added stylesheet for Leaflet Search plugin -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-search@2.9.9/dist/leaflet-search.min.css" />
     <style>
       /* Custom styles for Leaflet popups to match the dark theme */
       .leaflet-popup-content-wrapper,
@@ -83,6 +85,46 @@
           filter: drop-shadow(0 0 6px #fef08a) drop-shadow(0 0 15px #facc15);
           transform: scale(1.05);
         }
+      }
+
+      /* Custom styles for leaflet-search control to match dark theme */
+      .leaflet-control-search {
+        box-shadow: 0 1px 5px rgba(0,0,0,0.4) !important;
+      }
+      .leaflet-control-search .search-input {
+        background-color: #1F2937 !important;
+        border: 1px solid #4b5563 !important;
+        color: #e5e7eb !important;
+        box-shadow: none !important;
+        height: 36px !important;
+      }
+      .leaflet-control-search.search-exp .search-input {
+         padding-left: 10px !important;
+      }
+      .leaflet-control-search .search-button {
+        background-image: url('data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%239ca3af"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" /></svg>') !important;
+        background-color: #1F2937 !important;
+        width: 36px !important;
+        height: 36px !important;
+        border-radius: 8px !important;
+      }
+      .leaflet-control-search .search-tooltip {
+        background-color: #111827 !important;
+        border: 1px solid #4b5563 !important;
+        max-height: 250px !important;
+        overflow-y: auto !important;
+      }
+      .leaflet-control-search .search-tip {
+        color: #e5e7eb !important;
+        padding: 4px 8px !important;
+      }
+       .leaflet-control-search .search-tip:hover {
+        background-color: #374151 !important;
+      }
+      .leaflet-control-search .search-alert {
+        color: #fca5a5 !important;
+        background-color: #374151 !important;
+        text-align: center !important;
       }
     </style>
   </head>
