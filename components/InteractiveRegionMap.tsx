@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { OkbDataRow } from '../types';
 import { geoJsonData } from '../data/russia_regions_geojson';
 import { exportToExcel } from '../utils/exportUtils';
 import { SearchIcon, ExportIcon } from './icons';
+
+interface InteractiveRegionMapProps {
+    okbData: OkbDataRow[];
+}
 
 const normalizeString = (str: string) => str.toLowerCase().replace(/ё/g, 'е').trim();
 
@@ -16,126 +20,15 @@ const findValue = (row: OkbDataRow, keys: string[]): string => {
     return '';
 };
 
-// FIX: Define the props interface for the component to resolve the "Cannot find name" error.
-interface InteractiveRegionMapProps {
-    okbData: OkbDataRow[];
-}
-
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
-    const allRegionsLayerRef = useRef<L.GeoJSON | null>(null);
+    const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
     const markersLayerRef = useRef<L.LayerGroup | null>(null);
 
-    const [searchQuery, setSearchQuery] = useState('');
+    const [searchQuery, setSearchQuery] = useState('Республика Крым');
     const [filteredPoints, setFilteredPoints] = useState<OkbDataRow[]>([]);
     const [error, setError] = useState<string | null>(null);
-
-    const defaultRegionStyle: L.PathOptions = {
-        color: '#4f46e5', // indigo-600
-        weight: 1,
-        opacity: 0.4,
-        fillOpacity: 0.05,
-    };
-    
-    const highlightedRegionStyle: L.PathOptions = {
-        color: '#f97316', // orange-500
-        weight: 3,
-        opacity: 0.8,
-        fillColor: '#f97316',
-        fillOpacity: 0.2,
-    };
-
-    const showDefaultView = useCallback(() => {
-        const map = mapInstance.current;
-        if (!map) return;
-    
-        setError(null);
-        setFilteredPoints([]);
-        markersLayerRef.current?.clearLayers();
-        allRegionsLayerRef.current?.setStyle(defaultRegionStyle);
-    
-        const allPointsWithCoords = okbData.filter(p => p.lat && p.lon);
-    
-        if (allPointsWithCoords.length > 0) {
-            const markers: L.Marker[] = [];
-            allPointsWithCoords.forEach(point => {
-                const marker = L.marker([point.lat!, point.lon!]);
-                const address = findValue(point, ['Юридический адрес', 'Адрес']);
-                marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
-                markersLayerRef.current?.addLayer(marker);
-                markers.push(marker);
-            });
-            const featureGroup = L.featureGroup(markers);
-            map.fitBounds(featureGroup.getBounds().pad(0.1));
-        } else {
-            map.setView([60, 90], 3); // Default view of Russia
-        }
-    }, [okbData, defaultRegionStyle]);
-
-    const handleSearch = useCallback(() => {
-        const map = mapInstance.current;
-        if (!map) return;
-
-        // Reset styles first
-        allRegionsLayerRef.current?.setStyle(defaultRegionStyle);
-
-        if (searchQuery.trim() === '') {
-            showDefaultView();
-            return;
-        }
-    
-        const normalizedQuery = normalizeString(searchQuery);
-        setError(null);
-        markersLayerRef.current?.clearLayers();
-    
-        let regionFound = false;
-        let bounds: L.LatLngBounds | null = null;
-    
-        allRegionsLayerRef.current?.eachLayer(layer => {
-            // FIX: Cast the generic layer to L.Path to safely access its `feature`
-            // property and methods like `setStyle` and `getBounds`. This resolves
-            // TypeScript errors related to incorrect type assumptions.
-            const pathLayer = layer as L.Path;
-            const feature = pathLayer.feature;
-
-            if (feature && feature.properties && normalizeString(feature.properties.name) === normalizedQuery) {
-                regionFound = true;
-                pathLayer.setStyle(highlightedRegionStyle);
-                if (typeof pathLayer.getBounds === 'function') {
-                    bounds = pathLayer.getBounds();
-                }
-            }
-        });
-    
-        if (!regionFound) {
-            setError(`Регион "${searchQuery}" не найден в GeoJSON. Проверьте название.`);
-            setFilteredPoints([]);
-            return;
-        }
-    
-        if (bounds) {
-            map.fitBounds(bounds);
-        }
-        
-        const pointsInRegion = okbData.filter(
-            (row) => row.lat && row.lon && normalizeString(findValue(row, ['Регион'])) === normalizedQuery
-        );
-    
-        setFilteredPoints(pointsInRegion);
-    
-        if (pointsInRegion.length === 0) {
-            setError(`Для региона "${searchQuery}" не найдено торговых точек с координатами.`);
-        } else {
-            pointsInRegion.forEach(point => {
-                const marker = L.marker([point.lat!, point.lon!]);
-                const address = findValue(point, ['Юридический адрес', 'Адрес']);
-                marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
-                markersLayerRef.current?.addLayer(marker);
-            });
-        }
-    }, [searchQuery, okbData, showDefaultView, defaultRegionStyle, highlightedRegionStyle]);
-
 
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
@@ -149,16 +42,66 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
             }).addTo(mapInstance.current);
             
-            allRegionsLayerRef.current = L.geoJSON(geoJsonData as any, { style: defaultRegionStyle }).addTo(mapInstance.current);
             markersLayerRef.current = L.layerGroup().addTo(mapInstance.current);
         }
-    }, [defaultRegionStyle]);
-
-    useEffect(() => {
-        if (okbData.length > 0 && mapInstance.current) {
-            showDefaultView();
+        
+        // Initial search on component mount
+        if (okbData.length > 0) {
+            handleSearch();
         }
-    }, [okbData, showDefaultView]);
+
+    }, [okbData]); // Run once when okbData is available
+
+    const handleSearch = () => {
+        const map = mapInstance.current;
+        if (!map) return;
+
+        const normalizedQuery = normalizeString(searchQuery);
+        setError(null);
+        
+        // Clear previous layers
+        geoJsonLayerRef.current && map.removeLayer(geoJsonLayerRef.current);
+        markersLayerRef.current?.clearLayers();
+
+        // Find region GeoJSON
+        const regionFeature = geoJsonData.features.find(
+            (f) => normalizeString(f.properties.name) === normalizedQuery
+        );
+
+        if (!regionFeature) {
+            setError(`Регион "${searchQuery}" не найден. Проверьте название.`);
+            setFilteredPoints([]);
+            map.setView([60, 90], 3); // Reset view
+            return;
+        }
+
+        // Draw region border
+        geoJsonLayerRef.current = L.geoJSON(regionFeature as any, {
+            style: {
+                color: '#f97316', // orange-500
+                weight: 3,
+                opacity: 0.8,
+                fillColor: '#f97316',
+                fillOpacity: 0.1,
+            },
+        }).addTo(map);
+
+        map.fitBounds(geoJsonLayerRef.current.getBounds());
+        
+        // Filter and display points
+        const pointsInRegion = okbData.filter(
+            (row) => row.lat && row.lon && normalizeString(findValue(row, ['Регион'])) === normalizedQuery
+        );
+
+        setFilteredPoints(pointsInRegion);
+
+        pointsInRegion.forEach(point => {
+            const marker = L.marker([point.lat!, point.lon!]);
+            const address = findValue(point, ['Юридический адрес', 'Адрес']);
+            marker.bindPopup(`<b>${point['Наименование']}</b><br/><small>${address}</small>`);
+            markersLayerRef.current?.addLayer(marker);
+        });
+    };
     
     const handleExport = () => {
         if (filteredPoints.length > 0) {
@@ -175,7 +118,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                        placeholder="Введите название региона для поиска..."
+                        placeholder="Введите название региона..."
                         className="w-full p-2.5 pl-10 bg-gray-900/50 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
                     />
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
@@ -197,7 +140,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                     <span>Выгрузить (.xlsx)</span>
                 </button>
             </div>
-             {error && <p className="text-danger text-center mb-2 text-sm">{error}</p>}
+             {error && <p className="text-danger text-center mb-2">{error}</p>}
             <div ref={mapContainer} className="h-[65vh] w-full rounded-lg z-10" />
         </div>
     );
