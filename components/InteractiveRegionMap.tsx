@@ -5,6 +5,8 @@ import { AggregatedDataRow } from '../types';
 import { regionsGeoJson } from '../data/russia_regions_geojson';
 import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { ExportIcon, SearchIcon } from './icons';
+import { Feature } from 'geojson';
+
 
 // Fix for default Leaflet icons in Vite/React
 // @ts-ignore
@@ -42,9 +44,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
     };
 
     const maxGrowth = Math.max(...data.map(d => d.growthPotential), 0);
-
-    const styleFeature = (feature: GeoJSON.Feature) => {
-        const regionName = feature?.properties?.name;
+    
+    // FIX: Correctly type the style function to accept an optional feature
+    const styleFeature = (feature?: Feature) => {
+        if (!feature || !feature.properties) {
+             return {
+                fillColor: '#4B5563', weight: 1, opacity: 1, color: '#111827', fillOpacity: 0.3
+            };
+        }
+        const regionName = feature.properties.name;
         const regionData = dataMap.get(regionName);
         return {
             fillColor: getColor(regionData?.growthPotential, maxGrowth),
@@ -96,20 +104,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
         geoJsonLayer.current = L.geoJSON(regionsGeoJson as any, {
             style: styleFeature,
             onEachFeature: (feature, layer) => {
-                const regionName = feature.properties.name;
-                const regionData = dataMap.get(regionName);
-                let popupContent = `<b>${regionName}</b>`;
-                if (regionData) {
-                    popupContent += `<br/>Потенциал роста: <b>${formatNumber(regionData.growthPotential)}</b>`;
-                    popupContent += `<br/>Факт: ${formatNumber(regionData.fact)}`;
-                    popupContent += `<br/>Общий потенциал: ${formatNumber(regionData.potential)}`;
+                // FIX: Check if properties exist to prevent 'possibly null' error
+                if (feature.properties) {
+                    const regionName = feature.properties.name;
+                    const regionData = dataMap.get(regionName);
+                    let popupContent = `<b>${regionName}</b>`;
+                    if (regionData) {
+                        popupContent += `<br/>Потенциал роста: <b>${formatNumber(regionData.growthPotential)}</b>`;
+                        popupContent += `<br/>Факт: ${formatNumber(regionData.fact)}`;
+                        popupContent += `<br/>Общий потенциал: ${formatNumber(regionData.potential)}`;
+                    }
+                    layer.bindPopup(popupContent);
+                    
+                    layer.on({
+                        mouseover: (e) => e.target.setStyle({ weight: 3, color: '#f87171' }),
+                        mouseout: () => geoJsonLayer.current?.resetStyle(layer),
+                    });
                 }
-                layer.bindPopup(popupContent);
-                
-                layer.on({
-                    mouseover: (e) => e.target.setStyle({ weight: 3, color: '#f87171' }),
-                    mouseout: () => geoJsonLayer.current?.resetStyle(layer),
-                });
             },
         }).addTo(mapInstance.current);
 
