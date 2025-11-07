@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-// FIX: Changed import to `import * as L from 'leaflet'` to ensure proper namespace augmentation
-// by plugins like leaflet.markercluster, which resolves type errors for `L.markerClusterGroup`.
-import * as L from 'leaflet';
+// FIX: Changed the Leaflet import from `import * as L from 'leaflet'` to `import L from 'leaflet'`.
+// This aligns with the import style used in other components of the project and allows TypeScript
+// to correctly resolve the types for the `leaflet.markercluster` plugin, fixing errors related
+// to `L.MarkerClusterGroup` and `L.markerClusterGroup`.
+import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster'; // Import JS for clustering
-// FIX: Added required CSS imports for leaflet.markercluster for correct visual rendering of clusters.
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import { OkbDataRow } from '../types';
@@ -39,7 +40,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
-    // FIX: The type `L.MarkerClusterGroup` is now correctly resolved from the augmented L namespace.
     const markersLayerRef = useRef<L.MarkerClusterGroup | null>(null);
 
     const [searchQuery, setSearchQuery] = useState('');
@@ -129,7 +129,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
             }).addTo(map);
             
-            // FIX: The function `L.markerClusterGroup` is now correctly found on the L namespace.
             markersLayerRef.current = L.markerClusterGroup({
                 chunkedLoading: true,
                 maxClusterRadius: 80,

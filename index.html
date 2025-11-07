@@ -76,24 +76,32 @@
             background-color: #1F2937;
         }
         
-        /* Custom Leaflet Marker Clusters */
+        /* NEW: Custom Leaflet Marker Clusters */
         .marker-cluster {
             background-clip: padding-box;
             border-radius: 50%;
-            background-color: rgba(79, 70, 229, 0.8); /* accent-dark with opacity */
-            border: 2px solid rgba(165, 180, 252, 0.8); /* accent-light with opacity */
+            background-color: rgba(129, 140, 248, 0.25); /* accent with alpha */
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border: 1.5px solid rgba(129, 140, 248, 0.8); /* accent border */
+
             display: flex;
             justify-content: center;
             align-items: center;
+            
             color: white;
-            font-weight: bold;
+            font-weight: 700;
             font-family: Inter, sans-serif;
-            box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+            text-shadow: 0 0 4px black;
+
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
             transition: all 0.2s ease-out;
             cursor: pointer;
         }
         .marker-cluster:hover {
             transform: scale(1.1);
+            border-color: rgba(165, 180, 252, 1);
+            background-color: rgba(129, 140, 248, 0.4);
         }
         .marker-cluster span {
             line-height: 1;
