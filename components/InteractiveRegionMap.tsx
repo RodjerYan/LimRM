@@ -24,7 +24,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
-    const legendControl = useRef<L.Control | null>(null);
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
 
@@ -101,9 +100,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
         return aggregation;
     }, [data]);
-    
-    const highlightStyle = { color: '#FF4500', weight: 3, opacity: 1 };
-    const defaultStyle = { weight: 1, color: '#4B5563', fillOpacity: 0.7 };
+
+    // Define styles for different states
+    const highlightStyle = { color: '#FF4500', weight: 3, opacity: 1, fillOpacity: 0 };
+    const baseStyle = { weight: 1, fillOpacity: 0, opacity: 0.6, color: '#4B5563' }; // For regions with no data
+    const dataStyle = { ...baseStyle, weight: 1.5, opacity: 0.9, color: '#738299' }; // For regions with data
+    const filterSelectedStyle = { color: '#818cf8', weight: 2.5, opacity: 1, fillOpacity: 0 }; // For regions selected in filter
 
     const resetHighlight = () => {
         if (highlightedLayer.current && geoJsonLayer.current) {
@@ -124,7 +126,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         setSearchTerm('');
         setSearchResults([]);
-
         resetHighlight();
 
         if (location.type === 'capital' || location.type === 'country') {
@@ -143,7 +144,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 map.fitBounds((foundLayer as L.Polygon).getBounds());
                 highlightRegion(foundLayer);
             } else {
-                const capitalForRegion = capitals.find(c => c.name === location.name);
+                const capitalForRegion = capitals.find(c => c.region_name === location.name || c.name === location.name);
                 if (capitalForRegion) map.flyTo([capitalForRegion.lat, capitalForRegion.lon], 7);
             }
         }
@@ -182,39 +183,26 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (!map) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
-        if (legendControl.current) map.removeControl(legendControl.current);
         capitalMarkersRef.current.forEach((marker, name) => marker.bindPopup(`<b>${name}</b>`));
 
         if (regionalData.size === 0 && selectedRegions.length === 0) {
+             geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, { style: baseStyle }).addTo(map);
             map.flyTo([60, 90], 3);
             return;
         }
 
-        const growthValues = Array.from(regionalData.values()).map(d => d.totalGrowth).filter(v => v > 0);
-        const maxGrowth = growthValues.length > 0 ? Math.max(...growthValues) : 0;
-        const minGrowth = growthValues.length > 0 ? Math.min(...growthValues) : 0;
-        const getColor = (value: number) => {
-            if (value <= 0) return '#374151';
-            const range = Math.log(maxGrowth + 1) - Math.log(minGrowth + 1);
-            if (range === 0) return 'hsl(180, 70%, 50%)';
-            const intensity = (Math.log(value + 1) - Math.log(minGrowth + 1)) / range;
-            const hue = 240 - intensity * 180;
-            return `hsl(${hue}, 70%, 50%)`;
-        };
         const formatNumber = (num: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num);
 
         if (russiaRegionsGeoJSON?.features.length > 0) {
             geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
                 style: (feature) => {
                     const regionName = feature?.properties?.name;
-                    const regionStats = regionalData.get(regionName);
+                    const hasData = regionalData.has(regionName);
                     const isSelectedByFilter = selectedRegions.includes(regionName);
-                    return {
-                        ...defaultStyle,
-                        fillColor: regionStats ? getColor(regionStats.totalGrowth) : '#1F2937',
-                        weight: isSelectedByFilter ? 3 : 1,
-                        color: isSelectedByFilter ? '#818cf8' : defaultStyle.color,
-                    };
+                    
+                    if (isSelectedByFilter) return filterSelectedStyle;
+                    if (hasData) return dataStyle;
+                    return baseStyle;
                 },
                 onEachFeature: (feature, layer) => {
                     const regionName = feature.properties.name;
@@ -246,7 +234,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         const dataBounds = L.latLngBounds([]);
         regionalData.forEach((stats, regionName) => {
-            const marker = capitalMarkersRef.current.get(regionName);
+            const capital = capitals.find(c => c.region_name === regionName || c.name === regionName);
+            const marker = capital ? capitalMarkersRef.current.get(capital.name) : undefined;
             if (marker) {
                 const popupContent = `<b>${regionName}</b><br/><b>Потенциал роста: ${formatNumber(stats.totalGrowth)}</b><br/>Факт: ${formatNumber(stats.totalFact)}<br/>Потенциал: ${formatNumber(stats.totalPotential)}<br/>Клиентов: ${stats.clientCount}<br/>РМ: ${Array.from(stats.rmSet).join(', ')}`;
                 marker.bindPopup(popupContent);
@@ -267,27 +256,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.fitBounds(dataBounds.pad(0.2), { maxZoom: 8 });
         }
 
-        if (maxGrowth > 0) {
-            const legend = new L.Control({ position: 'bottomright' });
-            legend.onAdd = () => {
-                const div = L.DomUtil.create('div', 'info legend');
-                div.style.backgroundColor = 'rgba(31, 41, 55, 0.8)'; div.style.padding = '10px'; div.style.borderRadius = '5px';
-                div.style.color = 'white'; div.style.lineHeight = '1.5';
-                const grades = [0, maxGrowth * 0.1, maxGrowth * 0.25, maxGrowth * 0.5, maxGrowth * 0.75].filter((v, i, a) => a.indexOf(v) === i);
-                let innerHTML = '<h4>Потенциал Роста</h4>';
-                for (let i = 0; i < grades.length; i++) {
-                    const from = grades[i]; const to = grades[i + 1];
-                    innerHTML += `<i style="background:${getColor(from + 1)}"></i> ${formatNumber(from)}${to ? '&ndash;' + formatNumber(to) : '+'}<br>`;
-                }
-                div.innerHTML = innerHTML;
-                const style = document.createElement('style');
-                style.innerHTML = `.legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.8; border-radius: 3px; }`;
-                div.appendChild(style);
-                return div;
-            };
-            legend.addTo(map);
-            legendControl.current = legend;
-        }
     }, [regionalData, selectedRegions]);
 
     return (
