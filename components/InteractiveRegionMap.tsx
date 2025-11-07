@@ -4,7 +4,6 @@ import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { SearchIcon } from './icons';
 
 interface InteractiveRegionMapProps {
@@ -32,39 +31,37 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
 
+    // FIX: The search list is now built from definitive sources (GeoJSON for regions, capitals.ts for cities)
+    // to ensure all possible locations are searchable, regardless of the loaded data file.
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
-        capitals.forEach(capital => {
-            if (!addedNames.has(capital.name)) {
-                locations.push({ name: capital.name, type: capital.type, lat: capital.lat, lon: capital.lon });
-                addedNames.add(capital.name);
-            }
-        });
-
-        const regionNamesFromMap = new Set(Object.values(REGION_KEYWORD_MAP));
+        // 1. Add all regions from the GeoJSON file. This is the single source of truth for regions.
         russiaRegionsGeoJSON.features.forEach(feature => {
             const name = feature.properties?.name;
-            if (name) regionNamesFromMap.add(name);
-        });
-        regionNamesFromMap.forEach(name => {
             if (name && !addedNames.has(name)) {
                 locations.push({ name, type: 'region' });
                 addedNames.add(name);
             }
         });
 
-        data.forEach(row => {
-            const regionName = row.region;
-            if (regionName && regionName !== 'Регион не определен' && !addedNames.has(regionName)) {
-                locations.push({ name: regionName, type: 'region' });
-                addedNames.add(regionName);
+        // 2. Add all capitals from the dedicated capitals file.
+        capitals.forEach(capital => {
+            if (!addedNames.has(capital.name)) {
+                locations.push({ 
+                    name: capital.name, 
+                    type: capital.type, 
+                    lat: capital.lat, 
+                    lon: capital.lon 
+                });
+                addedNames.add(capital.name);
             }
         });
 
         return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-    }, [data]);
+    }, []);
+
 
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
@@ -129,7 +126,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         let foundLayer: L.Layer | null = null;
         if (location.type === 'region') {
             geoJsonLayer.current?.eachLayer(layer => {
-                if ((layer as any).feature?.properties?.name === location.name) {
+                if ((layer as any).feature?.properties?.name.toLowerCase() === location.name.toLowerCase()) {
                     foundLayer = layer;
                 }
             });
