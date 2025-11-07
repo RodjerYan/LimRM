@@ -81,7 +81,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             // Add capitals layer
             capitalsLayerRef.current = L.layerGroup().addTo(mapInstance.current);
             capitals.forEach(capital => {
-                const radius = capital.type === 'country' ? 6 : 4;
+                const radius = capital.type === 'country' ? 6 : 2;
                 const marker = L.circleMarker([capital.lat, capital.lon], {
                     radius: radius,
                     fillColor: "#fbbf24", // yellow-400
