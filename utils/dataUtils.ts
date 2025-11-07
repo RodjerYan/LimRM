@@ -1,5 +1,4 @@
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
-import { REGION_BY_CITY_MAP } from './addressMappings';
 
 /**
  * Normalizes an address string for search and comparison purposes.
@@ -77,25 +76,6 @@ export const findBestOkbMatch = (clientName: string, city: string, okbData: (Okb
     }
     
     return bestMatch;
-};
-
-
-/**
- * Extracts a standardized region name from an OKB data row.
- */
-export const extractRegionFromOkb = (okbRow: OkbDataRow): string => {
-    if (okbRow['Регион']) {
-        const region = normalizeAddressForSearch(okbRow['Регион']);
-        return region.charAt(0).toUpperCase() + region.slice(1);
-    }
-    
-    const city = okbRow['Город']?.toLowerCase();
-    if (city && REGION_BY_CITY_MAP[city]) {
-        const region = REGION_BY_CITY_MAP[city];
-        return region.charAt(0).toUpperCase() + region.slice(1);
-    }
-
-    return 'Регион не определен';
 };
 
 
