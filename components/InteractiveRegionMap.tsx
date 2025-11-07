@@ -41,9 +41,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
     const [filteredPoints, setFilteredPoints] = useState<OkbDataRow[]>([]);
     const [error, setError] = useState<string | null>(null);
 
-    const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#374151', fillOpacity: 0.1 };
-    // FIX: Set fillOpacity to 0 to only show the border, as requested by the user.
-    const highlightStyle = { color: '#f97316', weight: 3, opacity: 1, fillOpacity: 0 };
+    const defaultStyle = { color: '#4b5563', weight: 1, opacity: 0.6, fillColor: '#111827', fillOpacity: 0.7 };
+    const highlightStyle = { color: '#f97316', weight: 2.5, opacity: 1, fillOpacity: 0.1, fillColor: '#f97316' };
 
     const updateMapDisplay = useCallback((query: string, data: OkbDataRow[]) => {
         const map = mapInstance.current;
@@ -121,7 +120,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                  map.setView([60, 90], 3);
             }
         }
-    }, []);
+    }, [defaultStyle, highlightStyle]);
 
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
@@ -165,7 +164,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 mapInstance.current = null;
             };
         }
-    }, []);
+    }, [defaultStyle]);
 
     useEffect(() => {
         if (okbData.length > 0 && mapInstance.current) {
