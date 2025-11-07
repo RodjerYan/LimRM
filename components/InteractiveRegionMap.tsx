@@ -37,6 +37,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
+    const [isWarningVisible, setIsWarningVisible] = useState(true);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
@@ -311,29 +312,42 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
-            <div className="absolute top-4 left-4 z-[1000] w-full max-w-xs md:max-w-sm">
-                 <div className="relative">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
-                    <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={e => setSearchTerm(e.target.value)}
-                        placeholder="Поиск города или региона..."
-                        className="w-full p-2 pl-10 bg-card-bg/80 backdrop-blur-sm border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-400 transition"
-                    />
-                    {searchResults.length > 0 && (
-                        <ul className="absolute z-10 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
-                            {searchResults.map(loc => (
-                                <li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20">
-                                    {loc.name} <span className="text-xs text-gray-400 ml-2">{loc.type}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-white">Карта рыночного потенциала</h2>
+                <div className="relative z-[1000] w-full max-w-xs md:max-w-sm">
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            placeholder="Поиск города или региона..."
+                            className="w-full p-2 pl-10 bg-card-bg/80 backdrop-blur-sm border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-400 transition"
+                        />
+                        {searchResults.length > 0 && (
+                            <ul className="absolute z-10 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
+                                {searchResults.map(loc => (
+                                    <li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20">
+                                        {loc.name} <span className="text-xs text-gray-400 ml-2">{loc.type}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
                 </div>
             </div>
-             {conflictZones && (
-                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">
+
+            {conflictZones && isWarningVisible && (
+                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm relative">
+                    <button
+                        onClick={() => setIsWarningVisible(false)}
+                        className="absolute top-1 right-1 p-1 text-red-200 hover:text-white transition-colors rounded-full hover:bg-black/20"
+                        aria-label="Закрыть предупреждение"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
                     <div className="w-6 h-6 flex-shrink-0 text-danger mt-0.5"><ErrorIcon/></div>
                     <div>
                         <p className="font-bold">ОСТОРОЖНО! ЗОНА ПРОВЕДЕНИЯ СВО</p>
@@ -346,7 +360,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     </div>
                 </div>
             )}
-            <h2 className="text-xl font-bold mb-4 text-white text-center">Карта рыночного потенциала и оперативной обстановки</h2>
+            
             <div ref={mapContainer} className="h-[60vh] w-full rounded-lg" />
         </div>
     );
