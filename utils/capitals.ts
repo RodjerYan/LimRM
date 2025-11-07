@@ -106,4 +106,27 @@ export const capitals: Capital[] = [
     { name: 'Донецк', lat: 48.0159, lon: 37.8028, type: 'regional' },
     { name: 'Мелитополь', lat: 46.8491, lon: 35.3673, type: 'regional' },
     { name: 'Геническ', lat: 46.1742, lon: 34.8086, type: 'regional' },
+
+    // === Регионы СНГ ===
+    // Беларусь
+    { name: 'Гомель', lat: 52.4242, lon: 31.0084, type: 'regional' },
+    { name: 'Могилёв', lat: 53.9100, lon: 30.3400, type: 'regional' },
+    { name: 'Витебск', lat: 55.1904, lon: 30.2049, type: 'regional' },
+    { name: 'Гродно', lat: 53.6884, lon: 23.8258, type: 'regional' },
+    { name: 'Брест', lat: 52.0976, lon: 23.7341, type: 'regional' },
+    // Казахстан
+    { name: 'Алматы', lat: 43.2220, lon: 76.8512, type: 'regional' },
+    { name: 'Шымкент', lat: 42.3167, lon: 69.6000, type: 'regional' },
+    { name: 'Караганда', lat: 49.8333, lon: 73.1167, type: 'regional' },
+    { name: 'Актобе', lat: 50.2833, lon: 57.1667, type: 'regional' },
+    { name: 'Тараз', lat: 42.9000, lon: 71.3667, type: 'regional' },
+    { name: 'Павлодар', lat: 52.3000, lon: 76.9500, type: 'regional' },
+    { name: 'Усть-Каменогорск', lat: 49.9833, lon: 82.6167, type: 'regional' },
+    { name: 'Семей', lat: 50.4167, lon: 80.2500, type: 'regional' },
+    { name: 'Уральск', lat: 51.2333, lon: 51.3667, type: 'regional' },
+    { name: 'Актау', lat: 43.6500, lon: 51.1667, type: 'regional' },
+    // Кыргызстан
+    { name: 'Ош', lat: 40.5167, lon: 72.8000, type: 'regional' },
+    // Абхазия
+    { name: 'Гагра', lat: 43.2800, lon: 40.2600, type: 'regional' },
 ];

@@ -1,212 +1,24 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Гео-Анализ Рынка | Limkorm</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    
-    <style>
-        body {
-            background-color: #111827;
-            background-image: radial-gradient(circle at 10% 20%, rgba(129, 140, 248, 0.15), transparent 40%),
-                              radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.15), transparent 50%);
-            background-attachment: fixed;
-        }
-        /* Custom animations */
-        @keyframes fade-in {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes fade-in-right {
-            from { opacity: 0; transform: translateX(20px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes scale-in {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-        }
-        .animate-fade-in { animation: fade-in 0.3s ease-out forwards; }
-        .animate-fade-in-right { animation: fade-in-right 0.5s ease-out forwards; }
-        .animate-scale-in { animation: scale-in 0.3s ease-out forwards; }
-
-        /* Skeleton loader shimmer animation */
-        @keyframes shimmer {
-            0% { background-position: -1000px 0; }
-            100% { background-position: 1000px 0; }
-        }
-        .shimmer-effect {
-            animation: shimmer 2s infinite linear;
-            background: linear-gradient(to right, 
-                rgba(255, 255, 255, 0) 20%, 
-                rgba(255, 255, 255, 0.08) 50%, 
-                rgba(255, 255, 255, 0) 80%);
-            background-size: 2000px 100%;
-        }
-
-        /* Custom scrollbar for modal/table */
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(31, 41, 55, 0.5); /* gray-800 */
-            border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #4f46e5; /* indigo-600 */
-            border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #6366f1; /* indigo-500 */
-        }
-
-        /* Leaflet Map Overrides */
-        .leaflet-container {
-            background-color: #1F2937; /* card-bg */
-        }
-        .leaflet-popup-content-wrapper {
-            background-color: #1F2937;
-            color: #E5E7EB;
-            border: 1px solid #4B5563;
-        }
-        .leaflet-popup-tip {
-            background-color: #1F2937;
-        }
-        
-        /* Professional Leaflet Marker Clusters */
-        .marker-cluster {
-            background-clip: padding-box;
-            border-radius: 50%;
-            background-color: hsla(236, 82%, 60%, 0.8);
-            border: 2px solid rgba(255, 255, 255, 0.5);
-            backdrop-filter: blur(2px);
-
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            
-            color: white;
-            font-weight: 700;
-            font-family: Inter, sans-serif;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 2px rgba(255, 255, 255, 0.2);
-            transition: all 0.2s ease-out;
-            cursor: pointer;
-        }
-        .marker-cluster:hover {
-            transform: scale(1.1);
-            background-color: hsla(236, 82%, 70%, 0.9);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255, 255, 255, 0.2);
-        }
-        .marker-cluster span {
-            line-height: 1;
-        }
-        .marker-cluster-small {
-            width: 32px;
-            height: 32px;
-        }
-        .marker-cluster-small span {
-            font-size: 13px;
-        }
-        .marker-cluster-medium {
-            width: 42px;
-            height: 42px;
-        }
-        .marker-cluster-medium span {
-            font-size: 15px;
-        }
-        .marker-cluster-large {
-            width: 52px;
-            height: 52px;
-        }
-        .marker-cluster-large span {
-            font-size: 17px;
-        }
-        
-        /* Custom Leaflet Marker Pins */
-        .marker-pin {
-            width: 30px;
-            height: 30px;
-            border-radius: 50% 50% 50% 0;
-            position: absolute;
-            transform: rotate(-45deg);
-            border: 1px solid #111827;
-            box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            transition: transform 0.1s ease-in-out;
-        }
-        .marker-pin::after {
-            content: '';
-            width: 14px;
-            height: 14px;
-            margin: 8px 0 0 8px;
-            background: #111827;
-            position: absolute;
-            border-radius: 50%;
-            border: 2px solid #E5E7EB;
-        }
-        .leaflet-marker-icon:hover .marker-pin {
-            transform: rotate(-45deg) scale(1.2);
-        }
-
-        .marker-pin.green {
-            background-color: #34d399; /* success */
-        }
-        .marker-pin.green::after {
-             border-color: #a7f3d0;
-        }
-
-        .marker-pin.blue {
-            background-color: #3b82f6; /* blue-500 */
-        }
-        .marker-pin.blue::after {
-            border-color: #93c5fd;
-        }
-
-    </style>
 <script type="importmap">
 {
   "imports": {
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.25.0",
-    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.4.1",
-    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
-    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
-    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
     "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
-    "path": "https://aistudiocdn.com/path@^0.12.7",
-    "vite": "https://aistudiocdn.com/vite@^7.1.11",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
-    "url": "https://aistudiocdn.com/url@^0.11.4",
-    "google-spreadsheet": "https://aistudiocdn.com/google-spreadsheet@^5.0.2",
-    "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.1",
-    "express": "https://aistudiocdn.com/express@^5.1.0",
-    "fs": "https://aistudiocdn.com/fs@^0.0.1-security",
-    "stream": "https://aistudiocdn.com/stream@^0.0.3",
-    "https": "https://aistudiocdn.com/https@^1.0.0",
-    "react-markdown": "https://aistudiocdn.com/react-markdown@^10.1.0",
-    "marked": "https://aistudiocdn.com/marked@^16.4.1",
-    "date-fns/": "https://aistudiocdn.com/date-fns@^4.1.0/",
-    "date-fns": "https://aistudiocdn.com/date-fns@^4.1.0",
-    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
     "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
-    "googleapis": "https://aistudiocdn.com/googleapis@^164.1.0",
-    "leaflet.markercluster/": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3/",
-    "leaflet.markercluster": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3",
-    "geojson": "https://aistudiocdn.com/geojson@^0.5.0"
+    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "marked": "https://aistudiocdn.com/marked@^17.0.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.2",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
+    "geojson": "https://aistudiocdn.com/geojson@^0.5.0",
+    "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
+    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.4"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
-</head>
-<body class="bg-primary-dark text-slate-200 font-sans">
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-</body>
-</html>
+full contents of index.html

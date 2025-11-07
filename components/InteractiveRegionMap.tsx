@@ -1,242 +1,193 @@
-
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import 'leaflet.markercluster';
-// FIX: Import the 'Feature' type from 'geojson' to resolve the "Cannot find namespace 'GeoJSON'" error.
-import type { Feature } from 'geojson';
-import { AggregatedDataRow, OkbDataRow } from '../types';
-// FIX: Import from the corrected russia_regions_geojson file which now exports an empty FeatureCollection.
-// This resolves the module export error.
-import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson'; 
-import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
-import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { exportAggregatedToExcel } from '../utils/exportUtils';
-import { SearchIcon, ExportIcon } from './icons';
+import { AggregatedDataRow } from '../types';
+import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-
-// Fix for default icon path issue with bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
-
-const markerPinHtml = (colorClass: string) => `<div class="marker-pin ${colorClass}"></div>`;
-
-const customIcon = (color: 'green' | 'blue') => new L.DivIcon({
-    className: 'custom-div-icon',
-    html: markerPinHtml(color),
-    iconSize: [30, 42],
-    iconAnchor: [15, 42],
-    popupAnchor: [0, -35]
-});
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
-    okbData: OkbDataRow[];
+    okbData: any[]; // Kept for future compatibility, not used in this implementation
 }
 
-const formatNumber = (num: number) => {
-    if (isNaN(num)) return '0';
-    if (Math.abs(num) >= 1_000_000) return `${(num / 1_000_000).toFixed(2)} млн`;
-    if (Math.abs(num) >= 1_000) return `${(num / 1_000).toFixed(1)} тыс.`;
-    return num.toLocaleString('ru-RU', { maximumFractionDigits: 0 });
-};
-
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbData }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
-    const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
-    const markerClusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
-    const capitalsLayerRef = useRef<L.LayerGroup | null>(null);
-    const tempMarkerRef = useRef<L.Marker | null>(null);
+    const geoJsonLayer = useRef<L.GeoJSON | null>(null);
+    const markersLayer = useRef<L.LayerGroup | null>(null);
+    const legendControl = useRef<L.Control | null>(null);
 
-    const [searchTerm, setSearchTerm] = useState('');
-    const [searchError, setSearchError] = useState<string | null>(null);
+    // 1. Aggregate data by region
+    const regionalData = useMemo(() => {
+        if (!data || data.length === 0) return new Map();
+        
+        const aggregation = new Map<string, {
+            totalGrowth: number;
+            totalPotential: number;
+            totalFact: number;
+            clientCount: number;
+            rmSet: Set<string>;
+        }>();
 
-    const regionDataMap = useMemo(() => {
-        const map = new Map<string, AggregatedDataRow>();
-        data.forEach(row => map.set(row.region, row));
-        return map;
+        data.forEach(row => {
+            const region = row.region;
+            if (!region || region === 'Регион не определен') return;
+
+            if (!aggregation.has(region)) {
+                aggregation.set(region, { totalGrowth: 0, totalPotential: 0, totalFact: 0, clientCount: 0, rmSet: new Set() });
+            }
+            const current = aggregation.get(region)!;
+            current.totalGrowth += row.growthPotential;
+            current.totalPotential += row.potential;
+            current.totalFact += row.fact;
+            current.clientCount += row.clients?.length || 1;
+            current.rmSet.add(row.rm);
+        });
+
+        return aggregation;
     }, [data]);
 
+    // Initialize map
     useEffect(() => {
-        if (mapContainer.current && !mapInstance.current) {
+        if (mapContainer.current && mapInstance.current === null) {
             mapInstance.current = L.map(mapContainer.current, {
-                scrollWheelZoom: true,
-                center: [62, 95], // Center of Russia
+                center: [60, 90], // Center of Russia
                 zoom: 3,
+                scrollWheelZoom: true,
             });
+
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
             }).addTo(mapInstance.current);
-            
-            geoJsonLayerRef.current = L.geoJSON(undefined, { style: () => ({ weight: 0 }) }).addTo(mapInstance.current);
-            markerClusterGroupRef.current = L.markerClusterGroup().addTo(mapInstance.current);
-            
-            // Add capitals layer
-            capitalsLayerRef.current = L.layerGroup().addTo(mapInstance.current);
-            capitals.forEach(capital => {
-                const radius = capital.type === 'country' ? 6 : 2;
-                const marker = L.circleMarker([capital.lat, capital.lon], {
-                    radius: radius,
-                    fillColor: "#fbbf24", // yellow-400
-                    color: "#f59e0b",     // yellow-500
-                    weight: 1,
-                    opacity: 1,
-                    fillOpacity: 0.8
-                });
 
-                marker.bindTooltip(capital.name, {
-                    permanent: false,
-                    direction: 'top'
-                });
-
-                capitalsLayerRef.current?.addLayer(marker);
-            });
+            markersLayer.current = L.layerGroup().addTo(mapInstance.current);
         }
+
+        return () => {
+            if (mapInstance.current) {
+                mapInstance.current.remove();
+                mapInstance.current = null;
+            }
+        };
     }, []);
 
+    // Update Choropleth and Markers based on data
     useEffect(() => {
         const map = mapInstance.current;
-        const geoJsonLayer = geoJsonLayerRef.current;
-        if (!map || !geoJsonLayer) return;
+        if (!map || !regionalData) return;
 
-        geoJsonLayer.clearLayers();
-
-        const allGrowthValues = Array.from(regionDataMap.values()).map(r => r.growthPotential).filter(g => g > 0);
-        if (allGrowthValues.length === 0) {
-            geoJsonLayer.addData(russiaRegionsGeoJSON as any); // Add outlines even if no data
-            return;
+        // Clear previous layers
+        if (geoJsonLayer.current) {
+            map.removeLayer(geoJsonLayer.current);
+            geoJsonLayer.current = null;
         }
+        if (legendControl.current) {
+            map.removeControl(legendControl.current);
+            legendControl.current = null;
+        }
+        markersLayer.current?.clearLayers();
 
-        const maxGrowth = Math.max(...allGrowthValues);
+        if (regionalData.size === 0) return;
 
-        const getColor = (growth: number) => {
-            if (growth <= 0) return '#4A5568'; // gray-600
-            const ratio = Math.log1p(growth) / Math.log1p(maxGrowth);
-            const hue = 220 + ratio * 40; // from blue to purple
+        const growthValues = Array.from(regionalData.values()).map(d => d.totalGrowth).filter(v => v > 0);
+        const maxGrowth = growthValues.length > 0 ? Math.max(...growthValues) : 0;
+        const minGrowth = growthValues.length > 0 ? Math.min(...growthValues) : 0;
+
+        // Color scale function
+        const getColor = (value: number) => {
+            if (value <= 0) return '#374151'; // Gray for no/negative growth
+            const range = Math.log(maxGrowth + 1) - Math.log(minGrowth + 1);
+            if (range === 0) return 'hsl(180, 70%, 50%)'; // Single color if all values are the same
+            const intensity = (Math.log(value + 1) - Math.log(minGrowth + 1)) / range;
+            const hue = 240 - intensity * 180; // from blue to red/pink
             return `hsl(${hue}, 70%, 50%)`;
         };
+        
+        const formatNumber = (num: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num);
 
-        // FIX: Replaced 'GeoJSON.Feature' with the imported 'Feature' type.
-        const styleFeature = (feature?: Feature): L.PathOptions => {
-            const regionName = feature?.properties?.name;
-            const regionData = regionName ? regionDataMap.get(regionName) : undefined;
-            const growth = regionData?.growthPotential ?? 0;
+        // Create GeoJSON layer if geo data is available
+        if (russiaRegionsGeoJSON && russiaRegionsGeoJSON.features.length > 0) {
+            geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
+                style: (feature) => {
+                    const regionName = feature?.properties?.name;
+                    const regionStats = regionalData.get(regionName);
+                    return {
+                        fillColor: regionStats ? getColor(regionStats.totalGrowth) : '#1F2937',
+                        weight: 1,
+                        opacity: 1,
+                        color: '#4B5563',
+                        fillOpacity: 0.7,
+                    };
+                },
+                onEachFeature: (feature, layer) => {
+                    const regionName = feature.properties.name;
+                    const regionStats = regionalData.get(regionName);
+                    const popupContent = regionStats
+                        ? `<b>${regionName}</b><br/>Потенциал роста: ${formatNumber(regionStats.totalGrowth)}<br/>Факт: ${formatNumber(regionStats.totalFact)}<br/>Клиентов: ${regionStats.clientCount}`
+                        : `<b>${regionName}</b><br/>Нет данных`;
+                    layer.bindPopup(popupContent);
+                }
+            }).addTo(map);
+        }
 
-            return {
-                fillColor: getColor(growth),
-                weight: 1,
-                opacity: 1,
-                color: '#1a202c',
-                fillOpacity: regionData ? 0.7 : 0.2,
-            };
+        // Add Markers for regional capitals
+        const capitalMarkers: L.Marker[] = [];
+        regionalData.forEach((stats, regionName) => {
+            const capital = capitals.find(c => c.name === regionName || regionName.startsWith(c.name));
+            if (capital) {
+                const marker = L.marker([capital.lat, capital.lon])
+                    .bindPopup(`<b>${regionName}</b><br/><b>Потенциал роста: ${formatNumber(stats.totalGrowth)}</b><br/>Факт: ${formatNumber(stats.totalFact)}<br/>Потенциал: ${formatNumber(stats.totalPotential)}<br/>Клиентов: ${stats.clientCount}<br/>РМ: ${Array.from(stats.rmSet).join(', ')}`);
+                markersLayer.current?.addLayer(marker);
+                capitalMarkers.push(marker);
+            }
+        });
+        
+        if (capitalMarkers.length > 1) {
+            const group = L.featureGroup(capitalMarkers);
+            map.fitBounds(group.getBounds().pad(0.2));
+        } else if (capitalMarkers.length === 1) {
+            map.flyTo(capitalMarkers[0].getLatLng(), 6);
+        }
+
+        // Add Legend
+        const legend = new L.Control({ position: 'bottomright' });
+        legend.onAdd = () => {
+            const div = L.DomUtil.create('div', 'info legend');
+            div.style.backgroundColor = 'rgba(31, 41, 55, 0.8)';
+            div.style.padding = '10px';
+            div.style.borderRadius = '5px';
+            div.style.color = 'white';
+            div.style.lineHeight = '1.5';
+
+            const grades = [0, maxGrowth * 0.1, maxGrowth * 0.25, maxGrowth * 0.5, maxGrowth * 0.75].filter((v, i, a) => a.indexOf(v) === i);
+            let innerHTML = '<h4>Потенциал Роста</h4>';
+            for (let i = 0; i < grades.length; i++) {
+                const from = grades[i];
+                const to = grades[i + 1];
+                innerHTML += `<i style="background:${getColor(from + 1)}"></i> ${formatNumber(from)}${to ? '&ndash;' + formatNumber(to) : '+'}<br>`;
+            }
+            div.innerHTML = innerHTML;
+
+            const style = document.createElement('style');
+            style.innerHTML = `.legend i { width: 18px; height: 18px; float: left; margin-right: 8px; opacity: 0.8; border-radius: 3px; }`;
+            div.appendChild(style);
+            
+            return div;
         };
-        
-        geoJsonLayer.options.style = styleFeature;
-        geoJsonLayer.addData(russiaRegionsGeoJSON as any);
-        
-    }, [regionDataMap]);
 
-     useEffect(() => {
-        const map = mapInstance.current;
-        const markerClusterGroup = markerClusterGroupRef.current;
-        if (!map || !markerClusterGroup) return;
-
-        markerClusterGroup.clearLayers();
-        
-        const activeRegions = new Set(data.map(d => d.region));
-        const markers: L.Marker[] = [];
-
-        okbData.forEach(okbRow => {
-            if (okbRow.lat && okbRow.lon && activeRegions.has(okbRow['Регион'] || '')) {
-                const marker = L.marker([okbRow.lat, okbRow.lon], { icon: customIcon('blue') });
-                marker.bindPopup(`<b>${okbRow['Наименование']}</b><br>${okbRow['Юридический адрес'] || 'Адрес не указан'}`);
-                markers.push(marker);
-            }
-        });
-        markerClusterGroup.addLayers(markers);
-
-    }, [data, okbData]);
-    
-    const handleSearch = () => {
-        const map = mapInstance.current;
-        if (!map) return;
-        setSearchError(null);
-        if (tempMarkerRef.current) map.removeLayer(tempMarkerRef.current);
-
-        const query = searchTerm.toLowerCase().trim();
-        if (!query) return;
-
-        // 1. Search for a city
-        for (const city in REGION_BY_CITY_WITH_INDEXES) {
-            if (city.toLowerCase() === query) {
-                const { lat, lon } = REGION_BY_CITY_WITH_INDEXES[city];
-                if (lat && lon) {
-                    map.flyTo([lat, lon], 12);
-                    tempMarkerRef.current = L.marker([lat, lon], { icon: customIcon('green') })
-                        .bindPopup(`<b>${city}</b>`)
-                        .addTo(map)
-                        .openPopup();
-                    return;
-                }
-            }
+        if (maxGrowth > 0) {
+             legend.addTo(map);
+             legendControl.current = legend;
         }
 
-        // 2. Search for a region (using keywords)
-        const normalizedQuery = REGION_KEYWORD_MAP[query] || query;
-        let foundLayer: L.Layer | null = null;
-        geoJsonLayerRef.current?.eachLayer(layer => {
-            const feature = (layer as L.GeoJSON).feature;
-            // FIX: Add a type guard to ensure `feature` is a GeoJSON Feature with properties.
-            // This resolves the TypeScript error "Property 'properties' does not exist on type '...'"
-            // by safely checking the object's structure before accessing nested properties.
-            if (feature?.type === 'Feature' && feature.properties) {
-                const props = feature.properties as { name?: any };
-                if (typeof props.name === 'string' && props.name.toLowerCase().includes(normalizedQuery)) {
-                    foundLayer = layer;
-                }
-            }
-        });
-
-        if (foundLayer) {
-            const bounds = (foundLayer as L.Polygon).getBounds();
-            if (bounds.isValid()) {
-                map.fitBounds(bounds.pad(0.1));
-            }
-        } else {
-            setSearchError('Регион или город не найден');
-        }
-    };
+    }, [regionalData]);
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-4 rounded-2xl shadow-lg border border-indigo-500/10 h-[70vh] flex flex-col">
-            <div className="flex-shrink-0 mb-4 p-2 flex flex-col sm:flex-row items-center gap-3 bg-gray-900/50 rounded-lg">
-                <h2 className="text-lg font-bold text-white flex-grow">Карта анализа регионов</h2>
-                <div className="relative w-full sm:w-auto">
-                    <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                        placeholder="Найти город или регион..."
-                        className="w-full sm:w-64 p-2 pl-10 bg-gray-800/60 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white"
-                    />
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
-                </div>
-                <button onClick={handleSearch} className="w-full sm:w-auto bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition">Найти</button>
-                <button onClick={() => exportAggregatedToExcel(data, 'Анализ_потенциала')} className="w-full sm:w-auto bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2">
-                    <ExportIcon />
-                    <span>Выгрузить (.xlsx)</span>
-                </button>
-            </div>
-            {searchError && <p className="text-danger text-center text-sm mb-2">{searchError}</p>}
-            <div ref={mapContainer} className="h-full w-full rounded-lg flex-grow" />
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+            <h2 className="text-xl font-bold mb-4 text-white">Карта рыночного потенциала по регионам</h2>
+            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg" />
         </div>
     );
 };
