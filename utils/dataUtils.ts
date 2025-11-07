@@ -1,24 +1,70 @@
 import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
 
 /**
+ * A comprehensive regex to remove region-specific nouns and adjectives from an address string.
+ * This helps in matching addresses where one version has the region and the other doesn't.
+ */
+const REGION_WORDS_TO_REMOVE = new RegExp(
+  `\\b(${[
+    // Nouns
+    'область', 'край', 'республика', 'автономный', 'округ', 'народная',
+    // Adjectives & Place Names
+    'адыгея', 'алтай', 'башкортостан', 'башкирия', 'бурятия', 'дагестан',
+    'ингушетия', 'кбр', 'кабардино', 'балкарская', 'калмыкия', 'кчр', 'карачаево', 'черкесская',
+    'карелия', 'коми', 'крым', 'марий', 'эл', 'мордовия', 'саха', 'якутия',
+    'северная', 'осетия', 'алания', 'татарстан', 'тыва', 'тува', 'удмуртия',
+    'хакасия', 'чечня', 'чеченская', 'чувашия', 'чувашская', 'алтайский',
+    'забайкальский', 'камчатский', 'краснодарский', 'кубань', 'красноярский',
+    'пермский', 'приморский', 'ставропольский', 'хабаровский', 'амурская',
+    'архангельская', 'астраханская', 'белгородская', 'брянская', 'владимирская',
+    'волгоградская', 'вологодская', 'воронежская', 'ивановская', 'иркутская',
+    'калининградская', 'калужская', 'кемеровская', 'кузбасс', 'кировская',
+    'костромская', 'курганская', 'курская', 'ленинградская', 'липецкая',
+    'магаданская', 'московская', 'мурманская', 'нижегородская', 'новгородская',
+    'новосибирская', 'омская', 'оренбургская', 'орловская', 'пензенская',
+    'псковская', 'ростовская', 'рязанская', 'самарская', 'саратовская',
+    'сахалинская', 'свердловская', 'смоленская', 'тамбовская', 'тверская',
+    'томская', 'тульская', 'тюменская', 'ульяновская', 'челябинская',
+    'ярославская', 'запорожская', 'херсонская', 'ненецкий', 'хмао', 'югра',
+    'чукотский', 'чукотка', 'янао', 'ямал', 'еврейская', 'луганская', 'донецкая',
+    // CIS & Others
+    'беларусь', 'белоруссия', 'казахстан', 'армения', 'киргизия', 'кыргызстан', 'абхазия'
+  ].join('|')})\\b`,
+  'g'
+);
+
+
+/**
  * Normalizes an address string for search and comparison purposes.
  * It converts to lower case, handles 'ё', removes punctuation and legal forms,
- * and standardizes common abbreviations.
+ * and standardizes common abbreviations. This version is designed to be highly robust
+ * against messy data formatting by removing region identifiers and address part keywords.
  * @param str The string to normalize.
- * @returns The normalized string.
+ * @returns The normalized string, with parts sorted alphabetically.
  */
 export const normalizeAddressForSearch = (str: string | undefined | null): string => {
     if (!str) return '';
-    return str
+
+    const cleanedString = str
         .toLowerCase()
         .replace(/ё/g, 'е')
-        .replace(/["'«»`.,;:[\]()]/g, '') // remove common punctuation
-        .replace(/\s+/g, ' ') // collapse whitespace
-        .replace(/\b(обл|обл\.)/g, 'область')
-        .replace(/\b(респ|респ\.)/g, 'республика')
-        .replace(/\b(г|г\.)/g, 'город')
+        // Remove 6-digit postal code from the beginning of the string
+        .replace(/^\s*\d{6}\s*,?\s*/, '')
+        // Remove region-specific words to match addresses with and without region info
+        .replace(REGION_WORDS_TO_REMOVE, ' ')
+        // Replace all punctuation with a single space
+        .replace(/[.,\/#!$%\^&\*;:{}=\-_`"«»~()\[\]]/g, ' ')
+        // Remove common address-part keywords.
+        .replace(/\b(обл|респ|г|ул|р-н|д|дом|корп|к|ш|пос|пгт|поселок|деревня|станица|ст-ца|хутор|х)\b/g, ' ')
+        // Remove common legal entity types
         .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
+        // Collapse multiple spaces and trim
+        .replace(/\s+/g, ' ')
         .trim();
+
+    // Tokenize, sort, and join to make it order-independent
+    const parts = cleanedString.split(' ').filter(Boolean);
+    return [...new Set(parts)].sort().join(' ');
 };
 
 /**
