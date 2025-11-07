@@ -314,7 +314,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold text-white">Карта рыночного потенциала</h2>
-                <div className="relative z-[1000] w-full max-w-xs md:max-w-sm">
+                <div className="relative z-[1001] w-full max-w-xs md:max-w-sm">
                     <div className="relative">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
                         <input
@@ -336,20 +336,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     </div>
                 </div>
             </div>
-
+            
+            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg" />
+            
             {conflictZones && isWarningVisible && (
-                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm relative">
-                    <button
-                        onClick={() => setIsWarningVisible(false)}
-                        className="absolute top-1 right-1 p-1 text-red-200 hover:text-white transition-colors rounded-full hover:bg-black/20"
-                        aria-label="Закрыть предупреждение"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
+                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">
                     <div className="w-6 h-6 flex-shrink-0 text-danger mt-0.5"><ErrorIcon/></div>
-                    <div>
+                    <div className="pr-4">
                         <p className="font-bold">ОСТОРОЖНО! ЗОНА ПРОВЕДЕНИЯ СВО</p>
                         <p className="mt-1">
                             Данные основаны на открытых источниках (zaschitnikiotechestva.ru). Планируйте маршруты с максимальной осторожностью.
@@ -358,10 +351,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             Торговые точки в зоне или в непосредственной близости могут не соответствовать действительности. Они не участвуют в расчете ОКБ и выведены на карту в качестве информации.
                         </p>
                     </div>
+                     <button
+                        onClick={() => setIsWarningVisible(false)}
+                        className="absolute top-1 right-1 p-1 text-red-200 hover:text-white transition-colors rounded-full hover:bg-black/20"
+                        aria-label="Закрыть предупреждение"
+                    >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
                 </div>
             )}
-            
-            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg" />
         </div>
     );
 };

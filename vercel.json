@@ -20,5 +20,11 @@
       "source": "/:path*",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/get-conflict-zones",
+      "schedule": "0 6 * * *"
+    }
   ]
 }
