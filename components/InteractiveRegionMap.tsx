@@ -4,6 +4,8 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.markercluster';
+// FIX: Import the 'Feature' type from 'geojson' to resolve the "Cannot find namespace 'GeoJSON'" error.
+import type { Feature } from 'geojson';
 import { AggregatedDataRow, OkbDataRow } from '../types';
 // FIX: Import from the corrected russia_regions_geojson file which now exports an empty FeatureCollection.
 // This resolves the module export error.
@@ -97,7 +99,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             return `hsl(${hue}, 70%, 50%)`;
         };
 
-        const styleFeature = (feature?: GeoJSON.Feature): L.PathOptions => {
+        // FIX: Replaced 'GeoJSON.Feature' with the imported 'Feature' type.
+        const styleFeature = (feature?: Feature): L.PathOptions => {
             const regionName = feature?.properties?.name;
             const regionData = regionName ? regionDataMap.get(regionName) : undefined;
             const growth = regionData?.growthPotential ?? 0;
