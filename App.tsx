@@ -8,7 +8,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
-import GlobalMapView from './components/GlobalMapView'; 
+import InteractiveRegionMap from './components/InteractiveRegionMap'; 
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -17,29 +17,11 @@ import {
     OkbStatus, 
     SummaryMetrics,
     OkbDataRow,
-    MapPoint
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-/**
- * A helper function to find a value in a row object by checking multiple possible keys.
- * Performs a case-insensitive search on the object's keys.
- * @param row The data row object.
- * @param keys An array of possible keys to check.
- * @returns The found value or null.
- */
-const findValueByKey = (row: { [key: string]: any }, keys: string[]): string | null => {
-    const lowerCaseKeys = keys.map(k => k.toLowerCase());
-    const rowKeys = Object.keys(row);
-    for (const rowKey of rowKeys) {
-        if (lowerCaseKeys.includes(rowKey.toLowerCase())) {
-            return row[rowKey];
-        }
-    }
-    return null;
-};
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -58,37 +40,6 @@ const App: React.FC = () => {
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     
-    // Derived state for the map
-    const activeRegions = useMemo(() => new Set(allData.map(row => row.region)), [allData]);
-
-    const potentialPoints = useMemo<MapPoint[]>(() => {
-        if (okbData.length === 0) return [];
-        
-        const activeAddresses = new Set<string>();
-        allData.forEach(group => {
-            group.clients.forEach(clientAddress => {
-                if (clientAddress) activeAddresses.add(clientAddress.trim());
-            });
-        });
-
-        return okbData
-            .filter(okbRow => {
-                const address = findValueByKey(okbRow, ['Юридический адрес', 'Адрес'])?.trim();
-                return okbRow.lat && okbRow.lon && (!address || !activeAddresses.has(address));
-            })
-            .map(okbRow => ({
-                key: `${okbRow.lat}-${okbRow.lon}-${okbRow['Наименование']}`,
-                lat: okbRow.lat!,
-                lon: okbRow.lon!,
-                status: 'potential',
-                name: okbRow['Наименование'] || 'Без названия',
-                address: findValueByKey(okbRow, ['Юридический адрес', 'Адрес']) || 'Адрес не указан',
-                type: findValueByKey(okbRow, ['Вид деятельности']) || 'н/д',
-                contacts: findValueByKey(okbRow, ['Контакты']) || undefined
-            }));
-    }, [allData, okbData]);
-
-
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
@@ -187,10 +138,7 @@ const App: React.FC = () => {
                         
                         {okbStatus?.status === 'ready' && (
                              okbStatus.coordsCount !== undefined && okbStatus.coordsCount > 0 ? (
-                                <GlobalMapView 
-                                    activeRegions={activeRegions}
-                                    potentialPoints={potentialPoints}
-                                />
+                                <InteractiveRegionMap okbData={okbData} />
                             ) : (
                                 <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
                                     <h2 className="text-xl font-bold mb-4 text-white">Карта торговых точек</h2>
