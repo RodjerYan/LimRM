@@ -78,39 +78,43 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
             setFilteredPoints(pointsWithCoords);
             addMarkers(pointsWithCoords);
             if (pointsWithCoords.length > 0) {
-                // A small delay ensures that the map container has rendered before fitting bounds
                 setTimeout(() => map.fitBounds(markersLayer.getBounds().pad(0.1)), 100);
             } else {
                 map.setView([60, 90], 3); // Default view of Russia
             }
         } else {
-            let regionFound = false;
+            let foundLayer: L.Path | null = null;
+            let foundRegionName: string | null = null;
+
             geoJsonLayer.eachLayer(layer => {
                 const featureLayer = layer as FeatureLayer;
-                if (layer instanceof L.Path && featureLayer.feature?.properties) {
-                    if (normalizeString(featureLayer.feature.properties.name) === normalizedQuery) {
-                        layer.setStyle(highlightStyle);
-                        layer.bringToFront();
-                        map.fitBounds((layer as L.Polygon).getBounds());
-                        regionFound = true;
-                    } else {
-                        layer.setStyle(defaultStyle);
+                if (!foundLayer && layer instanceof L.Path && featureLayer.feature?.properties) {
+                    const regionName = normalizeString(featureLayer.feature.properties.name);
+                    if (regionName.includes(normalizedQuery)) {
+                        foundLayer = layer;
+                        foundRegionName = regionName;
                     }
                 }
             });
 
-            if (regionFound) {
+            geoJsonLayer.eachLayer(layer => {
+                if (layer instanceof L.Path) {
+                    layer.setStyle(layer === foundLayer ? highlightStyle : defaultStyle);
+                }
+            });
+
+            if (foundLayer && foundRegionName) {
+                foundLayer.bringToFront();
+                map.fitBounds((foundLayer as L.Polygon).getBounds());
+                
                 const pointsInRegion = pointsWithCoords.filter(
-                    (row) => normalizeString(findValue(row, ['Регион'])) === normalizedQuery
+                    (row) => normalizeString(findValue(row, ['Регион'])) === foundRegionName
                 );
                 setFilteredPoints(pointsInRegion);
                 addMarkers(pointsInRegion);
             } else {
                 setError(`Регион "${query}" не найден. Проверьте название.`);
                 setFilteredPoints([]);
-                geoJsonLayer.eachLayer(layer => {
-                    if (layer instanceof L.Path) layer.setStyle(defaultStyle);
-                });
                 map.setView([60, 90], 3);
             }
         }
