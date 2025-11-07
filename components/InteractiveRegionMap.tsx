@@ -206,6 +206,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 },
                 onEachFeature: (feature, layer) => {
                     const regionName = feature.properties.name;
+                    layer.bindTooltip(regionName, { sticky: true, className: 'leaflet-tooltip-custom' });
                     const regionStats = regionalData.get(regionName);
                     const popupContent = regionStats ?
                         `<b>${regionName}</b><br/>Потенциал роста: ${formatNumber(regionStats.totalGrowth)}` :
