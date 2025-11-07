@@ -1,78 +1,64 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.markercluster';
 import { AggregatedDataRow, OkbDataRow } from '../types';
+// FIX: Import from the corrected russia_regions_geojson file which now exports an empty FeatureCollection.
+// This resolves the module export error.
+import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson'; 
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
+import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { exportAggregatedToExcel } from '../utils/exportUtils';
+import { SearchIcon, ExportIcon } from './icons';
 
-// Define custom icons to avoid default marker issues with bundlers
-// This is a common workaround for Leaflet with React/Vite/Webpack
+// Fix for default icon path issue with bundlers
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+const markerPinHtml = (colorClass: string) => `<div class="marker-pin ${colorClass}"></div>`;
+
+const customIcon = (color: 'green' | 'blue') => new L.DivIcon({
+    className: 'custom-div-icon',
+    html: markerPinHtml(color),
+    iconSize: [30, 42],
+    iconAnchor: [15, 42],
+    popupAnchor: [0, -35]
+});
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
-    okbData: OkbDataRow[]; // Prop is available if needed in the future
-}
-
-interface RegionMetrics {
-    region: string;
-    totalFact: number;
-    totalPotential: number;
-    totalGrowth: number;
-    clientCount: number;
+    okbData: OkbDataRow[];
 }
 
 const formatNumber = (num: number) => {
+    if (isNaN(num)) return '0';
     if (Math.abs(num) >= 1_000_000) return `${(num / 1_000_000).toFixed(2)} млн`;
     if (Math.abs(num) >= 1_000) return `${(num / 1_000).toFixed(1)} тыс.`;
     return num.toLocaleString('ru-RU', { maximumFractionDigits: 0 });
 };
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbData }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
-    const layerGroupRef = useRef<L.LayerGroup | null>(null);
+    const geoJsonLayerRef = useRef<L.GeoJSON | null>(null);
+    const markerClusterGroupRef = useRef<L.MarkerClusterGroup | null>(null);
+    const tempMarkerRef = useRef<L.Marker | null>(null);
 
-    const regionCoords = useMemo(() => {
-        const coords = new Map<string, { lat: number; lon: number }>();
-        // Iterate through the map to get coordinates for each region.
-        // The first city encountered for a region is used as its center point.
-        for (const city in REGION_BY_CITY_WITH_INDEXES) {
-            const { region, lat, lon } = REGION_BY_CITY_WITH_INDEXES[city];
-            if (!coords.has(region) && lat && lon) {
-                coords.set(region, { lat, lon });
-            }
-        }
-        return coords;
-    }, []);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [searchError, setSearchError] = useState<string | null>(null);
 
-    const aggregatedByRegion = useMemo(() => {
-        const aggregation = new Map<string, RegionMetrics>();
-        data.forEach(row => {
-            let regionData = aggregation.get(row.region);
-            if (!regionData) {
-                regionData = {
-                    region: row.region,
-                    totalFact: 0,
-                    totalPotential: 0,
-                    totalGrowth: 0,
-                    clientCount: 0,
-                };
-            }
-            regionData.totalFact += row.fact;
-            regionData.totalPotential += row.potential;
-            regionData.totalGrowth += row.growthPotential;
-            regionData.clientCount += row.clients.length;
-            aggregation.set(row.region, regionData);
-        });
-        return Array.from(aggregation.values());
+    const regionDataMap = useMemo(() => {
+        const map = new Map<string, AggregatedDataRow>();
+        data.forEach(row => map.set(row.region, row));
+        return map;
     }, [data]);
-    
+
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             mapInstance.current = L.map(mapContainer.current, {
@@ -80,79 +66,149 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
                 center: [62, 95], // Center of Russia
                 zoom: 3,
             });
-            
-            // Using a dark theme tile layer to match the app's aesthetic
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-                subdomains: 'abcd',
-                maxZoom: 19,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
             }).addTo(mapInstance.current);
-
-            layerGroupRef.current = L.layerGroup().addTo(mapInstance.current);
+            
+            geoJsonLayerRef.current = L.geoJSON(undefined, { style: () => ({ weight: 0 }) }).addTo(mapInstance.current);
+            markerClusterGroupRef.current = L.markerClusterGroup().addTo(mapInstance.current);
         }
     }, []);
 
     useEffect(() => {
-        const layerGroup = layerGroupRef.current;
-        if (!layerGroup) return;
+        const map = mapInstance.current;
+        const geoJsonLayer = geoJsonLayerRef.current;
+        if (!map || !geoJsonLayer) return;
 
-        layerGroup.clearLayers();
-        
-        const allGrowthValues = aggregatedByRegion.map(r => r.totalGrowth).filter(g => g > 0);
-        if (allGrowthValues.length === 0) return;
+        geoJsonLayer.clearLayers();
+
+        const allGrowthValues = Array.from(regionDataMap.values()).map(r => r.growthPotential).filter(g => g > 0);
+        if (allGrowthValues.length === 0) {
+            geoJsonLayer.addData(russiaRegionsGeoJSON as any); // Add outlines even if no data
+            return;
+        }
 
         const maxGrowth = Math.max(...allGrowthValues);
-        const minGrowth = Math.min(...allGrowthValues);
 
-        // Function to scale radius based on growth potential
-        const getRadius = (growth: number) => {
-            if (maxGrowth === minGrowth || maxGrowth <= 0) return 15;
-            const scale = (growth - minGrowth) / (maxGrowth - minGrowth);
-            return 10 + scale * 30; // Scale radius from 10px to 40px
+        const getColor = (growth: number) => {
+            if (growth <= 0) return '#4A5568'; // gray-600
+            const ratio = Math.log1p(growth) / Math.log1p(maxGrowth);
+            const hue = 220 + ratio * 40; // from blue to purple
+            return `hsl(${hue}, 70%, 50%)`;
         };
 
-        aggregatedByRegion.forEach(regionData => {
-            const coords = regionCoords.get(regionData.region);
-            if (coords) {
-                const circle = L.circle([coords.lat, coords.lon], {
-                    radius: getRadius(regionData.totalGrowth),
-                    color: '#fbbf24', // Warning color for potential
-                    fillColor: '#fbbf24',
-                    fillOpacity: 0.6,
-                    weight: 1,
-                });
+        const styleFeature = (feature?: GeoJSON.Feature): L.PathOptions => {
+            const regionName = feature?.properties?.name;
+            const regionData = regionName ? regionDataMap.get(regionName) : undefined;
+            const growth = regionData?.growthPotential ?? 0;
 
-                const popupContent = `
-                    <div class="bg-gray-800 text-white p-2 rounded-md shadow-lg border border-gray-700" style="font-family: Inter, sans-serif;">
-                        <h4 class="font-bold text-lg text-accent mb-2">${regionData.region}</h4>
-                        <ul class="text-sm space-y-1">
-                            <li><strong>Потенциал роста:</strong> <span class="font-semibold text-warning">${formatNumber(regionData.totalGrowth)}</span></li>
-                            <li><strong>Текущий факт:</strong> ${formatNumber(regionData.totalFact)}</li>
-                            <li><strong>Общий потенциал:</strong> ${formatNumber(regionData.totalPotential)}</li>
-                            <li><strong>Клиентов:</strong> ${regionData.clientCount}</li>
-                        </ul>
-                    </div>
-                `;
+            return {
+                fillColor: getColor(growth),
+                weight: 1,
+                opacity: 1,
+                color: '#1a202c',
+                fillOpacity: regionData ? 0.7 : 0.2,
+            };
+        };
+        
+        geoJsonLayer.options.style = styleFeature;
+        geoJsonLayer.addData(russiaRegionsGeoJSON as any);
+        
+    }, [regionDataMap]);
 
-                circle.bindPopup(popupContent);
-                layerGroup.addLayer(circle);
+     useEffect(() => {
+        const map = mapInstance.current;
+        const markerClusterGroup = markerClusterGroupRef.current;
+        if (!map || !markerClusterGroup) return;
+
+        markerClusterGroup.clearLayers();
+        
+        const activeRegions = new Set(data.map(d => d.region));
+        const markers: L.Marker[] = [];
+
+        okbData.forEach(okbRow => {
+            if (okbRow.lat && okbRow.lon && activeRegions.has(okbRow['Регион'] || '')) {
+                const marker = L.marker([okbRow.lat, okbRow.lon], { icon: customIcon('blue') });
+                marker.bindPopup(`<b>${okbRow['Наименование']}</b><br>${okbRow['Юридический адрес'] || 'Адрес не указан'}`);
+                markers.push(marker);
+            }
+        });
+        markerClusterGroup.addLayers(markers);
+
+    }, [data, okbData]);
+    
+    const handleSearch = () => {
+        const map = mapInstance.current;
+        if (!map) return;
+        setSearchError(null);
+        if (tempMarkerRef.current) map.removeLayer(tempMarkerRef.current);
+
+        const query = searchTerm.toLowerCase().trim();
+        if (!query) return;
+
+        // 1. Search for a city
+        for (const city in REGION_BY_CITY_WITH_INDEXES) {
+            if (city.toLowerCase() === query) {
+                const { lat, lon } = REGION_BY_CITY_WITH_INDEXES[city];
+                if (lat && lon) {
+                    map.flyTo([lat, lon], 12);
+                    tempMarkerRef.current = L.marker([lat, lon], { icon: customIcon('green') })
+                        .bindPopup(`<b>${city}</b>`)
+                        .addTo(map)
+                        .openPopup();
+                    return;
+                }
+            }
+        }
+
+        // 2. Search for a region (using keywords)
+        const normalizedQuery = REGION_KEYWORD_MAP[query] || query;
+        let foundLayer: L.Layer | null = null;
+        geoJsonLayerRef.current?.eachLayer(layer => {
+            const feature = (layer as L.GeoJSON).feature;
+            // FIX: Add a type guard to ensure `feature` is a GeoJSON Feature with properties.
+            // This resolves the TypeScript error "Property 'properties' does not exist on type '...'"
+            // by safely checking the object's structure before accessing nested properties.
+            if (feature?.type === 'Feature' && feature.properties) {
+                const props = feature.properties as { name?: any };
+                if (typeof props.name === 'string' && props.name.toLowerCase().includes(normalizedQuery)) {
+                    foundLayer = layer;
+                }
             }
         });
 
-    }, [aggregatedByRegion, regionCoords]);
-    
-    useEffect(() => {
-        return () => {
-            if (mapInstance.current) {
-                mapInstance.current.remove();
-                mapInstance.current = null;
+        if (foundLayer) {
+            const bounds = (foundLayer as L.Polygon).getBounds();
+            if (bounds.isValid()) {
+                map.fitBounds(bounds.pad(0.1));
             }
-        };
-    }, []);
+        } else {
+            setSearchError('Регион или город не найден');
+        }
+    };
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 h-[60vh] flex flex-col">
-            <h2 className="text-xl font-bold mb-4 text-white flex-shrink-0">Карта потенциала по регионам</h2>
+        <div className="bg-card-bg/70 backdrop-blur-sm p-4 rounded-2xl shadow-lg border border-indigo-500/10 h-[70vh] flex flex-col">
+            <div className="flex-shrink-0 mb-4 p-2 flex flex-col sm:flex-row items-center gap-3 bg-gray-900/50 rounded-lg">
+                <h2 className="text-lg font-bold text-white flex-grow">Карта анализа регионов</h2>
+                <div className="relative w-full sm:w-auto">
+                    <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                        placeholder="Найти город или регион..."
+                        className="w-full sm:w-64 p-2 pl-10 bg-gray-800/60 border border-gray-700 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white"
+                    />
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
+                </div>
+                <button onClick={handleSearch} className="w-full sm:w-auto bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition">Найти</button>
+                <button onClick={() => exportAggregatedToExcel(data, 'Анализ_потенциала')} className="w-full sm:w-auto bg-success hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2">
+                    <ExportIcon />
+                    <span>Выгрузить (.xlsx)</span>
+                </button>
+            </div>
+            {searchError && <p className="text-danger text-center text-sm mb-2">{searchError}</p>}
             <div ref={mapContainer} className="h-full w-full rounded-lg flex-grow" />
         </div>
     );
