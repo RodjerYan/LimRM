@@ -424,4 +424,4 @@ export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; index
   'каракол': { region: 'Кыргызская Республика', indexes: ['722200'], lat: 42.4833, lon: 78.3833 },
   'токмок': { region: 'Кыргызская Республика', indexes: ['722200'], lat: 42.8419, lon: 75.2869 },
   'кант': { region: 'Кыргызская Республика', indexes: ['722200'], lat: 42.8911, lon: 74.8519 },
-};
+};.
