@@ -76,10 +76,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data }) => 
                     fillOpacity: 0.8
                 }).bindPopup(`<b>${capital.name}</b>`);
 
-                marker.on('mouseover', function () {
+                marker.on('mouseover', function (this: L.CircleMarker) {
                     this.setRadius(capital.type === 'country' ? 10 : 6);
                 });
-                marker.on('mouseout', function () {
+                marker.on('mouseout', function (this: L.CircleMarker) {
                     this.setRadius(capital.type === 'country' ? 6 : 2);
                 });
 
