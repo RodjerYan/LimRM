@@ -106,11 +106,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
 
-    // Define styles for different layer states
-    const highlightStyle = { color: "#ff3300", weight: 3, opacity: 1, fillOpacity: 0 };
-    const baseStyle = { color: "#4B5563", weight: 1.5, opacity: 0.7, fillOpacity: 0 };
-    const dataStyle = { ...baseStyle, color: "#ff6600", weight: 2.5, opacity: 0.9 };
-    const filterSelectedStyle = { color: "#818cf8", weight: 3, opacity: 1, fillOpacity: 0 };
+    // Define styles for different layer states - ALL ARE INVISIBLE
+    const invisibleStyle = { weight: 0, opacity: 0, fillOpacity: 0 };
+    const highlightStyle = invisibleStyle;
+    const baseStyle = invisibleStyle;
+    const dataStyle = invisibleStyle;
+    const filterSelectedStyle = invisibleStyle;
+
 
     // Function to reset the previously highlighted layer
     const resetHighlight = useCallback(() => {
@@ -197,7 +199,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             capitalMarkersRef.current.set(capital.name, marker);
         });
 
-        // Add region boundaries
+        // Add region boundaries (now invisible)
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
             style: (feature) => {
                 const regionName = feature?.properties?.name;
