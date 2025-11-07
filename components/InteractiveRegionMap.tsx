@@ -177,7 +177,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         ttWithCoords.forEach(tt => {
             const name = tt['Наименование'] || 'Без названия';
-            const address = tt['Юридический адрес'] || 'Адрес не указан';
+            const address = tt['Адрес'] || tt['Юридический адрес'] || 'Адрес не указан';
             const activity = tt['Вид деятельности'] || 'н/д';
             const contacts = tt['Контакты'] || '';
             
