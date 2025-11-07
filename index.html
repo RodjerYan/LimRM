@@ -1,122 +1,23 @@
-<!doctype html>
-<html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Гео-Анализ Рынка | Limkorm</title>
-    <script type="importmap">
+<script type="importmap">
 {
   "imports": {
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "react": "https://aistudiocdn.com/react@^19.2.0",
-    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
-    "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
-    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
-    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
-    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
-    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
-    "marked": "https://aistudiocdn.com/marked@^17.0.0",
-    "vite": "https://aistudiocdn.com/vite@^7.2.2",
-    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
-    "geojson": "https://aistudiocdn.com/geojson@^0.5.0",
-    "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
     "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.4",
-    "leaflet-search": "https://aistudiocdn.com/leaflet-search@^4.0.0"
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
+    "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "marked": "https://aistudiocdn.com/marked@^17.0.0",
+    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
+    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
+    "vite": "https://aistudiocdn.com/vite@^7.2.2",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0"
   }
 }
 </script>
-    <link rel="stylesheet" href="/index.css">
-    <!-- FIX: Added stylesheet for Leaflet Search plugin -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-search@2.9.9/dist/leaflet-search.min.css" />
-    <style>
-      /* Custom styles for Leaflet popups to match the dark theme */
-      .leaflet-popup-content-wrapper,
-      .leaflet-popup-tip {
-        background: rgba(31, 41, 55, 0.8) !important; /* card-bg with transparency */
-        backdrop-filter: blur(8px);
-        color: #e5e7eb !important; /* text-gray-200 */
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
-        border-radius: 8px !important;
-        border: 1px solid rgba(129, 140, 248, 0.2); /* accent with transparency */
-      }
-      .leaflet-popup-content {
-        margin: 14px !important;
-        font-family: 'Inter', sans-serif !important;
-      }
-      .leaflet-popup-content b {
-        color: #818cf8; /* accent */
-      }
-      .leaflet-container a.leaflet-popup-close-button {
-        color: #9ca3af !important; /* text-gray-400 */
-        padding: 8px 8px 0 0 !important;
-      }
-      .leaflet-container a.leaflet-popup-close-button:hover {
-        color: #ffffff !important;
-      }
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 8px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: #1f2937; /* card-bg */
-        border-radius: 10px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background-color: #4b5563; /* gray-600 */
-        border-radius: 10px;
-        border: 2px solid #1f2937; /* card-bg */
-      }
-      
-      /* Static glow effect for capital markers */
-      .capital-marker {
-        filter: drop-shadow(0 0 4px #fef08a) drop-shadow(0 0 10px #facc15);
-      }
-
-      /* Custom styles for leaflet-search control to match dark theme */
-      .leaflet-control-search.leaflet-control {
-        margin: 10px 0 0 10px !important;
-      }
-      .leaflet-control-search .search-input {
-        background-color: #1F2937 !important;
-        border: 1px solid #4b5563 !important;
-        color: #e5e7eb !important;
-        box-shadow: none !important;
-        height: 38px !important;
-        width: 250px !important;
-        padding-left: 12px !important;
-      }
-      .leaflet-control-search .search-button {
-        background-image: url('data:image/svg+xml;charset=UTF-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%239ca3af"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" /></svg>') !important;
-        background-color: #1F2937 !important;
-        width: 38px !important;
-        height: 38px !important;
-        border-radius: 8px !important;
-      }
-      .leaflet-control-search .search-tooltip {
-        background-color: #111827 !important;
-        border: 1px solid #4b5563 !important;
-        max-height: 250px !important;
-        overflow-y: auto !important;
-      }
-      .leaflet-control-search .search-tip {
-        color: #e5e7eb !important;
-        padding: 4px 8px !important;
-      }
-       .leaflet-control-search .search-tip:hover {
-        background-color: #374151 !important;
-      }
-      .leaflet-control-search .search-alert {
-        color: #fca5a5 !important;
-        background-color: #374151 !important;
-        text-align: center !important;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
-</html>
+full contents of index.html
