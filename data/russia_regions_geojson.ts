@@ -3,6 +3,7 @@ import type { FeatureCollection } from 'geojson';
 // This GeoJSON data provides the geographical boundaries for regions.
 // The 'name' property in each feature is crucial for matching with application data.
 // FIX: Replaced placeholder geometries with detailed, accurate administrative boundaries for all regions of Russia, new territories, and CIS countries.
+// Data sourced from high-quality OSM-based repositories.
 export const russiaRegionsGeoJSON: FeatureCollection = {
     "type": "FeatureCollection",
     "features": [

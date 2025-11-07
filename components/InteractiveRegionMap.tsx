@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo, useState } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow } from '../types';
@@ -30,10 +30,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
 
+    // Memoize searchable locations to prevent recalculation on every render
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
         const addedNames = new Set<string>();
 
+        // Add capitals
         capitals.forEach(capital => {
             if (!addedNames.has(capital.name)) {
                 locations.push({ name: capital.name, type: capital.type, lat: capital.lat, lon: capital.lon });
@@ -41,6 +43,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
+        // Add regions from GeoJSON and keyword map
         const regionNamesFromMap = new Set(Object.values(REGION_KEYWORD_MAP));
         russiaRegionsGeoJSON.features.forEach(feature => {
             const name = feature.properties?.name;
@@ -53,6 +56,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
+        // Add regions from the current dataset
         data.forEach(row => {
             const regionName = row.region;
             if (regionName && regionName !== 'Регион не определен' && !addedNames.has(regionName)) {
@@ -61,23 +65,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        return locations.sort((a, b) => a.name.localeCompare(b.name));
+        return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     }, [data]);
 
+    // Update search results based on the search term
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
             const lowerSearchTerm = searchTerm.toLowerCase();
-            const results = searchableLocations.filter(loc =>
-                loc.name.toLowerCase().includes(lowerSearchTerm)
-            ).slice(0, 7);
+            const results = searchableLocations
+                .filter(loc => loc.name.toLowerCase().includes(lowerSearchTerm))
+                .slice(0, 7);
             setSearchResults(results);
         } else {
             setSearchResults([]);
         }
     }, [searchTerm, searchableLocations]);
 
+    // Memoize aggregated data for performance
     const regionalData = useMemo(() => {
-        if (!data || data.length === 0) return new Map();
         const aggregation = new Map<string, {
             totalGrowth: number;
             totalPotential: number;
@@ -101,74 +106,67 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
 
-    // Define styles for different states
-    const highlightStyle = { color: '#FF4500', weight: 3, opacity: 1, fillOpacity: 0 };
-    const baseStyle = { weight: 1, fillOpacity: 0, opacity: 0.6, color: '#4B5563' }; // For regions with no data
-    const dataStyle = { ...baseStyle, weight: 1.5, opacity: 0.9, color: '#738299' }; // For regions with data
-    const filterSelectedStyle = { color: '#818cf8', weight: 2.5, opacity: 1, fillOpacity: 0 }; // For regions selected in filter
+    // Define styles for different layer states
+    const highlightStyle = { color: "#ff3300", weight: 3, opacity: 1, fillOpacity: 0 };
+    const baseStyle = { color: "#4B5563", weight: 1.5, opacity: 0.7, fillOpacity: 0 };
+    const dataStyle = { ...baseStyle, color: "#ff6600", weight: 2.5, opacity: 0.9 };
+    const filterSelectedStyle = { color: "#818cf8", weight: 3, opacity: 1, fillOpacity: 0 };
 
-    const resetHighlight = () => {
+    // Function to reset the previously highlighted layer
+    const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
         highlightedLayer.current = null;
-    };
+    }, []);
 
-    const highlightRegion = (layer: L.Layer) => {
+    // Function to highlight a specific layer
+    const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
-        (layer as L.Path).setStyle(highlightStyle).bringToFront();
-        highlightedLayer.current = layer;
-    };
+        if (layer instanceof L.Path) {
+             layer.setStyle(highlightStyle).bringToFront();
+             highlightedLayer.current = layer;
+        }
+    }, [resetHighlight]);
 
-    const handleLocationSelect = (location: SearchableLocation) => {
+    // Handler for when a location is selected from the search results
+    const handleLocationSelect = useCallback((location: SearchableLocation) => {
         const map = mapInstance.current;
         if (!map) return;
 
         setSearchTerm('');
         setSearchResults([]);
-        resetHighlight();
 
-        if (location.type === 'capital' || location.type === 'country') {
-            const marker = capitalMarkersRef.current.get(location.name);
-            map.flyTo([location.lat!, location.lon!], 10);
-            if (marker) setTimeout(() => marker.openPopup(), 500);
-        } else if (location.type === 'region') {
-            let foundLayer: L.Layer | null = null;
+        let foundLayer: L.Layer | null = null;
+        if (location.type === 'region') {
             geoJsonLayer.current?.eachLayer(layer => {
                 if ((layer as any).feature?.properties?.name === location.name) {
                     foundLayer = layer;
                 }
             });
-
-            if (foundLayer) {
-                map.fitBounds((foundLayer as L.Polygon).getBounds());
-                highlightRegion(foundLayer);
-            } else {
-                const capitalForRegion = capitals.find(c => c.region_name === location.name || c.name === location.name);
-                if (capitalForRegion) map.flyTo([capitalForRegion.lat, capitalForRegion.lon], 7);
-            }
         }
-    };
-
+        
+        if (foundLayer) {
+            map.fitBounds((foundLayer as L.Polygon).getBounds());
+            highlightRegion(foundLayer);
+        } else if (location.lat && location.lon) {
+             map.flyTo([location.lat, location.lon], 8);
+             const marker = capitalMarkersRef.current.get(location.name);
+             if (marker) setTimeout(() => marker.openPopup(), 500);
+        }
+    }, [highlightRegion]);
+    
+    // Initialize map
     useEffect(() => {
-        if (mapContainer.current && mapInstance.current === null) {
+        if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
             mapInstance.current = map;
+
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
             }).addTo(map);
-
-            capitalsLayer.current = L.layerGroup().addTo(map);
-            capitals.forEach(capital => {
-                const marker = L.circleMarker([capital.lat, capital.lon], {
-                    radius: capital.type === 'country' ? 6 : 2,
-                    fillColor: '#fbbf24', color: '#f59e0b', weight: 1, opacity: 1, fillOpacity: 0.8
-                }).bindPopup(`<b>${capital.name}</b>`);
-                marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(capital.type === 'country' ? 10 : 6); });
-                marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(capital.type === 'country' ? 6 : 2); });
-                capitalsLayer.current?.addLayer(marker);
-                capitalMarkersRef.current.set(capital.name, marker);
-            });
+            
+            map.on('click', resetHighlight);
         }
         return () => {
             if (mapInstance.current) {
@@ -176,96 +174,60 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 mapInstance.current = null;
             }
         };
-    }, []);
+    }, [resetHighlight]);
 
+    // Update GeoJSON layer and markers when data changes
     useEffect(() => {
         const map = mapInstance.current;
         if (!map) return;
 
+        // Clear existing layers to redraw
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
-        capitalMarkersRef.current.forEach((marker, name) => marker.bindPopup(`<b>${name}</b>`));
+        if (capitalsLayer.current) map.removeLayer(capitalsLayer.current);
 
-        if (regionalData.size === 0 && selectedRegions.length === 0) {
-             geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, { style: baseStyle }).addTo(map);
-            map.flyTo([60, 90], 3);
-            return;
-        }
-
-        const formatNumber = (num: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num);
-
-        if (russiaRegionsGeoJSON?.features.length > 0) {
-            geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
-                style: (feature) => {
-                    const regionName = feature?.properties?.name;
-                    const hasData = regionalData.has(regionName);
-                    const isSelectedByFilter = selectedRegions.includes(regionName);
-                    
-                    if (isSelectedByFilter) return filterSelectedStyle;
-                    if (hasData) return dataStyle;
-                    return baseStyle;
-                },
-                onEachFeature: (feature, layer) => {
-                    const regionName = feature.properties.name;
-                    layer.bindTooltip(regionName, { sticky: true, className: 'leaflet-tooltip-custom' });
-                    const regionStats = regionalData.get(regionName);
-                    const popupContent = regionStats ?
-                        `<b>${regionName}</b><br/>Потенциал роста: ${formatNumber(regionStats.totalGrowth)}` :
-                        `<b>${regionName}</b><br/>Нет данных`;
-                    layer.bindPopup(popupContent);
-
-                    layer.on({
-                        mouseover: (e) => {
-                            if (e.target !== highlightedLayer.current) {
-                                e.target.setStyle(highlightStyle).bringToFront();
-                            }
-                        },
-                        mouseout: (e) => {
-                           if (e.target !== highlightedLayer.current) {
-                                geoJsonLayer.current?.resetStyle(e.target);
-                           }
-                        },
-                        click: (e) => {
-                            map.fitBounds(e.target.getBounds());
-                            highlightRegion(e.target);
-                        }
-                    });
-                }
-            }).addTo(map);
-        }
-
-        const dataBounds = L.latLngBounds([]);
-        regionalData.forEach((stats, regionName) => {
-            const capital = capitals.find(c => c.region_name === regionName || c.name === regionName);
-            const marker = capital ? capitalMarkersRef.current.get(capital.name) : undefined;
-            if (marker) {
-                const popupContent = `<b>${regionName}</b><br/><b>Потенциал роста: ${formatNumber(stats.totalGrowth)}</b><br/>Факт: ${formatNumber(stats.totalFact)}<br/>Потенциал: ${formatNumber(stats.totalPotential)}<br/>Клиентов: ${stats.clientCount}<br/>РМ: ${Array.from(stats.rmSet).join(', ')}`;
-                marker.bindPopup(popupContent);
-                dataBounds.extend(marker.getLatLng());
-            }
+        // Add capital markers
+        capitalsLayer.current = L.layerGroup().addTo(map);
+        capitals.forEach(capital => {
+            const marker = L.circleMarker([capital.lat, capital.lon], {
+                radius: 4, fillColor: '#fbbf24', color: '#f59e0b', weight: 1, opacity: 1, fillOpacity: 0.8
+            }).bindTooltip(capital.name);
+            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(8); });
+            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
+            capitalsLayer.current?.addLayer(marker);
+            capitalMarkersRef.current.set(capital.name, marker);
         });
 
-        if (selectedRegions.length > 0) {
-            const selectionBounds = L.latLngBounds([]);
-            geoJsonLayer.current?.eachLayer(layer => {
-                const featureName = (layer as any).feature?.properties?.name;
-                if (featureName && selectedRegions.includes(featureName)) {
-                    selectionBounds.extend((layer as L.Polygon).getBounds());
-                }
-            });
-            if (selectionBounds.isValid()) map.fitBounds(selectionBounds.pad(0.1));
-        } else if (dataBounds.isValid()) {
-            map.fitBounds(dataBounds.pad(0.2), { maxZoom: 8 });
-        }
+        // Add region boundaries
+        geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
+            style: (feature) => {
+                const regionName = feature?.properties?.name;
+                if (selectedRegions.includes(regionName)) return filterSelectedStyle;
+                if (regionalData.has(regionName)) return dataStyle;
+                return baseStyle;
+            },
+            onEachFeature: (feature, layer) => {
+                const regionName = feature.properties.name;
+                layer.bindTooltip(regionName, { sticky: true, className: 'leaflet-tooltip-custom' });
 
-    }, [regionalData, selectedRegions]);
+                layer.on({
+                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle(highlightStyle); },
+                    mouseout: (e) => { if (e.target !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(e.target); },
+                    click: (e) => {
+                        L.DomEvent.stop(e);
+                        map.fitBounds(e.target.getBounds());
+                        highlightRegion(e.target);
+                    }
+                });
+            }
+        }).addTo(map);
+
+    }, [regionalData, selectedRegions, highlightRegion]);
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
             <div className="absolute top-4 right-4 z-[1000]">
                 <div className="relative">
-                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <SearchIcon />
-                    </div>
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
                     <input
                         type="text"
                         value={searchTerm}
