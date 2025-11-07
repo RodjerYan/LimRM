@@ -178,4 +178,4 @@ export const capitals: Capital[] = [
     // Туркменистан
     { name: 'Туркменабад', lat: 39.0941, lon: 63.5786, type: 'capital', region_name: 'Лебапский велаят' },
     { name: 'Дашогуз', lat: 41.8333, lon: 59.9667, type: 'capital', region_name: 'Дашогузский велаят' },
-];.
+];
