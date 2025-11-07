@@ -176,14 +176,26 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const ttWithCoords = okbData.filter(tt => tt.lat && tt.lon);
 
         ttWithCoords.forEach(tt => {
+            const name = tt['Наименование'] || 'Без названия';
+            const address = tt['Юридический адрес'] || 'Адрес не указан';
+            const activity = tt['Вид деятельности'] || 'н/д';
+            const contacts = tt['Контакты'] || '';
+            
+            const popupContent = `
+                <b>${name}</b><br>
+                ${address}<br>
+                <small>${activity}</small>
+                ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+            `;
+
             const marker = L.circleMarker([tt.lat!, tt.lon!], {
                 radius: 3,
-                fillColor: '#22d3ee',
-                color: '#06b6d4',
+                fillColor: '#22d3ee', // cyan-400
+                color: '#06b6d4', // cyan-500
                 weight: 1,
                 opacity: 1,
                 fillOpacity: 0.7,
-            }).bindPopup(`<b>${tt['Наименование']}</b><br>${tt['Юридический адрес'] || ''}<br><small>${tt['Вид деятельности'] || ''}</small>`);
+            }).bindPopup(popupContent);
             
             marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(6); });
             marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(3); });
@@ -202,17 +214,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         capitalsLayer.current = L.layerGroup().addTo(map);
         capitals.forEach(capital => {
+            const isCountryCapital = capital.type === 'country';
+            const radius = isCountryCapital ? 6 : 4;
+            const hoverRadius = isCountryCapital ? 10 : 8;
+
             const marker = L.circleMarker([capital.lat, capital.lon], {
-                radius: 4,
-                fillColor: '#fbbf24',
-                color: '#f59e0b',
+                radius: radius,
+                fillColor: '#fbbf24', // yellow-400
+                color: '#f59e0b',     // yellow-500
                 weight: 1,
                 opacity: 1,
                 fillOpacity: 0.8,
                 className: 'pulsing-marker'
             }).bindTooltip(capital.name);
-            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(8); });
-            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
+
+            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(hoverRadius); });
+            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(radius); });
+
             capitalsLayer.current?.addLayer(marker);
             capitalMarkersRef.current.set(capital.name, marker);
         });
