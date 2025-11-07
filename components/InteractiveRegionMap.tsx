@@ -3,13 +3,13 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-// FIX: The `leaflet.markercluster` library extends the global `L` object. It is imported for its side effects and then `L.markerClusterGroup()` is used to create an instance. This resolves the TypeScript error "This expression is not callable" by correcting the import and instantiation of the marker cluster group.
 import 'leaflet.markercluster';
 import { AggregatedDataRow, OkbDataRow } from '../types';
 import { regionsGeoJson } from '../data/russia_regions_geojson';
 import { exportAggregatedToExcel } from '../utils/exportUtils';
 import { ExportIcon, SearchIcon } from './icons';
 import { Feature } from 'geojson';
+import { standardizeRegion } from '../utils/addressMappings';
 
 // Fix for default Leaflet icons in Vite/React
 // @ts-ignore
@@ -35,12 +35,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
     const [searchTerm, setSearchTerm] = useState('');
     const [searchError, setSearchError] = useState('');
     
-    // Create a memoized lookup for OKB data by region for performance
+    // FIX: Standardize region names when creating the lookup map to ensure consistency.
+    // This resolves the issue where markers were not appearing due to mismatched region names.
     const okbDataByRegion = React.useMemo(() => {
         const map = new Map<string, OkbDataRow[]>();
         okbData.forEach(row => {
-            const region = row['Регион'];
-            if (region) {
+            const region = standardizeRegion(row['Регион']);
+            if (region && region !== 'Регион не определен') {
                 if (!map.has(region)) map.set(region, []);
                 map.get(region)!.push(row);
             }
@@ -132,12 +133,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
 
         // --- 2. Update Markers for Trade Points ---
         if (markersLayer.current) {
-            map.removeLayer(markersLayer.current);
+            markersLayer.current.clearLayers();
+        } else {
+            markersLayer.current = L.markerClusterGroup();
+            map.addLayer(markersLayer.current);
         }
         
-        markersLayer.current = L.markerClusterGroup();
         const activeRegions = new Set(data.map(d => d.region));
-
+        
         activeRegions.forEach(region => {
             const regionOkb = okbDataByRegion.get(region) || [];
             regionOkb.forEach(client => {
@@ -149,33 +152,42 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, okbDa
             });
         });
 
-        if (markersLayer.current) {
-             map.addLayer(markersLayer.current);
-        }
-
     }, [data, okbDataByRegion]);
 
+    // FIX: A more robust search function that prioritizes exact matches and handles errors gracefully.
+    // This resolves the "Не удалось определить границы региона" error.
     const handleSearch = () => {
         setSearchError('');
         if (!searchTerm.trim() || !geoJsonLayer.current || !mapInstance.current) return;
 
-        let foundLayer: L.Layer | null = null;
+        let exactMatchLayer: L.Layer | null = null;
+        let partialMatchLayer: L.Layer | null = null;
         const lowerCaseSearch = searchTerm.toLowerCase();
 
         geoJsonLayer.current.eachLayer(layer => {
             const feature = (layer as any).feature as Feature;
-            if (feature.properties?.name.toLowerCase().includes(lowerCaseSearch)) {
-                foundLayer = layer;
+            const regionName = feature?.properties?.name?.toLowerCase();
+            if (regionName) {
+                if (regionName === lowerCaseSearch) {
+                    exactMatchLayer = layer;
+                } else if (regionName.includes(lowerCaseSearch) && !partialMatchLayer) {
+                    partialMatchLayer = layer;
+                }
             }
         });
 
-        if (foundLayer) {
+        const foundLayer = exactMatchLayer || partialMatchLayer;
+
+        if (foundLayer && typeof (foundLayer as L.GeoJSON).getBounds === 'function') {
             const bounds = (foundLayer as L.GeoJSON).getBounds();
             if (bounds.isValid()) {
-                mapInstance.current.fitBounds(bounds);
-                (foundLayer as L.Path).setStyle({ weight: 4, color: '#fbbf24' });
+                mapInstance.current.fitBounds(bounds, { paddingTopLeft: [20, 20], paddingBottomRight: [20, 20] });
+                const pathLayer = foundLayer as L.Path;
+                pathLayer.setStyle({ weight: 4, color: '#fbbf24' });
                 setTimeout(() => {
-                    geoJsonLayer.current?.resetStyle(foundLayer as L.Path);
+                    if (geoJsonLayer.current) {
+                        geoJsonLayer.current.resetStyle(pathLayer);
+                    }
                 }, 3000);
             } else {
                  setSearchError('Не удалось определить границы региона');
