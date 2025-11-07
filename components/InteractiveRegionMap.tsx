@@ -286,13 +286,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         if (conflictZones) {
             conflictZonesLayer.current = L.geoJSON(conflictZones, {
-                style: () => ({
-                    color: '#ef4444',       // red-500
-                    weight: 1,
-                    fillColor: '#ef4444',    // red-500
-                    fillOpacity: 0.3,
-                    dashArray: '5, 5'
-                }),
+                style: (feature) => {
+                    const status = feature?.properties?.status;
+                    switch (status) {
+                        case 'occupied':
+                            return { color: '#dc2626', weight: 1, fillColor: '#b91c1c', fillOpacity: 0.4 };
+                        case 'liberated':
+                            return { color: '#059669', weight: 1, fillColor: '#065f46', fillOpacity: 0.45 };
+                        case 'special_risk':
+                             return { color: '#facc15', weight: 1, fillColor: '#facc15', fillOpacity: 0.3, dashArray: '5, 5' };
+                        case 'drone_danger':
+                            return { color: '#f97316', weight: 1, fillColor: '#fb923c', fillOpacity: 0.4, dashArray: '4, 4' };
+                        default:
+                            return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
+                    }
+                },
                 onEachFeature: (feature, layer) => {
                     const props = feature.properties;
                     if (props && props.name) {
@@ -334,7 +342,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-center gap-2 max-w-sm">
                     <div className="w-6 h-6 flex-shrink-0 text-danger"><ErrorIcon/></div>
                     <div>
-                        <strong>ВНИМАНИЕ!</strong> На карте отображены зоны повышенной опасности. Данные носят информационный характер. Всегда сверяйтесь с актуальной информацией перед планированием маршрута.
+                        <strong>ВНИМАНИЕ!</strong> На карте отображены зоны повышенной опасности, включая приграничные территории с угрозой БПЛА. Данные носят информационный характер. Всегда сверяйтесь с актуальной информацией перед планированием маршрута.
                     </div>
                 </div>
             )}
