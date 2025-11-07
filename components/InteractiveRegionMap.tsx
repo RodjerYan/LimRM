@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
+// FIX: Explicitly import the 'Feature' type from 'geojson' to resolve the 'Cannot find namespace "GeoJSON"' error.
+// This ensures the type definitions for GeoJSON objects are available to TypeScript.
+import type { Feature } from 'geojson';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -14,7 +17,8 @@ import { SearchIcon, ExportIcon } from './icons';
 // type incompatibilities for the 'feature' property and allows direct access
 // to Path methods like setStyle without unsafe casting, fixing both reported errors.
 interface FeatureLayer extends L.Polygon {
-    feature?: GeoJSON.Feature;
+    // FIX: Use the imported 'Feature' type instead of the unresolved 'GeoJSON.Feature' namespace.
+    feature?: Feature;
 }
 
 interface InteractiveRegionMapProps {
@@ -138,7 +142,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ okbData }) 
                 }
             }).addTo(map);
 
-            const onEachFeature = (feature: GeoJSON.Feature, layer: L.Layer) => {
+            // FIX: Use the imported 'Feature' type instead of the unresolved 'GeoJSON.Feature' namespace.
+            const onEachFeature = (feature: Feature, layer: L.Layer) => {
                 layer.on({
                     mouseover: (e) => {
                         if (layer !== highlightedLayerRef.current) {
