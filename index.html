@@ -83,6 +83,35 @@
         animation: pulse-animation 2.5s infinite ease-in-out;
         transform-origin: center;
       }
+      /* Styles for Layer Control */
+      .leaflet-control-layers {
+        background: rgba(31, 41, 55, 0.8) !important;
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(129, 140, 248, 0.2) !important;
+        border-radius: 8px !important;
+        color: #e5e7eb !important;
+      }
+      .leaflet-control-layers-base label, .leaflet-control-layers-overlays label {
+        font-weight: normal !important;
+      }
+      .leaflet-control-layers-selector {
+        margin-top: 2px;
+      }
+      .leaflet-control-layers-separator {
+        border-top: 1px solid #4b5563 !important;
+      }
+      .leaflet-control-layers-overlays label span {
+          display: inline-flex;
+          align-items: center;
+      }
+      /* Style for the warning emoji in the layer control */
+      .leaflet-control-layers-overlays label span span:first-child {
+        min-width: 80px; /* Adjust as needed */
+      }
+      .leaflet-control-layers-overlays label span:first-child:has(span:contains("⚠️")) {
+          color: #f87171; /* danger color */
+          font-weight: bold;
+      }
     </style>
   </head>
   <body>

@@ -13,6 +13,10 @@
       "destination": "/api/get-okb-status"
     },
     {
+      "source": "/api/get-conflict-zones",
+      "destination": "/api/get-conflict-zones"
+    },
+    {
       "source": "/:path*",
       "destination": "/index.html"
     }

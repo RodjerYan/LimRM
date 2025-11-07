@@ -20,6 +20,7 @@ import {
     WorkerResultPayload,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, getOkbAddress, normalizeAddressForSearch } from './utils/dataUtils';
+import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -41,6 +42,7 @@ const App: React.FC = () => {
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [activeAddresses, setActiveAddresses] = useState<Set<string>>(new Set());
+    const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
@@ -77,6 +79,26 @@ const App: React.FC = () => {
             setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 5000);
     }, []);
+
+    // Fetch conflict zones on initial load
+    useEffect(() => {
+        const fetchConflictZones = async () => {
+            try {
+                const response = await fetch('/api/get-conflict-zones');
+                if (!response.ok) {
+                    throw new Error('Не удалось загрузить данные о зонах конфликта.');
+                }
+                const data: FeatureCollection = await response.json();
+                setConflictZones(data);
+                addNotification('Слой с зонами повышенной опасности успешно загружен.', 'info');
+            } catch (error) {
+                console.error(error);
+                addNotification((error as Error).message, 'error');
+            }
+        };
+
+        fetchConflictZones();
+    }, [addNotification]);
 
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
@@ -165,6 +187,7 @@ const App: React.FC = () => {
                             selectedRegions={filters.region} 
                             potentialClients={potentialClients}
                             activeClients={activeClients}
+                            conflictZones={conflictZones}
                         />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
