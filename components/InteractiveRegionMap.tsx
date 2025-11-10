@@ -170,6 +170,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
             mapInstance.current = map;
+            
+            // Create a dedicated pane for markers with a high z-index
+            map.createPane('markerPane');
+            const markerPane = map.getPane('markerPane');
+            if (markerPane) {
+                markerPane.style.zIndex = '650';
+            }
+
 
             const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
@@ -236,12 +244,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     findValueInRow(tt, ['контакты'])
                 );
                 const marker = L.circleMarker([tt.lat, tt.lon], {
+                    pane: 'markerPane', // Render in the dedicated marker pane
                     fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
-        map.addLayer(potentialClientMarkersLayer.current);
+        potentialClientMarkersLayer.current.addTo(map);
         layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         
         // --- Active Clients (from sales file, green markers) ---
@@ -253,11 +262,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClients.forEach(tt => {
             const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
             const marker = L.circleMarker([tt.lat, tt.lon], {
+                pane: 'markerPane', // Render in the dedicated marker pane
                 fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
             }).bindPopup(popupContent);
             activeClientMarkersLayer.current?.addLayer(marker);
         });
-        map.addLayer(activeClientMarkersLayer.current);
+        activeClientMarkersLayer.current.addTo(map);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
         
     }, [potentialClients, activeClients]);
@@ -292,6 +302,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 const hoverRadius = isCountryCapital ? 10 : 8;
                 
                 const options: L.CircleMarkerOptions = {
+                    pane: 'markerPane', // Render in the dedicated marker pane
                     radius,
                     weight: 1,
                     opacity: 1,
@@ -321,12 +332,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
 
         if (capitalsLayer.current) {
-            map.addLayer(capitalsLayer.current);
+            capitalsLayer.current.addTo(map);
             layerControl.current.addOverlay(capitalsLayer.current, "Столицы и страны");
         }
 
         if (urbanCentersLayer.current) {
-            map.addLayer(urbanCentersLayer.current);
+            urbanCentersLayer.current.addTo(map);
             layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
         }
 
