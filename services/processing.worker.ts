@@ -1,10 +1,9 @@
 import * as xlsx from 'xlsx';
-// FIX: Changed to a namespace import to correctly access both the `parse` function and the `ParseMeta` type from papaparse.
 import * as Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddressForSearch } from '../utils/dataUtils';
+import { normalizeAddressForSearch, levenshteinDistance } from '../utils/dataUtils';
 import { getCoordinatesFromAddress, delay } from './geoService';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -18,6 +17,7 @@ type CoordsCache = Map<string, { lat: number; lon: number } | null>;
  * @returns The found address string or null.
  */
 const findAddressInRow = (row: { [key: string]: any }): string | null => {
+    if (!row) return null;
     const rowKeys = Object.keys(row);
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
@@ -58,39 +58,24 @@ const getAddressInfoForRow = async (row: { [key: string]: any }, addressCache: M
 };
 
 /**
- * Pre-processes OKB data into two Maps for efficient lookups: by region and by normalized address.
+ * Pre-processes OKB data into an array with normalized addresses for efficient fuzzy matching.
  * @param okbData - The raw OKB data array.
- * @returns An object containing both maps.
+ * @returns An array of OKB rows, each with an added `normalizedAddress` property.
  */
-const prepareOkbData = (okbData: OkbDataRow[]): { okbByRegion: Map<string, OkbDataRow[]>, okbByAddress: Map<string, OkbDataRow> } => {
-    const okbByRegion = new Map<string, OkbDataRow[]>();
-    const okbByAddress = new Map<string, OkbDataRow>();
-    if (!okbData) return { okbByRegion, okbByAddress };
-
-    for (const row of okbData) {
-        // Populate map by region
-        const regionKey = findValueInRow(row, ['регион'])
-        const region = standardizeRegion(regionKey);
-        if (region && region !== 'Регион не определен') {
-            if (!okbByRegion.has(region)) {
-                okbByRegion.set(region, []);
-            }
-            okbByRegion.get(region)!.push(row);
-        }
-        
-        // Populate map by normalized address
+const prepareOkbForMatching = (okbData: OkbDataRow[]): (OkbDataRow & { normalizedAddress: string })[] => {
+    if (!okbData) return [];
+    return okbData.map(row => {
         const address = findAddressInRow(row);
-        if (address) {
-            const normalized = normalizeAddressForSearch(address);
-            if (normalized && !okbByAddress.has(normalized)) {
-                okbByAddress.set(normalized, row);
-            }
-        }
-    }
-    return { okbByRegion, okbByAddress };
+        return {
+            ...row,
+            normalizedAddress: normalizeAddressForSearch(address)
+        };
+    }).filter(row => row.normalizedAddress); // Filter out rows without a valid address
 };
 
+
 const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+    if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
         // Use trim() to handle potential whitespace in header names
@@ -108,9 +93,17 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
 function findPotentialClients(
     region: string,
     existingClients: Set<string>,
-    okbByRegion: Map<string, OkbDataRow[]>
+    okbData: OkbDataRow[]
 ): PotentialClient[] {
-    const potentialForRegion = okbByRegion.get(region) || [];
+    if (!okbData) return [];
+    
+    // First, derive the OKB entries for the specific region.
+    const potentialForRegion = okbData.filter(row => {
+        const regionKey = findValueInRow(row, ['регион']);
+        const standardized = standardizeRegion(regionKey);
+        return standardized === region;
+    });
+    
     if (potentialForRegion.length === 0) return [];
 
     const potential: PotentialClient[] = [];
@@ -137,78 +130,28 @@ function findPotentialClients(
 
 
 /**
- * Processes the final aggregated data to calculate growth metrics and find potential clients.
- */
-const finalizeProcessing = async (
-    aggregatedData: AggregationMap,
-    okbByRegion: Map<string, OkbDataRow[]>,
-    hasPotentialColumn: boolean,
-    postMessage: PostMessageFn
-): Promise<AggregatedDataRow[]> => {
-    
-    postMessage({ type: 'progress', payload: { percentage: 90, message: 'Расчет потенциала и поиск клиентов...' } });
-    
-    const finalData: AggregatedDataRow[] = [];
-    const aggregatedValues = Object.values(aggregatedData);
-
-    for (const item of aggregatedValues) {
-        let potential = item.potential;
-        if (!hasPotentialColumn) {
-            potential = item.fact * 1.15; 
-        } else if (potential < item.fact) {
-            potential = item.fact; 
-        }
-        
-        const growthPotential = Math.max(0, potential - item.fact);
-        const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
-        
-        const potentialClients = findPotentialClients(item.region, item.clients, okbByRegion);
-        
-        finalData.push({
-            ...item,
-            potential,
-            growthPotential,
-            growthPercentage,
-            potentialClients,
-            clients: Array.from(item.clients) 
-        });
-    }
-    return finalData;
-};
-
-/**
  * A multi-stage algorithm to reliably find the header for the client's name.
- * It prioritizes specific headers, then looks for "clean" generic headers,
- * and finally falls back to the first available generic header to prevent failure.
  * @param headers An array of header strings from the file.
  * @returns The determined client name header string, or undefined if none found.
  */
 const findClientNameHeader = (headers: string[]): string | undefined => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
-    // 1. Highest priority: specific, unambiguous terms.
     const priorityTerms = ['наименование клиента', 'контрагент', 'клиент'];
     for (const term of priorityTerms) {
         const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
-        if (foundIndex !== -1) {
-            return headers[foundIndex];
-        }
+        if (foundIndex !== -1) return headers[foundIndex];
     }
     
-    // 2. Medium priority: find a 'наименование' column, but exclude product-related ones.
     const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
-
     if (nameColumns.length > 0) {
         const cleanNameColumn = nameColumns.find(h => {
             const lH = h.toLowerCase().trim();
             return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
         });
-        
-        // If a "clean" one is found, use it. Otherwise, fall back to the first one found.
         return cleanNameColumn || nameColumns[0];
     }
     
-    // If no 'наименование' column, return undefined.
     return undefined;
 };
 
@@ -218,8 +161,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
     try {
-        const { okbByRegion, okbByAddress } = prepareOkbData(okbData);
-        const commonArgs = { okbByRegion, okbByAddress, postMessage };
+        const commonArgs = { okbData, postMessage };
         if (file.name.toLowerCase().endsWith('.csv')) {
             await processCsv(file, commonArgs);
         } else {
@@ -232,12 +174,11 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
 };
 
 interface CommonProcessArgs {
-    okbByRegion: Map<string, OkbDataRow[]>;
-    okbByAddress: Map<string, OkbDataRow>;
+    okbData: OkbDataRow[];
     postMessage: PostMessageFn;
 }
 
-async function processFile(jsonData: any[], headers: string[], { okbByRegion, okbByAddress, postMessage }: CommonProcessArgs) {
+async function processFile(jsonData: any[], headers: string[], { okbData, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
@@ -249,60 +190,90 @@ async function processFile(jsonData: any[], headers: string[], { okbByRegion, ok
     const coordsCache: CoordsCache = new Map();
     const plottableActiveClients: MapPoint[] = [];
 
-    // --- Geocoding Pre-computation ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ адресов...' } });
-    const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
+    // --- STAGE 1: INTELLIGENT FUZZY MATCHING AGAINST OKB ---
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Подготовка данных для сопоставления...' } });
+    const okbForMatching = prepareOkbForMatching(okbData);
     const addressesToGeocodeViaOsm = new Set<string>();
+    const salesAddressesCache = new Map<string, { lat: number; lon: number } | 'needs_geocoding' | null>();
 
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} адресов. Сверка с ОКБ...` } });
-    for (const address of uniqueAddresses) {
-        const normalized = normalizeAddressForSearch(address);
-        const okbMatch = okbByAddress.get(normalized);
+    postMessage({ type: 'progress', payload: { percentage: 10, message: 'Этап 1: Быстрое сопоставление с ОКБ...' } });
 
-        if (okbMatch) {
-            // Address found in OKB. Use its coordinates if they exist.
-            if (okbMatch.lat && okbMatch.lon) {
-                coordsCache.set(address, { lat: okbMatch.lat, lon: okbMatch.lon });
+    for (let i = 0; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const address = findAddressInRow(row);
+        if (!address) continue;
+        
+        // Check cache first to avoid re-processing the same address from sales file
+        if (salesAddressesCache.has(address)) continue;
+
+        const normalizedSalesAddress = normalizeAddressForSearch(address);
+        if (!normalizedSalesAddress) {
+            salesAddressesCache.set(address, null); // Mark as invalid
+            continue;
+        }
+
+        let bestMatch: OkbDataRow | null = null;
+        let bestScore = 0.85; // Confidence threshold
+
+        for (const okbEntry of okbForMatching) {
+            const distance = levenshteinDistance(normalizedSalesAddress, okbEntry.normalizedAddress);
+            const score = 1 - distance / Math.max(normalizedSalesAddress.length, okbEntry.normalizedAddress.length);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = okbEntry;
             }
-            // If the OKB match has no coordinates, we do NOT fall back to OSM to ensure high performance.
-            // This address will simply not be plotted.
+        }
+
+        if (bestMatch && bestMatch.lat && bestMatch.lon) {
+            salesAddressesCache.set(address, { lat: bestMatch.lat, lon: bestMatch.lon });
         } else {
-            // Address is not in OKB at all. Add it to the queue for slow geocoding via OSM.
-            addressesToGeocodeViaOsm.add(address);
+            salesAddressesCache.set(address, 'needs_geocoding');
+            addressesToGeocodeViaOsm.add(address); // Add to queue for slow geocoding
+        }
+
+        if (i % 1000 === 0) {
+            const percentage = 10 + Math.round((i / jsonData.length) * 40);
+            postMessage({ type: 'progress', payload: { percentage, message: `Сопоставление с ОКБ: ${i.toLocaleString('ru-RU')} строк` } });
         }
     }
 
+    // --- STAGE 2: SELECTIVE GECODING FOR NEW CLIENTS ONLY ---
     const osmList = Array.from(addressesToGeocodeViaOsm);
     if (osmList.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 20, message: `Геокодирование ${osmList.length} новых адресов (OSM)...` } });
+        postMessage({ type: 'progress', payload: { percentage: 50, message: `Этап 2: Геокодирование ${osmList.length} новых адресов...` } });
         for (let i = 0; i < osmList.length; i++) {
             const address = osmList[i];
             await delay(1100); // Respect Nominatim's usage policy
             const coords = await getCoordinatesFromAddress(address);
             coordsCache.set(address, coords);
-            const percentage = 20 + Math.round(((i + 1) / osmList.length) * 40);
+            const percentage = 50 + Math.round(((i + 1) / osmList.length) * 20);
             postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${osmList.length}` } });
         }
     }
     
-    // --- Aggregation Pass ---
-    postMessage({ type: 'progress', payload: { percentage: 60, message: 'Агрегация данных...' } });
+    // --- STAGE 3: DATA AGGREGATION & PLOTTING ---
+    postMessage({ type: 'progress', payload: { percentage: 70, message: 'Этап 3: Агрегация данных и подготовка карты...' } });
+    
+    const plottedAddresses = new Set<string>(); // To avoid duplicate points on the map for the same address
+
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
-        const parsedAddress = await getAddressInfoForRow(row, addressCache);
-
-        const region = parsedAddress.region;
-        const brand = findValueInRow(row, ['торговая марка']);
-        const rm = findValueInRow(row, ['рм']);
-        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
-        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
-        const clientDisplayValue = clientAddress || clientName;
+        // --- Plotting Logic ---
+        if (clientAddress && !plottedAddresses.has(clientAddress)) {
+            let coords: { lat: number; lon: number } | null = null;
+            const cachedResult = salesAddressesCache.get(clientAddress);
 
-        if (clientAddress && coordsCache.has(clientAddress)) {
-            const coords = coordsCache.get(clientAddress);
+            if (cachedResult && cachedResult !== 'needs_geocoding') {
+                coords = cachedResult;
+            } else if (cachedResult === 'needs_geocoding') {
+                coords = coordsCache.get(clientAddress) ?? null;
+            }
+
             if (coords) {
+                const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
                  plottableActiveClients.push({
                     key: `${coords.lat}-${coords.lon}-${i}`,
                     lat: coords.lat,
@@ -313,8 +284,19 @@ async function processFile(jsonData: any[], headers: string[], { okbByRegion, ok
                     type: findValueInRow(row, ['канал продаж']),
                     contacts: findValueInRow(row, ['контакты']),
                 });
+                plottedAddresses.add(clientAddress);
             }
         }
+
+        // --- Aggregation Logic ---
+        const parsedAddress = await getAddressInfoForRow(row, addressCache);
+        const region = parsedAddress.region;
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        
+        const clientNameForGroup = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+        const clientDisplayValue = clientAddress || clientNameForGroup;
 
         if (isNaN(weight) || region === 'Регион не определен') continue;
 
@@ -335,14 +317,40 @@ async function processFile(jsonData: any[], headers: string[], { okbByRegion, ok
         }
 
         if(i % 500 === 0) {
-            const percentage = 60 + Math.round((i / jsonData.length) * 30);
-            postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i.toLocaleString('ru-RU')} строк...` } });
+            const percentage = 70 + Math.round((i / jsonData.length) * 20);
+            postMessage({ type: 'progress', payload: { percentage, message: `Агрегация: ${i.toLocaleString('ru-RU')} строк...` } });
         }
     }
     
-    const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
-    
-    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
+    // --- STAGE 4: FINAL CALCULATIONS ---
+    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
+    const finalData: AggregatedDataRow[] = [];
+    const aggregatedValues = Object.values(aggregatedData);
+
+    for (const item of aggregatedValues) {
+        let potential = item.potential;
+        if (!hasPotentialColumn) {
+            potential = item.fact * 1.15; 
+        } else if (potential < item.fact) {
+            potential = item.fact; 
+        }
+        
+        const growthPotential = Math.max(0, potential - item.fact);
+        const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
+        
+        const potentialClients = findPotentialClients(item.region, item.clients, okbData);
+        
+        finalData.push({
+            ...item,
+            potential,
+            growthPotential,
+            growthPercentage,
+            potentialClients,
+            clients: Array.from(item.clients) 
+        });
+    }
+
+    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершено!' } });
     const resultPayload: WorkerResultPayload = { 
         aggregatedData: finalData, 
         plottableActiveClients 
@@ -367,8 +375,6 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
 async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
     
-    // Fix for build errors: Use a Promise-based wrapper for Papa.parse to ensure correct async handling and type inference.
-    // FIX: Corrected Papa.Meta to Papa.ParseMeta to align with papaparse type definitions.
     const parsePromise = new Promise<{ data: any[], meta: Papa.ParseMeta }>((resolve, reject) => {
         Papa.parse(file, {
             header: true,
@@ -376,7 +382,6 @@ async function processCsv(file: File, args: CommonProcessArgs) {
             complete: (results) => {
                 if (results.errors.length > 0) {
                     console.warn('CSV parsing errors:', results.errors);
-                    // Decide if errors are critical. For now, we proceed.
                 }
                 resolve({ data: results.data, meta: results.meta });
             },
