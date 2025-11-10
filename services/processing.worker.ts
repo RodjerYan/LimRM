@@ -1,8 +1,7 @@
 import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { callGeminiForRegion } from './geminiService';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddressForSearch } from '../utils/dataUtils';
 
@@ -19,17 +18,14 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
     const rowKeys = Object.keys(row);
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
-    // 1. Prioritized exact match (case-insensitive)
     for (const pKey of prioritizedKeys) {
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase() === pKey);
         if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
 
-    // 2. Substring match for 'адрес'
     const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
-    // 3. Fallback to 'город' or 'регион'
     const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
@@ -37,57 +33,25 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
 };
 
 /**
- * A multi-stage function to determine the address and region for a given row,
- * with fallbacks including an AI call for maximum reliability.
+ * Determines the address and region for a given row using local parsing.
  * @param row The data row from the file.
  * @param addressCache A cache to store results for identical addresses.
  * @returns A promise that resolves to the parsed address information.
  */
 const getAddressInfoForRow = async (row: { [key: string]: any }, addressCache: Map<string, ParsedAddress>): Promise<ParsedAddress> => {
-    // Step 1: Try the primary, most reliable address column first.
     const primaryAddress = findAddressInRow(row);
-    if (primaryAddress) {
-        if (addressCache.has(primaryAddress)) return addressCache.get(primaryAddress)!;
-        const parsed = await parseRussianAddress(primaryAddress);
-        if (parsed.region !== 'Регион не определен') {
-            addressCache.set(primaryAddress, parsed);
-            return parsed;
-        }
-    }
-
-    // Step 2: If primary parsing fails, build a composite string from multiple potential columns.
-    const rowKeys = Object.keys(row);
-    const findKey = (searchTerms: string[]) => rowKeys.find(k => searchTerms.some(term => k.toLowerCase().includes(term)));
-    
-    const compositeAddress = [
-        row[findKey(['адрес'])!],
-        row[findKey(['город'])!],
-        row[findKey(['регион'])!],
-        row[findKey(['дистрибьютор'])!],
-        row[findKey(['клиент', 'наименование'])!],
-    ].filter(Boolean).join(', ');
-
-    if (!compositeAddress) {
+    if (!primaryAddress) {
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
     
-    if (addressCache.has(compositeAddress)) return addressCache.get(compositeAddress)!;
-    
-    let parsedAddress = await parseRussianAddress(compositeAddress);
-
-    // Step 3: As a last resort, if local parsing of the composite string still fails, use Gemini AI.
-    if (parsedAddress.region === 'Регион не определен') {
-        const geminiRegion = await callGeminiForRegion(compositeAddress);
-        if (geminiRegion && geminiRegion !== 'Регион не определен') {
-            parsedAddress.region = geminiRegion;
-        }
+    if (addressCache.has(primaryAddress)) {
+        return addressCache.get(primaryAddress)!;
     }
 
-    // Cache the result to avoid re-parsing identical composite strings.
-    addressCache.set(compositeAddress, parsedAddress);
-    return parsedAddress;
+    const parsed = await parseRussianAddress(primaryAddress);
+    addressCache.set(primaryAddress, parsed);
+    return parsed;
 };
-
 
 /**
  * Pre-processes OKB data into a Map for efficient lookups by region.
@@ -98,8 +62,9 @@ const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
     const okbByRegion = new Map<string, OkbDataRow[]>();
     if (!okbData) return okbByRegion;
     for (const row of okbData) {
-        const region = standardizeRegion(row['Регион'] || '');
-        if (region) {
+        const regionKey = findValueInRow(row, ['регион'])
+        const region = standardizeRegion(regionKey);
+        if (region && region !== 'Регион не определен') {
             if (!okbByRegion.has(region)) {
                 okbByRegion.set(region, []);
             }
@@ -109,12 +74,19 @@ const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
     return okbByRegion;
 };
 
+const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
+    const rowKeys = Object.keys(row);
+    for (const keyword of keywords) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().includes(keyword));
+        if (foundKey && row[foundKey]) {
+            return String(row[foundKey]);
+        }
+    }
+    return '';
+};
+
 /**
  * Finds potential clients from the OKB data for a given region, excluding existing clients.
- * @param region - The normalized region to search in.
- * @param existingClients - A Set of addresses of clients already processed from the main file.
- * @param okbByRegion - The pre-processed OKB data Map.
- * @returns An array of potential clients, limited to 100 per group.
  */
 function findPotentialClients(
     region: string,
@@ -127,14 +99,21 @@ function findPotentialClients(
     const potential: PotentialClient[] = [];
     for (const okbRow of potentialForRegion) {
         const okbAddress = findAddressInRow(okbRow) || '';
-        if (okbAddress && !existingClients.has(okbAddress)) {
-            potential.push({
-                name: okbRow['Наименование'] || 'Без названия',
+        const normalizedOkbAddress = normalizeAddressForSearch(okbAddress);
+        
+        if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
+            const client: PotentialClient = {
+                name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
                 address: okbAddress,
-                type: okbRow['Вид деятельности'] || 'н/д',
-            });
+                type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
+            };
+            if(okbRow.lat && okbRow.lon) {
+                client.lat = okbRow.lat;
+                client.lon = okbRow.lon;
+            }
+            potential.push(client);
         }
-        if (potential.length >= 100) break; // Limit results for performance
+        if (potential.length >= 200) break; 
     }
     return potential;
 }
@@ -142,17 +121,13 @@ function findPotentialClients(
 
 /**
  * Processes the final aggregated data to calculate growth metrics and find potential clients.
- * @param aggregatedData - The map of aggregated data.
- * @param okbByRegion - The pre-processed OKB data.
- * @param hasPotentialColumn - Flag indicating if the source file had a 'Потенциал' column.
- * @param postMessage - The function to send progress messages back to the main thread.
  */
-const finalizeProcessing = (
+const finalizeProcessing = async (
     aggregatedData: AggregationMap,
     okbByRegion: Map<string, OkbDataRow[]>,
     hasPotentialColumn: boolean,
     postMessage: PostMessageFn
-): AggregatedDataRow[] => {
+): Promise<AggregatedDataRow[]> => {
     
     postMessage({ type: 'progress', payload: { percentage: 85, message: 'Расчет потенциала и поиск клиентов...' } });
     
@@ -162,9 +137,9 @@ const finalizeProcessing = (
     for (const item of aggregatedValues) {
         let potential = item.potential;
         if (!hasPotentialColumn) {
-            potential = item.fact * 1.15; // Fallback potential calculation
+            potential = item.fact * 1.15; 
         } else if (potential < item.fact) {
-            potential = item.fact; // Potential cannot be less than fact
+            potential = item.fact; 
         }
         
         const growthPotential = Math.max(0, potential - item.fact);
@@ -178,24 +153,19 @@ const finalizeProcessing = (
             growthPotential,
             growthPercentage,
             potentialClients,
-            clients: Array.from(item.clients)
+            clients: Array.from(item.clients) 
         });
     }
     return finalData;
 };
 
 
-/**
- * Main message handler for the worker.
- * Determines the file type and calls the appropriate processor.
- */
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
     const { file, okbData } = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
     try {
         const okbByRegion = prepareOkbData(okbData);
-
         if (file.name.toLowerCase().endsWith('.csv')) {
             await processCsv(file, okbByRegion, postMessage);
         } else {
@@ -207,9 +177,7 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
     }
 };
 
-/**
- * Processes XLSX/XLS files using batching for improved performance.
- */
+
 async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn) {
     postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
     const data = await file.arrayBuffer();
@@ -221,173 +189,149 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
     
     const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
-    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase() === 'потенциал');
-    if (!headers.some(h => (h || '').toLowerCase() === 'вес, кг')) throw new Error('Файл должен содержать колонку "Вес, кг".');
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
     const activeAddresses = new Set<string>();
-    const BATCH_SIZE = 500;
     
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Параллельный парсинг адресов...' } });
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ данных...' } });
 
-    for (let i = 0; i < jsonData.length; i += BATCH_SIZE) {
-        const batch = jsonData.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const parsedAddress = await getAddressInfoForRow(row, addressCache);
+
+        const region = parsedAddress.region;
+        const brandKey = Object.keys(row).find(k => k.toLowerCase().includes('торговая марка')) || 'Торговая марка';
+        const brand = row[brandKey] || 'Неизвестный бренд';
+        const rmKey = Object.keys(row).find(k => k.toLowerCase().includes('рм')) || 'РМ';
+        const rm = row[rmKey] || 'Неизвестный РМ';
+        const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
+        const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
         
-        const addressParsingJobs = batch.map(async (row) => {
-            const parsedAddress = await getAddressInfoForRow(row, addressCache);
-            return { row, parsedAddress };
-        });
+        const clientNameKey = Object.keys(row).find(k => k.toLowerCase().includes('наименование') || k.toLowerCase().includes('клиент')) || 'Наименование';
+        const clientName = row[clientNameKey] || 'Без названия';
+        const clientAddress = findAddressInRow(row) || `${clientName} (строка #${i + 2})`;
+        
+        if (clientAddress) {
+            activeAddresses.add(normalizeAddressForSearch(clientAddress));
+        }
 
-        const resolvedAddresses = await Promise.all(addressParsingJobs);
+        if (isNaN(fact) || region === 'Регион не определен') continue;
 
-        resolvedAddresses.forEach(({ row, parsedAddress }) => {
-            if (!parsedAddress) return;
+        const key = `${region}-${brand}-${rm}`.toLowerCase();
+        if (!aggregatedData[key]) {
+            aggregatedData[key] = {
+                key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
+                region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                clients: new Set<string>(),
+            };
+        }
+        aggregatedData[key].fact += fact;
+        aggregatedData[key].clients.add(clientName);
 
-            const region = parsedAddress.region;
-            const brand = row['Торговая марка'] || 'Неизвестный бренд';
-            const rm = row['РМ'] || 'Неизвестный РМ';
-            const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
-            const clientAddress = findAddressInRow(row) || `Строка #${jsonData.indexOf(row) + 2}`;
-            
-            if (clientAddress) {
-                activeAddresses.add(normalizeAddressForSearch(clientAddress));
-            }
+        if (hasPotentialColumn) {
+            const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
+            const potential = parseFloat(String(row[potentialKey] || '0').replace(/\s/g, '').replace(',', '.'));
+            if (!isNaN(potential)) aggregatedData[key].potential += potential;
+        }
 
-            if (isNaN(fact) || region === 'Регион не определен') return;
-
-            const key = `${region}-${brand}-${rm}`.toLowerCase();
-            if (!aggregatedData[key]) {
-                aggregatedData[key] = {
-                    key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
-                    region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                    clients: new Set<string>(),
-                };
-            }
-            aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(clientAddress);
-
-            if (hasPotentialColumn) {
-                const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
-                if (!isNaN(potential)) aggregatedData[key].potential += potential;
-            }
-        });
-
-        const percentage = 5 + Math.round(((i + batch.length) / jsonData.length) * 80);
-        postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i + batch.length} из ${jsonData.length} строк...` } });
+        if(i % 100 === 0) {
+            const percentage = 5 + Math.round((i / jsonData.length) * 80);
+            postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i} из ${jsonData.length} строк...` } });
+        }
     }
     
-    const finalData = finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
+    const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
     
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-    postMessage({ type: 'result', payload: { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) } });
+    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) };
+    postMessage({ type: 'result', payload: resultPayload });
 }
 
-/**
- * Processes CSV files using a streaming parser for high performance and low memory usage.
- */
+
 async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn) {
     postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
 
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
     const activeAddresses = new Set<string>();
-    const BATCH_SIZE = 1000;
-    let rowBatch: any[] = [];
-    let processingPromises: Promise<void>[] = [];
     let hasPotentialColumn = false;
-    let headersChecked = false;
-    let rowCounter = 0;
-
-    const processAndAggregateBatch = async (batch: any[]) => {
-        const addressParsingJobs = batch.map(async (row) => {
-            const parsedAddress = await getAddressInfoForRow(row, addressCache);
-            return { row, parsedAddress };
-        });
-
-        const resolvedAddresses = await Promise.all(addressParsingJobs);
-
-        resolvedAddresses.forEach(({ row, parsedAddress }) => {
-            if (!parsedAddress) return;
-
-            const region = parsedAddress.region;
-            const brand = row['Торговая марка'] || 'Неизвестный бренд';
-            const rm = row['РМ'] || 'Неизвестный РМ';
-            const fact = parseFloat(String(row['Вес, кг'] || '0').replace(/\s/g, '').replace(',', '.'));
-            const clientAddress = findAddressInRow(row) || `Строка #${row._originalIndex}`;
-
-            if(clientAddress) {
-                activeAddresses.add(normalizeAddressForSearch(clientAddress));
-            }
-
-            if (isNaN(fact) || region === 'Регион не определен') return;
-
-            const key = `${region}-${brand}-${rm}`.toLowerCase();
-            if (!aggregatedData[key]) {
-                aggregatedData[key] = {
-                    key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
-                    region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                    clients: new Set<string>(),
-                };
-            }
-            aggregatedData[key].fact += fact;
-            aggregatedData[key].clients.add(clientAddress);
-            
-            if (hasPotentialColumn) {
-                const potential = parseFloat(String(row['Потенциал'] || '0').replace(/\s/g, '').replace(',', '.'));
-                if (!isNaN(potential)) aggregatedData[key].potential += potential;
-            }
-        });
-    };
 
     return new Promise<void>((resolve, reject) => {
+        let rowCounter = 0;
         Papa.parse(file, {
             header: true,
             skipEmptyLines: true,
-            worker: true,
-            step: (results) => {
-                rowCounter++;
-                if (!headersChecked && results.meta.fields) {
-                    hasPotentialColumn = results.meta.fields.some(h => (h || '').toLowerCase() === 'потенциал');
-                    if (!results.meta.fields.some(h => (h || '').toLowerCase() === 'вес, кг')) {
-                        reject(new Error('Файл должен содержать колонку "Вес, кг".'));
-                        // @ts-ignore - Abort parsing
-                        results.meta.aborted = true; 
+            worker: true, 
+            step: async (results, parser) => {
+                parser.pause();
+                try {
+                    const row = results.data as any;
+                     if(rowCounter === 0) {
+                        const headers = Object.keys(row);
+                        hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+                        if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) {
+                           throw new Error('Файл должен содержать колонку "Вес".');
+                        }
                     }
-                    headersChecked = true;
-                }
-                
-                const dataWithIndex = { ...results.data as object, _originalIndex: rowCounter + 1 };
-                rowBatch.push(dataWithIndex);
 
-                if (rowBatch.length >= BATCH_SIZE) {
-                    const batchToProcess = [...rowBatch];
-                    rowBatch = [];
-                    processingPromises.push(processAndAggregateBatch(batchToProcess));
-                }
-                
-                const percentage = Math.round((results.meta.cursor / file.size) * 85);
-                 if (rowCounter % BATCH_SIZE === 0) { // Update progress less frequently
-                    postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
+                    const parsedAddress = await getAddressInfoForRow(row, addressCache);
+                    const region = parsedAddress.region;
+
+                    const brandKey = Object.keys(row).find(k => k.toLowerCase().includes('торговая марка')) || 'Торговая марка';
+                    const brand = row[brandKey] || 'Неизвестный бренд';
+                    const rmKey = Object.keys(row).find(k => k.toLowerCase().includes('рм')) || 'РМ';
+                    const rm = row[rmKey] || 'Неизвестный РМ';
+                    const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
+                    const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
+                    
+                    const clientNameKey = Object.keys(row).find(k => k.toLowerCase().includes('наименование') || k.toLowerCase().includes('клиент')) || 'Наименование';
+                    const clientName = row[clientNameKey] || 'Без названия';
+                    const clientAddress = findAddressInRow(row) || `${clientName} (строка #${rowCounter + 2})`;
+                    
+                    if (clientAddress) {
+                        activeAddresses.add(normalizeAddressForSearch(clientAddress));
+                    }
+
+                    if (!isNaN(fact) && region !== 'Регион не определен') {
+                        const key = `${region}-${brand}-${rm}`.toLowerCase();
+                        if (!aggregatedData[key]) {
+                            aggregatedData[key] = {
+                                key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
+                                region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                                clients: new Set<string>(),
+                            };
+                        }
+                        aggregatedData[key].fact += fact;
+                        aggregatedData[key].clients.add(clientName);
+                        
+                        if (hasPotentialColumn) {
+                            const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
+                            const potential = parseFloat(String(row[potentialKey] || '0').replace(/\s/g, '').replace(',', '.'));
+                            if (!isNaN(potential)) aggregatedData[key].potential += potential;
+                        }
+                    }
+
+                    rowCounter++;
+                    if(rowCounter % 200 === 0) {
+                        const percentage = Math.round((results.meta.cursor / file.size) * 85);
+                        postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
+                    }
+                } catch(e) {
+                    parser.abort();
+                    reject(e);
+                } finally {
+                    parser.resume();
                 }
             },
             complete: async () => {
                 try {
-                    if (rowBatch.length > 0) {
-                        processingPromises.push(processAndAggregateBatch(rowBatch));
-                    }
-                    
-                    // Throttle promises to avoid overwhelming the system
-                    const CONCURRENCY_LIMIT = 4;
-                    for (let i = 0; i < processingPromises.length; i += CONCURRENCY_LIMIT) {
-                        const batch = processingPromises.slice(i, i + CONCURRENCY_LIMIT);
-                        await Promise.all(batch);
-                    }
-
-                    const finalData = finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
-                    
+                    const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
                     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-                    postMessage({ type: 'result', payload: { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) } });
+                    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) };
+                    postMessage({ type: 'result', payload: resultPayload });
                     resolve();
                 } catch (e) {
                     reject(e);

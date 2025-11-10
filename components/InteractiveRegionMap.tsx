@@ -341,7 +341,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
 
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
-            style: invisibleStyle,
+            style: { ...invisibleStyle, interactive: false },
             onEachFeature: (feature, layer) => {
                 layer.bindTooltip(feature.properties.name, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
