@@ -26,7 +26,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
 
     return (
         <div 
-            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4 animate-fade-in"
+            className="fixed inset-0 bg-black/80 z-50 flex justify-center items-center p-4 animate-fade-in"
             onClick={onClose}
             role="dialog"
             aria-modal="true"

@@ -149,7 +149,7 @@ const App: React.FC = () => {
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
-            <main className="max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6">
+            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
                 <header>
                     <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                     <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
@@ -194,20 +194,19 @@ const App: React.FC = () => {
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>
                 </div>
-
-                <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
-                    {notifications.map(n => (
-                        <Notification key={n.id} message={n.message} type={n.type} />
-                    ))}
-                </div>
-
-                <DetailsModal 
-                    isOpen={isModalOpen} 
-                    onClose={() => setIsModalOpen(false)}
-                    data={selectedRow}
-                    okbStatus={okbStatus}
-                />
             </main>
+            <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
+                {notifications.map(n => (
+                    <Notification key={n.id} message={n.message} type={n.type} />
+                ))}
+            </div>
+
+            <DetailsModal 
+                isOpen={isModalOpen} 
+                onClose={() => setIsModalOpen(false)}
+                data={selectedRow}
+                okbStatus={okbStatus}
+            />
         </div>
     );
 };
