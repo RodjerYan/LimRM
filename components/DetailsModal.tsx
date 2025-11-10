@@ -88,7 +88,7 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     return (
         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col">
             <h4 className="font-bold text-lg mb-2 text-accent">Рекомендации от Gemini</h4>
-            <div className="flex-grow flex flex-col justify-center">
+            <div className="flex-grow min-h-0 overflow-y-auto custom-scrollbar pr-2">
                 {isLoading && !insight && (
                     <div className="flex items-center justify-center h-full text-gray-400">
                         <LoaderIcon />
