@@ -210,8 +210,17 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
         const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
         const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
         
-        const clientNameKey = Object.keys(row).find(k => k.toLowerCase().includes('наименование') || k.toLowerCase().includes('клиент')) || 'Наименование';
-        const clientName = row[clientNameKey] || 'Без названия';
+        // Determine the best key for the client's name, prioritizing specific identifiers and avoiding product columns.
+        const clientNameKey = (
+            Object.keys(row).find(k => k.toLowerCase().includes('наименование клиента')) ||
+            Object.keys(row).find(k => k.toLowerCase().includes('контрагент')) ||
+            Object.keys(row).find(k => k.toLowerCase().includes('клиент')) ||
+            Object.keys(row).find(k => {
+                const lk = k.toLowerCase();
+                return lk.includes('наименование') && !lk.includes('номенклатур') && !lk.includes('товар') && !lk.includes('продук');
+            })
+        );
+        const clientName = (clientNameKey && row[clientNameKey]) ? String(row[clientNameKey]) : 'Без названия';
         const clientAddress = findAddressInRow(row) || `${clientName} (строка #${i + 2})`;
         
         if (clientAddress) {
@@ -287,8 +296,17 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                     const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
                     const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
                     
-                    const clientNameKey = Object.keys(row).find(k => k.toLowerCase().includes('наименование') || k.toLowerCase().includes('клиент')) || 'Наименование';
-                    const clientName = row[clientNameKey] || 'Без названия';
+                    // Determine the best key for the client's name, prioritizing specific identifiers and avoiding product columns.
+                    const clientNameKey = (
+                        Object.keys(row).find(k => k.toLowerCase().includes('наименование клиента')) ||
+                        Object.keys(row).find(k => k.toLowerCase().includes('контрагент')) ||
+                        Object.keys(row).find(k => k.toLowerCase().includes('клиент')) ||
+                        Object.keys(row).find(k => {
+                            const lk = k.toLowerCase();
+                            return lk.includes('наименование') && !lk.includes('номенклатур') && !lk.includes('товар') && !lk.includes('продук');
+                        })
+                    );
+                    const clientName = (clientNameKey && row[clientNameKey]) ? String(row[clientNameKey]) : 'Без названия';
                     const clientAddress = findAddressInRow(row) || `${clientName} (строка #${rowCounter + 2})`;
                     
                     if (clientAddress) {
