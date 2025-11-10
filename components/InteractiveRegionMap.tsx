@@ -436,4 +436,4 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     );
 };
 
-export default InteractiveRegionMap;
+export default InteractiveRegionMap;.
