@@ -3,12 +3,12 @@ import * as Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddressForSearch, levenshteinDistance } from '../utils/dataUtils';
+import { normalizeAddressForSearch } from '../utils/dataUtils';
 import { getCoordinatesFromAddress, delay } from './geoService';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
-type CoordsCache = Map<string, { lat: number; lon: number } | null>;
+type OkbAddressMap = Map<string, { lat: number; lon: number } | null>;
 
 /**
  * A robust helper function to find an address value within a data row.
@@ -58,19 +58,28 @@ const getAddressInfoForRow = async (row: { [key: string]: any }, addressCache: M
 };
 
 /**
- * Pre-processes OKB data into an array with normalized addresses for efficient fuzzy matching.
- * @param okbData - The raw OKB data array.
- * @returns An array of OKB rows, each with an added `normalizedAddress` property.
+ * Creates a fast lookup map (index) from the OKB data.
+ * @param okbData The raw OKB data.
+ * @returns A Map where keys are normalized addresses and values are coordinates.
  */
-const prepareOkbForMatching = (okbData: OkbDataRow[]): (OkbDataRow & { normalizedAddress: string })[] => {
-    if (!okbData) return [];
-    return okbData.map(row => {
+const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressMap => {
+    const addressMap: OkbAddressMap = new Map();
+    if (!okbData) return addressMap;
+
+    for (const row of okbData) {
         const address = findAddressInRow(row);
-        return {
-            ...row,
-            normalizedAddress: normalizeAddressForSearch(address)
-        };
-    }).filter(row => row.normalizedAddress); // Filter out rows without a valid address
+        if (address) {
+            const normalized = normalizeAddressForSearch(address);
+            if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
+                if (row.lat && row.lon) {
+                    addressMap.set(normalized, { lat: row.lat, lon: row.lon });
+                } else {
+                    addressMap.set(normalized, null); // Mark that address exists but has no coords
+                }
+            }
+        }
+    }
+    return addressMap;
 };
 
 
@@ -97,7 +106,6 @@ function findPotentialClients(
 ): PotentialClient[] {
     if (!okbData) return [];
     
-    // First, derive the OKB entries for the specific region.
     const potentialForRegion = okbData.filter(row => {
         const regionKey = findValueInRow(row, ['регион']);
         const standardized = standardizeRegion(regionKey);
@@ -187,73 +195,57 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
 
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
-    const coordsCache: CoordsCache = new Map();
     const plottableActiveClients: MapPoint[] = [];
 
-    // --- STAGE 1: INTELLIGENT FUZZY MATCHING AGAINST OKB ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Подготовка данных для сопоставления...' } });
-    const okbForMatching = prepareOkbForMatching(okbData);
-    const addressesToGeocodeViaOsm = new Set<string>();
-    const salesAddressesCache = new Map<string, { lat: number; lon: number } | 'needs_geocoding' | null>();
+    // --- STAGE 1: CREATE OKB INDEX (VERY FAST) ---
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация ОКБ для быстрого поиска...' } });
+    const okbAddressIndex = createOkbAddressIndex(okbData);
 
-    postMessage({ type: 'progress', payload: { percentage: 10, message: 'Этап 1: Быстрое сопоставление с ОКБ...' } });
+    // --- STAGE 2: FAST MATCHING & QUEUING FOR GEOCODING (FAST) ---
+    postMessage({ type: 'progress', payload: { percentage: 15, message: 'Этап 1: Сопоставление адресов...' } });
+    const uniqueSalesAddresses = [...new Set(jsonData.map(findAddressInRow).filter(Boolean) as string[])];
+    const coordsCache: Map<string, { lat: number, lon: number } | null> = new Map();
+    const addressesToGeocode = new Set<string>();
 
-    for (let i = 0; i < jsonData.length; i++) {
-        const row = jsonData[i];
-        const address = findAddressInRow(row);
-        if (!address) continue;
+    for (let i = 0; i < uniqueSalesAddresses.length; i++) {
+        const address = uniqueSalesAddresses[i];
+        const normalized = normalizeAddressForSearch(address);
         
-        // Check cache first to avoid re-processing the same address from sales file
-        if (salesAddressesCache.has(address)) continue;
-
-        const normalizedSalesAddress = normalizeAddressForSearch(address);
-        if (!normalizedSalesAddress) {
-            salesAddressesCache.set(address, null); // Mark as invalid
-            continue;
-        }
-
-        let bestMatch: OkbDataRow | null = null;
-        let bestScore = 0.85; // Confidence threshold
-
-        for (const okbEntry of okbForMatching) {
-            const distance = levenshteinDistance(normalizedSalesAddress, okbEntry.normalizedAddress);
-            const score = 1 - distance / Math.max(normalizedSalesAddress.length, okbEntry.normalizedAddress.length);
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = okbEntry;
+        if (okbAddressIndex.has(normalized)) {
+            const coords = okbAddressIndex.get(normalized);
+            // Only add if coords exist in OKB. If they don't, we respect that and don't geocode.
+            if (coords) {
+                coordsCache.set(address, coords);
             }
-        }
-
-        if (bestMatch && bestMatch.lat && bestMatch.lon) {
-            salesAddressesCache.set(address, { lat: bestMatch.lat, lon: bestMatch.lon });
         } else {
-            salesAddressesCache.set(address, 'needs_geocoding');
-            addressesToGeocodeViaOsm.add(address); // Add to queue for slow geocoding
+            // Address is not in OKB at all, queue it for external geocoding
+            addressesToGeocode.add(address);
         }
 
-        if (i % 1000 === 0) {
-            const percentage = 10 + Math.round((i / jsonData.length) * 40);
-            postMessage({ type: 'progress', payload: { percentage, message: `Сопоставление с ОКБ: ${i.toLocaleString('ru-RU')} строк` } });
+        if (i % 100 === 0) {
+            const percentage = 15 + Math.round((i / uniqueSalesAddresses.length) * 30);
+            postMessage({ type: 'progress', payload: { percentage, message: `Сопоставление: ${i} / ${uniqueSalesAddresses.length} адресов` } });
         }
     }
 
-    // --- STAGE 2: SELECTIVE GECODING FOR NEW CLIENTS ONLY ---
-    const osmList = Array.from(addressesToGeocodeViaOsm);
+    // --- STAGE 3: SELECTIVE GEOCODING (CAN BE SLOW, BUT ONLY FOR NEW CLIENTS) ---
+    const osmList = Array.from(addressesToGeocode);
     if (osmList.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 50, message: `Этап 2: Геокодирование ${osmList.length} новых адресов...` } });
+        postMessage({ type: 'progress', payload: { percentage: 45, message: `Этап 2: Геокодирование ${osmList.length} новых адресов...` } });
         for (let i = 0; i < osmList.length; i++) {
             const address = osmList[i];
             await delay(1100); // Respect Nominatim's usage policy
             const coords = await getCoordinatesFromAddress(address);
-            coordsCache.set(address, coords);
-            const percentage = 50 + Math.round(((i + 1) / osmList.length) * 20);
+            if (coords) {
+                coordsCache.set(address, coords);
+            }
+            const percentage = 45 + Math.round(((i + 1) / osmList.length) * 30);
             postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${osmList.length}` } });
         }
     }
     
-    // --- STAGE 3: DATA AGGREGATION & PLOTTING ---
-    postMessage({ type: 'progress', payload: { percentage: 70, message: 'Этап 3: Агрегация данных и подготовка карты...' } });
+    // --- STAGE 4: DATA AGGREGATION & PLOTTING (FAST) ---
+    postMessage({ type: 'progress', payload: { percentage: 75, message: 'Этап 3: Агрегация данных и подготовка карты...' } });
     
     const plottedAddresses = new Set<string>(); // To avoid duplicate points on the map for the same address
 
@@ -263,28 +255,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
-            let coords: { lat: number; lon: number } | null = null;
-            const cachedResult = salesAddressesCache.get(clientAddress);
-
-            if (cachedResult && cachedResult !== 'needs_geocoding') {
-                coords = cachedResult;
-            } else if (cachedResult === 'needs_geocoding') {
-                coords = coordsCache.get(clientAddress) ?? null;
-            }
-
-            if (coords) {
-                const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
-                 plottableActiveClients.push({
-                    key: `${coords.lat}-${coords.lon}-${i}`,
-                    lat: coords.lat,
-                    lon: coords.lon,
-                    status: 'match',
-                    name: clientName,
-                    address: clientAddress,
-                    type: findValueInRow(row, ['канал продаж']),
-                    contacts: findValueInRow(row, ['контакты']),
-                });
-                plottedAddresses.add(clientAddress);
+            if (coordsCache.has(clientAddress)) {
+                const coords = coordsCache.get(clientAddress);
+                 if (coords) {
+                    const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+                    plottableActiveClients.push({
+                        key: `${coords.lat}-${coords.lon}-${i}`,
+                        lat: coords.lat,
+                        lon: coords.lon,
+                        status: 'match',
+                        name: clientName,
+                        address: clientAddress,
+                        type: findValueInRow(row, ['канал продаж']),
+                        contacts: findValueInRow(row, ['контакты']),
+                    });
+                    plottedAddresses.add(clientAddress);
+                }
             }
         }
 
@@ -316,16 +302,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
-        if(i % 500 === 0) {
-            const percentage = 70 + Math.round((i / jsonData.length) * 20);
+        if(i % 5000 === 0) {
+            const percentage = 75 + Math.round((i / jsonData.length) * 20);
             postMessage({ type: 'progress', payload: { percentage, message: `Агрегация: ${i.toLocaleString('ru-RU')} строк...` } });
         }
     }
     
-    // --- STAGE 4: FINAL CALCULATIONS ---
+    // --- STAGE 5: FINAL CALCULATIONS (FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
+    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddressForSearch(findAddressInRow(row))));
 
     for (const item of aggregatedValues) {
         let potential = item.potential;
@@ -338,7 +325,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const growthPotential = Math.max(0, potential - item.fact);
         const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
         
-        const potentialClients = findPotentialClients(item.region, item.clients, okbData);
+        const potentialClients = findPotentialClients(item.region, existingClientsForPotentialSearch, okbData);
         
         finalData.push({
             ...item,
@@ -393,6 +380,9 @@ async function processCsv(file: File, args: CommonProcessArgs) {
 
     try {
         const { data: jsonData, meta } = await parsePromise;
+        if (!jsonData || jsonData.length === 0) {
+             throw new Error("CSV файл пуст или не удалось его прочитать.");
+        }
         const headers = meta.fields || Object.keys(jsonData[0] || {});
         await processFile(jsonData, headers, args);
     } catch (error) {

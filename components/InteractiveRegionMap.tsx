@@ -123,7 +123,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
 
-    const invisibleStyle = { weight: 1, opacity: 0.2, color: '#6366f1', fillOpacity: 0.05, interactive: false };
+    const invisibleStyle = { weight: 0, opacity: 0, fillOpacity: 0, interactive: true };
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
@@ -347,7 +347,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             onEachFeature: (feature, layer) => {
                 layer.bindTooltip(feature.properties.name, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
-                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle({ weight: 2, color: '#a78bfa', fillOpacity: 0.2 }); },
+                    // Remove mouseover to prevent visual clutter
+                    // mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle({ weight: 2, color: '#a78bfa', fillOpacity: 0.2 }); },
                     mouseout: (e) => { if (e.target !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(e.target); },
                     click: (e) => {
                         L.DomEvent.stop(e);
