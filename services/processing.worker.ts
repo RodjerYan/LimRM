@@ -159,6 +159,46 @@ const finalizeProcessing = async (
     return finalData;
 };
 
+/**
+ * A multi-stage algorithm to reliably find the header for the client's name.
+ * It prioritizes specific headers, then looks for "clean" generic headers,
+ * and finally falls back to the first available generic header to prevent failure.
+ * @param headers An array of header strings from the file.
+ * @returns The determined client name header string, or undefined if none found.
+ */
+const findClientNameHeader = (headers: string[]): string | undefined => {
+    const lowerHeaders = headers.map(h => h.toLowerCase());
+
+    // 1. Highest priority: specific, unambiguous terms.
+    const priorityTerms = ['наименование клиента', 'контрагент', 'клиент'];
+    for (const term of priorityTerms) {
+        const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
+        if (foundIndex !== -1) {
+            return headers[foundIndex];
+        }
+    }
+
+    // 2. Medium priority: find columns named 'наименование'.
+    const nameColumns = headers.filter(h => h.toLowerCase().includes('наименование'));
+    if (nameColumns.length === 0) {
+        return undefined; // No column with 'наименование' found.
+    }
+
+    // Try to find a "clean" name column that is NOT product-related.
+    const cleanNameColumn = nameColumns.find(h => {
+        const lH = h.toLowerCase();
+        return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
+    });
+
+    if (cleanNameColumn) {
+        return cleanNameColumn; // Found a good candidate.
+    }
+
+    // 3. Fallback: If all 'наименование' columns seemed product-related (or we couldn't tell),
+    // return the very first one we found. This is better than returning nothing and showing "Без названия".
+    return nameColumns[0];
+};
+
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
     const { file, okbData } = e.data;
@@ -192,6 +232,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     
+    const clientNameHeader = findClientNameHeader(headers);
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
     const activeAddresses = new Set<string>();
@@ -210,21 +251,16 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
         const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
         const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
         
-        // Determine the best key for the client's name, prioritizing specific identifiers and avoiding product columns.
-        const clientNameKey = (
-            Object.keys(row).find(k => k.toLowerCase().includes('наименование клиента')) ||
-            Object.keys(row).find(k => k.toLowerCase().includes('контрагент')) ||
-            Object.keys(row).find(k => k.toLowerCase().includes('клиент')) ||
-            Object.keys(row).find(k => {
-                const lk = k.toLowerCase();
-                return lk.includes('наименование') && !lk.includes('номенклатур') && !lk.includes('товар') && !lk.includes('продук');
-            })
-        );
-        const clientName = (clientNameKey && row[clientNameKey]) ? String(row[clientNameKey]) : 'Без названия';
-        const clientAddress = findAddressInRow(row) || `${clientName} (строка #${i + 2})`;
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+        const clientAddress = findAddressInRow(row);
         
-        if (clientAddress) {
-            activeAddresses.add(normalizeAddressForSearch(clientAddress));
+        // Use address for display list if available, otherwise fall back to name
+        const clientDisplayValue = clientAddress || clientName;
+
+        // Use address for matching, with a more robust fallback
+        const addressForMatching = clientAddress || `${clientName} (строка #${i + 2})`;
+        if (addressForMatching) {
+            activeAddresses.add(normalizeAddressForSearch(addressForMatching));
         }
 
         if (isNaN(fact) || region === 'Регион не определен') continue;
@@ -238,7 +274,7 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
             };
         }
         aggregatedData[key].fact += fact;
-        aggregatedData[key].clients.add(clientName);
+        aggregatedData[key].clients.add(clientDisplayValue);
 
         if (hasPotentialColumn) {
             const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
@@ -267,6 +303,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
     const addressCache = new Map<string, ParsedAddress>();
     const activeAddresses = new Set<string>();
     let hasPotentialColumn = false;
+    let clientNameHeader: string | undefined = undefined;
 
     return new Promise<void>((resolve, reject) => {
         let rowCounter = 0;
@@ -284,6 +321,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                         if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) {
                            throw new Error('Файл должен содержать колонку "Вес".');
                         }
+                        clientNameHeader = findClientNameHeader(headers);
                     }
 
                     const parsedAddress = await getAddressInfoForRow(row, addressCache);
@@ -296,21 +334,16 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                     const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
                     const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
                     
-                    // Determine the best key for the client's name, prioritizing specific identifiers and avoiding product columns.
-                    const clientNameKey = (
-                        Object.keys(row).find(k => k.toLowerCase().includes('наименование клиента')) ||
-                        Object.keys(row).find(k => k.toLowerCase().includes('контрагент')) ||
-                        Object.keys(row).find(k => k.toLowerCase().includes('клиент')) ||
-                        Object.keys(row).find(k => {
-                            const lk = k.toLowerCase();
-                            return lk.includes('наименование') && !lk.includes('номенклатур') && !lk.includes('товар') && !lk.includes('продук');
-                        })
-                    );
-                    const clientName = (clientNameKey && row[clientNameKey]) ? String(row[clientNameKey]) : 'Без названия';
-                    const clientAddress = findAddressInRow(row) || `${clientName} (строка #${rowCounter + 2})`;
-                    
-                    if (clientAddress) {
-                        activeAddresses.add(normalizeAddressForSearch(clientAddress));
+                    const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+                    const clientAddress = findAddressInRow(row);
+
+                    // Use address for display list if available, otherwise fall back to name
+                    const clientDisplayValue = clientAddress || clientName;
+
+                    // Use address for matching, with a more robust fallback
+                    const addressForMatching = clientAddress || `${clientName} (строка #${rowCounter + 2})`;
+                    if (addressForMatching) {
+                        activeAddresses.add(normalizeAddressForSearch(addressForMatching));
                     }
 
                     if (!isNaN(fact) && region !== 'Регион не определен') {
@@ -323,7 +356,7 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
                             };
                         }
                         aggregatedData[key].fact += fact;
-                        aggregatedData[key].clients.add(clientName);
+                        aggregatedData[key].clients.add(clientDisplayValue);
                         
                         if (hasPotentialColumn) {
                             const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
