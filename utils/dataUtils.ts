@@ -1,6 +1,3 @@
-// utils/dataUtils.ts
-
-// FIX: This file's placeholder content was causing multiple build errors. This new implementation provides the necessary data utility functions required by other components, such as App.tsx and the processing worker. It includes functions for filtering data, extracting filter options, calculating summary metrics, and normalizing addresses for consistent matching.
 import {
   AggregatedDataRow,
   FilterState,
@@ -9,6 +6,8 @@ import {
   OkbDataRow,
 } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
+// FIX: Import the city normalization map to unify address processing logic.
+import { CITY_NORMALIZATION_MAP } from './addressMappings';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -155,33 +154,43 @@ const stopWordsRegex = new RegExp(`\\b(${allStopWords.join('|')})\\b`, 'g');
 
 
 /**
- * "Intelligently" normalizes an address string for robust, high-speed matching.
+ * The unified, "master" function for normalizing addresses for robust matching.
  * This is the centralized, single source of truth for creating a matchable address key.
- * It aggressively strips administrative and generic terms, leaving only the address core (street, number).
+ * It follows a multi-step process to handle real-world data inconsistencies.
  * @param address The raw address string.
  * @returns A normalized string, suitable for high-match-rate lookups.
  */
 export const normalizeAddressForSearch = (address: string | null | undefined): string => {
   if (!address) return '';
 
-  const cleanedAddress = address
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    // STEP 1: Replace common punctuation with spaces to handle cases like "31/1" or "юго-западная".
+  let normalized = address.toLowerCase().replace(/ё/g, 'е');
+
+  // STEP 1: Apply alias normalization FIRST to correct common typos and abbreviations.
+  // This uses the same logic that was previously isolated elsewhere, unifying the approach.
+  for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+      // Use a regex to replace whole words/phrases to avoid partial replacements.
+      const regex = new RegExp(`\\b${alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'g');
+      normalized = normalized.replace(regex, canonical);
+  }
+
+  const cleanedAddress = normalized
+    // STEP 2: Replace common punctuation with spaces to handle cases like "31/1" or "юго-западная".
     .replace(/[,.;:()/"'-]/g, ' ')
-    // STEP 2: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
+    // STEP 3: Specifically find and remove 5 or 6-digit numbers (postal codes) to prevent mismatches.
+    .replace(/\b\d{5,6}\b/g, '')
+    // STEP 4: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
     // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2".
     .replace(/(\d)([а-яa-z])/g, '$1 $2')
     .replace(/([а-яa-z])(\d)/g, '$1 $2')
-    // STEP 3: Remove the massively expanded list of stop words, including all region name components.
+    // STEP 5: Remove the massively expanded list of stop words, including all region name components.
     .replace(stopWordsRegex, '')
-    // STEP 4: Remove any remaining non-alphanumeric characters (just in case).
+    // STEP 6: Remove any remaining non-alphanumeric characters.
     .replace(/[^а-яa-z0-9\s]/g, '')
-    // STEP 5: Collapse multiple spaces that may have formed during replacements into one.
+    // STEP 7: Collapse multiple spaces that may have formed during replacements into one.
     .replace(/\s+/g, ' ')
     .trim();
 
-  // STEP 6: Sort the remaining significant words and numbers to handle different ordering.
+  // STEP 8: Sort the remaining significant words and numbers to handle different ordering.
   // This makes "Ленина 10" and "10 Ленина" identical.
   return cleanedAddress.split(' ').filter(Boolean).sort().join(' ');
 };
