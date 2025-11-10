@@ -122,11 +122,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
         return aggregation;
     }, [data]);
-
-    const invisibleStyle = { weight: 0.5, color: '#4f46e5', opacity: 0, fillOpacity: 0, interactive: true };
+    
+    // FIX: This style makes region polygons completely invisible by default to remove "пятна"
+    const invisibleStyle = {
+        weight: 0,
+        color: 'transparent',
+        opacity: 0,
+        fillOpacity: 0,
+        interactive: true
+    };
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
+            // Reset to the default invisible style
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
         highlightedLayer.current = null;
@@ -135,7 +143,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle({ weight: 2.5, color: '#f59e0b', opacity: 1, fillOpacity: 0.3 }).bringToFront();
+             layer.setStyle({ weight: 2.5, color: '#f59e0b', opacity: 1, fillColor: '#f59e0b', fillOpacity: 0.3 }).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -347,9 +355,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             onEachFeature: (feature, layer) => {
                 layer.bindTooltip(feature.properties.name, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
-                    // Remove mouseover to prevent visual clutter and accidental region appearance
-                    // mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle({ weight: 2, color: '#a78bfa', fillOpacity: 0.2 }); },
-                    mouseout: (e) => { if (e.target !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(e.target); },
                     click: (e) => {
                         L.DomEvent.stop(e);
                         map.fitBounds(e.target.getBounds());

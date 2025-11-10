@@ -1,16 +1,14 @@
 import * as xlsx from 'xlsx';
 import * as Papa from 'papaparse';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload, MapPoint } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddressForSearch } from '../utils/dataUtils';
-import { getCoordinatesFromAddress, delay } from './geoService';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
-type OkbAddressMap = Map<string, { lat: number; lon: number } | null>;
-// Cache for all processed unique addresses from the sales file
-type AddressInfoCache = Map<string, { region: string; coords: { lat: number; lon: number } | null }>;
+type OkbAddressIndex = Map<string, { lat: number; lon: number }>;
+
 
 /**
  * A robust helper function to find an address value within a data row.
@@ -38,24 +36,21 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
 };
 
 /**
- * Creates a fast lookup map (index) from the OKB data.
+ * Creates a fast lookup map (index) from the OKB data, storing only entries with valid coordinates.
  * @param okbData The raw OKB data.
- * @returns A Map where keys are normalized addresses and values are coordinates.
+ * @returns A Map where keys are normalized addresses and values are coordinate objects.
  */
-const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressMap => {
-    const addressMap: OkbAddressMap = new Map();
+const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
+    const addressMap: OkbAddressIndex = new Map();
     if (!okbData) return addressMap;
 
     for (const row of okbData) {
         const address = findAddressInRow(row);
-        if (address) {
+        // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
+        if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
             const normalized = normalizeAddressForSearch(address);
             if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
-                if (row.lat && row.lon) {
-                    addressMap.set(normalized, { lat: row.lat, lon: row.lon });
-                } else {
-                    addressMap.set(normalized, null); // Mark that address exists but has no coords
-                }
+                addressMap.set(normalized, { lat: row.lat, lon: row.lon });
             }
         }
     }
@@ -172,91 +167,46 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
+    
+    // --- STAGE 1: CREATE OKB COORDINATE INDEX (VERY FAST) ---
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
+    const okbCoordIndex = createOkbAddressIndex(okbData);
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} адресов с координатами.` } });
 
+    // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
-    const addressInfoCache: AddressInfoCache = new Map();
-
-
-    // --- STAGE 1: CREATE OKB INDEX (VERY FAST) ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация ОКБ для быстрого поиска...' } });
-    const okbAddressIndex = createOkbAddressIndex(okbData);
-
-    // --- STAGE 2: PROCESS UNIQUE ADDRESSES (THE CORE OF THE OPTIMIZATION) ---
-    postMessage({ type: 'progress', payload: { percentage: 10, message: 'Сбор уникальных адресов...' } });
-    const uniqueSalesAddresses = [...new Set(jsonData.map(findAddressInRow).filter(Boolean) as string[])];
-    
-    const addressesToGeocode = new Set<string>();
-
-    // Pass 1: Match against OKB index
-    postMessage({ type: 'progress', payload: { percentage: 15, message: `Этап 1: Быстрый поиск ${uniqueSalesAddresses.length} адресов в ОКБ...` } });
-    for (const address of uniqueSalesAddresses) {
-        const normalized = normalizeAddressForSearch(address);
-        const region = parseRussianAddress(address).region; // Fast, local parsing
-
-        if (okbAddressIndex.has(normalized)) {
-            // FIX: Ensure 'coords' is not undefined. '?? null' handles the case where get() could return undefined,
-            // which satisfies the AddressInfoCache type.
-            const coords = okbAddressIndex.get(normalized) ?? null;
-            addressInfoCache.set(address, { region, coords });
-        } else {
-            addressesToGeocode.add(address);
-        }
-    }
-
-    // Pass 2: Geocode remaining addresses via OSM
-    const osmList = Array.from(addressesToGeocode);
-    if (osmList.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 40, message: `Этап 2: Геокодирование ${osmList.length} новых адресов...` } });
-        for (let i = 0; i < osmList.length; i++) {
-            const address = osmList[i];
-            await delay(1100); // Respect Nominatim's usage policy
-            const coords = await getCoordinatesFromAddress(address);
-            const region = parseRussianAddress(address).region;
-            addressInfoCache.set(address, { region, coords });
-            
-            const percentage = 40 + Math.round(((i + 1) / osmList.length) * 40);
-            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${osmList.length}` } });
-        }
-    }
-    
-    // --- STAGE 3: DATA AGGREGATION & PLOTTING (SUPER FAST) ---
-    postMessage({ type: 'progress', payload: { percentage: 80, message: 'Этап 3: Агрегация данных и подготовка карты...' } });
-    
-    const plottedAddresses = new Set<string>(); // To avoid duplicate points on the map for the same address
+    const plottedAddresses = new Set<string>(); // To avoid duplicate map points
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        
         const clientAddress = findAddressInRow(row);
         
-        // FIX: Explicitly type `addressInfo` to prevent incorrect type inference.
-        // This ensures the type is `{ region: string; coords: { lat: number; lon: number } | null }`
-        // which prevents downstream errors when accessing `addressInfo.coords`.
-        let addressInfo: { region: string; coords: { lat: number; lon: number } | null } = { region: 'Регион не определен', coords: null };
-        if (clientAddress && addressInfoCache.has(clientAddress)) {
-            addressInfo = addressInfoCache.get(clientAddress)!;
-        }
-
         // --- Plotting Logic ---
-        // FIX: The type guard `addressInfo.coords` now correctly narrows the type to non-null,
-        // resolving the "property does not exist on type 'never'" errors.
-        if (clientAddress && addressInfo.coords && !plottedAddresses.has(clientAddress)) {
-            const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
-            plottableActiveClients.push({
-                key: `${addressInfo.coords.lat}-${addressInfo.coords.lon}-${i}`,
-                lat: addressInfo.coords.lat,
-                lon: addressInfo.coords.lon,
-                status: 'match',
-                name: clientName,
-                address: clientAddress,
-                type: findValueInRow(row, ['канал продаж']),
-                contacts: findValueInRow(row, ['контакты']),
-            });
-            plottedAddresses.add(clientAddress);
+        if (clientAddress && !plottedAddresses.has(clientAddress)) {
+            const normalizedAddress = normalizeAddressForSearch(clientAddress);
+            const coords = okbCoordIndex.get(normalizedAddress);
+
+            if (coords) {
+                // Address found in index with coordinates, plot it.
+                const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+                plottableActiveClients.push({
+                    key: `${coords.lat}-${coords.lon}-${i}`,
+                    lat: coords.lat,
+                    lon: coords.lon,
+                    status: 'match',
+                    name: clientName,
+                    address: clientAddress,
+                    type: findValueInRow(row, ['канал продаж']),
+                    contacts: findValueInRow(row, ['контакты']),
+                });
+                plottedAddresses.add(clientAddress);
+            }
         }
 
         // --- Aggregation Logic ---
-        const region = addressInfo.region;
+        const region = parseRussianAddress(clientAddress || '').region;
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -282,14 +232,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
-
-        if(i % 10000 === 0) {
-            const percentage = 80 + Math.round((i / jsonData.length) * 15);
-            postMessage({ type: 'progress', payload: { percentage, message: `Агрегация: ${i.toLocaleString('ru-RU')} строк...` } });
+        
+        if (i > 0 && i % 10000 === 0) {
+            const percentage = 10 + Math.round((i / jsonData.length) * 85);
+            postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')} / ${jsonData.length.toLocaleString('ru-RU')}...` } });
         }
     }
     
-    // --- STAGE 4: FINAL CALCULATIONS (FAST) ---
+    // --- STAGE 3: FINAL CALCULATIONS (FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
