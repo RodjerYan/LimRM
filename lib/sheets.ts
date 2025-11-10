@@ -60,42 +60,24 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             return null;
         }
 
-        // Create an object from the row array and header, and a case-insensitive version for lookups
+        // Create an object from the row array and header
         const row: { [key: string]: any } = {};
-        const iRow: { [key: string]: any } = {};
         header.forEach((key, index) => {
             if (key) {
-                const value = rowArray[index] || null;
-                row[key] = value;
-                iRow[key.toLowerCase().trim()] = value;
+                row[key] = rowArray[index] || null;
             }
         });
-        
-        // Helper to find a value using a list of possible case-insensitive keys
-        const findVal = (keys: string[]) => {
-            for (const key of keys) {
-                const val = iRow[key];
-                if (val !== undefined && val !== null) return val;
-            }
-            return null;
-        };
 
-        // Robust coordinate parsing and validation
-        const latVal = findVal(['lat', 'latitude', 'широта', 'широта (lat)']);
-        const lonVal = findVal(['lon', 'longitude', 'долгота', 'долгота (lon)']);
+        // User's requested logic for finding coordinates
+        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
+        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
         if (latVal && lonVal) {
-            // More robust parsing: remove all non-numeric characters except dot and minus
-            let lat = parseFloat(String(latVal).replace(',', '.').replace(/[^\d.-]/g, ''));
-            let lon = parseFloat(String(lonVal).replace(',', '.').replace(/[^\d.-]/g, ''));
+            const lat = parseFloat(String(latVal).replace(',', '.').trim());
+            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
 
-            // Sanity check for swapped coordinates. A latitude cannot be > 90.
-            if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) {
-                [lat, lon] = [lon, lat]; // Swap them
-            }
-            
-            // Final validation before assignment
-            if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+            // User's requested check for NaN
+            if (!isNaN(lat) && !isNaN(lon)) {
                 row.lat = lat;
                 row.lon = lon;
             }
