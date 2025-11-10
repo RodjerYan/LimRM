@@ -148,8 +148,8 @@ const App: React.FC = () => {
     const isControlPanelLocked = isLoading;
 
     return (
-        <div className="bg-primary-dark min-h-screen text-slate-200 font-sans p-4 lg:p-6">
-            <main className="max-w-screen-2xl mx-auto space-y-6">
+        <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
+            <main className="max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6">
                 <header>
                     <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                     <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
