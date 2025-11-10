@@ -4,6 +4,7 @@
  * A comprehensive map of cities, towns, and settlements across Russia and the CIS,
  * linking them to their respective region and providing a list of associated postal codes
  * and, critically, their geographic coordinates for map functionality.
+ * The 'lat' and 'lon' fields are preserved as they are essential for plotting points on the map.
  */
 export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; indexes: string[]; lat: number; lon: number; }> = {
   // =================================================================================

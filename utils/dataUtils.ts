@@ -134,7 +134,7 @@ export const getOkbAddress = (row: OkbDataRow | null | undefined): string => {
  * "Intelligently" normalizes an address string for robust, high-speed matching.
  * This is the core fix for matching addresses between the sales file and the OKB, ensuring green dots appear.
  * @param address The raw address string.
- * @returns A normalized string, sorted by words, suitable for high-match-rate lookups.
+ * @returns A normalized string, suitable for high-match-rate lookups.
  */
 export const normalizeAddressForSearch = (address: string | null | undefined): string => {
   if (!address) return '';
@@ -142,16 +142,16 @@ export const normalizeAddressForSearch = (address: string | null | undefined): s
   const cleanedAddress = address
     .toLowerCase()
     .replace(/ё/g, 'е')
-    // STEP 1: Aggressively remove everything that is not a Cyrillic letter or a space.
-    // This removes numbers, punctuation, building letters (if they are Latin), hyphens, etc.
-    .replace(/[^а-я\s]/g, '')
-    // STEP 2: Now that we have only words, remove common address "stop words".
+    // STEP 1: Aggressively remove everything that is not a Cyrillic letter, a number, or a space.
+    // This removes punctuation, most symbols, etc., but critically KEEPS numbers (e.g., house, building numbers).
+    .replace(/[^а-я0-9\s]/g, '')
+    // STEP 2: Now that we have only words and numbers, remove common address "stop words".
     // This includes single-letter words which are likely building/corpus identifiers.
     .replace(/\b(г|ул|улица|пр|проспект|д|дом|корп|корпус|обл|область|респ|республика|край|р-н|район|пос|поселок|село|деревня|станица|ст-ца|мкр|микрорайон|кв|квартира|а|б|в|к)\b/g, '')
     // STEP 3: Collapse multiple spaces into one.
     .replace(/\s+/g, ' ')
     .trim();
 
-  // STEP 4: Sort the remaining significant words to handle different ordering.
+  // STEP 4: Sort the remaining significant words and numbers to handle different ordering.
   return cleanedAddress.split(' ').filter(Boolean).sort().join(' ');
 };
