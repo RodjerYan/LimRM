@@ -4,7 +4,7 @@ import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAd
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddressForSearch } from '../utils/dataUtils';
-import { getCoordinatesFromAddress } from './aiService';
+import { getCoordinatesFromAddress, delay } from './geoService';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -242,18 +242,19 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
 
     // --- Geocoding Pass ---
     const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование...` } });
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование (OSM)...` } });
 
     for (let i = 0; i < uniqueAddresses.length; i++) {
         const address = uniqueAddresses[i];
         if (!coordsCache.has(address)) {
+            // Respect Nominatim's usage policy: max 1 request per second.
+            await delay(1100); 
             const coords = await getCoordinatesFromAddress(address);
             coordsCache.set(address, coords);
         }
-         if(i % 10 === 0) {
-            const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
-            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование: ${i} / ${uniqueAddresses.length}` } });
-        }
+        
+        const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
+        postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${uniqueAddresses.length}` } });
     }
 
     // --- Aggregation Pass ---
@@ -347,18 +348,19 @@ async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, po
 
     // --- Geocoding Pass ---
     const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование...` } });
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование (OSM)...` } });
 
     for (let i = 0; i < uniqueAddresses.length; i++) {
         const address = uniqueAddresses[i];
         if (!coordsCache.has(address)) {
+            // Respect Nominatim's usage policy: max 1 request per second.
+            await delay(1100);
             const coords = await getCoordinatesFromAddress(address);
             coordsCache.set(address, coords);
         }
-        if(i % 10 === 0) {
-            const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
-            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование: ${i} / ${uniqueAddresses.length}` } });
-        }
+        
+        const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
+        postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${uniqueAddresses.length}` } });
     }
 
     // --- Aggregation Pass ---
