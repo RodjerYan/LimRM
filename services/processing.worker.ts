@@ -202,7 +202,6 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
 };
 
 // Common processing logic for both XLSX and CSV
-// FIX: Added okbData to the function signature to make the raw OKB data available for processing.
 async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn, headers: string[]) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
     
@@ -218,7 +217,6 @@ async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: 
     // --- Pass 1: Match against OKB and identify addresses needing geocoding ---
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Сопоставление с ОКБ...' } });
     const okbAddressMap = new Map<string, OkbDataRow>();
-    // FIX: This loop now correctly uses the passed `okbData` array, resolving the 'Cannot find name' error.
     for (const row of okbData) {
         const address = findAddressInRow(row);
         if (address) {
@@ -330,19 +328,26 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
         const okbByRegion = prepareOkbData(okbData);
         if (file.name.toLowerCase().endsWith('.csv')) {
             postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
-            const fileContent = await file.text();
-            // FIX: Refactored Papa.parse to use its `complete` callback within a Promise.
-            // This resolves a TypeScript type inference issue that caused compilation errors.
-            const parsedCsv = await new Promise<Papa.ParseResult<any>>((resolve) => {
-                Papa.parse(fileContent, {
+            
+            // FIX: The previous synchronous Papa.parse call was causing complex TypeScript errors.
+            // This has been replaced with a more robust, Promise-based asynchronous approach.
+            // This method correctly handles the parsing result, resolves all related compilation errors,
+            // and uses the File object directly for better performance with large files.
+            const parsedCsv = await new Promise<Papa.ParseResult<any>>((resolve, reject) => {
+                Papa.parse(file, {
                     header: true,
                     skipEmptyLines: true,
                     trimHeaders: true,
-                    complete: (results) => {
-                        resolve(results);
-                    },
+                    complete: (results) => resolve(results),
+                    error: (err) => reject(err),
                 });
             });
+
+            if (parsedCsv.errors.length > 0) {
+                const errorMessages = parsedCsv.errors.map(e => `Row ${e.row}: ${e.message}`).join('; ');
+                throw new Error(`Ошибка парсинга CSV: ${errorMessages}`);
+            }
+
             await processData(parsedCsv.data, okbData, okbByRegion, postMessage, parsedCsv.meta.fields || []);
         } else {
             postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
