@@ -17,7 +17,6 @@ type CoordsCache = Map<string, { lat: number; lon: number } | null>;
  * @returns The found address string or null.
  */
 const findAddressInRow = (row: { [key: string]: any }): string | null => {
-    if (!row) return null;
     const rowKeys = Object.keys(row);
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
@@ -58,14 +57,17 @@ const getAddressInfoForRow = async (row: { [key: string]: any }, addressCache: M
 };
 
 /**
- * Pre-processes OKB data into a Map for efficient lookups by region.
+ * Pre-processes OKB data into two Maps for efficient lookups: by region and by normalized address.
  * @param okbData - The raw OKB data array.
- * @returns A Map where keys are normalized region names and values are arrays of OKB rows.
+ * @returns An object containing both maps.
  */
-const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
+const prepareOkbData = (okbData: OkbDataRow[]): { okbByRegion: Map<string, OkbDataRow[]>, okbByAddress: Map<string, OkbDataRow> } => {
     const okbByRegion = new Map<string, OkbDataRow[]>();
-    if (!okbData) return okbByRegion;
+    const okbByAddress = new Map<string, OkbDataRow>();
+    if (!okbData) return { okbByRegion, okbByAddress };
+
     for (const row of okbData) {
+        // Populate map by region
         const regionKey = findValueInRow(row, ['регион'])
         const region = standardizeRegion(regionKey);
         if (region && region !== 'Регион не определен') {
@@ -74,12 +76,20 @@ const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
             }
             okbByRegion.get(region)!.push(row);
         }
+        
+        // Populate map by normalized address
+        const address = findAddressInRow(row);
+        if (address) {
+            const normalized = normalizeAddressForSearch(address);
+            if (normalized && !okbByAddress.has(normalized)) {
+                okbByAddress.set(normalized, row);
+            }
+        }
     }
-    return okbByRegion;
+    return { okbByRegion, okbByAddress };
 };
 
 const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
-    if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
         // Use trim() to handle potential whitespace in header names
@@ -201,62 +211,74 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
-// Common processing logic for both XLSX and CSV
-async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn, headers: string[]) {
+
+self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
+    const { file, okbData } = e.data;
+    const postMessage: PostMessageFn = (message) => self.postMessage(message);
+
+    try {
+        const { okbByRegion, okbByAddress } = prepareOkbData(okbData);
+        const commonArgs = { okbByRegion, okbByAddress, postMessage };
+        if (file.name.toLowerCase().endsWith('.csv')) {
+            await processCsv(file, commonArgs);
+        } else {
+            await processXlsx(file, commonArgs);
+        }
+    } catch (error) {
+        console.error("Worker Error:", error);
+        postMessage({ type: 'error', payload: (error as Error).message });
+    }
+};
+
+interface CommonProcessArgs {
+    okbByRegion: Map<string, OkbDataRow[]>;
+    okbByAddress: Map<string, OkbDataRow>;
+    postMessage: PostMessageFn;
+}
+
+async function processFile(jsonData: any[], headers: string[], { okbByRegion, okbByAddress, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
-    
+
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
-    
     const clientNameHeader = findClientNameHeader(headers);
+
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
     const coordsCache: CoordsCache = new Map();
     const plottableActiveClients: MapPoint[] = [];
 
-    // --- Pass 1: Match against OKB and identify addresses needing geocoding ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Сопоставление с ОКБ...' } });
-    const okbAddressMap = new Map<string, OkbDataRow>();
-    for (const row of okbData) {
-        const address = findAddressInRow(row);
-        if (address) {
-            okbAddressMap.set(normalizeAddressForSearch(address), row);
-        }
-    }
+    // --- Geocoding Pre-computation ---
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ адресов...' } });
+    const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
+    const addressesToGeocodeViaOsm = new Set<string>();
 
-    const addressesToGeocode = new Set<string>();
-    for (const row of jsonData) {
-        const clientAddress = findAddressInRow(row);
-        if (!clientAddress) continue;
-        const normalizedAddress = normalizeAddressForSearch(clientAddress);
-        const okbMatch = okbAddressMap.get(normalizedAddress);
-
-        if (okbMatch && okbMatch.lat && okbMatch.lon) {
-            coordsCache.set(clientAddress, { lat: okbMatch.lat, lon: okbMatch.lon });
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} адресов. Сверка с ОКБ...` } });
+    for (const address of uniqueAddresses) {
+        const normalized = normalizeAddressForSearch(address);
+        const okbMatch = okbByAddress.get(normalized);
+        if (okbMatch?.lat && okbMatch?.lon) {
+            coordsCache.set(address, { lat: okbMatch.lat, lon: okbMatch.lon });
         } else {
-            addressesToGeocode.add(clientAddress);
+            addressesToGeocodeViaOsm.add(address);
         }
     }
-    postMessage({ type: 'progress', payload: { percentage: 20, message: `Найдено ${coordsCache.size} адресов в ОКБ.` } });
 
-    // --- Pass 2: Geocode remaining addresses via OSM ---
-    const uniqueAddressesToGeocode = Array.from(addressesToGeocode);
-    if (uniqueAddressesToGeocode.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 25, message: `Запрос координат для ${uniqueAddressesToGeocode.length} новых адресов (OSM)...` } });
-        for (let i = 0; i < uniqueAddressesToGeocode.length; i++) {
-            const address = uniqueAddressesToGeocode[i];
-            if (!coordsCache.has(address)) {
-                await delay(1100); // Respect Nominatim's usage policy: max 1 request per second.
-                const coords = await getCoordinatesFromAddress(address);
-                coordsCache.set(address, coords);
-            }
-            const percentage = 25 + Math.round(((i + 1) / uniqueAddressesToGeocode.length) * 35);
-            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${uniqueAddressesToGeocode.length}` } });
+    const osmList = Array.from(addressesToGeocodeViaOsm);
+    if (osmList.length > 0) {
+        postMessage({ type: 'progress', payload: { percentage: 20, message: `Геокодирование ${osmList.length} новых адресов (OSM)...` } });
+        for (let i = 0; i < osmList.length; i++) {
+            const address = osmList[i];
+            await delay(1100); // Respect Nominatim's usage policy
+            const coords = await getCoordinatesFromAddress(address);
+            coordsCache.set(address, coords);
+            const percentage = 20 + Math.round(((i + 1) / osmList.length) * 40);
+            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование (OSM): ${i + 1} / ${osmList.length}` } });
         }
     }
     
-    // --- Pass 3: Aggregate data and create plottable points ---
-    postMessage({ type: 'progress', payload: { percentage: 65, message: 'Агрегация данных...' } });
+    // --- Aggregation Pass ---
+    postMessage({ type: 'progress', payload: { percentage: 60, message: 'Агрегация данных...' } });
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
@@ -270,7 +292,7 @@ async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: 
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
         const clientDisplayValue = clientAddress || clientName;
 
-        if (clientAddress) {
+        if (clientAddress && coordsCache.has(clientAddress)) {
             const coords = coordsCache.get(clientAddress);
             if (coords) {
                  plottableActiveClients.push({
@@ -304,12 +326,12 @@ async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: 
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
-        if(i % 100 === 0) {
-            const percentage = 65 + Math.round((i / jsonData.length) * 25);
-            postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i} из ${jsonData.length} строк...` } });
+        if(i % 500 === 0) {
+            const percentage = 60 + Math.round((i / jsonData.length) * 30);
+            postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i.toLocaleString('ru-RU')} строк...` } });
         }
     }
-
+    
     const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
     
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
@@ -320,47 +342,31 @@ async function processData(jsonData: any[], okbData: OkbDataRow[], okbByRegion: 
     postMessage({ type: 'result', payload: resultPayload });
 }
 
-self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
-    const { file, okbData } = e.data;
-    const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
-    try {
-        const okbByRegion = prepareOkbData(okbData);
-        if (file.name.toLowerCase().endsWith('.csv')) {
-            postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
-            
-            // FIX: The previous synchronous Papa.parse call was causing complex TypeScript errors.
-            // This has been replaced with a more robust, Promise-based asynchronous approach.
-            // This method correctly handles the parsing result, resolves all related compilation errors,
-            // and uses the File object directly for better performance with large files.
-            const parsedCsv = await new Promise<Papa.ParseResult<any>>((resolve, reject) => {
-                Papa.parse(file, {
-                    header: true,
-                    skipEmptyLines: true,
-                    trimHeaders: true,
-                    complete: (results) => resolve(results),
-                    error: (err) => reject(err),
-                });
-            });
+async function processXlsx(file: File, args: CommonProcessArgs) {
+    args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
+    const data = await file.arrayBuffer();
+    const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
+    const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
+    
+    await processFile(jsonData, headers, args);
+}
 
-            if (parsedCsv.errors.length > 0) {
-                const errorMessages = parsedCsv.errors.map(e => `Row ${e.row}: ${e.message}`).join('; ');
-                throw new Error(`Ошибка парсинга CSV: ${errorMessages}`);
-            }
 
-            await processData(parsedCsv.data, okbData, okbByRegion, postMessage, parsedCsv.meta.fields || []);
-        } else {
-            postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
-            const data = await file.arrayBuffer();
-            const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-            const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
-            const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
-            await processData(jsonData, okbData, okbByRegion, postMessage, headers);
-        }
-    } catch (error) {
-        console.error("Worker Error:", error);
-        postMessage({ type: 'error', payload: (error as Error).message });
+async function processCsv(file: File, args: CommonProcessArgs) {
+    args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
+    const fileContent = await file.text();
+    const parsedCsv = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+    
+    if (parsedCsv.errors.length > 0) {
+        console.warn('CSV parsing errors:', parsedCsv.errors);
     }
-};
+
+    const jsonData = parsedCsv.data as any[];
+    const headers = parsedCsv.meta.fields || Object.keys(jsonData[0] || {});
+
+    await processFile(jsonData, headers, args);
+}

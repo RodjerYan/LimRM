@@ -123,7 +123,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
 
-    const invisibleStyle = { weight: 0, opacity: 0, fillOpacity: 0 };
+    const invisibleStyle = { weight: 1, opacity: 0.2, color: '#6366f1', fillOpacity: 0.05, interactive: false };
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
@@ -135,7 +135,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle({ ...invisibleStyle, interactive: false }).bringToFront(); // Fix: make layer non-interactive
+             layer.setStyle({ weight: 2.5, color: '#f59e0b', fillOpacity: 0.4 }).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -170,12 +170,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
             mapInstance.current = map;
-            
-            // Create a dedicated pane for markers with a high z-index
+
+            // Create a dedicated pane for markers to ensure they are always on top
             map.createPane('markerPane');
             const markerPane = map.getPane('markerPane');
             if (markerPane) {
-                markerPane.style.zIndex = '650';
+                markerPane.style.zIndex = '650'; // Higher than default overlay pane (400)
             }
 
 
@@ -244,13 +244,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     findValueInRow(tt, ['контакты'])
                 );
                 const marker = L.circleMarker([tt.lat, tt.lon], {
-                    pane: 'markerPane', // Render in the dedicated marker pane
+                    pane: 'markerPane', // Render in the top pane
                     fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
-        potentialClientMarkersLayer.current.addTo(map);
+        map.addLayer(potentialClientMarkersLayer.current);
         layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         
         // --- Active Clients (from sales file, green markers) ---
@@ -262,12 +262,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClients.forEach(tt => {
             const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
             const marker = L.circleMarker([tt.lat, tt.lon], {
-                pane: 'markerPane', // Render in the dedicated marker pane
+                pane: 'markerPane', // Render in the top pane
                 fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
             }).bindPopup(popupContent);
             activeClientMarkersLayer.current?.addLayer(marker);
         });
-        activeClientMarkersLayer.current.addTo(map);
+        map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
         
     }, [potentialClients, activeClients]);
@@ -302,7 +302,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 const hoverRadius = isCountryCapital ? 10 : 8;
                 
                 const options: L.CircleMarkerOptions = {
-                    pane: 'markerPane', // Render in the dedicated marker pane
+                    pane: 'markerPane', // Render in the top pane
                     radius,
                     weight: 1,
                     opacity: 1,
@@ -332,22 +332,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
 
         if (capitalsLayer.current) {
-            capitalsLayer.current.addTo(map);
+            map.addLayer(capitalsLayer.current);
             layerControl.current.addOverlay(capitalsLayer.current, "Столицы и страны");
         }
 
         if (urbanCentersLayer.current) {
-            urbanCentersLayer.current.addTo(map);
+            map.addLayer(urbanCentersLayer.current);
             layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
         }
 
 
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
-            style: { ...invisibleStyle, interactive: false },
+            style: invisibleStyle,
             onEachFeature: (feature, layer) => {
                 layer.bindTooltip(feature.properties.name, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
-                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle(invisibleStyle); },
+                    mouseover: (e) => { if (e.target !== highlightedLayer.current) e.target.setStyle({ weight: 2, color: '#a78bfa', fillOpacity: 0.2 }); },
                     mouseout: (e) => { if (e.target !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(e.target); },
                     click: (e) => {
                         L.DomEvent.stop(e);
