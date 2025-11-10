@@ -142,16 +142,18 @@ export const normalizeAddressForSearch = (address: string | null | undefined): s
   const cleanedAddress = address
     .toLowerCase()
     .replace(/ё/g, 'е')
-    // STEP 1: Aggressively remove everything that is not a Cyrillic letter, a number, or a space.
-    // This removes punctuation, most symbols, etc., but critically KEEPS numbers (e.g., house, building numbers).
-    .replace(/[^а-я0-9\s]/g, '')
-    // STEP 2: Now that we have only words and numbers, remove common address "stop words".
-    // This includes single-letter words which are likely building/corpus identifiers.
+    // STEP 1: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
+    // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2"
+    .replace(/(\d)([а-яa-z])/g, '$1 $2')
+    .replace(/([а-яa-z])(\d)/g, '$1 $2')
+    // STEP 2: Aggressively remove everything that is not a Cyrillic/Latin letter, a number, or a space.
+    .replace(/[^а-яa-z0-9\s]/g, '')
+    // STEP 3: Remove common address "stop words". This is now safer because of the spacing added in step 1.
     .replace(/\b(г|ул|улица|пр|проспект|д|дом|корп|корпус|обл|область|респ|республика|край|р-н|район|пос|поселок|село|деревня|станица|ст-ца|мкр|микрорайон|кв|квартира|а|б|в|к)\b/g, '')
-    // STEP 3: Collapse multiple spaces into one.
+    // STEP 4: Collapse multiple spaces into one.
     .replace(/\s+/g, ' ')
     .trim();
 
-  // STEP 4: Sort the remaining significant words and numbers to handle different ordering.
+  // STEP 5: Sort the remaining significant words and numbers to handle different ordering.
   return cleanedAddress.split(' ').filter(Boolean).sort().join(' ');
 };
