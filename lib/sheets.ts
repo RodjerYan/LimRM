@@ -68,16 +68,22 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        // User's requested logic for finding coordinates
+        // Robust coordinate parsing and validation
         const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
         const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
         if (latVal && lonVal) {
-            const lat = parseFloat(String(latVal).replace(',', '.').trim());
-            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
+            // More robust parsing: remove all non-numeric characters except dot and minus
+            let lat = parseFloat(String(latVal).replace(',', '.').replace(/[^\d.-]/g, ''));
+            let lon = parseFloat(String(lonVal).replace(',', '.').replace(/[^\d.-]/g, ''));
 
-            // User's requested check for NaN
-            if (!isNaN(lat) && !isNaN(lon)) {
+            // Sanity check for swapped coordinates. A latitude cannot be > 90.
+            if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) {
+                [lat, lon] = [lon, lat]; // Swap them
+            }
+            
+            // Final validation before assignment
+            if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
                 row.lat = lat;
                 row.lon = lon;
             }

@@ -173,12 +173,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
         const latVal = findValueInRow(row, ['широта', 'lat']);
         const lonVal = findValueInRow(row, ['долгота', 'lon', 'lng']);
-
+        
         if (latVal && lonVal) {
-            const parsedLat = parseFloat(String(latVal).replace(',', '.').trim());
-            const parsedLon = parseFloat(String(lonVal).replace(',', '.').trim());
+            // Robust parsing: remove all non-numeric characters except dot and minus
+            let parsedLat = parseFloat(String(latVal).replace(',', '.').replace(/[^\d.-]/g, ''));
+            let parsedLon = parseFloat(String(lonVal).replace(',', '.').replace(/[^\d.-]/g, ''));
 
-            if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
+            // Sanity check for swapped coordinates. A latitude cannot be > 90.
+            if (Math.abs(parsedLat) > 90 && Math.abs(parsedLon) <= 90) {
+                [parsedLat, parsedLon] = [parsedLon, parsedLat]; // Swap them
+            }
+
+            // Final validation before assignment
+            if (!isNaN(parsedLat) && !isNaN(parsedLon) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLon) <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
                 coordsSource = 'file';
