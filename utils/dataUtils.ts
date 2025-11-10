@@ -8,6 +8,7 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
+import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -104,35 +105,59 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 };
 
 /**
- * A robust helper to find an address value within an OKB data row.
- * It searches for keys in a prioritized order.
- * @param row The OKB data row object.
- * @returns The found address string or an empty string.
+ * A robust helper function to find an address value within a data row.
+ * It searches for keys in a prioritized order, using both exact and partial matches.
+ * This is the centralized, single source of truth for finding an address.
+ * @param row The data row object.
+ * @returns The found address string or null.
  */
-export const getOkbAddress = (row: OkbDataRow | null | undefined): string => {
-  if (!row) return '';
-  const rowKeys = Object.keys(row);
-  const prioritizedKeys = ['юридический адрес', 'адрес'];
+export const findAddressInRow = (row: { [key: string]: any }): string | null => {
+    if (!row) return null;
+    const rowKeys = Object.keys(row);
+    // Prioritized, exact matches first for reliability
+    const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
-  for (const pKey of prioritizedKeys) {
-    const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
-    if (foundKey && row[foundKey]) return String(row[foundKey]);
-  }
+    for (const pKey of prioritizedKeys) {
+        // Find a key that matches exactly when lowercased and trimmed
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
+        if (foundKey && row[foundKey]) return String(row[foundKey]);
+    }
 
-  const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
-  if (addressKey && row[addressKey]) return String(row[addressKey]);
+    // Fallback to partial match if no exact match is found
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
+    if (addressKey && row[addressKey]) return String(row[addressKey]);
+    
+    // Last resort fallback
+    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
+    if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
-  const fallbackKey = rowKeys.find(
-    key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')
-  );
-  if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
-
-  return '';
+    return null;
 };
+
+
+// --- Super-aggressive address normalization ---
+
+// Create these lists once outside the function for performance.
+const regionNameWords = russiaRegionsGeoJSON.features.flatMap(f => 
+    (f.properties?.name || '').toLowerCase().split(/[\s-]+/)
+);
+const uniqueRegionWords = [...new Set(regionNameWords)];
+
+const baseStopWords = [
+    'г', 'ул', 'улица', 'пр', 'проспект', 'д', 'дом', 'корп', 'корпус', 'обл', 'область', 'респ', 'республика', 'край', 
+    'р-н', 'район', 'пос', 'поселок', 'село', 'деревня', 'станица', 'ст-ца', 'мкр', 'микрорайон', 'кв', 'квартира', 
+    'а', 'б', 'в', 'к', 'стр', 'строение', 'лит', 'литера', 'пер', 'переулок', 'ш', 'шоссе', 'пл', 'площадь', 'наб', 
+    'набережная', 'бульвар', 'б-р', 'проезд', 'пр-д', 'ао', 'автономный', 'округ', 'федерации', 'народная'
+];
+
+const allStopWords = [...new Set([...baseStopWords, ...uniqueRegionWords])];
+const stopWordsRegex = new RegExp(`\\b(${allStopWords.join('|')})\\b`, 'g');
+
 
 /**
  * "Intelligently" normalizes an address string for robust, high-speed matching.
- * This is the core fix for matching addresses between the sales file and the OKB, ensuring green dots appear.
+ * This is the centralized, single source of truth for creating a matchable address key.
+ * It aggressively strips administrative and generic terms, leaving only the address core (street, number).
  * @param address The raw address string.
  * @returns A normalized string, suitable for high-match-rate lookups.
  */
@@ -142,18 +167,21 @@ export const normalizeAddressForSearch = (address: string | null | undefined): s
   const cleanedAddress = address
     .toLowerCase()
     .replace(/ё/g, 'е')
-    // STEP 1: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
-    // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2"
+    // STEP 1: Replace common punctuation with spaces to handle cases like "31/1" or "юго-западная".
+    .replace(/[,.;:()/"'-]/g, ' ')
+    // STEP 2: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
+    // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2".
     .replace(/(\d)([а-яa-z])/g, '$1 $2')
     .replace(/([а-яa-z])(\d)/g, '$1 $2')
-    // STEP 2: Aggressively remove everything that is not a Cyrillic/Latin letter, a number, or a space.
+    // STEP 3: Remove the massively expanded list of stop words, including all region name components.
+    .replace(stopWordsRegex, '')
+    // STEP 4: Remove any remaining non-alphanumeric characters (just in case).
     .replace(/[^а-яa-z0-9\s]/g, '')
-    // STEP 3: Remove common address "stop words". This is now safer because of the spacing added in step 1.
-    .replace(/\b(г|ул|улица|пр|проспект|д|дом|корп|корпус|обл|область|респ|республика|край|р-н|район|пос|поселок|село|деревня|станица|ст-ца|мкр|микрорайон|кв|квартира|а|б|в|к)\b/g, '')
-    // STEP 4: Collapse multiple spaces into one.
+    // STEP 5: Collapse multiple spaces that may have formed during replacements into one.
     .replace(/\s+/g, ' ')
     .trim();
 
-  // STEP 5: Sort the remaining significant words and numbers to handle different ordering.
+  // STEP 6: Sort the remaining significant words and numbers to handle different ordering.
+  // This makes "Ленина 10" and "10 Ленина" identical.
   return cleanedAddress.split(' ').filter(Boolean).sort().join(' ');
 };

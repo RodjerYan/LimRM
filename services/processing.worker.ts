@@ -3,37 +3,13 @@ import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse'
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddressForSearch } from '../utils/dataUtils';
+// FIX: Import the new, centralized address processing functions.
+import { normalizeAddressForSearch, findAddressInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 type OkbAddressIndex = Map<string, { lat: number; lon: number }>;
 
-
-/**
- * A robust helper function to find an address value within a data row.
- * It searches for keys in a prioritized order, using both exact and partial matches.
- * @param row The data row object.
- * @returns The found address string or null.
- */
-const findAddressInRow = (row: { [key: string]: any }): string | null => {
-    if (!row) return null;
-    const rowKeys = Object.keys(row);
-    const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
-
-    for (const pKey of prioritizedKeys) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
-        if (foundKey && row[foundKey]) return String(row[foundKey]);
-    }
-
-    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
-    if (addressKey && row[addressKey]) return String(row[addressKey]);
-    
-    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
-    if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
-
-    return null;
-};
 
 /**
  * Creates a fast lookup map (index) from the OKB data, storing only entries with valid coordinates.
@@ -45,9 +21,11 @@ const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
     if (!okbData) return addressMap;
 
     for (const row of okbData) {
+        // USE CENTRALIZED FUNCTION
         const address = findAddressInRow(row);
         // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
         if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
+            // USE CENTRALIZED FUNCTION
             const normalized = normalizeAddressForSearch(address);
             if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
                 addressMap.set(normalized, { lat: row.lat, lon: row.lon });
@@ -91,7 +69,9 @@ function findPotentialClients(
 
     const potential: PotentialClient[] = [];
     for (const okbRow of potentialForRegion) {
+        // USE CENTRALIZED FUNCTION
         const okbAddress = findAddressInRow(okbRow) || '';
+        // USE CENTRALIZED FUNCTION
         const normalizedOkbAddress = normalizeAddressForSearch(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
@@ -181,10 +161,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
+        // USE CENTRALIZED FUNCTION
         const clientAddress = findAddressInRow(row);
         
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
+            // USE CENTRALIZED FUNCTION
             const normalizedAddress = normalizeAddressForSearch(clientAddress);
             const coords = okbCoordIndex.get(normalizedAddress);
 
@@ -243,6 +225,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
+    // USE CENTRALIZED FUNCTION
     const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddressForSearch(findAddressInRow(row))));
 
     for (const item of aggregatedValues) {
