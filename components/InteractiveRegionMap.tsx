@@ -152,11 +152,33 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
             mapInstance.current = map;
 
-            const baseLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-            }).addTo(map);
+            });
+            const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+            });
+
+            darkLayer.addTo(map);
+
+            const baseMaps = {
+                "Темная карта": darkLayer,
+                "Светлая карта": lightLayer
+            };
             
-            layerControl.current = L.control.layers({ "Темная карта": baseLayer }, {}).addTo(map);
+            layerControl.current = L.control.layers(baseMaps, {}).addTo(map);
+
+            map.on('baselayerchange', function(e) {
+                if (mapContainer.current) {
+                    mapContainer.current.classList.remove('theme-dark', 'theme-light');
+                    if (e.name === 'Светлая карта') {
+                        mapContainer.current.classList.add('theme-light');
+                    } else {
+                        mapContainer.current.classList.add('theme-dark');
+                    }
+                }
+            });
+
 
             map.on('click', resetHighlight);
         }
@@ -385,7 +407,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             </div>
             
-            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg" />
+            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg theme-dark" />
             
             {conflictZones && isWarningVisible && (
                 <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">

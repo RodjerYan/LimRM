@@ -30,29 +30,73 @@
     </script>
     <link rel="stylesheet" href="/index.css">
     <style>
-      /* Custom styles for Leaflet popups to match the dark theme */
-      .leaflet-popup-content-wrapper,
-      .leaflet-popup-tip {
-        background: rgba(31, 41, 55, 0.8) !important; /* card-bg with transparency */
+      /* --- Dark Theme Styles --- */
+      .theme-dark .leaflet-popup-content-wrapper,
+      .theme-dark .leaflet-popup-tip {
+        background: rgba(31, 41, 55, 0.85) !important;
         backdrop-filter: blur(8px);
-        color: #e5e7eb !important; /* text-gray-200 */
+        color: #e5e7eb !important;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
         border-radius: 8px !important;
-        border: 1px solid rgba(129, 140, 248, 0.2); /* accent with transparency */
+        border: 1px solid rgba(129, 140, 248, 0.2) !important;
       }
+      .theme-dark .leaflet-popup-content b {
+        color: #818cf8 !important;
+      }
+      .theme-dark .leaflet-container a.leaflet-popup-close-button {
+        color: #9ca3af !important;
+      }
+      .theme-dark .leaflet-container a.leaflet-popup-close-button:hover {
+        color: #ffffff !important;
+      }
+      .theme-dark .leaflet-control-layers {
+        background: rgba(31, 41, 55, 0.85) !important;
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(129, 140, 248, 0.2) !important;
+        border-radius: 8px !important;
+        color: #e5e7eb !important;
+      }
+      .theme-dark .leaflet-control-layers-separator {
+        border-top: 1px solid #4b5563 !important;
+      }
+
+      /* --- Light Theme Styles --- */
+      .theme-light .leaflet-popup-content-wrapper,
+      .theme-light .leaflet-popup-tip {
+        background: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(8px);
+        color: #111827 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(0, 0, 0, 0.1) !important;
+      }
+      .theme-light .leaflet-popup-content b {
+        color: #4f46e5 !important;
+      }
+      .theme-light .leaflet-container a.leaflet-popup-close-button {
+        color: #4b5563 !important;
+      }
+      .theme-light .leaflet-container a.leaflet-popup-close-button:hover {
+        color: #000000 !important;
+      }
+      .theme-light .leaflet-control-layers {
+        background: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(8px);
+        color: #111827 !important;
+        border: 1px solid #d1d5db !important;
+        border-radius: 8px !important;
+      }
+      .theme-light .leaflet-control-layers-separator {
+        border-top: 1px solid #d1d5db !important;
+      }
+
+      /* --- General Leaflet Styles --- */
       .leaflet-popup-content {
         margin: 14px !important;
         font-family: 'Inter', sans-serif !important;
       }
-      .leaflet-popup-content b {
-        color: #818cf8; /* accent */
-      }
       .leaflet-container a.leaflet-popup-close-button {
-        color: #9ca3af !important; /* text-gray-400 */
         padding: 8px 8px 0 0 !important;
-      }
-      .leaflet-container a.leaflet-popup-close-button:hover {
-        color: #ffffff !important;
       }
       .custom-scrollbar::-webkit-scrollbar {
         width: 8px;
@@ -84,21 +128,11 @@
         transform-origin: center;
       }
       /* Styles for Layer Control */
-      .leaflet-control-layers {
-        background: rgba(31, 41, 55, 0.8) !important;
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(129, 140, 248, 0.2) !important;
-        border-radius: 8px !important;
-        color: #e5e7eb !important;
-      }
       .leaflet-control-layers-base label, .leaflet-control-layers-overlays label {
         font-weight: normal !important;
       }
       .leaflet-control-layers-selector {
         margin-top: 2px;
-      }
-      .leaflet-control-layers-separator {
-        border-top: 1px solid #4b5563 !important;
       }
       .leaflet-control-layers-overlays label span {
           display: inline-flex;
