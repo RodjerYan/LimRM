@@ -1,5 +1,5 @@
 import * as xlsx from 'xlsx';
-import * as Papa from 'papaparse';
+import * as Papa from 'paparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
