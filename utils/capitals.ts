@@ -2,7 +2,7 @@ export interface Capital {
     name: string;
     lat: number;
     lon: number;
-    type: 'country' | 'capital';
+    type: 'country' | 'capital' | 'urban_center';
     region_name?: string; // Add optional region name for better mapping
 }
 
@@ -119,7 +119,17 @@ export const capitals: Capital[] = [
     { name: 'Донецк', lat: 48.0159, lon: 37.8028, type: 'capital', region_name: 'Донецкая Народная Республика' },
     { name: 'Мелитополь', lat: 46.8491, lon: 35.3673, type: 'capital', region_name: 'Запорожская область' },
     { name: 'Геническ', lat: 46.1742, lon: 34.8086, type: 'capital', region_name: 'Херсонская область' },
-    // Крупные города
-    { name: 'Сочи', lat: 43.5855, lon: 39.7233, type: 'capital', region_name: 'Краснодарский край' },
-    { name: 'Новороссийск', lat: 44.7241, lon: 37.7675, type: 'capital', region_name: 'Краснодарский край' }
+    
+    // === Крупные городские центры (не столицы регионов) ===
+    { name: 'Сочи', lat: 43.5855, lon: 39.7233, type: 'urban_center', region_name: 'Краснодарский край' },
+    { name: 'Новороссийск', lat: 44.7241, lon: 37.7675, type: 'urban_center', region_name: 'Краснодарский край' },
+    { name: 'Норильск', lat: 69.3496, lon: 88.2026, type: 'urban_center', region_name: 'Красноярский край' },
+    { name: 'Сургут', lat: 61.25, lon: 73.4167, type: 'urban_center', region_name: 'Ханты-Мансийский автономный округ — Югра' },
+    { name: 'Нижневартовск', lat: 60.9385, lon: 76.5593, type: 'urban_center', region_name: 'Ханты-Мансийский автономный округ — Югра' },
+    { name: 'Новый Уренгой', lat: 66.0842, lon: 76.6809, type: 'urban_center', region_name: 'Ямало-Ненецкий автономный округ' },
+    { name: 'Тольятти', lat: 53.5078, lon: 49.4204, type: 'urban_center', region_name: 'Самарская область' },
+    { name: 'Набережные Челны', lat: 55.7420, lon: 52.3590, type: 'urban_center', region_name: 'Республика Татарстан' },
+    { name: 'Магнитогорск', lat: 53.4186, lon: 59.0472, type: 'urban_center', region_name: 'Челябинская область' },
+    { name: 'Новокузнецк', lat: 53.75, lon: 87.1167, type: 'urban_center', region_name: 'Кемеровская область' },
+    { name: 'Череповец', lat: 59.1333, lon: 37.9000, type: 'urban_center', region_name: 'Вологодская область' },
 ];

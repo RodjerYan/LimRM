@@ -17,7 +17,7 @@ interface InteractiveRegionMapProps {
 
 interface SearchableLocation {
     name: string;
-    type: 'region' | 'capital' | 'country';
+    type: 'region' | 'capital' | 'country' | 'urban_center';
     lat?: number;
     lon?: number;
 }
@@ -27,6 +27,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
+    const urbanCentersLayer = useRef<L.LayerGroup | null>(null);
     const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
@@ -234,27 +235,71 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
 
+        // Remove old layers
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         if (capitalsLayer.current) {
-             layerControl.current.removeLayer(capitalsLayer.current);
-             map.removeLayer(capitalsLayer.current);
+            layerControl.current.removeLayer(capitalsLayer.current);
+            map.removeLayer(capitalsLayer.current);
+        }
+        if (urbanCentersLayer.current) {
+            layerControl.current.removeLayer(urbanCentersLayer.current);
+            map.removeLayer(urbanCentersLayer.current);
         }
 
         capitalsLayer.current = L.layerGroup();
+        urbanCentersLayer.current = L.layerGroup();
+        capitalMarkersRef.current.clear();
+
         capitals.forEach(capital => {
             const isCountryCapital = capital.type === 'country';
-            const radius = isCountryCapital ? 6 : 4;
-            const hoverRadius = isCountryCapital ? 10 : 8;
-            const marker = L.circleMarker([capital.lat, capital.lon], {
-                radius, fillColor: '#fbbf24', color: '#f59e0b', weight: 1, opacity: 1, fillOpacity: 0.8, className: 'pulsing-marker'
-            }).bindTooltip(capital.name);
-            marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(hoverRadius); });
-            marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(radius); });
-            capitalsLayer.current?.addLayer(marker);
-            capitalMarkersRef.current.set(capital.name, marker);
+            const isCapital = capital.type === 'capital';
+            const isUrbanCenter = capital.type === 'urban_center';
+
+            if (isCountryCapital || isCapital || isUrbanCenter) {
+                const radius = isCountryCapital ? 6 : 4;
+                const hoverRadius = isCountryCapital ? 10 : 8;
+                
+                const options: L.CircleMarkerOptions = {
+                    radius,
+                    weight: 1,
+                    opacity: 1,
+                    fillOpacity: 0.8,
+                };
+                let tooltipContent = capital.name;
+
+                if (isUrbanCenter) {
+                    options.fillColor = '#22d3ee'; // Cyan
+                    options.color = '#06b6d4';
+                    tooltipContent = `${capital.name}<br/><small>Городской центр</small>`
+                } else { // country or capital
+                    options.fillColor = '#fbbf24'; // Yellow
+                    options.color = '#f59e0b';
+                    options.className = 'pulsing-marker';
+                }
+                
+                const marker = L.circleMarker([capital.lat, capital.lon], options).bindTooltip(tooltipContent);
+                
+                marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(hoverRadius); });
+                marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(radius); });
+
+                if (isUrbanCenter) {
+                    urbanCentersLayer.current?.addLayer(marker);
+                } else {
+                    capitalsLayer.current?.addLayer(marker);
+                }
+                capitalMarkersRef.current.set(capital.name, marker);
+            }
         });
-        map.addLayer(capitalsLayer.current);
-        layerControl.current.addOverlay(capitalsLayer.current, "Столицы");
+
+        if (capitalsLayer.current) {
+            map.addLayer(capitalsLayer.current);
+            layerControl.current.addOverlay(capitalsLayer.current, "Столицы и страны");
+        }
+
+        if (urbanCentersLayer.current) {
+            map.addLayer(urbanCentersLayer.current);
+            layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
+        }
 
 
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
@@ -308,7 +353,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             layerControl.current.addOverlay(conflictZonesLayer.current, "⚠️ Зоны опасности");
         }
     }, [conflictZones]);
-
+    
+    const typeToLabel: Record<SearchableLocation['type'], string> = {
+        region: 'Регион',
+        capital: 'Столица',
+        country: 'Страна',
+        urban_center: 'Городской центр'
+    };
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
@@ -328,7 +379,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             <ul className="absolute z-10 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
                                 {searchResults.map(loc => (
                                     <li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20">
-                                        {loc.name} <span className="text-xs text-gray-400 ml-2">{loc.type}</span>
+                                        {loc.name} <span className="text-xs text-gray-400 ml-2">{typeToLabel[loc.type]}</span>
                                     </li>
                                 ))}
                             </ul>
