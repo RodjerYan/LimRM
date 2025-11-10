@@ -5,7 +5,6 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 // FIX: Import the city normalization map to unify address processing logic.
 import { CITY_NORMALIZATION_MAP } from './addressMappings';
 
@@ -133,23 +132,19 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     return null;
 };
 
-
-// --- Super-aggressive address normalization ---
-
-// Create these lists once outside the function for performance.
-const regionNameWords = russiaRegionsGeoJSON.features.flatMap(f => 
-    (f.properties?.name || '').toLowerCase().split(/[\s-]+/)
-);
-const uniqueRegionWords = [...new Set(regionNameWords)];
-
-const baseStopWords = [
-    'г', 'ул', 'улица', 'пр', 'проспект', 'д', 'дом', 'корп', 'корпус', 'обл', 'область', 'респ', 'республика', 'край', 
-    'р-н', 'район', 'пос', 'поселок', 'село', 'деревня', 'станица', 'ст-ца', 'мкр', 'микрорайон', 'кв', 'квартира', 
-    'а', 'б', 'в', 'к', 'стр', 'строение', 'лит', 'литера', 'пер', 'переулок', 'ш', 'шоссе', 'пл', 'площадь', 'наб', 
-    'набережная', 'бульвар', 'б-р', 'проезд', 'пр-д', 'ао', 'автономный', 'округ', 'федерации', 'народная'
+// A single, manually curated, and safe list of stop words.
+// It removes generic administrative and address terms WITHOUT removing city/region names.
+const allStopWords = [
+    // General address terms
+    'г', 'ул', 'улица', 'пр', 'проспект', 'д', 'дом', 'корп', 'корпус', 'р-н', 'район', 'пос', 'поселок', 'село', 
+    'деревня', 'станица', 'ст-ца', 'мкр', 'микрорайон', 'кв', 'квартира', 'а', 'б', 'в', 'к', 'стр', 'строение', 
+    'лит', 'литера', 'пер', 'переулок', 'ш', 'шоссе', 'пл', 'площадь', 'наб', 'набережная', 'бульвар', 'б-р', 
+    'проезд', 'пр-д', 'федерации', 'народная',
+    // Generic administrative terms
+    'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'муниципальный', 'городской', 
+    'сельский', 'поселение', 'территория', 'снт', 'садовое', 'некоммерческое', 'товарищество'
 ];
 
-const allStopWords = [...new Set([...baseStopWords, ...uniqueRegionWords])];
 const stopWordsRegex = new RegExp(`\\b(${allStopWords.join('|')})\\b`, 'g');
 
 
@@ -166,9 +161,7 @@ export const normalizeAddressForSearch = (address: string | null | undefined): s
   let normalized = address.toLowerCase().replace(/ё/g, 'е');
 
   // STEP 1: Apply alias normalization FIRST to correct common typos and abbreviations.
-  // This uses the same logic that was previously isolated elsewhere, unifying the approach.
   for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-      // Use a regex to replace whole words/phrases to avoid partial replacements.
       const regex = new RegExp(`\\b${alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'g');
       normalized = normalized.replace(regex, canonical);
   }
@@ -182,7 +175,7 @@ export const normalizeAddressForSearch = (address: string | null | undefined): s
     // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2".
     .replace(/(\d)([а-яa-z])/g, '$1 $2')
     .replace(/([а-яa-z])(\d)/g, '$1 $2')
-    // STEP 5: Remove the massively expanded list of stop words, including all region name components.
+    // STEP 5: Remove the safe, curated list of stop words. This NO LONGER removes city names.
     .replace(stopWordsRegex, '')
     // STEP 6: Remove any remaining non-alphanumeric characters.
     .replace(/[^а-яa-z0-9\s]/g, '')
