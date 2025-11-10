@@ -264,17 +264,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     weight: 1,
                     opacity: 1,
                     fillOpacity: 0.8,
+                    fillColor: '#fbbf24', // Yellow for all
+                    color: '#f59e0b',     // Yellow border for all
+                    className: 'pulsing-marker' // Pulsing for all
                 };
-                let tooltipContent = capital.name;
 
+                let tooltipContent = capital.name;
                 if (isUrbanCenter) {
-                    options.fillColor = '#22d3ee'; // Cyan
-                    options.color = '#06b6d4';
-                    tooltipContent = `${capital.name}<br/><small>Городской центр</small>`
-                } else { // country or capital
-                    options.fillColor = '#fbbf24'; // Yellow
-                    options.color = '#f59e0b';
-                    options.className = 'pulsing-marker';
+                    tooltipContent = `${capital.name}<br/><small>Городской центр</small>`;
                 }
                 
                 const marker = L.circleMarker([capital.lat, capital.lon], options).bindTooltip(tooltipContent);

@@ -120,7 +120,7 @@ export const capitals: Capital[] = [
     { name: 'Мелитополь', lat: 46.8491, lon: 35.3673, type: 'capital', region_name: 'Запорожская область' },
     { name: 'Геническ', lat: 46.1742, lon: 34.8086, type: 'capital', region_name: 'Херсонская область' },
     
-    // === Крупные городские центры (не столицы регионов) ===
+    // === Крупные городские центры РФ (не столицы регионов) ===
     { name: 'Сочи', lat: 43.5855, lon: 39.7233, type: 'urban_center', region_name: 'Краснодарский край' },
     { name: 'Новороссийск', lat: 44.7241, lon: 37.7675, type: 'urban_center', region_name: 'Краснодарский край' },
     { name: 'Норильск', lat: 69.3496, lon: 88.2026, type: 'urban_center', region_name: 'Красноярский край' },
@@ -132,4 +132,33 @@ export const capitals: Capital[] = [
     { name: 'Магнитогорск', lat: 53.4186, lon: 59.0472, type: 'urban_center', region_name: 'Челябинская область' },
     { name: 'Новокузнецк', lat: 53.75, lon: 87.1167, type: 'urban_center', region_name: 'Кемеровская область' },
     { name: 'Череповец', lat: 59.1333, lon: 37.9000, type: 'urban_center', region_name: 'Вологодская область' },
+
+    // === Крупные города СНГ (не столицы) ===
+    // Беларусь
+    { name: 'Гомель', lat: 52.4242, lon: 31.0084, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Могилёв', lat: 53.9100, lon: 30.3400, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Витебск', lat: 55.1904, lon: 30.2049, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Гродно', lat: 53.6884, lon: 23.8258, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Брест', lat: 52.0976, lon: 23.7341, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Бобруйск', lat: 53.1500, lon: 29.2333, type: 'urban_center', region_name: 'Республика Беларусь' },
+    { name: 'Барановичи', lat: 53.1333, lon: 26.0167, type: 'urban_center', region_name: 'Республика Беларусь' },
+    // Казахстан
+    { name: 'Алматы', lat: 43.2220, lon: 76.8512, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Караганда', lat: 49.8333, lon: 73.1167, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Шымкент', lat: 42.3167, lon: 69.6000, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Актобе', lat: 50.2833, lon: 57.1667, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Тараз', lat: 42.9000, lon: 71.3667, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Павлодар', lat: 52.3000, lon: 76.9500, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Усть-Каменогорск', lat: 49.9833, lon: 82.6167, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Семей', lat: 50.4167, lon: 80.2500, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Костанай', lat: 53.2167, lon: 63.6333, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Актау', lat: 43.6500, lon: 51.1667, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Уральск', lat: 51.2333, lon: 51.3667, type: 'urban_center', region_name: 'Республика Казахстан' },
+    { name: 'Петропавловск', lat: 54.8667, lon: 69.1333, type: 'urban_center', region_name: 'Республика Казахстан' },
+    // Кыргызстан
+    { name: 'Ош', lat: 40.5167, lon: 72.8000, type: 'urban_center', region_name: 'Кыргызская Республика' },
+    { name: 'Джалал-Абад', lat: 40.9333, lon: 73.0000, type: 'urban_center', region_name: 'Кыргызская Республика' },
+    { name: 'Каракол', lat: 42.4833, lon: 78.3833, type: 'urban_center', region_name: 'Кыргызская Республика' },
+    { name: 'Токмок', lat: 42.8419, lon: 75.2869, type: 'urban_center', region_name: 'Кыргызская Республика' },
+    { name: 'Кант', lat: 42.8911, lon: 74.8519, type: 'urban_center', region_name: 'Кыргызская Республика' },
 ];
