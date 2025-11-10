@@ -60,17 +60,29 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             return null;
         }
 
-        // Create an object from the row array and header
+        // Create an object from the row array and header, and a case-insensitive version for lookups
         const row: { [key: string]: any } = {};
+        const iRow: { [key: string]: any } = {};
         header.forEach((key, index) => {
             if (key) {
-                row[key] = rowArray[index] || null;
+                const value = rowArray[index] || null;
+                row[key] = value;
+                iRow[key.toLowerCase().trim()] = value;
             }
         });
+        
+        // Helper to find a value using a list of possible case-insensitive keys
+        const findVal = (keys: string[]) => {
+            for (const key of keys) {
+                const val = iRow[key];
+                if (val !== undefined && val !== null) return val;
+            }
+            return null;
+        };
 
         // Robust coordinate parsing and validation
-        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
-        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
+        const latVal = findVal(['lat', 'latitude', 'широта', 'широта (lat)']);
+        const lonVal = findVal(['lon', 'longitude', 'долгота', 'долгота (lon)']);
 
         if (latVal && lonVal) {
             // More robust parsing: remove all non-numeric characters except dot and minus
