@@ -178,7 +178,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        const clientAddress = String(row[headerMap.address!] || '');
+        const clientAddress: string = String(row[headerMap.address!] || '');
         
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
@@ -207,7 +207,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         }
 
         // --- Aggregation Logic ---
-        const region = parseRussianAddress(clientAddress || '').region;
+        const region: string = parseRussianAddress(clientAddress || '').region;
         const brand = headerMap.brand ? String(row[headerMap.brand] || 'Без бренда') : 'Без бренда';
         const rm = headerMap.rm ? String(row[headerMap.rm] || 'Без РМ') : 'Без РМ';
         const weight = parseFloat(String(row[headerMap.weight!] || '0').replace(/\s/g, '').replace(',', '.'));
