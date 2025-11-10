@@ -4,7 +4,6 @@ import {
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
-import { callGeminiForRegion } from './geminiService';
 
 /**
  * Capitalizes the first letter of each word in a string.
@@ -38,11 +37,11 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
- * Parses a Russian address string to extract the region and city using a lightweight, priority-based approach.
+ * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
-export async function parseRussianAddress(address: string): Promise<ParsedAddress> {
+export function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определён' };
     }
@@ -59,15 +58,7 @@ export async function parseRussianAddress(address: string): Promise<ParsedAddres
     }
 
     // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
-    let region = findRegionByKeyword(normalized);
-
-    // --- Fallback: If local parsing fails, use Gemini AI ---
-    if (!region) {
-        const geminiRegion = await callGeminiForRegion(address); // Use original address for more context
-        if (geminiRegion && geminiRegion !== 'Регион не определен') {
-            region = geminiRegion;
-        }
-    }
+    const region = findRegionByKeyword(normalized);
     
     // City extraction can be improved, but for now, we focus on the region.
     // A simple city extraction could be added here if needed, but it's less critical than the region.
