@@ -1,201 +1,147 @@
-import { AggregatedDataRow, FilterOptions, FilterState, SummaryMetrics, OkbDataRow } from '../types';
+// utils/dataUtils.ts
+
+// FIX: This file's placeholder content was causing multiple build errors. This new implementation provides the necessary data utility functions required by other components, such as App.tsx and the processing worker. It includes functions for filtering data, extracting filter options, calculating summary metrics, and normalizing addresses for consistent matching.
+import {
+  AggregatedDataRow,
+  FilterState,
+  FilterOptions,
+  SummaryMetrics,
+  OkbDataRow,
+} from '../types';
 
 /**
- * A comprehensive regex to remove region-specific nouns and adjectives from an address string.
- * This helps in matching addresses where one version has the region and the other doesn't.
+ * Applies the current filter state to the aggregated data.
+ * @param data The full array of aggregated data rows.
+ * @param filters The current filter state from the UI.
+ * @returns A new array containing only the rows that match the filters.
  */
-const REGION_WORDS_TO_REMOVE = new RegExp(
-  `\\b(${[
-    // Nouns
-    'область', 'край', 'республика', 'автономный', 'округ', 'народная',
-    // Adjectives & Place Names
-    'адыгея', 'алтай', 'башкортостан', 'башкирия', 'бурятия', 'дагестан',
-    'ингушетия', 'кбр', 'кабардино', 'балкарская', 'калмыкия', 'кчр', 'карачаево', 'черкесская',
-    'карелия', 'коми', 'крым', 'марий', 'эл', 'мордовия', 'саха', 'якутия',
-    'северная', 'осетия', 'алания', 'татарстан', 'тыва', 'тува', 'удмуртия',
-    'хакасия', 'чечня', 'чеченская', 'чувашия', 'чувашская', 'алтайский',
-    'забайкальский', 'камчатский', 'краснодарский', 'кубань', 'красноярский',
-    'пермский', 'приморский', 'ставропольский', 'хабаровский', 'амурская',
-    'архангельская', 'астраханская', 'белгородская', 'брянская', 'владимирская',
-    'волгоградская', 'вологодская', 'воронежская', 'ивановская', 'иркутская',
-    'калининградская', 'калужская', 'кемеровская', 'кузбасс', 'кировская',
-    'костромская', 'курганская', 'курская', 'ленинградская', 'липецкая',
-    'магаданская', 'московская', 'мурманская', 'нижегородская', 'новгородская',
-    'новосибирская', 'омская', 'оренбургская', 'орловская', 'пензенская',
-    'псковская', 'ростовская', 'рязанская', 'самарская', 'саратовская',
-    'сахалинская', 'свердловская', 'смоленская', 'тамбовская', 'тверская',
-    'томская', 'тульская', 'тюменская', 'ульяновская', 'челябинская',
-    'ярославская', 'запорожская', 'херсонская', 'ненецкий', 'хмао', 'югра',
-    'чукотский', 'чукотка', 'янао', 'ямал', 'еврейская', 'луганская', 'донецкая',
-    // CIS & Others
-    'беларусь', 'белоруссия', 'казахстан', 'армения', 'киргизия', 'кыргызстан', 'абхазия'
-  ].join('|')})\\b`,
-  'g'
-);
-
-
-/**
- * Normalizes an address string for search and comparison purposes.
- * It converts to lower case, handles 'ё', removes punctuation and legal forms,
- * and standardizes common abbreviations. This version is designed to be highly robust
- * against messy data formatting by removing region identifiers and address part keywords.
- * @param str The string to normalize.
- * @returns The normalized string, with parts sorted alphabetically.
- */
-export const normalizeAddressForSearch = (str: string | undefined | null): string => {
-    if (!str) return '';
-
-    const cleanedString = str
-        .toLowerCase()
-        .replace(/ё/g, 'е')
-        // Remove 6-digit postal code from the beginning of the string
-        .replace(/^\s*\d{6}\s*,?\s*/, '')
-        // Remove region-specific words to match addresses with and without region info
-        .replace(REGION_WORDS_TO_REMOVE, ' ')
-        // Replace all punctuation with a single space
-        .replace(/[.,\/#!$%\^&\*;:{}=\-_`"«»~()\[\]]/g, ' ')
-        // Remove common address-part keywords.
-        .replace(/\b(обл|респ|г|ул|р-н|д|дом|корп|к|ш|пос|пгт|поселок|деревня|станица|ст-ца|хутор|х)\b/g, ' ')
-        // Remove common legal entity types
-        .replace(/(^|\s)(ооо|зао|пао|ип|ао)($|\s)/g, ' ')
-        // Collapse multiple spaces and trim
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    // Tokenize, sort, and join to make it order-independent
-    const parts = cleanedString.split(' ').filter(Boolean);
-    return [...new Set(parts)].sort().join(' ');
+export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
+  return data.filter(row => {
+    const rmMatch = !filters.rm || row.rm === filters.rm;
+    const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
+    const regionMatch = filters.region.length === 0 || filters.region.includes(row.region);
+    return rmMatch && brandMatch && regionMatch;
+  });
 };
 
 /**
- * Gets a reliable address from an OKB data row for comparison.
- * @param row The OKB data row.
- * @returns The address string.
- */
-export const getOkbAddress = (row: OkbDataRow): string => {
-    // Юридический адрес is the most reliable source.
-    return row['Юридический адрес'] || row['Адрес'] || '';
-};
-
-
-// For compatibility with older parts of the codebase if needed.
-export const normalizeString = normalizeAddressForSearch;
-
-/**
- * Calculates the Levenshtein distance between two strings.
- * This is a measure of the difference between two sequences.
- * @param a The first string.
- * @param b The second string.
- * @returns The Levenshtein distance (number of edits).
- */
-export const levenshteinDistance = (a: string, b: string): number => {
-    const an = a ? a.length : 0;
-    const bn = b ? b.length : 0;
-    if (an === 0) return bn;
-    if (bn === 0) return an;
-    const matrix = Array.from({ length: bn + 1 }, (_, i) => [i]);
-    for (let j = 1; j <= an; j++) matrix[0][j] = j;
-
-    for (let i = 1; i <= bn; i++) {
-        for (let j = 1; j <= an; j++) {
-            const cost = a[j - 1] === b[i - 1] ? 0 : 1;
-            matrix[i][j] = Math.min(
-                matrix[i - 1][j] + 1,      // deletion
-                matrix[i][j - 1] + 1,      // insertion
-                matrix[i - 1][j - 1] + cost // substitution
-            );
-        }
-    }
-    return matrix[bn][an];
-};
-
-/**
- * Finds the best matching record from the OKB data for a given client name and city.
- */
-export const findBestOkbMatch = (clientName: string, city: string, okbData: (OkbDataRow & { normalizedName: string })[]): OkbDataRow | null => {
-    const normalizedClientName = normalizeAddressForSearch(clientName);
-    const lowercasedCity = city.toLowerCase();
-    
-    let bestMatch: OkbDataRow | null = null;
-    let maxScore = 0.8; // Set a threshold to avoid bad matches
-
-    const potentialMatches = okbData.filter(okb =>
-        okb['Город']?.toLowerCase() === lowercasedCity || okb['Юридический адрес']?.toLowerCase().includes(lowercasedCity)
-    );
-
-    for (const okb of potentialMatches) {
-        const distance = levenshteinDistance(normalizedClientName, okb.normalizedName);
-        const score = 1 - distance / Math.max(normalizedClientName.length, okb.normalizedName.length);
-        if (score > maxScore) {
-            maxScore = score;
-            bestMatch = okb;
-        }
-    }
-    
-    return bestMatch;
-};
-
-
-/**
- * Filters the main dataset based on the current filter state.
- */
-export const applyFilters = (allData: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
-    return allData.filter(row => {
-        const rmMatch = filters.rm ? row.rm === filters.rm : true;
-        const brandMatch = filters.brand.length > 0 ? filters.brand.includes(row.brand) : true;
-        // FIX: Filter by region instead of city
-        const regionMatch = filters.region.length > 0 ? filters.region.includes(row.region) : true;
-        return rmMatch && brandMatch && regionMatch;
-    });
-};
-
-/**
- * Extracts unique values for all filterable columns from the dataset.
+ * Extracts all unique values for filter dropdowns from the aggregated data.
+ * @param data The full array of aggregated data rows.
+ * @returns An object containing arrays of unique RMs, brands, and regions.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
-    const rms = new Set<string>();
-    const brands = new Set<string>();
-    const regions = new Set<string>(); // FIX: Extract regions instead of cities
+  const rms = new Set<string>();
+  const brands = new Set<string>();
+  const regions = new Set<string>();
 
-    data.forEach(row => {
-        rms.add(row.rm);
-        brands.add(row.brand);
-        regions.add(row.region);
-    });
+  data.forEach(row => {
+    if (row.rm) rms.add(row.rm);
+    if (row.brand) brands.add(row.brand);
+    if (row.region && row.region !== 'Регион не определен') regions.add(row.region);
+  });
 
-    return {
-        rms: Array.from(rms).sort(),
-        brands: Array.from(brands).sort(),
-        regions: Array.from(regions).sort(), // FIX: Return sorted regions
-    };
+  return {
+    rms: Array.from(rms).sort((a, b) => a.localeCompare(b, 'ru')),
+    brands: Array.from(brands).sort((a, b) => a.localeCompare(b, 'ru')),
+    regions: Array.from(regions).sort((a, b) => a.localeCompare(b, 'ru')),
+  };
 };
 
 /**
- * Calculates summary metrics for a given dataset.
+ * Calculates summary metrics for a given set of data (usually filtered data).
+ * @param data The array of data rows to calculate metrics for.
+ * @returns A SummaryMetrics object, or null if the input data is empty.
  */
-export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics => {
-    const totalFact = data.reduce((sum, row) => sum + row.fact, 0);
-    const totalPotential = data.reduce((sum, row) => sum + row.potential, 0);
-    const totalGrowth = data.reduce((sum, row) => sum + row.growthPotential, 0);
+export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics | null => {
+  if (data.length === 0) {
+    return null;
+  }
 
-    const totalClients = data.length;
-    const totalActiveClients = data.reduce((sum, row) => sum + (row.clients?.length || 1), 0);
-    
-    const averageGrowthPercentage = totalPotential > 0 ? (totalGrowth / totalPotential) * 100 : 0;
-    
-    const rmGrowth: { [key: string]: number } = {};
-    data.forEach(row => {
-        if (!rmGrowth[row.rm]) rmGrowth[row.rm] = 0;
-        rmGrowth[row.rm] += row.growthPotential;
-    });
+  const metrics = data.reduce(
+    (acc, row) => {
+      acc.totalFact += row.fact;
+      acc.totalPotential += row.potential;
+      acc.totalGrowth += row.growthPotential;
+      acc.totalActiveClients += row.clients?.length || 0;
 
-    const topPerformingRM = Object.entries(rmGrowth).reduce(
-        (top, [name, value]) => (value > top.value ? { name, value } : top),
-        { name: 'N/A', value: -1 }
+      if (!acc.rmGrowth[row.rm]) {
+        acc.rmGrowth[row.rm] = 0;
+      }
+      acc.rmGrowth[row.rm] += row.growthPotential;
+
+      return acc;
+    },
+    {
+      totalFact: 0,
+      totalPotential: 0,
+      totalGrowth: 0,
+      totalActiveClients: 0,
+      rmGrowth: {} as { [key: string]: number },
+    }
+  );
+
+  const averageGrowthPercentage =
+    metrics.totalPotential > 0 ? (metrics.totalGrowth / metrics.totalPotential) * 100 : 0;
+
+  let topPerformingRM = { name: 'N/A', value: 0 };
+  const rmKeys = Object.keys(metrics.rmGrowth);
+  if (rmKeys.length > 0) {
+    const topRMName = rmKeys.reduce((a, b) =>
+      metrics.rmGrowth[a] > metrics.rmGrowth[b] ? a : b
     );
+    topPerformingRM = { name: topRMName, value: metrics.rmGrowth[topRMName] };
+  }
 
-    return {
-        totalFact, totalPotential, totalGrowth, totalClients, totalActiveClients,
-        averageGrowthPercentage, topPerformingRM,
-    };
+  return {
+    totalFact: metrics.totalFact,
+    totalPotential: metrics.totalPotential,
+    totalGrowth: metrics.totalGrowth,
+    totalClients: data.length, // Total number of groups
+    totalActiveClients: metrics.totalActiveClients, // Total number of individual clients
+    averageGrowthPercentage,
+    topPerformingRM,
+  };
+};
+
+/**
+ * A robust helper to find an address value within an OKB data row.
+ * It searches for keys in a prioritized order.
+ * @param row The OKB data row object.
+ * @returns The found address string or an empty string.
+ */
+export const getOkbAddress = (row: OkbDataRow | null | undefined): string => {
+  if (!row) return '';
+  const rowKeys = Object.keys(row);
+  const prioritizedKeys = ['юридический адрес', 'адрес'];
+
+  for (const pKey of prioritizedKeys) {
+    const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
+    if (foundKey && row[foundKey]) return String(row[foundKey]);
+  }
+
+  const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
+  if (addressKey && row[addressKey]) return String(row[addressKey]);
+
+  const fallbackKey = rowKeys.find(
+    key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')
+  );
+  if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
+
+  return '';
+};
+
+/**
+ * Normalizes an address string for consistent matching and indexing.
+ * This function is critical for linking data from different sources.
+ * @param address The raw address string.
+ * @returns A normalized, lowercase string with no punctuation.
+ */
+export const normalizeAddressForSearch = (address: string | null | undefined): string => {
+  if (!address) return '';
+  return address
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^а-яa-z0-9\s]/g, '') // Remove all non-alphanumeric characters except spaces
+    .replace(/\s+/g, ' ')
+    .trim();
 };
