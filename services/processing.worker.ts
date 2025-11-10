@@ -36,7 +36,8 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
 };
 
 /**
- * Creates a fast lookup map (index) from the OKB data, storing only entries with valid coordinates.
+ * Creates a fast lookup map (index) from the OKB data. This version is optimized for fuzzy matching
+ * by creating two types of keys for each address: a full one and one without numbers.
  * @param okbData The raw OKB data.
  * @returns A Map where keys are normalized addresses and values are coordinate objects.
  */
@@ -46,11 +47,22 @@ const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
 
     for (const row of okbData) {
         const address = findAddressInRow(row);
-        // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
         if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
-            const normalized = normalizeAddressForSearch(address);
-            if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
-                addressMap.set(normalized, { lat: row.lat, lon: row.lon });
+            const coords = { lat: row.lat, lon: row.lon };
+
+            // Primary Key: full normalized address.
+            const primaryKey = normalizeAddressForSearch(address);
+            if (primaryKey && !addressMap.has(primaryKey)) {
+                addressMap.set(primaryKey, coords);
+            }
+
+            // Secondary Key: normalized address without numbers.
+            if (primaryKey) {
+                const secondaryKey = primaryKey.replace(/\d/g, '').replace(/\s+/g, ' ').trim();
+                // Add secondary key only if it's different, meaningful, and not already present.
+                if (secondaryKey && secondaryKey !== primaryKey && secondaryKey.length > 5 && !addressMap.has(secondaryKey)) {
+                    addressMap.set(secondaryKey, coords);
+                }
             }
         }
     }
@@ -171,7 +183,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     // --- STAGE 1: CREATE OKB COORDINATE INDEX (VERY FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
     const okbCoordIndex = createOkbAddressIndex(okbData);
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} адресов с координатами.` } });
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} ключей адресов с координатами.` } });
 
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
@@ -186,7 +198,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
             const normalizedAddress = normalizeAddressForSearch(clientAddress);
-            const coords = okbCoordIndex.get(normalizedAddress);
+            
+            // --- NEW 2-Step Lookup Logic ---
+            let coords = okbCoordIndex.get(normalizedAddress); // Step 1: Try exact match
+
+            if (!coords && normalizedAddress) { // Step 2: If no exact match, try matching without numbers
+                const noNumbersNormalized = normalizedAddress.replace(/\d/g, '').replace(/\s+/g, ' ').trim();
+                if (noNumbersNormalized && noNumbersNormalized.length > 5) {
+                    coords = okbCoordIndex.get(noNumbersNormalized);
+                }
+            }
+            // --- End of new logic ---
 
             if (coords) {
                 // Address found in index with coordinates, plot it.
