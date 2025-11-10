@@ -156,45 +156,72 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
-    const plottedAddresses = new Set<string>(); // To avoid duplicate map points
+    const plottedKeys = new Set<string>(); // To avoid duplicate map points
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        // USE CENTRALIZED FUNCTION
+        // --- 1. Data Extraction ---
         const clientAddress = findAddressInRow(row);
-        
-        // --- Plotting Logic ---
-        if (clientAddress && !plottedAddresses.has(clientAddress)) {
-            // USE CENTRALIZED FUNCTION
-            const normalizedAddress = normalizeAddress(clientAddress);
-            const coords = okbCoordIndex.get(normalizedAddress);
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
 
-            if (coords) {
-                // Address found in index with coordinates, plot it.
-                const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
-                plottableActiveClients.push({
-                    key: `${coords.lat}-${coords.lon}-${i}`,
-                    lat: coords.lat,
-                    lon: coords.lon,
-                    status: 'match',
-                    name: clientName,
-                    address: clientAddress,
-                    type: findValueInRow(row, ['канал продаж']),
-                    contacts: findValueInRow(row, ['контакты']),
-                });
-                plottedAddresses.add(clientAddress);
+        // --- 2. Coordinate Resolution ---
+        let lat: number | null = null;
+        let lon: number | null = null;
+        let coordsSource: 'file' | 'okb' | 'none' = 'none';
+
+        // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
+        const latVal = findValueInRow(row, ['широта', 'lat']);
+        const lonVal = findValueInRow(row, ['долгота', 'lon', 'lng']);
+
+        if (latVal && lonVal) {
+            const parsedLat = parseFloat(String(latVal).replace(',', '.').trim());
+            const parsedLon = parseFloat(String(lonVal).replace(',', '.').trim());
+
+            if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
+                lat = parsedLat;
+                lon = parsedLon;
+                coordsSource = 'file';
+            }
+        }
+        
+        // Priority 2: If no valid coordinates in file, fall back to OKB address index.
+        if (coordsSource === 'none' && clientAddress) {
+            const normalizedAddress = normalizeAddress(clientAddress);
+            const okbCoords = okbCoordIndex.get(normalizedAddress);
+            if (okbCoords) {
+                lat = okbCoords.lat;
+                lon = okbCoords.lon;
+                coordsSource = 'okb';
             }
         }
 
-        // --- Aggregation Logic ---
+        // --- 3. Plotting Logic ---
+        if (coordsSource !== 'none' && lat !== null && lon !== null) {
+            const plotKey = clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`;
+            
+            if (!plottedKeys.has(plotKey)) {
+                plottableActiveClients.push({
+                    key: `${lat}-${lon}-${i}`,
+                    lat: lat,
+                    lon: lon,
+                    status: 'match',
+                    name: clientName,
+                    address: clientAddress || `Координаты из файла: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+                    type: findValueInRow(row, ['канал продаж']),
+                    contacts: findValueInRow(row, ['контакты']),
+                });
+                plottedKeys.add(plotKey);
+            }
+        }
+
+        // --- 4. Aggregation Logic ---
         const region = parseRussianAddress(clientAddress || '').region;
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
-        const clientNameForGroup = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
-        const clientDisplayValue = clientAddress || clientNameForGroup;
+        const clientDisplayValue = clientAddress || clientName;
 
         if (isNaN(weight) || region === 'Регион не определен') continue;
 

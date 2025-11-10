@@ -173,6 +173,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
              if (marker) setTimeout(() => marker.openPopup(), 500);
         }
     }, [highlightRegion]);
+
+    // FIX: Add useEffect to invalidate map size when data changes, fixing the "white map" issue.
+    useEffect(() => {
+        const map = mapInstance.current;
+        if (map) {
+            // This is a robust way to ensure the map resizes correctly after
+            // parent components (like the summary metrics) finish loading and cause layout shifts.
+            // A small delay ensures the browser has finished its reflow.
+            const timer = setTimeout(() => map.invalidateSize(true), 200);
+            return () => clearTimeout(timer);
+        }
+    }, [data]);
     
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
@@ -412,57 +424,50 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     };
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 relative">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold text-white">Карта рыночного потенциала</h2>
-                <div className="relative z-[1001] w-full max-w-xs md:max-w-sm">
-                    <div className="relative">
-                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
-                        <input
-                            type="text"
-                            value={searchTerm}
-                            onChange={e => setSearchTerm(e.target.value)}
-                            placeholder="Поиск города или региона..."
-                            className="w-full p-2 pl-10 bg-card-bg/80 backdrop-blur-sm border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-400 transition"
-                        />
-                        {searchResults.length > 0 && (
-                            <ul className="absolute z-10 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
-                                {searchResults.map(loc => (
-                                    <li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20">
-                                        {loc.name} <span className="text-xs text-gray-400 ml-2">{typeToLabel[loc.type]}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+            <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                <h2 className="text-xl font-bold text-white whitespace-nowrap">Карта рыночного потенциала</h2>
+                <div className="relative w-full md:w-auto md:min-w-[300px]">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <SearchIcon />
                     </div>
+                    <input
+                        type="text"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder="Поиск города или региона..."
+                        className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
+                    />
+                    {searchResults.length > 0 && (
+                        <ul className="absolute z-50 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
+                            {searchResults.map((loc) => (
+                                <li
+                                    key={`${loc.name}-${loc.type}`}
+                                    onClick={() => handleLocationSelect(loc)}
+                                    className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20 flex justify-between items-center"
+                                >
+                                    <span>{loc.name}</span>
+                                    <span className="text-xs text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded-md">{typeToLabel[loc.type]}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             </div>
-            
-            <div ref={mapContainer} className="h-[60vh] w-full rounded-lg theme-dark" />
-            
-            {conflictZones && isWarningVisible && (
-                <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">
-                    <div className="w-6 h-6 flex-shrink-0 text-danger mt-0.5"><ErrorIcon/></div>
-                    <div className="pr-4">
-                        <p className="font-bold">ОСТОРОЖНО! ЗОНЫ ПОВЫШЕННОЙ ОПАСНОСТИ</p>
-                        <p className="mt-1">
-                            На карте отмечены зона проведения СВО и приграничные территории РФ с повышенным риском. Данные основаны на открытых источниках (zaschitnikiotechestva.ru). Планируйте маршруты с максимальной осторожностью.
-                        </p>
-                        <p className="mt-2 text-yellow-200/80">
-                            Торговые точки в зоне или в непосредственной близости проведения СВО могут не соответствовать действительности. Они не участвуют в расчете ОКБ и выведены на карту в качестве информации.
-                        </p>
+
+            {isWarningVisible && (
+                <div className="bg-red-900/50 border border-danger/50 text-danger text-sm rounded-lg p-3 mb-4 flex justify-between items-center">
+                    <div className="flex items-center">
+                        <div className="w-5 h-5 mr-2 flex-shrink-0"><ErrorIcon/></div>
+                        <span>
+                            Внимание: слой "Зоны опасности" носит информационный характер и может быть неполным. Всегда сверяйтесь с официальными источниками.
+                        </span>
                     </div>
-                     <button
-                        onClick={() => setIsWarningVisible(false)}
-                        className="absolute top-1 right-1 p-1 text-red-200 hover:text-white transition-colors rounded-full hover:bg-black/20"
-                        aria-label="Закрыть предупреждение"
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
+                    <button onClick={() => setIsWarningVisible(false)} className="text-red-300 hover:text-white text-lg">&times;</button>
                 </div>
             )}
+            
+            <div ref={mapContainer} className="h-[65vh] w-full rounded-lg theme-dark bg-gray-800 border border-gray-700" />
         </div>
     );
 };
