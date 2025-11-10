@@ -33,10 +33,10 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             aria-labelledby="modal-title"
         >
             <div 
-                className="bg-card-bg/80 backdrop-blur-lg rounded-2xl shadow-2xl w-full max-w-6xl border border-indigo-500/20 transform animate-scale-in"
+                className="bg-card-bg/80 backdrop-blur-lg rounded-2xl shadow-2xl w-full max-w-6xl border border-indigo-500/20 transform animate-scale-in flex flex-col max-h-[95vh]"
                 onClick={(e) => e.stopPropagation()} // Prevent closing modal when clicking inside
             >
-                <div className="flex justify-between items-center p-5 border-b border-gray-700">
+                <div className="flex justify-between items-center p-5 border-b border-gray-700 flex-shrink-0">
                     <h3 id="modal-title" className="text-xl font-bold text-white">{title}</h3>
                     <button 
                         onClick={onClose} 
@@ -48,10 +48,10 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
                         </svg>
                     </button>
                 </div>
-                <div className="p-6">
+                <div className="p-6 overflow-y-auto custom-scrollbar">
                     {children}
                 </div>
-                <div className="flex justify-end p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700">
+                <div className="flex justify-end p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
                     <button 
                         onClick={onClose} 
                         className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200"
