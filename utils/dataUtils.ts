@@ -145,4 +145,4 @@ export function normalizeAddress(address: string | null | undefined): string {
     .replace(/(россия|рф|область|край|г\.|город|ул\.|улица|д\.|дом|корпус|корп\.|к\.|стр\.|строение)/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-}
+}.
