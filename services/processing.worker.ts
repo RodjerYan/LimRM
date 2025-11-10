@@ -195,7 +195,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const region = parseRussianAddress(address).region; // Fast, local parsing
 
         if (okbAddressIndex.has(normalized)) {
-            const coords = okbAddressIndex.get(normalized);
+            // FIX: Ensure 'coords' is not undefined. '?? null' handles the case where get() could return undefined,
+            // which satisfies the AddressInfoCache type.
+            const coords = okbAddressIndex.get(normalized) ?? null;
             addressInfoCache.set(address, { region, coords });
         } else {
             addressesToGeocode.add(address);
@@ -227,12 +229,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
         
-        let addressInfo = { region: 'Регион не определен', coords: null };
+        // FIX: Explicitly type `addressInfo` to prevent incorrect type inference.
+        // This ensures the type is `{ region: string; coords: { lat: number; lon: number } | null }`
+        // which prevents downstream errors when accessing `addressInfo.coords`.
+        let addressInfo: { region: string; coords: { lat: number; lon: number } | null } = { region: 'Регион не определен', coords: null };
         if (clientAddress && addressInfoCache.has(clientAddress)) {
             addressInfo = addressInfoCache.get(clientAddress)!;
         }
 
         // --- Plotting Logic ---
+        // FIX: The type guard `addressInfo.coords` now correctly narrows the type to non-null,
+        // resolving the "property does not exist on type 'never'" errors.
         if (clientAddress && addressInfo.coords && !plottedAddresses.has(clientAddress)) {
             const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
             plottableActiveClients.push({
