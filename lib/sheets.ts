@@ -56,8 +56,8 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
   const dataRows = rows.slice(1);
 
   // Find column indices directly. This is more robust than matching string keys later.
-  const latIndex = lowerCaseHeader.findIndex(h => ['широта', 'ширина', 'm'].includes(h));
-  const lonIndex = lowerCaseHeader.findIndex(h => ['долгота', 'l'].includes(h));
+  const latIndex = lowerCaseHeader.findIndex(h => ['широта', 'ширина', 'lat', 'm'].includes(h));
+  const lonIndex = lowerCaseHeader.findIndex(h => ['долгота', 'lon', 'l'].includes(h));
   
   const okbData: OkbDataRow[] = dataRows
     .map(row => {
