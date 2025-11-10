@@ -357,6 +357,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         // Style for the main SVO zone
                         return { color: '#dc2626', weight: 1.5, fillColor: '#b91c1c', fillOpacity: 0.45 };
                     }
+                    if (status === 'border_danger_zone') {
+                        // Style for Russian border danger zones
+                        return { color: '#f59e0b', weight: 1, fillColor: '#f59e0b', fillOpacity: 0.4 };
+                    }
                     // Default/fallback style
                     return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
                 },
@@ -413,9 +417,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 <div className="absolute bottom-4 left-4 z-[1000] bg-red-900/50 backdrop-blur-sm p-3 rounded-lg border border-danger/50 text-xs text-red-200 flex items-start gap-2 max-w-sm">
                     <div className="w-6 h-6 flex-shrink-0 text-danger mt-0.5"><ErrorIcon/></div>
                     <div className="pr-4">
-                        <p className="font-bold">ОСТОРОЖНО! ЗОНА ПРОВЕДЕНИЯ СВО</p>
+                        <p className="font-bold">ОСТОРОЖНО! ЗОНЫ ПОВЫШЕННОЙ ОПАСНОСТИ</p>
                         <p className="mt-1">
-                            Данные основаны на открытых источниках (zaschitnikiotechestva.ru). Планируйте маршруты с максимальной осторожностью.
+                            На карте отмечены зона проведения СВО и приграничные территории РФ с повышенным риском. Данные основаны на открытых источниках (zaschitnikiotechestva.ru). Планируйте маршруты с максимальной осторожностью.
                         </p>
                         <p className="mt-2 text-yellow-200/80">
                             Торговые точки в зоне или в непосредственной близости проведения СВО могут не соответствовать действительности. Они не участвуют в расчете ОКБ и выведены на карту в качестве информации.
