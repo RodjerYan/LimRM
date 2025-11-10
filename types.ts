@@ -99,7 +99,7 @@ export type WorkerProgressPayload = {
 };
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
-    activeAddresses: string[];
+    plottableActiveClients: MapPoint[];
 };
 export type WorkerErrorPayload = string;
 

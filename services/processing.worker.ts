@@ -1,12 +1,14 @@
 import * as xlsx from 'xlsx';
 import Papa from 'papaparse';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddressForSearch } from '../utils/dataUtils';
+import { getCoordinatesFromAddress } from './aiService';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
+type CoordsCache = Map<string, { lat: number; lon: number } | null>;
 
 /**
  * A robust helper function to find an address value within a data row.
@@ -19,7 +21,7 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
     for (const pKey of prioritizedKeys) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase() === pKey);
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
         if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
 
@@ -31,6 +33,7 @@ const findAddressInRow = (row: { [key: string]: any }): string | null => {
 
     return null;
 };
+
 
 /**
  * Determines the address and region for a given row using local parsing.
@@ -74,10 +77,11 @@ const prepareOkbData = (okbData: OkbDataRow[]): Map<string, OkbDataRow[]> => {
     return okbByRegion;
 };
 
-const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
+const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().includes(keyword));
+        // Use trim() to handle potential whitespace in header names
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
@@ -167,7 +171,7 @@ const finalizeProcessing = async (
  * @returns The determined client name header string, or undefined if none found.
  */
 const findClientNameHeader = (headers: string[]): string | undefined => {
-    const lowerHeaders = headers.map(h => h.toLowerCase());
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
     // 1. Highest priority: specific, unambiguous terms.
     const priorityTerms = ['наименование клиента', 'контрагент', 'клиент'];
@@ -177,26 +181,22 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
             return headers[foundIndex];
         }
     }
+    
+    // 2. Medium priority: find a 'наименование' column, but exclude product-related ones.
+    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
 
-    // 2. Medium priority: find columns named 'наименование'.
-    const nameColumns = headers.filter(h => h.toLowerCase().includes('наименование'));
-    if (nameColumns.length === 0) {
-        return undefined; // No column with 'наименование' found.
+    if (nameColumns.length > 0) {
+        const cleanNameColumn = nameColumns.find(h => {
+            const lH = h.toLowerCase().trim();
+            return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
+        });
+        
+        // If a "clean" one is found, use it. Otherwise, fall back to the first one found.
+        return cleanNameColumn || nameColumns[0];
     }
-
-    // Try to find a "clean" name column that is NOT product-related.
-    const cleanNameColumn = nameColumns.find(h => {
-        const lH = h.toLowerCase();
-        return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
-    });
-
-    if (cleanNameColumn) {
-        return cleanNameColumn; // Found a good candidate.
-    }
-
-    // 3. Fallback: If all 'наименование' columns seemed product-related (or we couldn't tell),
-    // return the very first one we found. This is better than returning nothing and showing "Без названия".
-    return nameColumns[0];
+    
+    // If no 'наименование' column, return undefined.
+    return undefined;
 };
 
 
@@ -235,35 +235,59 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     const clientNameHeader = findClientNameHeader(headers);
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
-    const activeAddresses = new Set<string>();
+    const coordsCache: CoordsCache = new Map();
+    const plottableActiveClients: MapPoint[] = [];
     
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ данных...' } });
 
+    // --- Geocoding Pass ---
+    const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование...` } });
+
+    for (let i = 0; i < uniqueAddresses.length; i++) {
+        const address = uniqueAddresses[i];
+        if (!coordsCache.has(address)) {
+            const coords = await getCoordinatesFromAddress(address);
+            coordsCache.set(address, coords);
+        }
+         if(i % 10 === 0) {
+            const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
+            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование: ${i} / ${uniqueAddresses.length}` } });
+        }
+    }
+
+    // --- Aggregation Pass ---
+    postMessage({ type: 'progress', payload: { percentage: 50, message: 'Агрегация данных...' } });
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        const clientAddress = findAddressInRow(row);
         const parsedAddress = await getAddressInfoForRow(row, addressCache);
 
         const region = parsedAddress.region;
-        const brandKey = Object.keys(row).find(k => k.toLowerCase().includes('торговая марка')) || 'Торговая марка';
-        const brand = row[brandKey] || 'Неизвестный бренд';
-        const rmKey = Object.keys(row).find(k => k.toLowerCase().includes('рм')) || 'РМ';
-        const rm = row[rmKey] || 'Неизвестный РМ';
-        const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
-        const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
-        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const clientAddress = findAddressInRow(row);
-        
-        // Use address for display list if available, otherwise fall back to name
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
         const clientDisplayValue = clientAddress || clientName;
 
-        // Use address for matching, with a more robust fallback
-        const addressForMatching = clientAddress || `${clientName} (строка #${i + 2})`;
-        if (addressForMatching) {
-            activeAddresses.add(normalizeAddressForSearch(addressForMatching));
+        if (clientAddress) {
+            const coords = coordsCache.get(clientAddress);
+            if (coords) {
+                 plottableActiveClients.push({
+                    key: `${coords.lat}-${coords.lon}-${i}`,
+                    lat: coords.lat,
+                    lon: coords.lon,
+                    status: 'match',
+                    name: clientName,
+                    address: clientAddress,
+                    type: findValueInRow(row, ['канал продаж']),
+                    contacts: findValueInRow(row, ['контакты']),
+                });
+            }
         }
 
-        if (isNaN(fact) || region === 'Регион не определен') continue;
+        if (isNaN(weight) || region === 'Регион не определен') continue;
 
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
@@ -273,17 +297,16 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
                 clients: new Set<string>(),
             };
         }
-        aggregatedData[key].fact += fact;
+        aggregatedData[key].fact += weight;
         aggregatedData[key].clients.add(clientDisplayValue);
 
         if (hasPotentialColumn) {
-            const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
-            const potential = parseFloat(String(row[potentialKey] || '0').replace(/\s/g, '').replace(',', '.'));
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
         if(i % 100 === 0) {
-            const percentage = 5 + Math.round((i / jsonData.length) * 80);
+            const percentage = 50 + Math.round((i / jsonData.length) * 35);
             postMessage({ type: 'progress', payload: { percentage, message: `Обработано ${i} из ${jsonData.length} строк...` } });
         }
     }
@@ -291,104 +314,110 @@ async function processXlsx(file: File, okbByRegion: Map<string, OkbDataRow[]>, p
     const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
     
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) };
+    const resultPayload: WorkerResultPayload = { 
+        aggregatedData: finalData, 
+        plottableActiveClients 
+    };
     postMessage({ type: 'result', payload: resultPayload });
 }
 
 
 async function processCsv(file: File, okbByRegion: Map<string, OkbDataRow[]>, postMessage: PostMessageFn) {
     postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
+    
+    // This is more complex for CSV streaming. For now, we will read the whole file to find unique addresses first.
+    // A more advanced implementation would require a two-pass approach on the stream.
+    const fileContent = await file.text();
+    const parsedCsv = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
+    const jsonData = parsedCsv.data as any[];
 
+    if (jsonData.length === 0) throw new Error('CSV файл пуст или имеет неверный формат.');
+
+    const headers = Object.keys(jsonData[0]);
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) {
+       throw new Error('Файл должен содержать колонку "Вес".');
+    }
+    const clientNameHeader = findClientNameHeader(headers);
+    
     const aggregatedData: AggregationMap = {};
     const addressCache = new Map<string, ParsedAddress>();
-    const activeAddresses = new Set<string>();
-    let hasPotentialColumn = false;
-    let clientNameHeader: string | undefined = undefined;
+    const coordsCache: CoordsCache = new Map();
+    const plottableActiveClients: MapPoint[] = [];
 
-    return new Promise<void>((resolve, reject) => {
-        let rowCounter = 0;
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            worker: true, 
-            step: async (results, parser) => {
-                parser.pause();
-                try {
-                    const row = results.data as any;
-                     if(rowCounter === 0) {
-                        const headers = Object.keys(row);
-                        hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-                        if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) {
-                           throw new Error('Файл должен содержать колонку "Вес".');
-                        }
-                        clientNameHeader = findClientNameHeader(headers);
-                    }
+    // --- Geocoding Pass ---
+    const uniqueAddresses = [...new Set(jsonData.map(row => findAddressInRow(row)).filter(Boolean) as string[])];
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${uniqueAddresses.length} уникальных адресов. Геокодирование...` } });
 
-                    const parsedAddress = await getAddressInfoForRow(row, addressCache);
-                    const region = parsedAddress.region;
+    for (let i = 0; i < uniqueAddresses.length; i++) {
+        const address = uniqueAddresses[i];
+        if (!coordsCache.has(address)) {
+            const coords = await getCoordinatesFromAddress(address);
+            coordsCache.set(address, coords);
+        }
+        if(i % 10 === 0) {
+            const percentage = 10 + Math.round((i / uniqueAddresses.length) * 40);
+            postMessage({ type: 'progress', payload: { percentage, message: `Геокодирование: ${i} / ${uniqueAddresses.length}` } });
+        }
+    }
 
-                    const brandKey = Object.keys(row).find(k => k.toLowerCase().includes('торговая марка')) || 'Торговая марка';
-                    const brand = row[brandKey] || 'Неизвестный бренд';
-                    const rmKey = Object.keys(row).find(k => k.toLowerCase().includes('рм')) || 'РМ';
-                    const rm = row[rmKey] || 'Неизвестный РМ';
-                    const weightKey = Object.keys(row).find(k => k.toLowerCase().includes('вес')) || 'Вес, кг';
-                    const fact = parseFloat(String(row[weightKey] || '0').replace(/\s/g, '').replace(',', '.'));
-                    
-                    const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-                    const clientAddress = findAddressInRow(row);
+    // --- Aggregation Pass ---
+    postMessage({ type: 'progress', payload: { percentage: 50, message: 'Агрегация данных...' } });
+    for (let i = 0; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const clientAddress = findAddressInRow(row);
+        const parsedAddress = await getAddressInfoForRow(row, addressCache);
 
-                    // Use address for display list if available, otherwise fall back to name
-                    const clientDisplayValue = clientAddress || clientName;
+        const region = parsedAddress.region;
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+        const clientDisplayValue = clientAddress || clientName;
 
-                    // Use address for matching, with a more robust fallback
-                    const addressForMatching = clientAddress || `${clientName} (строка #${rowCounter + 2})`;
-                    if (addressForMatching) {
-                        activeAddresses.add(normalizeAddressForSearch(addressForMatching));
-                    }
-
-                    if (!isNaN(fact) && region !== 'Регион не определен') {
-                        const key = `${region}-${brand}-${rm}`.toLowerCase();
-                        if (!aggregatedData[key]) {
-                            aggregatedData[key] = {
-                                key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
-                                region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                                clients: new Set<string>(),
-                            };
-                        }
-                        aggregatedData[key].fact += fact;
-                        aggregatedData[key].clients.add(clientDisplayValue);
-                        
-                        if (hasPotentialColumn) {
-                            const potentialKey = Object.keys(row).find(k => k.toLowerCase().includes('потенциал')) || 'Потенциал';
-                            const potential = parseFloat(String(row[potentialKey] || '0').replace(/\s/g, '').replace(',', '.'));
-                            if (!isNaN(potential)) aggregatedData[key].potential += potential;
-                        }
-                    }
-
-                    rowCounter++;
-                    if(rowCounter % 200 === 0) {
-                        const percentage = Math.round((results.meta.cursor / file.size) * 85);
-                        postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${rowCounter.toLocaleString('ru-RU')}...` } });
-                    }
-                } catch(e) {
-                    parser.abort();
-                    reject(e);
-                } finally {
-                    parser.resume();
-                }
-            },
-            complete: async () => {
-                try {
-                    const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
-                    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
-                    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, activeAddresses: Array.from(activeAddresses) };
-                    postMessage({ type: 'result', payload: resultPayload });
-                    resolve();
-                } catch (e) {
-                    reject(e);
-                }
-            },
-            error: (err) => reject(err),
-        });
-    });
+        if (clientAddress) {
+            const coords = coordsCache.get(clientAddress);
+            if (coords) {
+                 plottableActiveClients.push({
+                    key: `${coords.lat}-${coords.lon}-${i}`,
+                    lat: coords.lat,
+                    lon: coords.lon,
+                    status: 'match',
+                    name: clientName,
+                    address: clientAddress,
+                    type: findValueInRow(row, ['канал продаж']),
+                    contacts: findValueInRow(row, ['контакты']),
+                });
+            }
+        }
+        
+        if (!isNaN(weight) && region !== 'Регион не определен') {
+            const key = `${region}-${brand}-${rm}`.toLowerCase();
+            if (!aggregatedData[key]) {
+                 aggregatedData[key] = {
+                    key, clientName: `${region} (${brand})`, brand, rm, city: parsedAddress.city || region,
+                    region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                    clients: new Set<string>(),
+                };
+            }
+            aggregatedData[key].fact += weight;
+            aggregatedData[key].clients.add(clientDisplayValue);
+            
+            if (hasPotentialColumn) {
+                const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+                if (!isNaN(potential)) aggregatedData[key].potential += potential;
+            }
+        }
+        
+        if(i % 200 === 0) {
+            const percentage = 50 + Math.round((i / jsonData.length) * 35);
+            postMessage({ type: 'progress', payload: { percentage, message: `Обработано строк: ${i.toLocaleString('ru-RU')}...` } });
+        }
+    }
+    
+    const finalData = await finalizeProcessing(aggregatedData, okbByRegion, hasPotentialColumn, postMessage);
+    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершение...' } });
+    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients };
+    postMessage({ type: 'result', payload: resultPayload });
 }

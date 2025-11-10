@@ -1,6 +1,4 @@
-
-
-import { AggregatedDataRow } from "../types";
+import { AggregatedDataRow, MapPoint } from "../types";
 
 // The proxy URL should be configured in one place, but for simplicity, we define it here.
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
@@ -99,3 +97,44 @@ export const streamClientInsights = async (
         }
     }
 };
+
+/**
+ * Gets geographic coordinates for a given address string using the Gemini API.
+ * @param address The address string to geocode.
+ * @returns A promise that resolves to an object with lat and lon, or null if not found.
+ */
+export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lon: number } | null> {
+    const prompt = `
+        Преобразуй следующий адрес в географические координаты.
+        Адрес: "${address}"
+        Верни ТОЛЬКО JSON-объект в формате {"lat": широта, "lon": долгота}.
+        Например: {"lat": 55.7558, "lon": 37.6176}.
+        Если адрес невозможно определить, верни {"lat": null, "lon": null}.
+    `;
+
+    try {
+        const response = await fetch(PROXY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt }),
+        });
+
+        if (!response.ok) {
+            console.error(`Geocoding API error for address "${address}": ${response.statusText}`);
+            return null;
+        }
+
+        const text = await response.text();
+        // Clean the response to ensure it's valid JSON
+        const jsonString = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        const result = JSON.parse(jsonString);
+
+        if (result && typeof result.lat === 'number' && typeof result.lon === 'number') {
+            return result;
+        }
+        return null;
+    } catch (error) {
+        console.error(`Error geocoding address "${address}":`, error);
+        return null;
+    }
+}

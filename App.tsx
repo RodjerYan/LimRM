@@ -18,6 +18,7 @@ import {
     SummaryMetrics,
     OkbDataRow,
     WorkerResultPayload,
+    MapPoint,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, getOkbAddress, normalizeAddressForSearch } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
@@ -41,7 +42,7 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
-    const [activeAddresses, setActiveAddresses] = useState<Set<string>>(new Set());
+    const [plottableActiveClients, setPlottableActiveClients] = useState<MapPoint[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
@@ -51,27 +52,16 @@ const App: React.FC = () => {
         return filteredData.length > 0 ? calculateSummaryMetrics(filteredData) : null;
     }, [filteredData]);
 
-    const { potentialClients, activeClients } = useMemo(() => {
-        if (!okbData.length || activeAddresses.size === 0) {
-            return { potentialClients: okbData, activeClients: [] };
-        }
-        
-        const potential: OkbDataRow[] = [];
-        const active: OkbDataRow[] = [];
-
-        for (const okb of okbData) {
+    const potentialClients = useMemo(() => {
+        if (!okbData.length) return okbData;
+        const activeAddressesSet = new Set(plottableActiveClients.map(c => normalizeAddressForSearch(c.address)));
+        return okbData.filter(okb => {
             const address = getOkbAddress(okb);
             const normalizedAddress = normalizeAddressForSearch(address);
-            if (activeAddresses.has(normalizedAddress)) {
-                active.push(okb);
-            } else {
-                potential.push(okb);
-            }
-        }
-        
-        return { potentialClients: potential, activeClients: active };
-    }, [okbData, activeAddresses]);
-
+            return !activeAddressesSet.has(normalizedAddress);
+        });
+    }, [okbData, plottableActiveClients]);
+    
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
@@ -102,7 +92,7 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
-        setActiveAddresses(new Set(data.activeAddresses));
+        setPlottableActiveClients(data.plottableActiveClients);
         setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп.`, 'success');
     }, [addNotification]);
@@ -186,7 +176,7 @@ const App: React.FC = () => {
                             data={filteredData} 
                             selectedRegions={filters.region} 
                             potentialClients={potentialClients}
-                            activeClients={activeClients}
+                            activeClients={plottableActiveClients}
                             conflictZones={conflictZones}
                         />
 

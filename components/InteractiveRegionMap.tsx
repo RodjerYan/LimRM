@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow, OkbDataRow } from '../types';
+import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
 import { SearchIcon, ErrorIcon } from './icons';
@@ -11,7 +11,7 @@ interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
     potentialClients: OkbDataRow[];
-    activeClients: OkbDataRow[];
+    activeClients: MapPoint[];
     conflictZones: FeatureCollection | null;
 }
 
@@ -135,7 +135,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle(invisibleStyle).bringToFront();
+             layer.setStyle({ ...invisibleStyle, interactive: false }).bringToFront(); // Fix: make layer non-interactive
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -209,37 +209,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, [resetHighlight]);
     
-    const createClientMarker = (tt: OkbDataRow, options: L.CircleMarkerOptions) => {
-        const name = findValueInRow(tt, ['наименование', 'клиент']) || 'Без названия';
-        const address = findValueInRow(tt, ['юридический адрес', 'адрес']) || 'Адрес не указан';
-        const activity = findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д';
-        const contacts = findValueInRow(tt, ['контакты', 'телефон', 'email']) || '';
-        
-        const popupContent = `
-            <b>${name}</b><br>
-            ${address}<br>
-            <small>${activity}</small>
-            ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-        `;
-
-        const marker = L.circleMarker([tt.lat!, tt.lon!], {
-            ...options,
-            radius: 4,
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 0.8,
-        }).bindPopup(popupContent);
-        
-        marker.on('mouseover', function(this: L.CircleMarker) { this.setRadius(7); });
-        marker.on('mouseout', function(this: L.CircleMarker) { this.setRadius(4); });
-
-        return marker;
-    };
+    // Generic marker creation function
+    const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
+        <b>${name}</b><br>
+        ${address}<br>
+        <small>${type || 'н/д'}</small>
+        ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+    `;
     
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
 
+        // --- Potential Clients (from OKB, blue markers) ---
         if (potentialClientMarkersLayer.current) {
             layerControl.current.removeLayer(potentialClientMarkersLayer.current);
             map.removeLayer(potentialClientMarkersLayer.current);
@@ -247,27 +229,36 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         potentialClientMarkersLayer.current = L.layerGroup();
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                const marker = createClientMarker(tt, { fillColor: '#3b82f6', color: '#2563eb' });
+                const popupContent = createPopupContent(
+                    findValueInRow(tt, ['наименование', 'клиент']),
+                    findValueInRow(tt, ['юридический адрес', 'адрес']),
+                    findValueInRow(tt, ['вид деятельности', 'тип']),
+                    findValueInRow(tt, ['контакты'])
+                );
+                const marker = L.circleMarker([tt.lat, tt.lon], {
+                    fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
+                }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
         map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциальные клиенты");
-
-
+        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
+        
+        // --- Active Clients (from sales file, green markers) ---
         if (activeClientMarkersLayer.current) {
             layerControl.current.removeLayer(activeClientMarkersLayer.current);
             map.removeLayer(activeClientMarkersLayer.current);
         }
         activeClientMarkersLayer.current = L.layerGroup();
         activeClients.forEach(tt => {
-            if (tt.lat && tt.lon) {
-                const marker = createClientMarker(tt, { fillColor: '#22c55e', color: '#16a34a' });
-                activeClientMarkersLayer.current?.addLayer(marker);
-            }
+            const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
+            const marker = L.circleMarker([tt.lat, tt.lon], {
+                fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
+            }).bindPopup(popupContent);
+            activeClientMarkersLayer.current?.addLayer(marker);
         });
         map.addLayer(activeClientMarkersLayer.current);
-        layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные клиенты");
+        layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
         
     }, [potentialClients, activeClients]);
 
