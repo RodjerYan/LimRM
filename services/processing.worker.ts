@@ -1,6 +1,5 @@
 import * as xlsx from 'xlsx';
-import * as Papa from 'paparse';
-import type { ParseResult, ParseMeta } from 'papaparse';
+import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
@@ -295,7 +294,7 @@ async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
     
     const parsePromise = new Promise<{ data: any[], meta: ParseMeta }>((resolve, reject) => {
-        Papa.parse(file, {
+        PapaParse(file, {
             header: true,
             skipEmptyLines: true,
             complete: (results: ParseResult<any>) => {
