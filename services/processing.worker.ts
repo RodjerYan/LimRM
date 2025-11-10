@@ -1,5 +1,6 @@
 import * as xlsx from 'xlsx';
-import Papa from 'papaparse';
+// FIX: Changed to a namespace import to correctly access both the `parse` function and the `ParseMeta` type from papaparse.
+import * as Papa from 'papaparse';
 import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, ParsedAddress, WorkerResultPayload, MapPoint } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
@@ -257,9 +258,16 @@ async function processFile(jsonData: any[], headers: string[], { okbByRegion, ok
     for (const address of uniqueAddresses) {
         const normalized = normalizeAddressForSearch(address);
         const okbMatch = okbByAddress.get(normalized);
-        if (okbMatch?.lat && okbMatch?.lon) {
-            coordsCache.set(address, { lat: okbMatch.lat, lon: okbMatch.lon });
+
+        if (okbMatch) {
+            // Address found in OKB. Use its coordinates if they exist.
+            if (okbMatch.lat && okbMatch.lon) {
+                coordsCache.set(address, { lat: okbMatch.lat, lon: okbMatch.lon });
+            }
+            // If the OKB match has no coordinates, we do NOT fall back to OSM to ensure high performance.
+            // This address will simply not be plotted.
         } else {
+            // Address is not in OKB at all. Add it to the queue for slow geocoding via OSM.
             addressesToGeocodeViaOsm.add(address);
         }
     }
@@ -358,15 +366,31 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
 
 async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
-    const fileContent = await file.text();
-    const parsedCsv = Papa.parse(fileContent, { header: true, skipEmptyLines: true });
     
-    if (parsedCsv.errors.length > 0) {
-        console.warn('CSV parsing errors:', parsedCsv.errors);
+    // Fix for build errors: Use a Promise-based wrapper for Papa.parse to ensure correct async handling and type inference.
+    // FIX: Corrected Papa.Meta to Papa.ParseMeta to align with papaparse type definitions.
+    const parsePromise = new Promise<{ data: any[], meta: Papa.ParseMeta }>((resolve, reject) => {
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+                if (results.errors.length > 0) {
+                    console.warn('CSV parsing errors:', results.errors);
+                    // Decide if errors are critical. For now, we proceed.
+                }
+                resolve({ data: results.data, meta: results.meta });
+            },
+            error: (error: Error) => {
+                reject(error);
+            }
+        });
+    });
+
+    try {
+        const { data: jsonData, meta } = await parsePromise;
+        const headers = meta.fields || Object.keys(jsonData[0] || {});
+        await processFile(jsonData, headers, args);
+    } catch (error) {
+        throw new Error(`Failed to parse CSV file: ${(error as Error).message}`);
     }
-
-    const jsonData = parsedCsv.data as any[];
-    const headers = parsedCsv.meta.fields || Object.keys(jsonData[0] || {});
-
-    await processFile(jsonData, headers, args);
 }
