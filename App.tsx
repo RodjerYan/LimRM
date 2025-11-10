@@ -20,8 +20,8 @@ import {
     WorkerResultPayload,
     MapPoint,
 } from './types';
-// FIX: Use findAddressInRow instead of getOkbAddress for consistency
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddressForSearch } from './utils/dataUtils';
+// FIX: Use findAddressInRow and the new normalizeAddress for consistency
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
@@ -55,10 +55,10 @@ const App: React.FC = () => {
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return []; // Return empty array instead of original data
-        const activeAddressesSet = new Set(plottableActiveClients.map(c => normalizeAddressForSearch(c.address)));
+        const activeAddressesSet = new Set(plottableActiveClients.map(c => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
-            const normalizedAddress = normalizeAddressForSearch(address);
+            const normalizedAddress = normalizeAddress(address);
             return !activeAddressesSet.has(normalizedAddress);
         });
     }, [okbData, plottableActiveClients]);

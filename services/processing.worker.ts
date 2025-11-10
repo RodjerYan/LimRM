@@ -4,7 +4,7 @@ import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerRe
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 // FIX: Import the new, centralized address processing functions.
-import { normalizeAddressForSearch, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -26,7 +26,7 @@ const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
         // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
         if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
             // USE CENTRALIZED FUNCTION
-            const normalized = normalizeAddressForSearch(address);
+            const normalized = normalizeAddress(address);
             if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
                 addressMap.set(normalized, { lat: row.lat, lon: row.lon });
             }
@@ -72,7 +72,7 @@ function findPotentialClients(
         // USE CENTRALIZED FUNCTION
         const okbAddress = findAddressInRow(okbRow) || '';
         // USE CENTRALIZED FUNCTION
-        const normalizedOkbAddress = normalizeAddressForSearch(okbAddress);
+        const normalizedOkbAddress = normalizeAddress(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
             const client: PotentialClient = {
@@ -167,7 +167,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
             // USE CENTRALIZED FUNCTION
-            const normalizedAddress = normalizeAddressForSearch(clientAddress);
+            const normalizedAddress = normalizeAddress(clientAddress);
             const coords = okbCoordIndex.get(normalizedAddress);
 
             if (coords) {
@@ -226,7 +226,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
     // USE CENTRALIZED FUNCTION
-    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddressForSearch(findAddressInRow(row))));
+    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddress(findAddressInRow(row))));
 
     for (const item of aggregatedValues) {
         let potential = item.potential;

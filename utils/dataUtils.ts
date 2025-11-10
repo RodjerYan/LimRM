@@ -5,8 +5,6 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-// FIX: Import the city normalization map to unify address processing logic.
-import { CITY_NORMALIZATION_MAP } from './addressMappings';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -132,58 +130,19 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     return null;
 };
 
-// A single, manually curated, and safe list of stop words.
-// It removes generic administrative and address terms WITHOUT removing city/region names.
-const allStopWords = [
-    // General address terms
-    'г', 'ул', 'улица', 'пр', 'проспект', 'д', 'дом', 'корп', 'корпус', 'р-н', 'район', 'пос', 'поселок', 'село', 
-    'деревня', 'станица', 'ст-ца', 'мкр', 'микрорайон', 'кв', 'квартира', 'а', 'б', 'в', 'к', 'стр', 'строение', 
-    'лит', 'литера', 'пер', 'переулок', 'ш', 'шоссе', 'пл', 'площадь', 'наб', 'набережная', 'бульвар', 'б-р', 
-    'проезд', 'пр-д', 'федерации', 'народная',
-    // Generic administrative terms
-    'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'муниципальный', 'городской', 
-    'сельский', 'поселение', 'территория', 'снт', 'садовое', 'некоммерческое', 'товарищество'
-];
-
-const stopWordsRegex = new RegExp(`\\b(${allStopWords.join('|')})\\b`, 'g');
-
-
 /**
- * The unified, "master" function for normalizing addresses for robust matching.
- * This is the centralized, single source of truth for creating a matchable address key.
- * It follows a multi-step process to handle real-world data inconsistencies.
+ * Normalizes an address string for robust matching, based on user-provided logic.
  * @param address The raw address string.
  * @returns A normalized string, suitable for high-match-rate lookups.
  */
-export const normalizeAddressForSearch = (address: string | null | undefined): string => {
-  if (!address) return '';
+export function normalizeAddress(address: string | null | undefined): string {
+  if (!address) return "";
 
-  let normalized = address.toLowerCase().replace(/ё/g, 'е');
-
-  // STEP 1: Apply alias normalization FIRST to correct common typos and abbreviations.
-  for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-      const regex = new RegExp(`\\b${alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'g');
-      normalized = normalized.replace(regex, canonical);
-  }
-
-  const cleanedAddress = normalized
-    // STEP 2: Replace common punctuation with spaces to handle cases like "31/1" or "юго-западная".
-    .replace(/[,.;:()/"'-]/g, ' ')
-    // STEP 3: Specifically find and remove 5 or 6-digit numbers (postal codes) to prevent mismatches.
-    .replace(/\b\d{5,6}\b/g, '')
-    // STEP 4: Intelligently add spaces between numbers and letters to normalize building/corpus numbers.
-    // E.g., "дом25к2" -> "дом 25 к 2", "25к2" -> "25 к 2".
-    .replace(/(\d)([а-яa-z])/g, '$1 $2')
-    .replace(/([а-яa-z])(\d)/g, '$1 $2')
-    // STEP 5: Remove the safe, curated list of stop words. This NO LONGER removes city names.
-    .replace(stopWordsRegex, '')
-    // STEP 6: Remove any remaining non-alphanumeric characters.
-    .replace(/[^а-яa-z0-9\s]/g, '')
-    // STEP 7: Collapse multiple spaces that may have formed during replacements into one.
-    .replace(/\s+/g, ' ')
+  return address
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.,;]/g, "")
+    .replace(/(россия|рф|область|край|г\.|город|ул\.|улица|д\.|дом|корпус|корп\.|к\.|стр\.|строение)/g, "")
+    .replace(/\s{2,}/g, " ")
     .trim();
-
-  // STEP 8: Sort the remaining significant words and numbers to handle different ordering.
-  // This makes "Ленина 10" and "10 Ленина" identical.
-  return cleanedAddress.split(' ').filter(Boolean).sort().join(' ');
-};
+}

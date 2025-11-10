@@ -51,49 +51,39 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     return []; // No data or only a header row
   }
 
-  const originalHeader = rows[0].map(h => String(h || '').trim());
-  const lowerCaseHeader = originalHeader.map(h => h.toLowerCase());
+  const header = rows[0].map(h => String(h || '').trim());
   const dataRows = rows.slice(1);
 
-  // Find column indices directly. This is more robust than matching string keys later.
-  const latIndex = lowerCaseHeader.findIndex(h => ['широта', 'ширина', 'lat', 'm'].includes(h));
-  const lonIndex = lowerCaseHeader.findIndex(h => ['долгота', 'lon', 'l'].includes(h));
-  
   const okbData: OkbDataRow[] = dataRows
-    .map(row => {
-        // Skip rows that are completely empty to avoid processing useless data.
-        if (row.every(cell => cell === null || cell === '' || cell === undefined)) {
+    .map(rowArray => {
+        if (rowArray.every(cell => cell === null || cell === '' || cell === undefined)) {
             return null;
         }
 
-        // Create the base row object by mapping original headers to row values.
-        const rowData: { [key: string]: any } = {};
-        originalHeader.forEach((key, index) => {
-            if (key) { // Only add properties for columns with a header
-                rowData[key] = row[index] || null;
+        // Create an object from the row array and header
+        const row: { [key: string]: any } = {};
+        header.forEach((key, index) => {
+            if (key) {
+                row[key] = rowArray[index] || null;
             }
         });
-        
-        // Now, robustly parse coordinates using the determined indices.
-        // This logic is now independent of the `rowData` object's keys.
-        if (latIndex !== -1 && lonIndex !== -1 && row[latIndex] && row[lonIndex]) {
-            const latStr = String(row[latIndex]).replace(',', '.').trim();
-            const lonStr = String(row[lonIndex]).replace(',', '.').trim();
 
-            const lat = parseFloat(latStr);
-            const lon = parseFloat(lonStr);
+        // User's requested logic for finding coordinates
+        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
+        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
-            // Only add coordinates if they are valid numbers.
+        if (latVal && lonVal) {
+            const lat = parseFloat(String(latVal).replace(',', '.').trim());
+            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
+
+            // User's requested check for NaN
             if (!isNaN(lat) && !isNaN(lon)) {
-                rowData.lat = lat;
-                rowData.lon = lon;
+                row.lat = lat;
+                row.lon = lon;
             }
         }
 
-        if (Object.keys(rowData).length === 0) {
-            return null;
-        }
-        return rowData as OkbDataRow;
+        return row as OkbDataRow;
     })
     .filter((row): row is OkbDataRow => row !== null);
 
