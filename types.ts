@@ -48,6 +48,7 @@ export interface OkbDataRow {
     'Вид деятельности'?: string;
     'ИНН'?: string;
     'Статус'?: string;
+    'Контакты'?: string;
     lat?: number;
     lon?: number;
 }

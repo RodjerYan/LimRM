@@ -22,6 +22,25 @@ interface SearchableLocation {
     lon?: number;
 }
 
+/**
+ * A robust helper to find a value in a data row by searching for keywords in its keys.
+ * This makes data extraction resilient to variations in column names from the source file.
+ * @param row The data row object (e.g., from OKB).
+ * @param keywords An array of lowercase keywords to search for (e.g., ['наименование', 'клиент']).
+ * @returns The found string value or an empty string if not found.
+ */
+const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
+    const rowKeys = Object.keys(row);
+    for (const keyword of keywords) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().includes(keyword));
+        if (foundKey && row[foundKey]) {
+            return String(row[foundKey]);
+        }
+    }
+    return '';
+};
+
+
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
@@ -191,10 +210,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [resetHighlight]);
     
     const createClientMarker = (tt: OkbDataRow, options: L.CircleMarkerOptions) => {
-        const name = tt['Наименование'] || 'Без названия';
-        const address = tt['Юридический адрес'] || 'Адрес не указан';
-        const activity = tt['Вид деятельности'] || 'н/д';
-        const contacts = tt['Контакты'] || '';
+        const name = findValueInRow(tt, ['наименование', 'клиент']) || 'Без названия';
+        const address = findValueInRow(tt, ['юридический адрес', 'адрес']) || 'Адрес не указан';
+        const activity = findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д';
+        const contacts = findValueInRow(tt, ['контакты', 'телефон', 'email']) || '';
         
         const popupContent = `
             <b>${name}</b><br>
