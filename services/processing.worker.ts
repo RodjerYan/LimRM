@@ -10,65 +10,65 @@ type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'pote
 type OkbAddressIndex = Map<string, { lat: number; lon: number }>;
 
 
-// --- NEW: Synonym-based Header Recognition System ---
-
-const ADDRESS_SYNONYMS = ['адрес', 'юрадрес', 'юр. адрес', 'адрес доставки', 'юридический адрес', 'адрес тт'];
-const CLIENT_NAME_SYNONYMS = ['наименование клиента', 'контрагент', 'клиент', 'наименование', 'торговая точка', 'тт'];
-const WEIGHT_SYNONYMS = ['вес', 'масса', 'объем', 'объём', 'количество', 'кол-во', 'факт'];
-const BRAND_SYNONYMS = ['торговая марка', 'бренд', 'тм'];
-const RM_SYNONYMS = ['рм', 'региональный менеджер', 'менеджер'];
-const POTENTIAL_SYNONYMS = ['потенциал'];
-const CLIENT_TYPE_SYNONYMS = ['вид деятельности', 'тип клиента', 'канал продаж'];
-const CONTACTS_SYNONYMS = ['контакты', 'телефон', 'контакт'];
-
 /**
- * Finds the actual header name from a list of headers based on a prioritized list of synonyms.
- * @param headers The list of headers from the uploaded file.
- * @param synonyms A list of lowercase strings to look for.
- * @returns The found header name or null if not found.
+ * A robust helper function to find an address value within a data row.
+ * It searches for keys in a prioritized order, using both exact and partial matches.
+ * @param row The data row object.
+ * @returns The found address string or null.
  */
-const findHeader = (headers: string[], synonyms: string[]): string | null => {
-    const lowerHeaders = headers.map(h => (h || '').toLowerCase().trim());
-    for (const synonym of synonyms) {
-        const foundHeader = headers[lowerHeaders.findIndex(lh => lh.includes(synonym))];
-        if (foundHeader) {
-            return foundHeader;
-        }
+const findAddressInRow = (row: { [key: string]: any }): string | null => {
+    if (!row) return null;
+    const rowKeys = Object.keys(row);
+    const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
+
+    for (const pKey of prioritizedKeys) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
+        if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
+
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
+    if (addressKey && row[addressKey]) return String(row[addressKey]);
+    
+    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
+    if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
+
     return null;
 };
 
-// --- End of new system ---
-
-
 /**
- * Creates a fast lookup map (index) from the OKB data. This version is optimized for fuzzy matching
- * by creating two types of keys for each address: a full one and one without numbers.
+ * Creates a fast lookup map (index) from the OKB data, storing only entries with valid coordinates.
  * @param okbData The raw OKB data.
  * @returns A Map where keys are normalized addresses and values are coordinate objects.
  */
 const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
     const addressMap: OkbAddressIndex = new Map();
     if (!okbData) return addressMap;
-    const okbAddressHeader = findHeader(Object.keys(okbData[0] || {}), ADDRESS_SYNONYMS);
 
     for (const row of okbData) {
-        const address = okbAddressHeader ? String(row[okbAddressHeader] || '') : null;
+        const address = findAddressInRow(row);
+        // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
         if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
-            const coords = { lat: row.lat, lon: row.lon };
-            const primaryKey = normalizeAddressForSearch(address);
-            if (primaryKey && !addressMap.has(primaryKey)) {
-                addressMap.set(primaryKey, coords);
-            }
-            if (primaryKey) {
-                const secondaryKey = primaryKey.replace(/\d/g, '').replace(/\s+/g, ' ').trim();
-                if (secondaryKey && secondaryKey !== primaryKey && secondaryKey.length > 5 && !addressMap.has(secondaryKey)) {
-                    addressMap.set(secondaryKey, coords);
-                }
+            const normalized = normalizeAddressForSearch(address);
+            if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
+                addressMap.set(normalized, { lat: row.lat, lon: row.lon });
             }
         }
     }
     return addressMap;
+};
+
+
+const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+    if (!row) return '';
+    const rowKeys = Object.keys(row);
+    for (const keyword of keywords) {
+        // Use trim() to handle potential whitespace in header names
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        if (foundKey && row[foundKey]) {
+            return String(row[foundKey]);
+        }
+    }
+    return '';
 };
 
 /**
@@ -77,14 +77,13 @@ const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
 function findPotentialClients(
     region: string,
     existingClients: Set<string>,
-    okbData: OkbDataRow[],
-    headers: { address: string | null; clientName: string | null; type: string | null; }
+    okbData: OkbDataRow[]
 ): PotentialClient[] {
-    if (!okbData || !headers.address || !headers.clientName) return [];
+    if (!okbData) return [];
     
     const potentialForRegion = okbData.filter(row => {
-        const regionKey = Object.keys(row).find(k => k.toLowerCase().includes('регион'));
-        const standardized = regionKey ? standardizeRegion(String(row[regionKey])) : '';
+        const regionKey = findValueInRow(row, ['регион']);
+        const standardized = standardizeRegion(regionKey);
         return standardized === region;
     });
     
@@ -92,14 +91,14 @@ function findPotentialClients(
 
     const potential: PotentialClient[] = [];
     for (const okbRow of potentialForRegion) {
-        const okbAddress = String(okbRow[headers.address] || '');
+        const okbAddress = findAddressInRow(okbRow) || '';
         const normalizedOkbAddress = normalizeAddressForSearch(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
             const client: PotentialClient = {
-                name: String(okbRow[headers.clientName]) || 'Без названия',
+                name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
                 address: okbAddress,
-                type: headers.type ? String(okbRow[headers.type]) || 'н/д' : 'н/д',
+                type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
             };
             if(okbRow.lat && okbRow.lon) {
                 client.lat = okbRow.lat;
@@ -111,6 +110,33 @@ function findPotentialClients(
     }
     return potential;
 }
+
+
+/**
+ * A multi-stage algorithm to reliably find the header for the client's name.
+ * @param headers An array of header strings from the file.
+ * @returns The determined client name header string, or undefined if none found.
+ */
+const findClientNameHeader = (headers: string[]): string | undefined => {
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+
+    const priorityTerms = ['наименование клиента', 'контрагент', 'клиент'];
+    for (const term of priorityTerms) {
+        const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
+        if (foundIndex !== -1) return headers[foundIndex];
+    }
+    
+    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
+    if (nameColumns.length > 0) {
+        const cleanNameColumn = nameColumns.find(h => {
+            const lH = h.toLowerCase().trim();
+            return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
+        });
+        return cleanNameColumn || nameColumns[0];
+    }
+    
+    return undefined;
+};
 
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
@@ -137,85 +163,58 @@ interface CommonProcessArgs {
 
 async function processFile(jsonData: any[], headers: string[], { okbData, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
+
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
+    const clientNameHeader = findClientNameHeader(headers);
     
-    // --- STAGE 1: INTELLIGENT HEADER DETECTION ---
-    postMessage({ type: 'progress', payload: { percentage: 2, message: 'Анализ заголовков файла...' } });
-    const headerMap = {
-        address: findHeader(headers, ADDRESS_SYNONYMS),
-        clientName: findHeader(headers, CLIENT_NAME_SYNONYMS),
-        weight: findHeader(headers, WEIGHT_SYNONYMS),
-        brand: findHeader(headers, BRAND_SYNONYMS),
-        rm: findHeader(headers, RM_SYNONYMS),
-        potential: findHeader(headers, POTENTIAL_SYNONYMS),
-        clientType: findHeader(headers, CLIENT_TYPE_SYNONYMS),
-        contacts: findHeader(headers, CONTACTS_SYNONYMS),
-    };
-
-    // --- NEW: VALIDATION ---
-    if (!headerMap.address) throw new Error("Не удалось найти колонку с адресом. Проверьте, что она называется 'Адрес', 'Юридический адрес' или подобным образом.");
-    if (!headerMap.weight) throw new Error("Не удалось найти обязательную колонку с весом продаж. Проверьте, что она называется 'Вес', 'Масса', 'Количество' или 'Факт'.");
-    
-    // --- FIX: Client name is now optional. If not found, address will be used instead. ---
-    if (!headerMap.clientName) {
-        postMessage({ type: 'error', payload: "Колонка 'Наименование клиента' не найдена. Вместо нее будет использоваться адрес." });
-        headerMap.clientName = headerMap.address;
-    }
-
-    if (!headerMap.brand) postMessage({ type: 'error', payload: "Колонка 'Бренд' не найдена, данные будут сгруппированы без учета бренда." });
-    if (!headerMap.rm) postMessage({ type: 'error', payload: "Колонка 'РМ' не найдена, данные будут сгруппированы без учета РМ." });
-
-
-    // --- STAGE 2: CREATE OKB COORDINATE INDEX (VERY FAST) ---
+    // --- STAGE 1: CREATE OKB COORDINATE INDEX (VERY FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
     const okbCoordIndex = createOkbAddressIndex(okbData);
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} ключей адресов с координатами.` } });
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} адресов с координатами.` } });
 
-    // --- STAGE 3: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
+    // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
-    const plottedAddresses = new Set<string>();
+    const plottedAddresses = new Set<string>(); // To avoid duplicate map points
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        const clientAddress: string = String(row[headerMap.address!] || '');
+        const clientAddress = findAddressInRow(row);
         
         // --- Plotting Logic ---
         if (clientAddress && !plottedAddresses.has(clientAddress)) {
             const normalizedAddress = normalizeAddressForSearch(clientAddress);
-            let coords = okbCoordIndex.get(normalizedAddress);
-            if (!coords && normalizedAddress) {
-                const noNumbersNormalized = normalizedAddress.replace(/\d/g, '').replace(/\s+/g, ' ').trim();
-                if (noNumbersNormalized && noNumbersNormalized.length > 5) {
-                    coords = okbCoordIndex.get(noNumbersNormalized);
-                }
-            }
+            const coords = okbCoordIndex.get(normalizedAddress);
+
             if (coords) {
+                // Address found in index with coordinates, plot it.
+                const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
                 plottableActiveClients.push({
                     key: `${coords.lat}-${coords.lon}-${i}`,
                     lat: coords.lat,
                     lon: coords.lon,
                     status: 'match',
-                    // Now correctly uses clientName which might be the address
-                    name: String(row[headerMap.clientName!] || 'Без названия'),
+                    name: clientName,
                     address: clientAddress,
-                    type: headerMap.clientType ? String(row[headerMap.clientType] || '') : 'н/д',
-                    contacts: headerMap.contacts ? String(row[headerMap.contacts] || '') : undefined,
+                    type: findValueInRow(row, ['канал продаж']),
+                    contacts: findValueInRow(row, ['контакты']),
                 });
                 plottedAddresses.add(clientAddress);
             }
         }
 
         // --- Aggregation Logic ---
-        const region: string = parseRussianAddress(clientAddress || '').region;
-        const brand = headerMap.brand ? String(row[headerMap.brand] || 'Без бренда') : 'Без бренда';
-        const rm = headerMap.rm ? String(row[headerMap.rm] || 'Без РМ') : 'Без РМ';
-        const weight = parseFloat(String(row[headerMap.weight!] || '0').replace(/\s/g, '').replace(',', '.'));
+        const region = parseRussianAddress(clientAddress || '').region;
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
-        // This correctly uses the clientName header, which now falls back to the address header if the original client name is missing.
-        const clientDisplayValue = String(row[headerMap.clientName!] || 'Без названия');
+        const clientNameForGroup = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+        const clientDisplayValue = clientAddress || clientNameForGroup;
 
-        if (isNaN(weight) || region === 'Регион не определен' || !rm || !brand) continue;
+        if (isNaN(weight) || region === 'Регион не определен') continue;
 
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
@@ -229,8 +228,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         aggregatedData[key].fact += weight;
         aggregatedData[key].clients.add(clientDisplayValue);
 
-        if (headerMap.potential) {
-            const potential = parseFloat(String(row[headerMap.potential] || '0').replace(/\s/g, '').replace(',', '.'));
+        if (hasPotentialColumn) {
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         
@@ -240,21 +239,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         }
     }
     
-    // --- STAGE 4: FINAL CALCULATIONS (FAST) ---
+    // --- STAGE 3: FINAL CALCULATIONS (FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
-    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddressForSearch(row[headerMap.address!])));
-
-    const okbHeaders = {
-        address: findHeader(Object.keys(okbData[0] || {}), ADDRESS_SYNONYMS),
-        clientName: findHeader(Object.keys(okbData[0] || {}), CLIENT_NAME_SYNONYMS),
-        type: findHeader(Object.keys(okbData[0] || {}), CLIENT_TYPE_SYNONYMS),
-    };
+    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddressForSearch(findAddressInRow(row))));
 
     for (const item of aggregatedValues) {
         let potential = item.potential;
-        if (!headerMap.potential) {
+        if (!hasPotentialColumn) {
             potential = item.fact * 1.15; 
         } else if (potential < item.fact) {
             potential = item.fact; 
@@ -263,7 +256,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const growthPotential = Math.max(0, potential - item.fact);
         const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
         
-        const potentialClients = findPotentialClients(item.region, existingClientsForPotentialSearch, okbData, okbHeaders);
+        const potentialClients = findPotentialClients(item.region, existingClientsForPotentialSearch, okbData);
         
         finalData.push({
             ...item,
