@@ -8,31 +8,47 @@ import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
-type OkbAddressIndex = Map<string, { lat: number; lon: number }>;
+// FIX: Define more specific types for the coordinate indexes for clarity and type safety.
+type CoordByInnIndex = Map<string, { lat: number; lon: number }>;
+type CoordByAddressIndex = Map<string, { lat: number; lon: number }>;
 
 
 /**
- * Creates a fast lookup map (index) from the OKB data, storing only entries with valid coordinates.
- * @param okbData The raw OKB data.
- * @returns A Map where keys are normalized addresses and values are coordinate objects.
+ * Creates fast lookup maps (indexes) from the OKB data for both INN and normalized address.
+ * This is a critical performance optimization and improves matching reliability.
+ * @param okbData The raw OKB data from Google Sheets.
+ * @returns An object containing two maps: one for INN-based lookups and one for address-based lookups.
  */
-const createOkbAddressIndex = (okbData: OkbDataRow[]): OkbAddressIndex => {
-    const addressMap: OkbAddressIndex = new Map();
-    if (!okbData) return addressMap;
+const createOkbIndexes = (okbData: OkbDataRow[]): { coordByInn: CoordByInnIndex; coordByAddress: CoordByAddressIndex } => {
+    const coordByInn: CoordByInnIndex = new Map();
+    const coordByAddress: CoordByAddressIndex = new Map();
+    if (!okbData) return { coordByInn, coordByAddress };
 
     for (const row of okbData) {
-        // USE CENTRALIZED FUNCTION
+        const inn = findValueInRow(row, ['инн'])?.trim();
         const address = findAddressInRow(row);
-        // CRITICAL CHANGE: Only index addresses that HAVE valid coordinates.
-        if (address && row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
-            // USE CENTRALIZED FUNCTION
-            const normalized = normalizeAddress(address);
-            if (normalized && !addressMap.has(normalized)) { // Keep first entry in case of duplicates
-                addressMap.set(normalized, { lat: row.lat, lon: row.lon });
+        const lat = row.lat;
+        const lon = row.lon;
+        
+        // Only index rows that have valid coordinates.
+        if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
+            const coords = { lat, lon };
+
+            // Populate the INN index.
+            if (inn && !coordByInn.has(inn)) {
+                coordByInn.set(inn, coords);
+            }
+
+            // Populate the address index.
+            if (address) {
+                const normalized = normalizeAddress(address);
+                if (normalized && !coordByAddress.has(normalized)) {
+                    coordByAddress.set(normalized, coords);
+                }
             }
         }
     }
-    return addressMap;
+    return { coordByInn, coordByAddress };
 };
 
 
@@ -148,10 +164,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
-    // --- STAGE 1: CREATE OKB COORDINATE INDEX (VERY FAST) ---
+    // --- STAGE 1: CREATE OKB COORDINATE INDEXES (INN & ADDRESS) ---
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
-    const okbCoordIndex = createOkbAddressIndex(okbData);
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${okbCoordIndex.size} адресов с координатами.` } });
+    const { coordByInn, coordByAddress } = createOkbIndexes(okbData);
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${coordByInn.size} ИНН и ${coordByAddress.size} адресов с координатами.` } });
 
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
@@ -162,22 +178,21 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const row = jsonData[i];
         
         // --- 1. Data Extraction ---
+        const clientInn = findValueInRow(row, ['инн'])?.trim();
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
 
-        // --- 2. Coordinate Resolution ---
+        // --- 2. Coordinate Resolution (INN-first approach) ---
         let lat: number | null = null;
         let lon: number | null = null;
-        let coordsSource: 'file' | 'okb' | 'none' = 'none';
+        let coordsSource: 'file' | 'okb_inn' | 'okb_address' | 'none' = 'none';
 
         // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
         const latVal = findValueInRow(row, ['широта', 'lat']);
         const lonVal = findValueInRow(row, ['долгота', 'lon', 'lng']);
-
         if (latVal && lonVal) {
             const parsedLat = parseFloat(String(latVal).replace(',', '.').trim());
             const parsedLon = parseFloat(String(lonVal).replace(',', '.').trim());
-
             if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
@@ -185,36 +200,45 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
         
-        // Priority 2: If no valid coordinates in file, fall back to OKB address index.
-        if (coordsSource === 'none' && clientAddress) {
-            const normalizedAddress = normalizeAddress(clientAddress);
-            const okbCoords = okbCoordIndex.get(normalizedAddress);
+        // Priority 2: If no coords in file, use the highly reliable INN index.
+        if (coordsSource === 'none' && clientInn) {
+            const okbCoords = coordByInn.get(clientInn);
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
-                coordsSource = 'okb';
+                coordsSource = 'okb_inn';
+            }
+        }
+        
+        // Priority 3: Fallback to the less reliable address index if INN fails.
+        if (coordsSource === 'none' && clientAddress) {
+            const normalizedAddress = normalizeAddress(clientAddress);
+            const okbCoords = coordByAddress.get(normalizedAddress);
+            if (okbCoords) {
+                lat = okbCoords.lat;
+                lon = okbCoords.lon;
+                coordsSource = 'okb_address';
             }
         }
 
         // --- 3. Plotting Logic ---
         if (coordsSource !== 'none' && lat !== null && lon !== null) {
-            const plotKey = clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`;
+            // Use INN for key if available, otherwise address, otherwise coordinates.
+            const plotKey = clientInn || (clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`);
             
             if (!plottedKeys.has(plotKey)) {
-                // FIX: Correct longitude for points across the antimeridian (e.g., Chukotka)
-                // to ensure they are rendered on a single continuous map view.
                 let correctedLon = lon;
-                if (correctedLon < -100) { // A safe threshold for Eurasian data, catches Chukotka.
+                if (correctedLon < -100) {
                     correctedLon += 360;
                 }
 
                 plottableActiveClients.push({
-                    key: `${lat}-${lon}-${i}`, // Keep original key for uniqueness
+                    key: `${lat}-${lon}-${i}`,
                     lat: lat,
-                    lon: correctedLon, // Use corrected longitude for plotting
+                    lon: correctedLon,
                     status: 'match',
                     name: clientName,
-                    address: clientAddress || `Координаты из файла: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+                    address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
                     type: findValueInRow(row, ['канал продаж']),
                     contacts: findValueInRow(row, ['контакты']),
                 });
@@ -259,7 +283,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
-    // USE CENTRALIZED FUNCTION
     const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddress(findAddressInRow(row))));
 
     for (const item of aggregatedValues) {
