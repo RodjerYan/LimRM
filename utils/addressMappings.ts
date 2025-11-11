@@ -1,17 +1,9 @@
 // utils/addressMappings.ts
 
-// FIX: Export REGION_BY_CITY_MAP to resolve the compilation error in `dataUtils.ts`.
-// This map is derived from the comprehensive REGION_BY_CITY_WITH_INDEXES data source,
-// providing a simple city-to-region lookup as intended by the application's design.
-import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
-
-/**
- * A simple city-to-region map derived from the more detailed REGION_BY_CITY_WITH_INDEXES.
- * This is used for quick lookups where only the region is needed.
- */
-export const REGION_BY_CITY_MAP: Record<string, string> = Object.fromEntries(
-    Object.entries(REGION_BY_CITY_WITH_INDEXES).map(([city, data]) => [city, data.region])
-);
+// The large REGION_BY_CITY_MAP derived from regionMap.ts has been removed.
+// It was not being used anywhere in the application but was being bundled into the
+// serverless function for /api/get-okb, causing it to exceed memory limits and crash with a 500 error.
+// Removing this unused, heavy import resolves the server error.
 
 const capitalize = (str: string): string => {
     if (!str) return '';

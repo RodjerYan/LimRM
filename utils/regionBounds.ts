@@ -131,4 +131,4 @@ export function isCoordinateInBoundingBox(lat: number, lon: number, bbox: Boundi
     }
 
     return lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat;
-}
+}.
