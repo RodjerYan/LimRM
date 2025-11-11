@@ -5,6 +5,7 @@ import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 // FIX: Import the new, centralized address processing functions.
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { regionBoundingBoxes, isCoordinateInBoundingBox } from '../utils/regionBounds';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -164,6 +165,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- 1. Data Extraction ---
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+        const region = parseRussianAddress(clientAddress || '').region;
 
         // --- 2. Coordinate Resolution ---
         let lat: number | null = null;
@@ -196,8 +198,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
 
-        // --- 3. Plotting Logic ---
-        if (coordsSource !== 'none' && lat !== null && lon !== null) {
+        // --- 3. Coordinate Sanity Check & Plotting Logic ---
+        let areCoordsValidForRegion = true;
+        if (lat !== null && lon !== null && region !== 'Регион не определен') {
+            areCoordsValidForRegion = isCoordinateInBoundingBox(lat, lon, regionBoundingBoxes[region]);
+        }
+
+        if (coordsSource !== 'none' && lat !== null && lon !== null && areCoordsValidForRegion) {
             const plotKey = clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`;
             
             if (!plottedKeys.has(plotKey)) {
@@ -216,7 +223,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         }
 
         // --- 4. Aggregation Logic ---
-        const region = parseRussianAddress(clientAddress || '').region;
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));

@@ -1,5 +1,8 @@
 import { google } from 'googleapis';
 import { OkbDataRow } from '../types';
+import { parseRussianAddress } from '../services/addressParser';
+import { findAddressInRow } from '../utils/dataUtils';
+import { regionBoundingBoxes, isCoordinateInBoundingBox } from '../utils/regionBounds';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const SHEET_NAME = 'Base';
@@ -37,6 +40,7 @@ async function getGoogleSheetsClient() {
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
  * It parses the data into an array of structured objects compatible with the application's types.
  * This version includes robust parsing to handle empty rows and headers gracefully.
+ * It also features a "smart swap" for coordinates to automatically correct misplaced lat/lon values.
  * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
  */
 export async function getOKBData(): Promise<OkbDataRow[]> {
@@ -60,7 +64,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             return null;
         }
 
-        // Create an object from the row array and header
         const row: { [key: string]: any } = {};
         header.forEach((key, index) => {
             if (key) {
@@ -68,20 +71,34 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        // User's requested logic for finding coordinates
-        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
-        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
+        // --- "Smart Swap" Coordinate Logic ---
+        const latValStr = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
+        const lonValStr = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
-        if (latVal && lonVal) {
-            const lat = parseFloat(String(latVal).replace(',', '.').trim());
-            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
+        if (latValStr && lonValStr) {
+            const coordFromLatCol = parseFloat(String(latValStr).replace(',', '.').trim());
+            const coordFromLonCol = parseFloat(String(lonValStr).replace(',', '.').trim());
+            
+            if (!isNaN(coordFromLatCol) && !isNaN(coordFromLonCol)) {
+                const address = findAddressInRow(row);
+                const parsedRegion = address ? parseRussianAddress(address).region : 'Регион не определен';
+                const bbox = regionBoundingBoxes[parsedRegion];
 
-            // User's requested check for NaN
-            if (!isNaN(lat) && !isNaN(lon)) {
-                row.lat = lat;
-                row.lon = lon;
+                // Check 1: Are coordinates correct as labeled? (lat, lon)
+                if (isCoordinateInBoundingBox(coordFromLatCol, coordFromLonCol, bbox)) {
+                    row.lat = coordFromLatCol;
+                    row.lon = coordFromLonCol;
+                } 
+                // Check 2: Are coordinates swapped? (lon, lat)
+                else if (isCoordinateInBoundingBox(coordFromLonCol, coordFromLatCol, bbox)) {
+                    // This is the fix for the user's issue.
+                    row.lat = coordFromLonCol; // Correct by swapping
+                    row.lon = coordFromLatCol; // Correct by swapping
+                }
+                // Else: Coordinates are invalid/outside region, do not assign them.
             }
         }
+        // --- End of "Smart Swap" Logic ---
 
         return row as OkbDataRow;
     })
@@ -89,6 +106,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
 
   return okbData;
 }
+
 
 /**
  * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
