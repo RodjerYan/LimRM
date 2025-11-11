@@ -188,7 +188,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
-            const map = L.map(mapContainer.current, { center: [60, 90], zoom: 3, scrollWheelZoom: true, preferCanvas: true });
+            // FIX: Add worldCopyJump: true to handle data that crosses the antimeridian.
+            const map = L.map(mapContainer.current, { 
+                center: [60, 90], 
+                zoom: 3, 
+                scrollWheelZoom: true, 
+                preferCanvas: true,
+                worldCopyJump: true
+            });
             mapInstance.current = map;
 
             // Create a dedicated pane for markers to ensure they are always on top

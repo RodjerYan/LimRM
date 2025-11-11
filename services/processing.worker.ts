@@ -204,7 +204,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                 // FIX: Correct longitude for points across the antimeridian (e.g., Chukotka)
                 // to ensure they are rendered on a single continuous map view.
                 let correctedLon = lon;
-                if (correctedLon < -150) { // A safe threshold for Eurasian data
+                if (correctedLon < -100) { // A safe threshold for Eurasian data, catches Chukotka.
                     correctedLon += 360;
                 }
 
