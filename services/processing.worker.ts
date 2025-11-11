@@ -201,10 +201,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             const plotKey = clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`;
             
             if (!plottedKeys.has(plotKey)) {
+                // FIX: Correct longitude for points across the antimeridian (e.g., Chukotka)
+                // to ensure they are rendered on a single continuous map view.
+                let correctedLon = lon;
+                if (correctedLon < -150) { // A safe threshold for Eurasian data
+                    correctedLon += 360;
+                }
+
                 plottableActiveClients.push({
-                    key: `${lat}-${lon}-${i}`,
+                    key: `${lat}-${lon}-${i}`, // Keep original key for uniqueness
                     lat: lat,
-                    lon: lon,
+                    lon: correctedLon, // Use corrected longitude for plotting
                     status: 'match',
                     name: clientName,
                     address: clientAddress || `Координаты из файла: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,

@@ -248,13 +248,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
-
-        // --- Potential Clients (from OKB, blue markers) ---
+    
+        // --- Cleanup and Re-creation ---
         if (potentialClientMarkersLayer.current) {
-            layerControl.current.removeLayer(potentialClientMarkersLayer.current);
             map.removeLayer(potentialClientMarkersLayer.current);
+            layerControl.current.removeLayer(potentialClientMarkersLayer.current);
         }
         potentialClientMarkersLayer.current = L.layerGroup();
+    
+        if (activeClientMarkersLayer.current) {
+            map.removeLayer(activeClientMarkersLayer.current);
+            layerControl.current.removeLayer(activeClientMarkersLayer.current);
+        }
+        activeClientMarkersLayer.current = L.layerGroup();
+    
+        // --- Populate Layers ---
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(
@@ -264,33 +272,54 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     findValueInRow(tt, ['контакты'])
                 );
                 const marker = L.circleMarker([tt.lat, tt.lon], {
-                    pane: 'markerPane', // Render in the top pane
+                    pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
-        map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
-        
-        // --- Active Clients (from sales file, green markers) ---
-        if (activeClientMarkersLayer.current) {
-            layerControl.current.removeLayer(activeClientMarkersLayer.current);
-            map.removeLayer(activeClientMarkersLayer.current);
-        }
-        activeClientMarkersLayer.current = L.layerGroup();
+    
         activeClients.forEach(tt => {
             const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
             const marker = L.circleMarker([tt.lat, tt.lon], {
-                pane: 'markerPane', // Render in the top pane
+                pane: 'markerPane',
                 fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
             }).bindPopup(popupContent);
             activeClientMarkersLayer.current?.addLayer(marker);
         });
+    
+        // --- Add to Map and Control ---
+        map.addLayer(potentialClientMarkersLayer.current);
+        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
+        
         map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
+    
+        // --- Fit Bounds to Data ---
+        const allMarkers = [
+            ...(potentialClientMarkersLayer.current?.getLayers() || []),
+            ...(activeClientMarkersLayer.current?.getLayers() || [])
+        ];
+    
+        if (allMarkers.length > 0) {
+            const featureGroup = L.featureGroup(allMarkers as L.Layer[]);
+            try {
+                const bounds = featureGroup.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds.pad(0.2));
+                } else {
+                     console.warn("Could not fit bounds: bounds are invalid.");
+                     map.setView([60, 90], 3); // Fallback
+                }
+            } catch(e) {
+                console.error("Error calculating bounds for map:", e);
+                map.setView([60, 90], 3); // Fallback
+            }
+        } else if (data.length === 0) { // Only reset if the underlying data is also empty
+            map.setView([60, 90], 3);
+        }
         
-    }, [potentialClients, activeClients]);
+    }, [potentialClients, activeClients, data]);
 
 
     useEffect(() => {
