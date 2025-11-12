@@ -52,9 +52,40 @@ const App: React.FC = () => {
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
+    const isDataLoaded = allData.length > 0;
+
+    const filteredActiveClients = useMemo(() => {
+        if (!isDataLoaded) return [];
+        return plottableActiveClients.filter(client => {
+            const rmMatch = !filters.rm || client.rm === filters.rm;
+            const brandMatch = filters.brand.length === 0 || filters.brand.includes(client.brand);
+            const regionMatch = filters.region.length === 0 || filters.region.includes(client.region);
+            return rmMatch && brandMatch && regionMatch;
+        });
+    }, [plottableActiveClients, filters, isDataLoaded]);
+
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
-        return filteredData.length > 0 ? calculateSummaryMetrics(filteredData) : null;
-    }, [filteredData]);
+        if (!isDataLoaded) {
+            return null;
+        }
+
+        const baseMetrics = calculateSummaryMetrics(filteredData);
+        
+        const defaultMetrics = {
+            totalFact: 0,
+            totalPotential: 0,
+            totalGrowth: 0,
+            totalClients: 0,
+            totalActiveClients: 0,
+            averageGrowthPercentage: 0,
+            topPerformingRM: { name: 'N/A', value: 0 },
+        };
+        
+        return {
+            ...(baseMetrics || defaultMetrics),
+            totalActiveClients: filteredActiveClients.length,
+        };
+    }, [filteredData, filteredActiveClients, isDataLoaded]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return []; // Return empty array instead of original data
@@ -154,7 +185,6 @@ const App: React.FC = () => {
         return () => clearTimeout(timer);
     }, [allData, filters]);
 
-    const isDataLoaded = allData.length > 0;
     const isControlPanelLocked = isLoading;
 
     return (
@@ -226,7 +256,7 @@ const App: React.FC = () => {
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
-                clients={plottableActiveClients}
+                clients={filteredActiveClients}
                 onClientSelect={handleClientSelectOnMap}
             />
         </div>

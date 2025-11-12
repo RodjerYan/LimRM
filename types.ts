@@ -23,6 +23,9 @@ export interface MapPoint {
     name: string;
     address: string;
     city: string;
+    region: string;
+    rm: string;
+    brand: string;
     type: string;
     contacts?: string;
 }

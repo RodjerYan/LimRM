@@ -172,7 +172,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
-    const plottedKeys = new Set<string>(); // To avoid duplicate map points
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
@@ -181,6 +180,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const clientInn = findValueInRow(row, ['инн'])?.trim();
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
 
         // --- 2. Coordinate Resolution (INN-first approach) ---
         let lat: number | null = null;
@@ -226,41 +227,32 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const region = parsedAddress.region;
         const parsedCity = parsedAddress.city;
         
-        // ** THE FIX **: Use the same "working logic" from the table.
-        // If city parsing fails, use the Region name as the group name.
-        // This ensures no "Город не определен" groups and provides consistency.
         const groupName = (parsedCity !== 'Город не определен') ? parsedCity : region;
-
 
         // --- 5. Plotting Logic ---
         if (coordsSource !== 'none' && lat !== null && lon !== null) {
-            // Use INN for key if available, otherwise address, otherwise coordinates.
-            const plotKey = clientInn || (clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`);
-            
-            if (!plottedKeys.has(plotKey)) {
-                let correctedLon = lon;
-                if (correctedLon < -100) {
-                    correctedLon += 360;
-                }
-
-                plottableActiveClients.push({
-                    key: `${lat}-${lon}-${i}`,
-                    lat: lat,
-                    lon: correctedLon,
-                    status: 'match',
-                    name: clientName,
-                    address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-                    city: groupName, // Use the robust group name with fallback
-                    type: findValueInRow(row, ['канал продаж']),
-                    contacts: findValueInRow(row, ['контакты']),
-                });
-                plottedKeys.add(plotKey);
+            let correctedLon = lon;
+            if (correctedLon < -100) {
+                correctedLon += 360;
             }
+
+            plottableActiveClients.push({
+                key: `${lat}-${lon}-${i}`, // Use index `i` to make key unique per row
+                lat: lat,
+                lon: correctedLon,
+                status: 'match',
+                name: clientName,
+                address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+                city: groupName,
+                region: region,
+                rm: rm,
+                brand: brand,
+                type: findValueInRow(row, ['канал продаж']),
+                contacts: findValueInRow(row, ['контакты']),
+            });
         }
 
         // --- 6. Aggregation Logic ---
-        const brand = findValueInRow(row, ['торговая марка']);
-        const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
         const clientDisplayValue = clientAddress || clientName;
