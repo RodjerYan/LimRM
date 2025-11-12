@@ -6,6 +6,7 @@ import {
   OkbDataRow,
 } from '../types';
 import { REGION_KEYWORD_MAP } from './addressMappings';
+import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -137,7 +138,12 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
 
-// Create a comprehensive set of stopwords for addresses. This is done once for performance.
+/**
+ * Creates a comprehensive set of stopwords for address normalization.
+ * This function now intelligently filters out known city names to prevent them from
+ * being incorrectly removed from addresses, which was a critical bug.
+ * @returns A Set of lowercase stopword strings.
+ */
 const createStopwords = (): Set<string> => {
     const genericStopwords = [
         // Типы улиц
@@ -155,15 +161,19 @@ const createStopwords = (): Set<string> => {
     ];
 
     const regionNameParts = new Set<string>();
-    const allRegionKeywords = { ...REGION_KEYWORD_MAP };
+    // Create a Set of all known city names for fast lookups.
+    const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
 
-    // Add all keys and values from the map, splitting them into words
-    for (const item of Object.entries(allRegionKeywords)) {
+    // Process keywords used for region identification.
+    for (const item of Object.entries(REGION_KEYWORD_MAP)) {
+        // Analyze both the keyword (e.g., 'брянская обл') and its value (e.g., 'Брянская область')
         [item[0], item[1]].forEach(text => {
             text.toLowerCase()
-                .replace(/[^а-я\s]/g, '') // Оставляем только буквы и пробелы
+                .replace(/[^а-я\s]/g, '') // Keep only Cyrillic letters and spaces
                 .split(/\s+/)
-                .filter(word => word.length > 2) // Отсеиваем слишком короткие слова
+                // CRITICAL FIX: Add a word to stopwords ONLY if it's not a known city name.
+                // This prevents "брянск" from being removed from addresses.
+                .filter(word => word.length > 2 && !allCities.has(word)) 
                 .forEach(word => regionNameParts.add(word));
         });
     }
