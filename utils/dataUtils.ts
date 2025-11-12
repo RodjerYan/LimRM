@@ -136,47 +136,42 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 };
 
 
-// --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC (based on user feedback) ---
+// --- FIXED ADDRESS NORMALIZATION LOGIC (stable and geography-safe) ---
 
-// A safe, "weak" list of stopwords that only removes service words, preserving geographical names.
-const WEAK_STOPWORDS = new Set([
-  'улица','ул','проспект','пр', 'пр-кт', 'проезд','переулок','пер','шоссе','ш',
-  'бульвар', 'б-р', 'площадь','пл','набережная','наб','тупик','аллея',
-  'дом','д','корпус','корп','к','строение','стр',
-  'литер','лит','владение','вл','квартира','кв', 'пом', 'помещение', 'офис', 'оф'
+// Только служебные слова, без географических единиц
+const STATIC_STOPWORDS = new Set([
+  'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
+  'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
+  'тупик', 'аллея', 'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
+  'здание', 'зд', 'литер', 'лит', 'владение', 'вл', 'квартира', 'кв',
+  'офис', 'оф', 'пом', 'помещение'
 ]);
 
 /**
- * Creates a "digital fingerprint" of a Russian address for robust, order-independent matching.
- * This function implements the user's recommended "soft" normalization approach.
- * @param address The raw address string.
- * @returns A normalized, sorted, space-separated string representing the address fingerprint.
+ * Универсальная нормализация адресов для сопоставления XLSX ↔ Google Sheet.
+ * Убирает лишние служебные слова, но сохраняет географию (города, регионы).
  */
 export function normalizeAddress(address: string | null | undefined): string {
-  if (!address) return "";
+  if (!address) return '';
 
-  // Step 1: Basic cleaning (lowercase, yo-e unification)
+  // Базовая очистка
   let cleaned = address.toLowerCase().replace(/ё/g, 'е');
-  
-  // Step 2: Remove postal codes and all punctuation, replacing them with spaces
   cleaned = cleaned
-    .replace(/\b\d{5,6}\b/g, ' ') // postal codes
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // punctuation
-    .replace(/\s+/g, ' '); // collapse multiple spaces
+    .replace(/\b\d{5,6}\b/g, ' ') // индексы
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // пунктуация
+    .replace(/\s+/g, ' ');
 
-  // Step 3: Tokenize, filter out weak stopwords and short noise words
+  // Токенизация + фильтрация мусора
   const parts = cleaned
     .split(/\s+/)
     .map(p => p.trim())
     .filter(p => {
       if (!p) return false;
-      if (WEAK_STOPWORDS.has(p)) return false;
-      // Filter out short prepositions/conjunctions as suggested
-      if (/^[а-я]{1,2}$/.test(p)) return false; 
+      if (STATIC_STOPWORDS.has(p)) return false;
+      if (/^[а-я]{1,2}$/.test(p)) return false; // убираем короткие предлоги
       return true;
     });
-      
-  // Step 4: Sort and join to create the fingerprint, ensuring order-insensitivity
+
+  // Сортировка для устойчивого сопоставления
   return parts.sort((a, b) => a.localeCompare(b, 'ru')).join(' ').trim();
 }
-// --- END OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
