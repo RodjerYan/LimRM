@@ -1,5 +1,3 @@
-
-
 import React from 'react';
 import { OkbStatus, SummaryMetrics } from '../types';
 import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon, CoverageIcon } from './icons';
@@ -10,10 +8,16 @@ interface MetricCardProps {
     icon: React.ReactNode;
     color: string;
     tooltip: string;
+    onClick?: () => void;
+    isClickable?: boolean;
 }
 
-const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tooltip }) => (
-    <div title={tooltip} className="bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20">
+const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tooltip, onClick, isClickable }) => (
+    <div 
+        title={tooltip} 
+        onClick={onClick}
+        className={`bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20 ${isClickable ? 'cursor-pointer' : ''}`}
+    >
         <div className={`p-3 rounded-lg ${color} bg-opacity-20`}>
            {icon}
         </div>
@@ -40,9 +44,10 @@ interface MetricsSummaryProps {
     metrics: SummaryMetrics | null;
     okbStatus: OkbStatus | null;
     disabled: boolean;
+    onActiveClientsClick?: () => void;
 }
 
-const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, disabled }) => {
+const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, disabled, onActiveClientsClick }) => {
     if (disabled || !metrics) {
         // Render placeholders
         return (
@@ -97,7 +102,9 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
                 value={formatNumber(metrics.totalActiveClients, false)}
                 icon={<UsersIcon />} 
                 color="text-cyan-400"
-                tooltip="Общее количество уникальных ТТ в загруженном файле"
+                tooltip="Общее количество уникальных ТТ в загруженном файле. Нажмите для просмотра списка."
+                onClick={onActiveClientsClick}
+                isClickable={!!onActiveClientsClick}
             />
             <MetricCard 
                 title="Средний Факт (Клиент)"

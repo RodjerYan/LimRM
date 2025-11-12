@@ -4,6 +4,7 @@ import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
+import ClientsListModal from './components/ClientsListModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
@@ -39,6 +40,7 @@ const App: React.FC = () => {
     const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -140,7 +142,7 @@ const App: React.FC = () => {
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
-            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
+            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isModalOpen || isClientsModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
                 <header>
                     <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                     <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
@@ -171,7 +173,12 @@ const App: React.FC = () => {
                     </aside>
 
                     <div className="lg:col-span-3 space-y-6">
-                        <MetricsSummary metrics={summaryMetrics} okbStatus={okbStatus} disabled={!isDataLoaded || isLoading} />
+                        <MetricsSummary 
+                            metrics={summaryMetrics} 
+                            okbStatus={okbStatus} 
+                            disabled={!isDataLoaded || isLoading}
+                            onActiveClientsClick={() => setIsClientsModalOpen(true)}
+                        />
                         
                         <InteractiveRegionMap 
                             data={filteredData} 
@@ -197,6 +204,11 @@ const App: React.FC = () => {
                 onClose={() => setIsModalOpen(false)}
                 data={selectedRow}
                 okbStatus={okbStatus}
+            />
+            <ClientsListModal 
+                isOpen={isClientsModalOpen} 
+                onClose={() => setIsClientsModalOpen(false)}
+                clients={plottableActiveClients}
             />
         </div>
     );
