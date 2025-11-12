@@ -5,6 +5,7 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
+import { REGION_KEYWORD_MAP } from './addressMappings';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -136,18 +137,40 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
 
-// A comprehensive, static list of stopwords for maximum performance and predictability.
-const STOPWORDS = new Set([
-    'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш',
-    'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
-    'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х',
-    'станица', 'ст-ца', 'ст', 'аул', 'рп', 'рабочий', 'снт', 'тер', 'территория',
-    'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'автономная',
-    'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон',
-    'российская', 'федерация', 'россия', 'рф',
-    // Generic parts of region names that are not cities
-    'северная', 'южная', 'западная', 'восточная', 'центральная', 'народная', 'еврейская'
-]);
+/**
+ * Creates a comprehensive set of stopwords ONCE from static lists and dynamic app data.
+ * This is a critical optimization, ensuring the "heavy lifting" is done only one time.
+ * @returns A Set containing all words to be ignored during address normalization.
+ */
+const generateStopwords = (): Set<string> => {
+    const staticStopwords = [
+        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш',
+        'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
+        'тракт', 'мкр', 'микрорайон', 'квартал', 'кв-л', 'территория', 'тер', 'городок',
+        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'литер', 'лит', 'вл', 'владение',
+        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х',
+        'станица', 'ст-ца', 'ст', 'аул', 'рп', 'рабочий', 'снт', 'с/п', 'го',
+        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'автономная',
+        'район', 'р-н', 'муниципальный',
+        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн',
+        'российская', 'федерация', 'россия', 'рф',
+        'народная', 'еврейская'
+    ];
+
+    const stopwords = new Set(staticStopwords);
+
+    // Dynamically add all keywords used for region mapping to the stopwords.
+    // This makes the algorithm "smarter" by using the app's own knowledge base.
+    // It will add words like "брянская", "смоленская", "жуковский", etc.
+    Object.keys(REGION_KEYWORD_MAP).forEach(key => {
+        key.split(/\s+/).forEach(word => stopwords.add(word.replace(/[-.]/g, '')));
+    });
+
+    return stopwords;
+};
+
+// Memoize the generated stopwords so the function is only executed once per app lifecycle.
+const ALL_STOPWORDS = generateStopwords();
 
 
 /**
@@ -165,22 +188,22 @@ export function normalizeAddress(address: string | null | undefined): string {
     // Step 1: Targeted Phrase Removal - Remove administrative units like "Жуковский р-н" before tokenizing.
     // This prevents parts of district names from being confused with city names.
     cleaned = cleaned.replace(/[\w-]+\s+(р-н|район|сельское поселение|с\/п|городской округ|го)\b/g, ' ');
-
-    // Step 2: Unify building/structure numbers to a consistent format.
+    
+    // Step 2: Unify building/structure numbers to a consistent format AND remove their prefixes.
     cleaned = cleaned
-        .replace(/\b(дом|д)\.?\s*([\d]+[а-я]?\b)/g, 'д$2')
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2') // "17 а" -> "17а"
-        .replace(/\b(корпус|корп|к)\.?\s*([\d]+[а-я]?\b)/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*([\d]+[а-я]?\b)/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*([\d]+[а-я]?\b)/g, 'л$2');
+        .replace(/\b(дом|д|корпус|корп|к|строение|стр|литер|лит)\.?\s*([\d]+[а-я]?\b)/g, ' $2 ')
+        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2'); // "17 а" -> "17а"
 
     // Step 3: Remove postal codes and all punctuation.
     cleaned = cleaned.replace(/\b\d{5,6}\b/g, ' ');
     cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ');
 
-    // Step 4: Tokenize and remove all stopwords from the comprehensive list.
+    // Step 4: Tokenize and remove all stopwords from the comprehensive, dynamically-generated list.
     const parts = cleaned.split(/\s+/)
-        .filter(part => part && !STOPWORDS.has(part));
+        .filter(part => {
+             // Keep the part if it's not empty and not in our massive stopword list.
+             return part && !ALL_STOPWORDS.has(part);
+        });
     
     // Step 5: Sort the remaining significant parts to make the fingerprint order-independent.
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
