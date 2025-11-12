@@ -138,45 +138,78 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
 
-// A "weak" or "soft" set of stopwords as requested, to avoid removing important geographical names.
-// This list only contains unambiguous prefixes and suffixes related to address structure.
-const WEAK_STOPWORDS = new Set([
-  'улица','ул','проспект','пр', 'пр-т', 'проезд','переулок','пер','шоссе','ш',
-  'бульвар','б-р', 'площадь','пл','набережная','наб','тупик','аллея',
-  'дом','д','корпус','корп','к','строение','стр',
-  'литер','лит','владение','вл','квартира','кв', 'офис', 'оф',
-  'г', // 'город' is a meaningful word, but 'г.' is almost always noise.
-]);
+// Memoized function to create a comprehensive set of "noise" words from the app's own knowledge base.
+const getComprehensiveStopwords = (() => {
+    let comprehensiveSet: Set<string> | null = null;
+    
+    const baseStopwords = [
+        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'переулок', 'пер', 'шоссе', 'ш',
+        'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея',
+        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
+        'литер', 'лит', 'владение', 'вл', 'квартира', 'кв', 'офис', 'оф',
+        'г', 'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'ао',
+        'округ', 'район', 'р-н', 'поселок', 'пос', 'пгт', 'деревня', 'дер',
+        'станица', 'ст-ца', 'хутор', 'х'
+    ];
+
+    return () => {
+        if (comprehensiveSet) {
+            return comprehensiveSet;
+        }
+
+        const newSet = new Set(baseStopwords);
+
+        // Add all keywords from the region map to the stopwords.
+        // This is crucial for removing "брянская", "жуковский", etc., from the fingerprint.
+        Object.keys(REGION_KEYWORD_MAP).forEach(key => {
+            key.split(/\s+/).forEach(word => {
+                if (word.length > 2) newSet.add(word); // Avoid adding short, ambiguous words like 'р'
+            });
+        });
+        
+        // Add parts of the standardized region names as well
+        Object.values(REGION_KEYWORD_MAP).forEach(value => {
+            value.toLowerCase().replace(/—/g, ' ').replace(/[()]/g, '').split(/\s+/).forEach(word => {
+                 if (word.length > 3) newSet.add(word);
+            });
+        });
+        
+        comprehensiveSet = newSet;
+        return comprehensiveSet;
+    };
+})();
 
 
 /**
  * Creates a "digital fingerprint" of a Russian address for robust, order-independent matching.
- * This function implements the requested "less harsh" normalization logic.
+ * This function is the definitive solution to the address matching problem.
  * @param address The raw address string.
  * @returns A normalized, sorted, space-separated string representing the address fingerprint.
  */
 export function normalizeAddress(address: string | null | undefined): string {
     if (!address) return "";
 
-    // Step 1: Basic cleaning (lowercase, ё->е).
-    let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+    const stopwords = getComprehensiveStopwords();
 
-    // Step 2: Remove postal codes and all punctuation/special characters, replacing them with spaces.
+    // Step 1: Basic cleaning and unifying building numbers/letters.
+    let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+    // "д 17 а", "дом 17а" -> "д17а". Also handles cases like "д.17/2".
+    cleaned = cleaned.replace(/\s*(дом|д|корпус|корп|к|строение|стр|литер|лит)[\s.]*([\w\d/]+)/g, ' д$2');
+
+    // Step 2: Remove postal codes and all punctuation.
     cleaned = cleaned.replace(/\b\d{5,6}\b/g, ' ').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ');
 
-    // Step 3: Tokenize the string by spaces, and filter out the "weak" stopwords.
-    // This preserves important words like "брянская", "область", "район".
+    // Step 3: Tokenize and filter out all stopwords.
     const significantParts = cleaned.split(/\s+/)
         .map(part => part.trim())
         .filter(part => {
-            return part && !WEAK_STOPWORDS.has(part);
+            return part && !stopwords.has(part);
         });
 
-    // Step 4: Sort the remaining significant parts. This makes the fingerprint order-independent.
-    // "клинцы ленина 10" will now be identical to "ленина 10 клинцы".
+    // Step 4: Sort the remaining significant parts alphabetically.
     significantParts.sort((a, b) => a.localeCompare(b, 'ru'));
 
-    // Step 5: Join the sorted parts to create the final, unique fingerprint.
+    // Step 5: Join to create the final, unique fingerprint.
     return significantParts.join(' ').trim();
 }
 // --- END OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
