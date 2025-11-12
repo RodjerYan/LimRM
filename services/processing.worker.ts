@@ -221,7 +221,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
 
-        // --- 3. Plotting Logic ---
+        // --- 4. Unified Address Parsing & Fallback Logic ---
+        const { region, city: parsedCity } = parseRussianAddress(clientAddress || '');
+        // This is the single source of truth for city/region logic across the app.
+        // If city is not found, it falls back to the region name.
+        const finalCity = (parsedCity === 'Город не определен' && region !== 'Регион не определен') ? region : parsedCity;
+
+        // --- 5. Plotting Logic ---
         if (coordsSource !== 'none' && lat !== null && lon !== null) {
             // Use INN for key if available, otherwise address, otherwise coordinates.
             const plotKey = clientInn || (clientAddress ? normalizeAddress(clientAddress) : `${lat.toFixed(5)},${lon.toFixed(5)}`);
@@ -232,8 +238,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                     correctedLon += 360;
                 }
 
-                const { city } = parseRussianAddress(clientAddress || '');
-
                 plottableActiveClients.push({
                     key: `${lat}-${lon}-${i}`,
                     lat: lat,
@@ -241,7 +245,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                     status: 'match',
                     name: clientName,
                     address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-                    city: city,
+                    city: finalCity,
                     type: findValueInRow(row, ['канал продаж']),
                     contacts: findValueInRow(row, ['контакты']),
                 });
@@ -249,8 +253,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
 
-        // --- 4. Aggregation Logic ---
-        const { region, city } = parseRussianAddress(clientAddress || '');
+        // --- 6. Aggregation Logic ---
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -262,7 +265,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${region} (${brand})`, brand, rm, city: city || region,
+                key, clientName: `${region} (${brand})`, brand, rm, city: finalCity,
                 region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };

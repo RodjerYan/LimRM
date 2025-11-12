@@ -44,7 +44,7 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
  */
 export function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
-        return { region: 'Регион не определен', city: 'Город не определён' };
+        return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
     // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
@@ -61,8 +61,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
     const region = findRegionByKeyword(normalized);
     
-    // --- PRIORITY 2: Use the robust city parser ---
-    const city = getCityFromAddress(address);
+    // --- PRIORITY 2: Use the robust city parser on the CLEANED string ---
+    const city = getCityFromAddress(normalized);
 
     return {
         region: standardizeRegion(region),

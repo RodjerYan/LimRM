@@ -11,7 +11,7 @@ const capitalize = (str: string): string => {
 export function getCityFromAddress(address: string): string {
     if (!address) return 'Город не определен';
     
-    const lowerAddress = address.toLowerCase();
+    const lowerAddress = address; // Input is already lowercased and normalized
 
     // Priority 1: Find a known city from our comprehensive map.
     // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
