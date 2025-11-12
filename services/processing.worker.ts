@@ -222,10 +222,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         }
 
         // --- 4. Unified Address Parsing & Fallback Logic ---
-        const { region, city: parsedCity } = parseRussianAddress(clientAddress || '');
-        // This is the single source of truth for city/region logic across the app.
-        // If city is not found, it falls back to the region name.
-        const finalCity = (parsedCity === 'Город не определен' && region !== 'Регион не определен') ? region : parsedCity;
+        const parsedAddress = parseRussianAddress(clientAddress || '');
+        const region = parsedAddress.region;
+        const parsedCity = parsedAddress.city;
+        
+        // ** THE FIX **: Use the same "working logic" from the table.
+        // If city parsing fails, use the Region name as the group name.
+        // This ensures no "Город не определен" groups and provides consistency.
+        const groupName = (parsedCity !== 'Город не определен') ? parsedCity : region;
+
 
         // --- 5. Plotting Logic ---
         if (coordsSource !== 'none' && lat !== null && lon !== null) {
@@ -245,7 +250,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                     status: 'match',
                     name: clientName,
                     address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-                    city: finalCity,
+                    city: groupName, // Use the robust group name with fallback
                     type: findValueInRow(row, ['канал продаж']),
                     contacts: findValueInRow(row, ['контакты']),
                 });
@@ -265,7 +270,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${region} (${brand})`, brand, rm, city: finalCity,
+                key, clientName: `${region} (${brand})`, brand, rm, city: groupName,
                 region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };

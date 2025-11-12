@@ -4,7 +4,10 @@ import {
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
-import { getCityFromAddress } from '../utils/cityParser';
+import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
+
+// Memoize the sorted list of cities to avoid re-computing it on every call.
+const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
 /**
  * Capitalizes the first letter of each word in a string.
@@ -13,8 +16,30 @@ import { getCityFromAddress } from '../utils/cityParser';
  */
 const capitalize = (str: string | null): string => {
     if (!str) return '';
-    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 };
+
+/**
+ * Finds a city name within a normalized address string.
+ * @param normalizedAddress A pre-processed, lowercased address string.
+ * @returns The capitalized city name or a default string if not found.
+ */
+function getCityFromAddress(normalizedAddress: string): string {
+    if (!normalizedAddress) return 'Город не определен';
+
+    // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
+    for (const city of CITIES_SORTED_BY_LENGTH) {
+        // Use regex with word boundaries to ensure we're matching the whole city name.
+        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedCity}\\b`);
+        if (regex.test(normalizedAddress)) {
+            return capitalize(city);
+        }
+    }
+    
+    return 'Город не определен';
+}
+
 
 /**
  * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
@@ -58,10 +83,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
+    // --- Step 2: Determine Region and City ---
     const region = findRegionByKeyword(normalized);
-    
-    // --- PRIORITY 2: Use the robust city parser on the CLEANED string ---
     const city = getCityFromAddress(normalized);
 
     return {
