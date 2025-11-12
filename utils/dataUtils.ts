@@ -5,8 +5,6 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-import { REGION_KEYWORD_MAP } from './addressMappings';
-import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -138,55 +136,24 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
 
-/**
- * Creates a comprehensive set of stopwords for address normalization.
- * This function now intelligently filters out known city names to prevent them from
- * being incorrectly removed from addresses, which was a critical bug.
- * @returns A Set of lowercase stopword strings.
- */
-const createStopwords = (): Set<string> => {
-    const genericStopwords = [
-        // Типы улиц
-        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
-        'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
-        // Типы населенных пунктов
-        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
-        'станица', 'ст-ца', 'аул', 'рп', 'рабочий',
-        // Типы административных делений
-        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Обозначения зданий
-        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'с', 'литер', 'лит', 'л',
-        // Прочее
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон'
-    ];
+// A comprehensive, static list of stopwords for maximum performance and predictability.
+const STOPWORDS = new Set([
+    'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш',
+    'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
+    'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х',
+    'станица', 'ст-ца', 'ст', 'аул', 'рп', 'рабочий', 'снт', 'тер', 'территория',
+    'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'автономная',
+    'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон',
+    'российская', 'федерация', 'россия', 'рф',
+    // Generic parts of region names that are not cities
+    'северная', 'южная', 'западная', 'восточная', 'центральная', 'народная', 'еврейская'
+]);
 
-    const regionNameParts = new Set<string>();
-    // Create a Set of all known city names for fast lookups.
-    const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
-
-    // Process keywords used for region identification.
-    for (const item of Object.entries(REGION_KEYWORD_MAP)) {
-        // Analyze both the keyword (e.g., 'брянская обл') and its value (e.g., 'Брянская область')
-        [item[0], item[1]].forEach(text => {
-            text.toLowerCase()
-                .replace(/[^а-я\s]/g, '') // Keep only Cyrillic letters and spaces
-                .split(/\s+/)
-                // CRITICAL FIX: Add a word to stopwords ONLY if it's not a known city name.
-                // This prevents "брянск" from being removed from addresses.
-                .filter(word => word.length > 2 && !allCities.has(word)) 
-                .forEach(word => regionNameParts.add(word));
-        });
-    }
-
-    return new Set([...genericStopwords, ...Array.from(regionNameParts)]);
-};
-
-const STOPWORDS = createStopwords();
 
 /**
  * Performs deep normalization on an address string for robust, order-independent matching.
- * This multi-stage "digital fingerprint" algorithm is designed to create a consistent key for an address,
- * regardless of major variations in its original formatting.
+ * This "hybrid" algorithm uses targeted regex replacements before tokenization to handle
+ * complex cases like district names, ensuring a highly reliable "digital fingerprint" for each address.
  * @param address The raw address string.
  * @returns A normalized, order-independent string for high-match-rate lookups.
  */
@@ -195,23 +162,27 @@ export function normalizeAddress(address: string | null | undefined): string {
 
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
 
-    // Step 1: Unify building/structure numbers before removing words.
-    // "17 а" -> "17а", "корп 2" -> "к2", "строение 1б" -> "с1б"
+    // Step 1: Targeted Phrase Removal - Remove administrative units like "Жуковский р-н" before tokenizing.
+    // This prevents parts of district names from being confused with city names.
+    cleaned = cleaned.replace(/[\w-]+\s+(р-н|район|сельское поселение|с\/п|городской округ|го)\b/g, ' ');
+
+    // Step 2: Unify building/structure numbers to a consistent format.
     cleaned = cleaned
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2')
-        .replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2');
+        .replace(/\b(дом|д)\.?\s*([\d]+[а-я]?\b)/g, 'д$2')
+        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2') // "17 а" -> "17а"
+        .replace(/\b(корпус|корп|к)\.?\s*([\d]+[а-я]?\b)/g, 'к$2')
+        .replace(/\b(строение|стр)\.?\s*([\d]+[а-я]?\b)/g, 'с$2')
+        .replace(/\b(литер|лит)\.?\s*([\d]+[а-я]?\b)/g, 'л$2');
 
-    // Step 2: Remove all punctuation and postal codes.
-    cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); // Remove postal codes
-    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); // Replace punctuation with spaces
+    // Step 3: Remove postal codes and all punctuation.
+    cleaned = cleaned.replace(/\b\d{5,6}\b/g, ' ');
+    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ');
 
-    // Step 3: Tokenize and remove all stopwords.
+    // Step 4: Tokenize and remove all stopwords from the comprehensive list.
     const parts = cleaned.split(/\s+/)
         .filter(part => part && !STOPWORDS.has(part));
     
-    // Step 4: Sort the remaining significant parts to make it order-independent.
+    // Step 5: Sort the remaining significant parts to make the fingerprint order-independent.
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
     
     return parts.join(' ').trim();
