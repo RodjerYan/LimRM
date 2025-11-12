@@ -359,4 +359,4 @@ async function processCsv(file: File, args: CommonProcessArgs) {
     } catch (error) {
         throw new Error(`Failed to parse CSV file: ${(error as Error).message}`);
     }
-}.
+}
