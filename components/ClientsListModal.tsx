@@ -1,24 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
-import { getCityFromAddress } from '../utils/cityParser';
 import { SearchIcon } from './icons';
 
 interface ClientsListModalProps {
     isOpen: boolean;
     onClose: () => void;
     clients: MapPoint[];
+    onClientSelect: (client: MapPoint) => void;
 }
 
 type GroupedClients = Record<string, MapPoint[]>;
 
-const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients }) => {
+const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect }) => {
     const [searchTerm, setSearchTerm] = useState('');
 
     const groupedClients = useMemo<GroupedClients>(() => {
         if (!clients) return {};
         return clients.reduce((acc, client) => {
-            const city = getCityFromAddress(client.address);
+            const city = client.city || 'Город не определен';
             if (!acc[city]) {
                 acc[city] = [];
             }
@@ -74,10 +74,15 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                 </h3>
                                 <ul className="space-y-3">
                                     {filteredGroupedClients[city].map((client) => (
-                                            <li key={client.key} className="bg-gray-800/50 p-3 rounded-md">
-                                                <p className="font-semibold text-white truncate" title={client.name}>{client.name}</p>
-                                                <p className="text-sm text-gray-400 truncate" title={client.address}>{client.address}</p>
-                                            </li>
+                                        <li 
+                                            key={client.key}
+                                            onClick={() => onClientSelect(client)}
+                                            className="bg-gray-800/50 p-3 rounded-md cursor-pointer hover:bg-indigo-500/20 transition-colors"
+                                        >
+                                            <p className="font-semibold text-white truncate" title={client.name}>{client.name}</p>
+
+                                            <p className="text-sm text-gray-400 truncate" title={client.address}>{client.address}</p>
+                                        </li>
                                     ))}
                                 </ul>
                             </div>

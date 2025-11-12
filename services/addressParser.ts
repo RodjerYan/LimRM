@@ -4,6 +4,7 @@ import {
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
+import { getCityFromAddress } from '../utils/cityParser';
 
 /**
  * Capitalizes the first letter of each word in a string.
@@ -60,12 +61,11 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // --- PRIORITY 1: Find region by explicit keyword (e.g., "Орловская обл") ---
     const region = findRegionByKeyword(normalized);
     
-    // City extraction can be improved, but for now, we focus on the region.
-    // A simple city extraction could be added here if needed, but it's less critical than the region.
-    // For now, we leave city as 'Город не определён' to be populated from OKB data where available.
+    // --- PRIORITY 2: Use the robust city parser ---
+    const city = getCityFromAddress(address);
 
     return {
         region: standardizeRegion(region),
-        city: 'Город не определён' // City logic removed to simplify and rely on OKB data
+        city: city 
     };
 }

@@ -232,6 +232,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                     correctedLon += 360;
                 }
 
+                const { city } = parseRussianAddress(clientAddress || '');
+
                 plottableActiveClients.push({
                     key: `${lat}-${lon}-${i}`,
                     lat: lat,
@@ -239,6 +241,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                     status: 'match',
                     name: clientName,
                     address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+                    city: city,
                     type: findValueInRow(row, ['канал продаж']),
                     contacts: findValueInRow(row, ['контакты']),
                 });
@@ -247,7 +250,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         }
 
         // --- 4. Aggregation Logic ---
-        const region = parseRussianAddress(clientAddress || '').region;
+        const { region, city } = parseRussianAddress(clientAddress || '');
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -258,7 +261,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
 
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
-            const city = parseRussianAddress(clientAddress || '').city;
             aggregatedData[key] = {
                 key, clientName: `${region} (${brand})`, brand, rm, city: city || region,
                 region: region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,

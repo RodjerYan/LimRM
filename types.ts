@@ -22,6 +22,7 @@ export interface MapPoint {
     status: MapPointStatus;
     name: string;
     address: string;
+    city: string;
     type: string;
     contacts?: string;
 }

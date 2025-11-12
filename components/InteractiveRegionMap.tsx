@@ -13,6 +13,7 @@ interface InteractiveRegionMapProps {
     potentialClients: OkbDataRow[];
     activeClients: MapPoint[];
     conflictZones: FeatureCollection | null;
+    flyToClientKey: string | null;
 }
 
 interface SearchableLocation {
@@ -41,7 +42,7 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 };
 
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -51,6 +52,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
+    const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
 
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
@@ -268,6 +270,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             layerControl.current.removeLayer(activeClientMarkersLayer.current);
         }
         activeClientMarkersLayer.current = L.layerGroup();
+        activeClientMarkersRef.current.clear();
     
         // --- Populate Layers ---
         potentialClients.forEach(tt => {
@@ -293,6 +296,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
             }).bindPopup(popupContent);
             activeClientMarkersLayer.current?.addLayer(marker);
+            activeClientMarkersRef.current.set(tt.key, marker);
         });
     
         // --- Add to Map and Control ---
@@ -327,6 +331,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
         
     }, [potentialClients, activeClients, data]);
+    
+    useEffect(() => {
+        const map = mapInstance.current;
+        if (!map || !flyToClientKey) return;
+
+        const marker = activeClientMarkersRef.current.get(flyToClientKey);
+        if (marker && typeof (marker as any).getLatLng === 'function') {
+            const markerLatLng = (marker as L.Marker).getLatLng();
+            map.flyTo(markerLatLng, 16, { animate: true, duration: 1 });
+
+            // Open the popup after the fly-to animation completes
+            setTimeout(() => {
+                if (typeof (marker as any).openPopup === 'function') {
+                    (marker as L.Marker).openPopup();
+                }
+            }, 1000); // Duration of flyTo animation
+        }
+    }, [flyToClientKey]);
 
 
     useEffect(() => {

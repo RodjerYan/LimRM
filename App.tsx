@@ -42,6 +42,7 @@ const App: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
+    const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -92,6 +93,14 @@ const App: React.FC = () => {
 
         fetchConflictZones();
     }, [addNotification]);
+    
+    useEffect(() => {
+        if (flyToClientKey) {
+            // Reset the key after a moment so the user can click the same client again.
+            const timer = setTimeout(() => setFlyToClientKey(null), 500);
+            return () => clearTimeout(timer);
+        }
+    }, [flyToClientKey]);
 
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
@@ -125,6 +134,14 @@ const App: React.FC = () => {
         setOkbStatus(status);
         if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
         if (status.status === 'error' && status.message) addNotification(status.message, 'error');
+    };
+
+    const handleClientSelectOnMap = (client: MapPoint) => {
+        setIsClientsModalOpen(false);
+        // Use a short delay to allow the modal to close before the map starts moving.
+        setTimeout(() => {
+            setFlyToClientKey(client.key);
+        }, 300);
     };
 
     useEffect(() => {
@@ -186,6 +203,7 @@ const App: React.FC = () => {
                             potentialClients={potentialClients}
                             activeClients={plottableActiveClients}
                             conflictZones={conflictZones}
+                            flyToClientKey={flyToClientKey}
                         />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
@@ -209,6 +227,7 @@ const App: React.FC = () => {
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={plottableActiveClients}
+                onClientSelect={handleClientSelectOnMap}
             />
         </div>
     );
