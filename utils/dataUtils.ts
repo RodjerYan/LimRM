@@ -138,39 +138,46 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- FINAL, CORRECTED ADDRESS NORMALIZATION LOGIC (as per user's detailed analysis) ---
 
+// Only non-geographic, structural stopwords
+const STATIC_STOPWORDS = new Set([
+  'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
+  'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
+  'тупик', 'аллея', 'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
+  'здание', 'зд', 'литер', 'лит', 'владение', 'вл', 'квартира', 'кв',
+  'офис', 'оф', 'пом', 'помещение'
+]);
+
+
 /**
  * Creates a robust, normalized "fingerprint" of an address for reliable matching.
- * This version aggressively removes all structural and geographic keywords to find a match
- * based on the core components of the address (city name, street, number).
+ * This version uses a "soft" normalization approach, removing only structural keywords
+ * while preserving all geographic and identifying names.
  * @param address The raw address string.
  * @returns A sorted, cleaned string fingerprint of the address.
  */
 export function normalizeAddress(address: string | null | undefined): string {
-  if (!address) return "";
+  if (!address) return '';
 
-  // This comprehensive list includes both structural and geographic keywords.
-  // Removing them all creates a more abstract "fingerprint".
-  const stopwords = [
-    'рф', 'россия', 'обл', 'область', 'район', 'р-н', 'р н', 'г', 'город', 
-    'д', 'дом', 'корпус', 'корп', 'к', 'ул', 'улица', 'пр', 'проспект', 'пр-кт', 
-    'пер', 'переулок', 'мкр', 'микрорайон', 'п', 'пос', 'поселок', 'с', 'село', 
-    'дер', 'деревня', 'дп', 'пл', 'площадь', 'ш', 'шоссе', 'б-р', 'бульвар', 
-    'наб', 'набережная', 'тупик', 'аллея', 'стр', 'строение', 'зд', 'здание', 
-    'лит', 'литер', 'вл', 'владение', 'кв', 'квартира', 'оф', 'офис', 'пом', 
-    'помещение', 'тер', 'территория', 'станица', 'ст-ца', 'ст', 'хутор', 'х'
-  ];
-  const stopwordRegex = new RegExp(`\\b(${stopwords.join('|')})\\b`, 'g');
+  // 1. Basic cleaning: lowercase, ё->е, remove punctuation and postal codes
+  let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+  cleaned = cleaned
+    .replace(/\b\d{5,6}\b/g, ' ') // postal codes
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // punctuation
+    .replace(/\s+/g, ' ');
 
-  return address
-    .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // Remove all common punctuation
-    .replace(/\b\d{5,6}\b/g, ' ') // Remove postal codes
-    .replace(stopwordRegex, '') // Remove all stopwords from the list
-    .replace(/\s+/g, ' ') // Collapse multiple spaces into one
-    .trim()
-    .split(' ')
-    .filter(Boolean) // Remove any empty strings that may result from replacements
-    .sort((a, b) => a.localeCompare(b, 'ru')) // Sort alphabetically for order-insensitivity
-    .join(' ');
+  // 2. Tokenize and filter out stopwords and short prepositions
+  const parts = cleaned
+    .split(/\s+/)
+    .map(p => p.trim())
+    .filter(p => {
+      if (!p) return false;
+      if (STATIC_STOPWORDS.has(p)) return false;
+      // This regex removes short (1-2 letter) words that are likely prepositions
+      // but keeps words with digits like '1-й' by checking for their absence.
+      if (/^[а-я]{1,2}$/.test(p) && !/\d/.test(p)) return false;
+      return true;
+    });
+
+  // 3. Sort for order-insensitivity and join to create the final fingerprint
+  return parts.sort((a, b) => a.localeCompare(b, 'ru')).join(' ').trim();
 }
