@@ -106,15 +106,8 @@ export type WorkerResultPayload = {
     plottableActiveClients: MapPoint[];
 };
 export type WorkerErrorPayload = string;
-export type WorkerDebugPayload = {
-    message: string;
-    address: string;
-    normalized: string;
-};
-
 
 export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
     | { type: 'result', payload: WorkerResultPayload }
-    | { type: 'debug', payload: WorkerDebugPayload }
     | { type: 'error', payload: WorkerErrorPayload };
