@@ -107,7 +107,17 @@ export type WorkerResultPayload = {
 };
 export type WorkerErrorPayload = string;
 
+export type WorkerDebugPayload = {
+    level: 'info' | 'warn';
+    message: string;
+    originalAddress?: string;
+    fingerprint?: string;
+    okbMatchAttempt?: string;
+    okbOriginalAddress?: string;
+};
+
 export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
     | { type: 'result', payload: WorkerResultPayload }
-    | { type: 'error', payload: WorkerErrorPayload };
+    | { type: 'error', payload: WorkerErrorPayload }
+    | { type: 'debug', payload: WorkerDebugPayload };

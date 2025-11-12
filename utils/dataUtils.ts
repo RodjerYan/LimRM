@@ -5,8 +5,6 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-import { REGION_KEYWORD_MAP } from './addressMappings';
-import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -136,84 +134,54 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     return null;
 };
 
-// --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
+// --- CORRECTED ADDRESS NORMALIZATION LOGIC ---
+
+// ТОЛЬКО структурные слова + географические аббревиатуры
+const STRUCTURAL_STOPWORDS = new Set([
+  // Структурные элементы
+  'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
+  'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
+  'тупик', 'аллея', 'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
+  'здание', 'зд', 'литер', 'лит', 'владение', 'вл', 'квартира', 'кв',
+  'офис', 'оф', 'пом', 'помещение', 'тер', 'территория', 'микрорайон', 'мкр',
+  
+  // Географические аббревиатуры
+  'г', 'город', 'р-н', 'р', 'н', 'район', 'п', 'пос', 'поселок', 
+  'с', 'село', 'дер', 'деревня', 'дп', 'пгт', 'рп',
+  'обл', 'область', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'федерации', 'федерация'
+]);
 
 /**
- * Creates a comprehensive set of stopwords for address normalization.
- * This function now intelligently filters out known city names to prevent them from
- * being incorrectly removed from addresses, which was a critical bug.
- * @returns A Set of lowercase stopword strings.
- */
-const createStopwords = (): Set<string> => {
-    const genericStopwords = [
-        // Типы улиц
-        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
-        'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
-        // Типы населенных пунктов
-        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
-        'станица', 'ст-ца', 'аул', 'рп', 'рабочий',
-        // Типы административных делений
-        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Обозначения зданий
-        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'с', 'литер', 'лит', 'л',
-        // Прочее
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон'
-    ];
-
-    const regionNameParts = new Set<string>();
-    // Create a Set of all known city names for fast lookups.
-    const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
-
-    // Process keywords used for region identification.
-    for (const item of Object.entries(REGION_KEYWORD_MAP)) {
-        // Analyze both the keyword (e.g., 'брянская обл') and its value (e.g., 'Брянская область')
-        [item[0], item[1]].forEach(text => {
-            text.toLowerCase()
-                .replace(/[^а-я\s]/g, '') // Keep only Cyrillic letters and spaces
-                .split(/\s+/)
-                // CRITICAL FIX: Add a word to stopwords ONLY if it's not a known city name.
-                // This prevents "брянск" from being removed from addresses.
-                .filter(word => word.length > 2 && !allCities.has(word)) 
-                .forEach(word => regionNameParts.add(word));
-        });
-    }
-
-    return new Set([...genericStopwords, ...Array.from(regionNameParts)]);
-};
-
-const STOPWORDS = createStopwords();
-
-/**
- * Performs deep normalization on an address string for robust, order-independent matching.
- * This multi-stage "digital fingerprint" algorithm is designed to create a consistent key for an address,
- * regardless of major variations in its original formatting.
- * @param address The raw address string.
- * @returns A normalized, order-independent string for high-match-rate lookups.
+ * Creates a robust, normalized "fingerprint" of an address for reliable matching.
+ * This version removes ALL structural and geographical abbreviations while preserving
+ * actual geographical names (cities, regions, street names).
  */
 export function normalizeAddress(address: string | null | undefined): string {
-    if (!address) return "";
+  if (!address) return '';
 
-    let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+  let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+  
+  // Базовое очищение
+  cleaned = cleaned
+    .replace(/\b\d{5,6}\b/g, ' ') // Remove postal codes
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // Remove punctuation
+    .replace(/\s+/g, ' ') // Collapse whitespace
+    .trim();
 
-    // Step 1: Unify building/structure numbers before removing words.
-    // "17 а" -> "17а", "корп 2" -> "к2", "строение 1б" -> "с1б"
-    cleaned = cleaned
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2')
-        .replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2');
+  // Токенизация и фильтрация ВСЕХ служебных слов
+  const parts = cleaned
+    .split(' ')
+    .map(part => part.trim())
+    .filter(part => {
+      if (!part) return false;
+      // Удаляем ВСЕ структурные и географические аббревиатуры
+      if (STRUCTURAL_STOPWORDS.has(part)) return false;
+      return true;
+    });
 
-    // Step 2: Remove all punctuation and postal codes.
-    cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); // Remove postal codes
-    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); // Replace punctuation with spaces
-
-    // Step 3: Tokenize and remove all stopwords.
-    const parts = cleaned.split(/\s+/)
-        .filter(part => part && !STOPWORDS.has(part));
-    
-    // Step 4: Sort the remaining significant parts to make it order-independent.
-    parts.sort((a, b) => a.localeCompare(b, 'ru'));
-    
-    return parts.join(' ').trim();
+  // Сортировка для нечувствительности к порядку
+  return parts
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+    .join(' ')
+    .trim();
 }
-// --- END OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
