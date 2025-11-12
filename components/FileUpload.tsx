@@ -51,7 +51,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onFileProcessed(payload);
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Обработка завершена!`);
-                    setProgress(100);
+                    setProgress(100); // Ensure progress is 100 on completion
                     setEtr(0);
                     break;
                 case 'error':
@@ -59,31 +59,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     setMessage(`Ошибка: ${payload}`);
                     setEtr(null);
                     break;
-                case 'debug': {
-                    const { level, message, originalAddress, fingerprint, okbOriginalAddress } = payload;
-                    const style = level === 'info' 
-                        ? 'color: #34d399; font-weight: bold;' // success green
-                        : 'color: #fbbf24; font-weight: bold;'; // warning yellow
-                    
-                    let logMessage = `%c[WORKER] ${message}`;
-                    const logArgs = [style];
-
-                    if (originalAddress) {
-                        logMessage += `\n  -> Оригинал: "%c${originalAddress}%c"`;
-                        logArgs.push('color: #e5e7eb;', 'color: unset;'); // slate-200
-                    }
-                    if (fingerprint) {
-                        logMessage += `\n  -> Отпечаток: "%c${fingerprint}%c"`;
-                        logArgs.push('color: #818cf8;', 'color: unset;'); // accent
-                    }
-                    if (okbOriginalAddress) {
-                         logMessage += `\n  -> Найдено в ОКБ: "%c${okbOriginalAddress}%c"`;
-                         logArgs.push('color: #a5b4fc;', 'color: unset;'); // lighter accent
-                    }
-
-                    console.log(logMessage, ...logArgs);
-                    break;
-                }
                 default:
                     break;
             }
