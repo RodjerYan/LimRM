@@ -136,47 +136,47 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 };
 
 
-// --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
+// --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC (based on user feedback) ---
 
-// A safe, static list of stopwords that do not contain geographical names.
-const STATIC_STOPWORDS = new Set([
-    'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер', 'шоссе', 'ш',
-    'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея',
-    'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'здание', 'зд',
-    'литер', 'лит', 'владение', 'вл', 'квартира', 'кв', 'офис', 'оф', 'пом', 'помещение',
-    'г', 'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'ао',
-    'округ', 'район', 'р-н', 'поселок', 'пос', 'пгт', 'деревня', 'дер',
-    'станица', 'ст-ца', 'хутор', 'х', 'село', 'с', 'город', 'территория', 'тер'
+// A safe, "weak" list of stopwords that only removes service words, preserving geographical names.
+const WEAK_STOPWORDS = new Set([
+  'улица','ул','проспект','пр', 'пр-кт', 'проезд','переулок','пер','шоссе','ш',
+  'бульвар', 'б-р', 'площадь','пл','набережная','наб','тупик','аллея',
+  'дом','д','корпус','корп','к','строение','стр',
+  'литер','лит','владение','вл','квартира','кв', 'пом', 'помещение', 'офис', 'оф'
 ]);
-
 
 /**
  * Creates a "digital fingerprint" of a Russian address for robust, order-independent matching.
- * This function is the definitive solution to the address matching problem.
+ * This function implements the user's recommended "soft" normalization approach.
  * @param address The raw address string.
  * @returns A normalized, sorted, space-separated string representing the address fingerprint.
  */
 export function normalizeAddress(address: string | null | undefined): string {
-    if (!address) return "";
+  if (!address) return "";
 
-    // Step 1: Basic cleaning
-    let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+  // Step 1: Basic cleaning (lowercase, yo-e unification)
+  let cleaned = address.toLowerCase().replace(/ё/g, 'е');
   
-    // Step 2: Remove postal codes and all punctuation, replacing them with spaces
-    cleaned = cleaned.replace(/\b\d{5,6}\b/g, ' ').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ');
-    
-    // Step 3: Tokenize, filter out stopwords
-    const parts = cleaned.split(/\s+/)
-      .filter(p => {
-          // Filter out empty strings and stopwords
-          if (!p) return false;
-          if (STATIC_STOPWORDS.has(p)) return false;
-          // Also filter out single digits that are likely noise (e.g., from "ул. 8 Марта")
-          if (/^\d$/.test(p) && p !== '8') return false; 
-          return true;
-      });
+  // Step 2: Remove postal codes and all punctuation, replacing them with spaces
+  cleaned = cleaned
+    .replace(/\b\d{5,6}\b/g, ' ') // postal codes
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // punctuation
+    .replace(/\s+/g, ' '); // collapse multiple spaces
+
+  // Step 3: Tokenize, filter out weak stopwords and short noise words
+  const parts = cleaned
+    .split(/\s+/)
+    .map(p => p.trim())
+    .filter(p => {
+      if (!p) return false;
+      if (WEAK_STOPWORDS.has(p)) return false;
+      // Filter out short prepositions/conjunctions as suggested
+      if (/^[а-я]{1,2}$/.test(p)) return false; 
+      return true;
+    });
       
-    // Step 4: Sort and join to create the fingerprint
-    return parts.sort((a,b) => a.localeCompare(b, 'ru')).join(' ').trim();
+  // Step 4: Sort and join to create the fingerprint, ensuring order-insensitivity
+  return parts.sort((a, b) => a.localeCompare(b, 'ru')).join(' ').trim();
 }
 // --- END OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
