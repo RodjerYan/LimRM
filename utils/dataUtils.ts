@@ -47,6 +47,8 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
 
 /**
  * Calculates summary metrics for a given set of data (usually filtered data).
+ * NOTE: The `totalActiveClients` count here is based on deduplicated client names within groups.
+ * The final count displayed to the user should come from the length of the full `plottableActiveClients` array for accuracy.
  * @param data The array of data rows to calculate metrics for.
  * @returns A SummaryMetrics object, or null if the input data is empty.
  */
@@ -60,6 +62,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
       acc.totalFact += row.fact;
       acc.totalPotential += row.potential;
       acc.totalGrowth += row.growthPotential;
+      // This counts unique clients *within the aggregated groups*, which can differ from total file rows.
       acc.totalActiveClients += row.clients?.length || 0;
 
       if (!acc.rmGrowth[row.rm]) {
@@ -95,11 +98,12 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     totalPotential: metrics.totalPotential,
     totalGrowth: metrics.totalGrowth,
     totalClients: data.length, // Total number of groups
-    totalActiveClients: metrics.totalActiveClients, // Total number of individual clients
+    totalActiveClients: metrics.totalActiveClients, // This count is based on unique addresses per group.
     averageGrowthPercentage,
     topPerformingRM,
   };
 };
+
 
 /**
  * A robust helper function to find an address value within a data row.
@@ -146,31 +150,31 @@ export function normalizeAddress(address: string | null | undefined): string {
 
     let normalized = address.toLowerCase().replace(/ё/g, 'е');
 
-    // --- STEP 1: Remove district names ---
+    // --- STEP 1: Remove district and region names ---
     // This is a major source of inconsistency (e.g., "Жуковский р-н" vs. just "Жуковка").
-    // This regex removes a word followed by "р-н" or "район".
-    normalized = normalized.replace(/\b\w+?\s*(-)?\s*(р-н|район)\b/g, ' ');
+    normalized = normalized.replace(/\b[\w-]+\s*(-)?\s*(р-н|район)\b/g, ' ');
 
-    // --- STEP 2: Remove explicit region keywords ---
-    // This is crucial for matching "Брянская обл, г. Брянск" with "г. Брянск".
     for (const keyword of sortedRegionKeywords) {
+        // Match whole words/phrases to avoid partial replacements (e.g., "москва" in "московская")
         const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        normalized = normalized.replace(new RegExp(escapedKeyword, 'g'), ' ');
+        normalized = normalized.replace(new RegExp(`\\b${escapedKeyword}\\b`, 'g'), ' ');
     }
     
-    // --- STEP 3: Replace all punctuation and special characters with spaces ---
+    // --- STEP 2: Compact building numbers with letters (e.g., "17 а" -> "17а") ---
+    normalized = normalized.replace(/\b(\d+)\s+([а-я])\b/g, '$1$2');
+
+    // --- STEP 3: Replace all punctuation with spaces ---
     normalized = normalized.replace(/[.,;()"'/\\-]+/g, ' ');
     
     // --- STEP 4: Remove a comprehensive list of stopwords ---
     const stopWords = [
-        'россия', 'рф', 'республика', 'респ', 'край', 'область', 'обл', 'автономный округ', 'ао',
-        'город', 'г', 'поселок городского типа', 'пгт', 'рабочий поселок', 'рп', 'поселок', 'пос',
-        'село', 'с', 'деревня', 'д', 'станица', 'ст', 'хутор', 'х', 'аул',
+        'россия', 'рф', 'респ', 'край', 'обл', 'ао', 'округ', 'автономный', 'муниципальный',
+        'город', 'г', 'пгт', 'рп', 'пос', 'поселок', 'село', 'с', 'деревня', 'д', 
+        'станица', 'ст', 'хутор', 'х', 'аул', 'городского', 'типа',
         'улица', 'ул', 'проспект', 'пр-т', 'пр', 'переулок', 'пер', 'площадь', 'пл', 'бульвар',
         'бул', 'набережная', 'наб', 'шоссе', 'ш', 'проезд', 'пр-д', 'тупик', 'туп', 'аллея',
         'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'литер', 'лит',
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом',
-        'р-н', 'район' // also remove them if they appear alone
+        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом'
     ];
     const stopWordsRegex = new RegExp(`\\b(${stopWords.join('|')})\\b`, 'g');
     normalized = normalized.replace(stopWordsRegex, '');

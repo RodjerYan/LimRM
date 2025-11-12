@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
+import ActiveClientsTable from './components/ActiveClientsTable'; // Import the new component
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
@@ -21,7 +22,6 @@ import {
     WorkerResultPayload,
     MapPoint,
 } from './types';
-// FIX: Use findAddressInRow and the new normalizeAddress for consistency
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
@@ -84,9 +84,13 @@ const App: React.FC = () => {
             };
         }
         
-        // The value from baseMetrics is the source of truth.
-        return baseMetrics;
-    }, [filteredData, isDataLoaded]);
+        // FIX: The definitive source for the active clients count is the length of the filtered list of all clients.
+        // This ensures the metric card and the modal/table show the exact same number.
+        return {
+            ...baseMetrics,
+            totalActiveClients: filteredActiveClients.length
+        };
+    }, [filteredData, isDataLoaded, filteredActiveClients]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return []; // Return empty array instead of original data
@@ -168,13 +172,22 @@ const App: React.FC = () => {
         if (status.status === 'error' && status.message) addNotification(status.message, 'error');
     };
 
-    const handleClientSelectOnMap = (client: MapPoint) => {
-        setIsClientsModalOpen(false);
-        // Use a short delay to allow the modal to close before the map starts moving.
+    const flyToClient = useCallback((client: MapPoint) => {
+        // Use a short delay to allow UI to respond before the map starts moving.
         setTimeout(() => {
             setFlyToClientKey(client.key);
-        }, 300);
-    };
+        }, 100);
+        
+        // Scroll map into view if on a small screen
+        const mapElement = document.getElementById('interactive-map-container');
+        mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, []);
+    
+    const handleClientSelectFromModal = useCallback((client: MapPoint) => {
+        setIsClientsModalOpen(false);
+        flyToClient(client);
+    }, [flyToClient]);
+    
 
     useEffect(() => {
         setIsLoading(true);
@@ -237,6 +250,13 @@ const App: React.FC = () => {
                             flyToClientKey={flyToClientKey}
                         />
 
+                        {/* Display the full clients table if data is loaded */}
+                        <ActiveClientsTable 
+                            data={filteredActiveClients} 
+                            onRowClick={flyToClient} 
+                            disabled={!isDataLoaded || isLoading}
+                        />
+
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>
@@ -258,7 +278,7 @@ const App: React.FC = () => {
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
-                onClientSelect={handleClientSelectOnMap}
+                onClientSelect={handleClientSelectFromModal}
             />
         </div>
     );

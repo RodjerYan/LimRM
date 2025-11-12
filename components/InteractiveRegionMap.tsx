@@ -290,6 +290,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         activeClients.forEach(tt => {
+            // FIX: Check for lat and lon before creating the marker
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
@@ -484,7 +485,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     };
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
+        <div id="interactive-map-container" className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
             <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                 <h2 className="text-xl font-bold text-white whitespace-nowrap">Карта рыночного потенциала</h2>
                 <div className="relative w-full md:w-auto md:min-w-[300px]">
