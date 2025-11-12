@@ -150,27 +150,36 @@ export function normalizeAddress(address: string | null | undefined): string {
 
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
 
-    // 1. Unify building numbers, e.g., "17 а" -> "17а", "д.17/2" -> "17/2"
+    // Step 1: Remove all region, district, and other location keywords first.
+    for (const keyword of sortedRegionKeywords) {
+        const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'g');
+        cleaned = cleaned.replace(regex, '');
+    }
+
+    // Step 2: Unify building numbers and structures.
     cleaned = cleaned
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2') 
-        .replace(/\b(дом|д)\.?\s*([\d/]+[а-я]?)\b/g, '$2');
+        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2') // "17 а" -> "17а"
+        .replace(/\b(корп|к|корпус)\.?\s*(\d+[а-я]?)/g, 'к$2') // "корп 2" -> "к2"
+        .replace(/\b(стр|строение)\.?\s*(\d+[а-я]?)/g, 'с$2'); // "стр 3" -> "с3"
 
-    // 2. Remove all non-alphanumeric characters (except slashes for building numbers) and turn them into spaces
-    cleaned = cleaned.replace(/[^а-я0-9/]/g, ' ');
+    // Step 3: Remove all remaining non-essential words and punctuation.
+    const stopWords = [
+        'ул', 'улица', 'г', 'город', 'обл', 'область', 'край', 'респ', 'республика', 
+        'р-н', 'район', 'проспект', 'пр-т', 'пр', 'пер', 'переулок', 'дом', 'д', 
+        'корп', 'корпус', 'стр', 'строение', 'лит', 'литер', 'пос', 'поселок', 
+        'село', 'станица', 'ст-ца', 'хутор', 'деревня', 'кв', 'квартира', 'офис', 'пом', 'помещение'
+    ];
+    const stopWordsRegex = new RegExp(`\\b(${stopWords.join('|')})\\b`, 'g');
+    cleaned = cleaned.replace(stopWordsRegex, '');
     
-    // 3. Split into parts and filter
-    const parts = cleaned.split(' ').filter(part => {
-        if (!part) return false; // remove empty strings
-        if (/^\d{5,6}$/.test(part)) return false; // remove postal codes
-        
-        // Remove common stopwords. Removed ambiguous single-letter words like 'р', 'н', 'д'.
-        const stopWords = new Set(['ул', 'улица', 'г', 'город', 'обл', 'область', 'край', 'респ', 'республика', 'район', 'проспект', 'пр', 'пер', 'переулок', 'дом', 'корп', 'корпус', 'стр', 'строение', 'лит', 'литер', 'пос', 'поселок', 'село', 'станица', 'хутор', 'кв', 'квартира', 'офис', 'пом', 'помещение']);
-        if (stopWords.has(part)) return false;
-        
-        return true;
-    });
+    // Remove postal codes.
+    cleaned = cleaned.replace(/\b\d{5,6}\b/g, '');
 
-    // 4. Sort and join
+    // Remove all remaining punctuation and symbols, then collapse whitespace.
+    cleaned = cleaned.replace(/[^а-я0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Step 4: Tokenize, sort, and create the final fingerprint.
+    const parts = cleaned.split(' ').filter(Boolean);
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
     
     return parts.join(' ');
