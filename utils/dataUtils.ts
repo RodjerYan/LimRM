@@ -148,47 +148,30 @@ const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.le
 export function normalizeAddress(address: string | null | undefined): string {
     if (!address) return "";
 
-    let normalized = address.toLowerCase().replace(/ё/g, 'е');
+    let cleaned = address.toLowerCase().replace(/ё/g, 'е');
 
-    // --- STEP 1: Remove district and region names ---
-    // This is a major source of inconsistency (e.g., "Жуковский р-н" vs. just "Жуковка").
-    normalized = normalized.replace(/\b[\w-]+\s*(-)?\s*(р-н|район)\b/g, ' ');
+    // 1. Unify building numbers, e.g., "17 а" -> "17а", "д.17/2" -> "17/2"
+    cleaned = cleaned
+        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2') 
+        .replace(/\b(дом|д)\.?\s*([\d/]+[а-я]?)\b/g, '$2');
 
-    for (const keyword of sortedRegionKeywords) {
-        // Match whole words/phrases to avoid partial replacements (e.g., "москва" in "московская")
-        const escapedKeyword = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        normalized = normalized.replace(new RegExp(`\\b${escapedKeyword}\\b`, 'g'), ' ');
-    }
+    // 2. Remove all non-alphanumeric characters (except slashes for building numbers) and turn them into spaces
+    cleaned = cleaned.replace(/[^а-я0-9/]/g, ' ');
     
-    // --- STEP 2: Compact building numbers with letters (e.g., "17 а" -> "17а") ---
-    normalized = normalized.replace(/\b(\d+)\s+([а-я])\b/g, '$1$2');
+    // 3. Split into parts and filter
+    const parts = cleaned.split(' ').filter(part => {
+        if (!part) return false; // remove empty strings
+        if (/^\d{5,6}$/.test(part)) return false; // remove postal codes
+        
+        // Remove common stopwords. Removed ambiguous single-letter words like 'р', 'н', 'д'.
+        const stopWords = new Set(['ул', 'улица', 'г', 'город', 'обл', 'область', 'край', 'респ', 'республика', 'район', 'проспект', 'пр', 'пер', 'переулок', 'дом', 'корп', 'корпус', 'стр', 'строение', 'лит', 'литер', 'пос', 'поселок', 'село', 'станица', 'хутор', 'кв', 'квартира', 'офис', 'пом', 'помещение']);
+        if (stopWords.has(part)) return false;
+        
+        return true;
+    });
 
-    // --- STEP 3: Replace all punctuation with spaces ---
-    normalized = normalized.replace(/[.,;()"'/\\-]+/g, ' ');
-    
-    // --- STEP 4: Remove a comprehensive list of stopwords ---
-    const stopWords = [
-        'россия', 'рф', 'респ', 'край', 'обл', 'ао', 'округ', 'автономный', 'муниципальный',
-        'город', 'г', 'пгт', 'рп', 'пос', 'поселок', 'село', 'с', 'деревня', 'д', 
-        'станица', 'ст', 'хутор', 'х', 'аул', 'городского', 'типа',
-        'улица', 'ул', 'проспект', 'пр-т', 'пр', 'переулок', 'пер', 'площадь', 'пл', 'бульвар',
-        'бул', 'набережная', 'наб', 'шоссе', 'ш', 'проезд', 'пр-д', 'тупик', 'туп', 'аллея',
-        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'литер', 'лит',
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом'
-    ];
-    const stopWordsRegex = new RegExp(`\\b(${stopWords.join('|')})\\b`, 'g');
-    normalized = normalized.replace(stopWordsRegex, '');
-
-    // --- STEP 5: Remove postal codes ---
-    normalized = normalized.replace(/\b\d{5,6}\b/g, '');
-
-    // --- STEP 6: Collapse multiple spaces and trim ---
-    normalized = normalized.replace(/\s+/g, ' ').trim();
-    
-    // --- STEP 7: Create the canonical, order-independent key ---
-    // "брянск димитрова 60" and "димитрова 60 брянск" will both become "60 брянск димитрова".
-    const parts = normalized.split(' ').filter(Boolean); // .filter(Boolean) removes any empty strings.
+    // 4. Sort and join
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
-  
+    
     return parts.join(' ');
 }

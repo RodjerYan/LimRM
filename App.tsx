@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
-import ActiveClientsTable from './components/ActiveClientsTable'; // Import the new component
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
@@ -68,10 +67,8 @@ const App: React.FC = () => {
         if (!isDataLoaded) {
             return null;
         }
-        // This is the correct calculation, based on the aggregated data.
         const baseMetrics = calculateSummaryMetrics(filteredData);
         
-        // If baseMetrics is null (e.g., filteredData is empty), provide a default.
         if (!baseMetrics) {
             return {
                 totalFact: 0,
@@ -84,8 +81,6 @@ const App: React.FC = () => {
             };
         }
         
-        // FIX: The definitive source for the active clients count is the length of the filtered list of all clients.
-        // This ensures the metric card and the modal/table show the exact same number.
         return {
             ...baseMetrics,
             totalActiveClients: filteredActiveClients.length
@@ -93,7 +88,7 @@ const App: React.FC = () => {
     }, [filteredData, isDataLoaded, filteredActiveClients]);
 
     const potentialClients = useMemo(() => {
-        if (!okbData.length) return []; // Return empty array instead of original data
+        if (!okbData.length) return [];
         const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
@@ -110,7 +105,6 @@ const App: React.FC = () => {
         }, 5000);
     }, []);
 
-    // Fetch conflict zones on initial load
     useEffect(() => {
         const fetchConflictZones = async () => {
             try {
@@ -132,7 +126,6 @@ const App: React.FC = () => {
     
     useEffect(() => {
         if (flyToClientKey) {
-            // Reset the key after a moment so the user can click the same client again.
             const timer = setTimeout(() => setFlyToClientKey(null), 500);
             return () => clearTimeout(timer);
         }
@@ -173,12 +166,10 @@ const App: React.FC = () => {
     };
 
     const flyToClient = useCallback((client: MapPoint) => {
-        // Use a short delay to allow UI to respond before the map starts moving.
         setTimeout(() => {
             setFlyToClientKey(client.key);
         }, 100);
         
-        // Scroll map into view if on a small screen
         const mapElement = document.getElementById('interactive-map-container');
         mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, []);
@@ -188,7 +179,6 @@ const App: React.FC = () => {
         flyToClient(client);
     }, [flyToClient]);
     
-
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
@@ -248,13 +238,6 @@ const App: React.FC = () => {
                             activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
-                        />
-
-                        {/* Display the full clients table if data is loaded */}
-                        <ActiveClientsTable 
-                            data={filteredActiveClients} 
-                            onRowClick={flyToClient} 
-                            disabled={!isDataLoaded || isLoading}
                         />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
