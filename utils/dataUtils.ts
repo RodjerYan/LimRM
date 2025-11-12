@@ -136,48 +136,50 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 };
 
 
-// --- FINAL, CORRECTED ADDRESS NORMALIZATION LOGIC (as per user's detailed analysis) ---
+// --- FINAL CORRECTED ADDRESS NORMALIZATION LOGIC ---
 
-// Only non-geographic, structural stopwords
-const STATIC_STOPWORDS = new Set([
+// ТОЛЬКО структурные слова, без географических терминов
+const STRUCTURAL_STOPWORDS = new Set([
   'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
   'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
   'тупик', 'аллея', 'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
   'здание', 'зд', 'литер', 'лит', 'владение', 'вл', 'квартира', 'кв',
-  'офис', 'оф', 'пом', 'помещение'
+  'офис', 'оф', 'пом', 'помещение', 'тер', 'территория', 'микрорайон', 'мкр'
 ]);
-
 
 /**
  * Creates a robust, normalized "fingerprint" of an address for reliable matching.
- * This version uses a "soft" normalization approach, removing only structural keywords
- * while preserving all geographic and identifying names.
+ * This version preserves all geographical information (regions, cities) while
+ * removing only structural elements and normalizing the format.
  * @param address The raw address string.
  * @returns A sorted, cleaned string fingerprint of the address.
  */
 export function normalizeAddress(address: string | null | undefined): string {
   if (!address) return '';
 
-  // 1. Basic cleaning: lowercase, ё->е, remove punctuation and postal codes
   let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+  
+  // Базовое очищение - только почтовые индексы и пунктуация
   cleaned = cleaned
-    .replace(/\b\d{5,6}\b/g, ' ') // postal codes
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // punctuation
-    .replace(/\s+/g, ' ');
+    .replace(/\b\d{5,6}\b/g, ' ') // Remove postal codes
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // Remove punctuation
+    .replace(/\s+/g, ' ') // Collapse whitespace
+    .trim();
 
-  // 2. Tokenize and filter out stopwords and short prepositions
+  // Токенизация и фильтрация ТОЛЬКО структурных слов
   const parts = cleaned
-    .split(/\s+/)
-    .map(p => p.trim())
-    .filter(p => {
-      if (!p) return false;
-      if (STATIC_STOPWORDS.has(p)) return false;
-      // This regex removes short (1-2 letter) words that are likely prepositions
-      // but keeps words with digits like '1-й' by checking for their absence.
-      if (/^[а-я]{1,2}$/.test(p) && !/\d/.test(p)) return false;
+    .split(' ')
+    .map(part => part.trim())
+    .filter(part => {
+      if (!part) return false;
+      // Удаляем ТОЛЬКО структурные слова, сохраняем все географические названия
+      if (STRUCTURAL_STOPWORDS.has(part)) return false;
       return true;
     });
 
-  // 3. Sort for order-insensitivity and join to create the final fingerprint
-  return parts.sort((a, b) => a.localeCompare(b, 'ru')).join(' ').trim();
+  // Сортировка для нечувствительности к порядку
+  return parts
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+    .join(' ')
+    .trim();
 }
