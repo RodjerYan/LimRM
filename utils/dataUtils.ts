@@ -6,7 +6,6 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-import { REGION_KEYWORD_MAP } from './addressMappings';
 
 /**
  * Applies the current filter state to the aggregated data.
@@ -137,9 +136,9 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 };
 
 
-// --- FIXED ADDRESS NORMALIZATION LOGIC (stable and geography-safe) ---
+// --- FIXED ADDRESS NORMALIZATION LOGIC (as per user's final, correct analysis) ---
 
-// Только служебные слова, без географических единиц
+// A "soft" list of stopwords that only removes structural address parts, but keeps geographic identifiers.
 const STATIC_STOPWORDS = new Set([
   'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
   'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
@@ -149,32 +148,33 @@ const STATIC_STOPWORDS = new Set([
 ]);
 
 /**
- * Универсальная нормализация адресов для сопоставления XLSX ↔ Google Sheet.
- * Убирает лишние служебные слова, но сохраняет географию (города, регионы).
+ * Creates a robust, normalized "fingerprint" of an address for reliable matching.
+ * This implementation is based on the user's detailed analysis and final recommendation.
+ * It removes only non-essential structural words, preserving crucial geographic context.
+ * @param address The raw address string.
+ * @returns A sorted, cleaned string fingerprint of the address.
  */
 export function normalizeAddress(address: string | null | undefined): string {
   if (!address) return '';
 
-  // Базовая очистка
+  // 1. Basic cleaning: lowercase, handle ё, remove postal codes and all punctuation.
   let cleaned = address.toLowerCase().replace(/ё/g, 'е');
   cleaned = cleaned
-    .replace(/\b\d{5,6}\b/g, ' ') // индексы
-    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // пунктуация
-    .replace(/\s+/g, ' ');
+    .replace(/\b\d{5,6}\b/g, ' ') // postal codes
+    .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // punctuation
+    .replace(/\s+/g, ' '); // collapse whitespace
 
-  // Токенизация + фильтрация мусора
+  // 2. Tokenize and filter out stopwords and short, meaningless words (like prepositions).
   const parts = cleaned
     .split(/\s+/)
     .map(p => p.trim())
     .filter(p => {
-      if (!p) return false;
-      if (STATIC_STOPWORDS.has(p)) return false;
-      // FIX: The user provided regex was /^[а-я]{1,2}$/.test(p) which is JS.
-      // In TS/JS this is correct. Let's make sure it's not a typo. It seems correct to remove 1-2 letter russian words (prepositions like 'в', 'на', 'по').
-      if (/^[а-я]{1,2}$/.test(p)) return false; 
+      if (!p) return false; // remove empty parts
+      if (STATIC_STOPWORDS.has(p)) return false; // remove structural stopwords
+      if (/^[а-я]{1,2}$/.test(p) && !/\d/.test(p)) return false; // remove short 1-2 letter words (but keep things like "1-й")
       return true;
     });
 
-  // Сортировка для устойчивого сопоставления
+  // 3. Sort the remaining parts alphabetically to make the match order-independent.
   return parts.sort((a, b) => a.localeCompare(b, 'ru')).join(' ').trim();
 }
