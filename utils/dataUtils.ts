@@ -1,3 +1,4 @@
+// utils/dataUtils.ts
 import {
   AggregatedDataRow,
   FilterState,
@@ -168,7 +169,9 @@ export function normalizeAddress(address: string | null | undefined): string {
     .filter(p => {
       if (!p) return false;
       if (STATIC_STOPWORDS.has(p)) return false;
-      if (/^[а-я]{1,2}$/.test(p)) return false; // убираем короткие предлоги
+      // FIX: The user provided regex was /^[а-я]{1,2}$/.test(p) which is JS.
+      // In TS/JS this is correct. Let's make sure it's not a typo. It seems correct to remove 1-2 letter russian words (prepositions like 'в', 'на', 'по').
+      if (/^[а-я]{1,2}$/.test(p)) return false; 
       return true;
     });
 
