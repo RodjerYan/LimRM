@@ -173,8 +173,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
 
+    console.group("Процесс обработки файла продаж");
+
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        const rowIndexForLogging = i + 2; // Assuming row 1 is headers
         
         // --- 1. Data Extraction ---
         const clientInn = findValueInRow(row, ['инн'])?.trim();
@@ -182,6 +185,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
+
+        console.groupCollapsed(`[Строка ${rowIndexForLogging}] Обработка: ${clientName}`);
+        console.log("Исходные данные строки:", row);
+        console.log(`Извлеченные идентификаторы: ИНН='${clientInn || 'не найден'}', Адрес='${clientAddress || 'не найден'}'`);
 
         // --- 2. Coordinate Resolution (INN-first approach) ---
         let lat: number | null = null;
@@ -196,6 +203,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
+                console.log(`%c[УСПЕХ] Найдены явные координаты в файле: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
             }
         }
         
@@ -205,7 +213,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
+                console.log(`%c[УСПЕХ] Найдено совпадение по ИНН '${clientInn}' в ОКБ: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
+            } else {
+                console.log(`[ИНФО] Попытка найти по ИНН '${clientInn}' не удалась. ИНН отсутствует в индексе ОКБ.`);
             }
+        } else if (lat === null) {
+             console.log(`[ИНФО] ИНН для поиска не найден в строке.`);
         }
         
         // Priority 3: Fallback to the less reliable address index if INN fails.
@@ -215,7 +228,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
+                console.log(`%c[УСПЕХ] Найдено совпадение по адресу '${clientAddress}' (нормализовано: '${normalizedAddress}') в ОКБ: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
+            } else {
+                console.log(`[ИНФО] Попытка найти по адресу '${clientAddress}' (нормализовано: '${normalizedAddress}') не удалась. Адрес отсутствует в индексе ОКБ.`);
             }
+        } else if (lat === null) {
+            console.log(`[ИНФО] Адрес для поиска не найден в строке.`);
+        }
+
+        if (lat === null || lon === null) {
+            console.warn(`%c[ОШИБКА] Не удалось найти координаты для строки ${rowIndexForLogging}. Клиент не будет отображен на карте.`, 'color: #f87171; font-weight: bold;');
+            console.info(`%c[РЕКОМЕНДАЦИЯ] Проверьте, что ИНН ('${clientInn || 'пусто'}') или юридический адрес ('${clientAddress || 'пусто'}') в этой строке точно совпадает с записью в Google Таблице ОКБ. Убедитесь, что для этой записи в ОКБ корректно указаны столбцы с широтой (lat) и долготой (lon), и они не пустые.`, 'color: #fbbf24;');
         }
 
         // --- 4. Unified Address Parsing & Fallback Logic ---
@@ -252,7 +275,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         
         const clientDisplayValue = clientAddress || clientName;
 
-        if (isNaN(weight) || region === 'Регион не определен') continue;
+        if (isNaN(weight) || region === 'Регион не определен') {
+            console.groupEnd();
+            continue;
+        };
 
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
@@ -270,11 +296,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         
+        console.groupEnd();
+        
         if (i > 0 && i % 10000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')} / ${jsonData.length.toLocaleString('ru-RU')}...` } });
         }
     }
+    
+    console.groupEnd();
     
     // --- STAGE 3: FINAL CALCULATIONS (FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
