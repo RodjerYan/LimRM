@@ -182,15 +182,17 @@ const createStopwords = (): Set<string> => {
 };
 
 const STOPWORDS = createStopwords();
+const ALL_CITIES = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
 
 /**
  * Performs deep normalization on an address string for robust, order-independent matching.
- * This multi-stage "digital fingerprint" algorithm is designed to create a consistent key for an address,
+ * This multi-stage "digital fingerprint" algorithm creates a consistent key for an address,
  * regardless of major variations in its original formatting.
  * @param address The raw address string.
+ * @param options An object with options, e.g., { simplify: true } to remove district names.
  * @returns A normalized, order-independent string for high-match-rate lookups.
  */
-export function normalizeAddress(address: string | null | undefined): string {
+export function normalizeAddress(address: string | null | undefined, options: { simplify?: boolean } = {}): string {
     if (!address) return "";
 
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
@@ -208,10 +210,25 @@ export function normalizeAddress(address: string | null | undefined): string {
     cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); // Replace punctuation with spaces
 
     // Step 3: Tokenize and remove all stopwords.
-    const parts = cleaned.split(/\s+/)
+    let parts = cleaned.split(/\s+/)
         .filter(part => part && !STOPWORDS.has(part));
     
-    // Step 4: Sort the remaining significant parts to make it order-independent.
+    // Step 4 (Optional): Simplify by removing district-like adjectives.
+    if (options.simplify) {
+        parts = parts.filter(part => {
+            // Keep if it's a number (house, building, etc.) or a combined number like 'к2'
+            if (/^\d+.*$/.test(part) || /^[ксл]\d/.test(part)) return true;
+            // Keep if it's a known city
+            if (ALL_CITIES.has(part)) return true;
+            // Discard if it looks like a district/region adjective and is NOT a city
+            if (part.endsWith('ский') || part.endsWith('ской') || part.endsWith('цкий') || part.endsWith('ецкий')) {
+                return false;
+            }
+            return true;
+        });
+    }
+    
+    // Step 5: Sort the remaining significant parts to make it order-independent.
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
     
     return parts.join(' ').trim();

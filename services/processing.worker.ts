@@ -10,17 +10,20 @@ type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 // FIX: Define more specific types for the coordinate indexes for clarity and type safety.
 type CoordByAddressIndex = Map<string, { lat: number; lon: number }>;
+type SimplifiedCoordIndex = Map<string, { lat: number; lon: number; originalAddress: string }>;
 
 
 /**
- * Creates a fast lookup map (index) from the OKB data using normalized addresses.
- * This is a critical performance optimization and improves matching reliability.
+ * Creates fast lookup maps (indexes) from the OKB data using both strict and simplified normalized addresses.
+ * This two-tier approach is a critical performance optimization and significantly improves matching reliability.
  * @param okbData The raw OKB data from Google Sheets.
- * @returns An object containing a map for address-based lookups.
+ * @returns An object containing maps for strict and simplified address-based lookups.
  */
-const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddressIndex } => {
+const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddressIndex; coordByAddressSimplified: SimplifiedCoordIndex } => {
     const coordByAddress: CoordByAddressIndex = new Map();
-    if (!okbData) return { coordByAddress };
+    const coordByAddressSimplified: SimplifiedCoordIndex = new Map();
+
+    if (!okbData) return { coordByAddress, coordByAddressSimplified };
 
     for (const row of okbData) {
         const address = findAddressInRow(row);
@@ -28,19 +31,24 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddre
         const lon = row.lon;
         
         // Only index rows that have valid coordinates.
-        if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
+        if (address && lat && lon && !isNaN(lat) && !isNaN(lon)) {
             const coords = { lat, lon };
+            const strictNormalized = normalizeAddress(address, { simplify: false });
+            const simplifiedNormalized = normalizeAddress(address, { simplify: true });
 
-            // Populate the address index.
-            if (address) {
-                const normalized = normalizeAddress(address);
-                if (normalized && !coordByAddress.has(normalized)) {
-                    coordByAddress.set(normalized, coords);
+            if (strictNormalized && !coordByAddress.has(strictNormalized)) {
+                coordByAddress.set(strictNormalized, coords);
+            }
+            
+            // Only add to simplified index if the key is different and valid.
+            if (simplifiedNormalized && simplifiedNormalized !== strictNormalized) {
+                 if (!coordByAddressSimplified.has(simplifiedNormalized)) {
+                    coordByAddressSimplified.set(simplifiedNormalized, { ...coords, originalAddress: address });
                 }
             }
         }
     }
-    return { coordByAddress };
+    return { coordByAddress, coordByAddressSimplified };
 };
 
 
@@ -157,8 +165,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     const clientNameHeader = findClientNameHeader(headers);
     
     // --- STAGE 1: CREATE OKB COORDINATE INDEXES (ADDRESS ONLY) ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ по адресам...' } });
-    const { coordByAddress } = createOkbIndexes(okbData);
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
+    const { coordByAddress, coordByAddressSimplified } = createOkbIndexes(okbData);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${coordByAddress.size} адресов с координатами.` } });
 
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
@@ -204,21 +212,57 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
         
-        // Priority 2: Match by address if no explicit coords found
+        // Priority 2: Match by address using two-tier lookup if no explicit coords found
         if (lat === null && clientAddress) {
-            const normalizedAddress = normalizeAddress(clientAddress);
-            console.log(`Нормализованный адрес для поиска (цифровой отпечаток): "${normalizedAddress}"`);
-            const okbCoords = coordByAddress.get(normalizedAddress);
+            const strictNormalized = normalizeAddress(clientAddress);
+            const simplifiedNormalized = normalizeAddress(clientAddress, { simplify: true });
+            console.log(`Нормализованный адрес (строгий): "${strictNormalized}"`);
+            console.log(`Нормализованный адрес (упрощенный): "${simplifiedNormalized}"`);
+            
+            let okbCoords;
+            let matchMethod = '';
+
+            // 1. Try strict key against strict map
+            okbCoords = coordByAddress.get(strictNormalized);
+            if (okbCoords) matchMethod = 'строгий -> строгий';
+        
+            // 2. Try simplified key against strict map
+            if (!okbCoords && simplifiedNormalized !== strictNormalized) {
+                okbCoords = coordByAddress.get(simplifiedNormalized);
+                if (okbCoords) matchMethod = 'упрощенный -> строгий';
+            }
+        
+            // 3. Try strict key against simplified map
+            if (!okbCoords) {
+                const simplifiedResult = coordByAddressSimplified.get(strictNormalized);
+                if (simplifiedResult) {
+                    okbCoords = simplifiedResult;
+                    matchMethod = 'строгий -> упрощенный';
+                }
+            }
+            
+            // 4. Try simplified key against simplified map
+            if (!okbCoords && simplifiedNormalized !== strictNormalized) {
+                const simplifiedResult = coordByAddressSimplified.get(simplifiedNormalized);
+                if (simplifiedResult) {
+                    okbCoords = simplifiedResult;
+                    matchMethod = 'упрощенный -> упрощенный';
+                }
+            }
+
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
-                console.log(`%c[УСПЕХ] Найдено совпадение по адресу в ОКБ. Координаты: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
+                console.log(`%c[УСПЕХ] Найдено совпадение по методу "${matchMethod}".`, 'color: #a78bfa; font-weight: bold;');
+                if ('originalAddress' in okbCoords && okbCoords.originalAddress) {
+                     console.info(`Совпадение с адресом из ОКБ: "${okbCoords.originalAddress}"`);
+                }
             } else {
                 console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ.`, 'color: #f87171; font-weight: bold;');
                 console.info(`%c[РЕКОМЕНДАЦИЯ] 
-1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице. Обратите внимание на опечатки и сокращения.
+1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице.
 2. Убедитесь, что для этого клиента в Google Таблице указаны координаты в столбцах 'lat' и 'lon'.
-3. Алгоритм нормализации создал ключ: "${normalizedAddress}". Если он выглядит неверно, возможно, адрес имеет нестандартный формат. Попробуйте упростить его.`, 'color: #fbbf24;');
+3. Алгоритм создал ключи: "${strictNormalized}" (строгий) и "${simplifiedNormalized}" (упрощенный). Если они неверны, упростите адрес в исходном файле.`, 'color: #fbbf24;');
             }
         }
 
