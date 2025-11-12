@@ -54,6 +54,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     setProgress(100); // Ensure progress is 100 on completion
                     setEtr(0);
                     break;
+                case 'debug':
+                    console.warn(`[WORKER] ${payload.message}\n  -> Оригинал: "${payload.address}"\n  -> Отпечаток: "${payload.normalized}"`);
+                    break;
                 case 'error':
                     onProcessingStateChange(false, `Ошибка при обработке файла: ${payload}`);
                     setMessage(`Ошибка: ${payload}`);

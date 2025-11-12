@@ -208,13 +208,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             }
         }
         
-        // Priority 3: Fallback to the less reliable address index if INN fails.
+        // Priority 3: Fallback to the address index if INN fails.
         if (lat === null && clientAddress) {
             const normalizedAddress = normalizeAddress(clientAddress);
             const okbCoords = coordByAddress.get(normalizedAddress);
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
+            } else if (normalizedAddress) {
+                // NEW: Send a debug message back to the main thread for logging
+                postMessage({
+                    type: 'debug',
+                    payload: {
+                        message: 'Адрес не найден в ОКБ',
+                        address: clientAddress,
+                        normalized: normalizedAddress
+                    }
+                });
             }
         }
 
