@@ -9,23 +9,20 @@ import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 // FIX: Define more specific types for the coordinate indexes for clarity and type safety.
-type CoordByInnIndex = Map<string, { lat: number; lon: number }>;
 type CoordByAddressIndex = Map<string, { lat: number; lon: number }>;
 
 
 /**
- * Creates fast lookup maps (indexes) from the OKB data for both INN and normalized address.
+ * Creates a fast lookup map (index) from the OKB data using normalized addresses.
  * This is a critical performance optimization and improves matching reliability.
  * @param okbData The raw OKB data from Google Sheets.
- * @returns An object containing two maps: one for INN-based lookups and one for address-based lookups.
+ * @returns An object containing a map for address-based lookups.
  */
-const createOkbIndexes = (okbData: OkbDataRow[]): { coordByInn: CoordByInnIndex; coordByAddress: CoordByAddressIndex } => {
-    const coordByInn: CoordByInnIndex = new Map();
+const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddressIndex } => {
     const coordByAddress: CoordByAddressIndex = new Map();
-    if (!okbData) return { coordByInn, coordByAddress };
+    if (!okbData) return { coordByAddress };
 
     for (const row of okbData) {
-        const inn = findValueInRow(row, ['инн'])?.trim();
         const address = findAddressInRow(row);
         const lat = row.lat;
         const lon = row.lon;
@@ -33,11 +30,6 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByInn: CoordByInnIndex;
         // Only index rows that have valid coordinates.
         if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
             const coords = { lat, lon };
-
-            // Populate the INN index.
-            if (inn && !coordByInn.has(inn)) {
-                coordByInn.set(inn, coords);
-            }
 
             // Populate the address index.
             if (address) {
@@ -48,7 +40,7 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByInn: CoordByInnIndex;
             }
         }
     }
-    return { coordByInn, coordByAddress };
+    return { coordByAddress };
 };
 
 
@@ -164,23 +156,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
-    // --- STAGE 1: CREATE OKB COORDINATE INDEXES (INN & ADDRESS) ---
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
-    const { coordByInn, coordByAddress } = createOkbIndexes(okbData);
-    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${coordByInn.size} ИНН и ${coordByAddress.size} адресов с координатами.` } });
+    // --- STAGE 1: CREATE OKB COORDINATE INDEXES (ADDRESS ONLY) ---
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ по адресам...' } });
+    const { coordByAddress } = createOkbIndexes(okbData);
+    postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${coordByAddress.size} адресов с координатами.` } });
 
     // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
 
-    console.group("Процесс обработки файла продаж");
+    console.group("Процесс сопоставления адресов");
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const rowIndexForLogging = i + 2; // Assuming row 1 is headers
         
         // --- 1. Data Extraction ---
-        const clientInn = findValueInRow(row, ['инн'])?.trim();
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
@@ -188,11 +179,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
 
         console.groupCollapsed(`[Строка ${rowIndexForLogging}] Обработка: ${clientName}`);
         console.log("Исходные данные строки:", row);
-        console.log(`Извлеченные идентификаторы: ИНН='${clientInn || 'не найден'}', Адрес='${clientAddress || 'не найден'}'`);
 
-        // --- 2. Coordinate Resolution (INN-first approach) ---
+        // --- 2. Coordinate Resolution ---
         let lat: number | null = null;
         let lon: number | null = null;
+
+        if (!clientAddress) {
+            console.warn('%c[ОШИБКА] Адрес не найден в строке. Невозможно найти координаты.', 'color: #f87171; font-weight: bold;');
+            console.info('%c[РЕКОМЕНДАЦИЯ] Проверьте, что в файле есть столбец с адресом ("Юридический адрес", "Адрес" и т.п.).', 'color: #fbbf24;');
+        } else {
+             console.log(`Извлеченный адрес из файла: "${clientAddress}"`);
+        }
 
         // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
         const latVal = findValueInRow(row, ['широта', 'lat']);
@@ -203,42 +200,30 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
-                console.log(`%c[УСПЕХ] Найдены явные координаты в файле: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
+                console.log(`%c[УСПЕХ] Найдены явные координаты в столбцах файла: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
             }
         }
         
-        // Priority 2: If no coords in file, use the highly reliable INN index.
-        if (lat === null && clientInn) {
-            const okbCoords = coordByInn.get(clientInn);
-            if (okbCoords) {
-                lat = okbCoords.lat;
-                lon = okbCoords.lon;
-                console.log(`%c[УСПЕХ] Найдено совпадение по ИНН '${clientInn}' в ОКБ: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
-            } else {
-                console.log(`[ИНФО] Попытка найти по ИНН '${clientInn}' не удалась. ИНН отсутствует в индексе ОКБ.`);
-            }
-        } else if (lat === null) {
-             console.log(`[ИНФО] ИНН для поиска не найден в строке.`);
-        }
-        
-        // Priority 3: Fallback to the less reliable address index if INN fails.
+        // Priority 2: Match by address if no explicit coords found
         if (lat === null && clientAddress) {
             const normalizedAddress = normalizeAddress(clientAddress);
+            console.log(`Нормализованный адрес для поиска (цифровой отпечаток): "${normalizedAddress}"`);
             const okbCoords = coordByAddress.get(normalizedAddress);
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
-                console.log(`%c[УСПЕХ] Найдено совпадение по адресу '${clientAddress}' (нормализовано: '${normalizedAddress}') в ОКБ: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
+                console.log(`%c[УСПЕХ] Найдено совпадение по адресу в ОКБ. Координаты: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
             } else {
-                console.log(`[ИНФО] Попытка найти по адресу '${clientAddress}' (нормализовано: '${normalizedAddress}') не удалась. Адрес отсутствует в индексе ОКБ.`);
+                console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ.`, 'color: #f87171; font-weight: bold;');
+                console.info(`%c[РЕКОМЕНДАЦИЯ] 
+1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице. Обратите внимание на опечатки и сокращения.
+2. Убедитесь, что для этого клиента в Google Таблице указаны координаты в столбцах 'lat' и 'lon'.
+3. Алгоритм нормализации создал ключ: "${normalizedAddress}". Если он выглядит неверно, возможно, адрес имеет нестандартный формат. Попробуйте упростить его.`, 'color: #fbbf24;');
             }
-        } else if (lat === null) {
-            console.log(`[ИНФО] Адрес для поиска не найден в строке.`);
         }
 
         if (lat === null || lon === null) {
-            console.warn(`%c[ОШИБКА] Не удалось найти координаты для строки ${rowIndexForLogging}. Клиент не будет отображен на карте.`, 'color: #f87171; font-weight: bold;');
-            console.info(`%c[РЕКОМЕНДАЦИЯ] Проверьте, что ИНН ('${clientInn || 'пусто'}') или юридический адрес ('${clientAddress || 'пусто'}') в этой строке точно совпадает с записью в Google Таблице ОКБ. Убедитесь, что для этой записи в ОКБ корректно указаны столбцы с широтой (lat) и долготой (lon), и они не пустые.`, 'color: #fbbf24;');
+            console.log(`[ИТОГ] Координаты для этой строки не найдены. Клиент не будет отображен на карте.`);
         }
 
         // --- 4. Unified Address Parsing & Fallback Logic ---
@@ -248,15 +233,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         
         const groupName = (parsedCity !== 'Город не определен') ? parsedCity : region;
 
-        // --- 5. Client List Creation (NO MORE FILTERING) ---
-        // Every client from the file is now added to the list.
+        // --- 5. Client List Creation ---
         let correctedLon = lon;
         if (correctedLon && correctedLon < -100) {
             correctedLon += 360;
         }
 
         plottableActiveClients.push({
-            key: `${clientInn || clientAddress || 'client'}-${i}`, // Unique key per row
+            key: `${clientAddress || 'client'}-${i}`, // Unique key per row
             lat: lat ?? undefined,
             lon: correctedLon ?? undefined,
             status: 'match',
