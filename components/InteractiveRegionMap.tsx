@@ -290,13 +290,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         activeClients.forEach(tt => {
-            const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
-            const marker = L.circleMarker([tt.lat, tt.lon], {
-                pane: 'markerPane',
-                fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
-            }).bindPopup(popupContent);
-            activeClientMarkersLayer.current?.addLayer(marker);
-            activeClientMarkersRef.current.set(tt.key, marker);
+            if (tt.lat && tt.lon) {
+                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
+                const marker = L.circleMarker([tt.lat, tt.lon], {
+                    pane: 'markerPane',
+                    fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
+                }).bindPopup(popupContent);
+                activeClientMarkersLayer.current?.addLayer(marker);
+                activeClientMarkersRef.current.set(tt.key, marker);
+            }
         });
     
         // --- Add to Map and Control ---

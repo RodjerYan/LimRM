@@ -131,18 +131,33 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 };
 
 /**
- * Normalizes an address string for robust matching, based on user-provided logic.
+ * Normalizes an address string for robust, order-independent matching.
+ * This function cleans the address, removes common "stop words", and then sorts
+ * the remaining significant parts alphabetically to create a canonical key.
  * @param address The raw address string.
- * @returns A normalized string, suitable for high-match-rate lookups.
+ * @returns A normalized, order-independent string for high-match-rate lookups.
  */
 export function normalizeAddress(address: string | null | undefined): string {
   if (!address) return "";
 
-  return address
+  // A comprehensive regex to find and remove all common address prefixes, suffixes, and "noise" words.
+  // The \b ensures we match whole words only.
+  const stopWordsRegex = /\b(россия|рф|область|обл|край|республика|респ|автономный округ|ао|город|г|поселок|пос|пгт|деревня|д|село|с|станица|ст|хутор|х|улица|ул|проспект|пр-т|пр|переулок|пер|площадь|пл|бульвар|бул|набережная|наб|дом|д|корпус|корп|к|строение|стр|квартира|кв|офис|оф)\b/g;
+
+  // 1. Clean the string: lowercase, unify ё/е, replace all punctuation with spaces, remove stop words.
+  const cleaned = address
     .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[.,;]/g, "")
-    .replace(/(россия|рф|область|край|г\.|город|ул\.|улица|д\.|дом|корпус|корп\.|к\.|стр\.|строение)/g, "")
-    .replace(/\s{2,}/g, " ")
+    .replace(/ё/g, 'е')
+    .replace(/[.,;()"'/\\-]/g, ' ') // Aggressively replace punctuation with spaces.
+    .replace(stopWordsRegex, '')
+    .replace(/\s+/g, ' ') // Collapse multiple spaces into a single space.
     .trim();
+
+  // 2. Create the canonical key: split into parts, sort them, and rejoin.
+  // This makes the result independent of the original word order.
+  // "брянск димитрова 60" and "димитрова 60 брянск" will both become "60 брянск димитрова".
+  const parts = cleaned.split(' ').filter(Boolean); // .filter(Boolean) removes any empty strings.
+  parts.sort((a, b) => a.localeCompare(b, 'ru'));
+  
+  return parts.join(' ');
 }
