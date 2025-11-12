@@ -138,41 +138,44 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 // --- FINAL CORRECTED ADDRESS NORMALIZATION LOGIC ---
 
-// ТОЛЬКО структурные слова, без географических терминов
+// ТОЛЬКО структурные слова + географические аббревиатуры
 const STRUCTURAL_STOPWORDS = new Set([
+  // Структурные элементы
   'улица', 'ул', 'проспект', 'пр', 'пр-кт', 'проезд', 'переулок', 'пер',
   'шоссе', 'ш', 'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб',
   'тупик', 'аллея', 'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр',
   'здание', 'зд', 'литер', 'лит', 'владение', 'вл', 'квартира', 'кв',
-  'офис', 'оф', 'пом', 'помещение', 'тер', 'территория', 'микрорайон', 'мкр'
+  'офис', 'оф', 'пом', 'помещение', 'тер', 'территория', 'микрорайон', 'мкр',
+  
+  // Географические аббревиатуры (ДОБАВЛЕНО)
+  'г', 'город', 'р-н', 'р', 'н', 'район', 'п', 'пос', 'поселок', 
+  'с', 'село', 'дер', 'деревня', 'дп', 'пгт', 'рп'
 ]);
 
 /**
  * Creates a robust, normalized "fingerprint" of an address for reliable matching.
- * This version preserves all geographical information (regions, cities) while
- * removing only structural elements and normalizing the format.
- * @param address The raw address string.
- * @returns A sorted, cleaned string fingerprint of the address.
+ * This version removes ALL structural and geographical abbreviations while preserving
+ * actual geographical names (cities, regions, street names).
  */
 export function normalizeAddress(address: string | null | undefined): string {
   if (!address) return '';
 
   let cleaned = address.toLowerCase().replace(/ё/g, 'е');
   
-  // Базовое очищение - только почтовые индексы и пунктуация
+  // Базовое очищение
   cleaned = cleaned
     .replace(/\b\d{5,6}\b/g, ' ') // Remove postal codes
     .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()"]/g, ' ') // Remove punctuation
     .replace(/\s+/g, ' ') // Collapse whitespace
     .trim();
 
-  // Токенизация и фильтрация ТОЛЬКО структурных слов
+  // Токенизация и фильтрация ВСЕХ служебных слов
   const parts = cleaned
     .split(' ')
     .map(part => part.trim())
     .filter(part => {
       if (!part) return false;
-      // Удаляем ТОЛЬКО структурные слова, сохраняем все географические названия
+      // Удаляем ВСЕ структурные и географические аббревиатуры
       if (STRUCTURAL_STOPWORDS.has(part)) return false;
       return true;
     });
