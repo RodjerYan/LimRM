@@ -17,8 +17,8 @@ export type MapPointStatus = 'match' | 'potential';
 
 export interface MapPoint {
     key: string;
-    lat: number;
-    lon: number;
+    lat?: number;
+    lon?: number;
     status: MapPointStatus;
     name: string;
     address: string;

@@ -46,7 +46,7 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
-    const [plottableActiveClients, setPlottableActiveClients] = useState<MapPoint[]>([]);
+    const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
@@ -56,46 +56,47 @@ const App: React.FC = () => {
 
     const filteredActiveClients = useMemo(() => {
         if (!isDataLoaded) return [];
-        return plottableActiveClients.filter(client => {
+        return allActiveClients.filter(client => {
             const rmMatch = !filters.rm || client.rm === filters.rm;
             const brandMatch = filters.brand.length === 0 || filters.brand.includes(client.brand);
             const regionMatch = filters.region.length === 0 || filters.region.includes(client.region);
             return rmMatch && brandMatch && regionMatch;
         });
-    }, [plottableActiveClients, filters, isDataLoaded]);
+    }, [allActiveClients, filters, isDataLoaded]);
 
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
         if (!isDataLoaded) {
             return null;
         }
-
+        // This is the correct calculation, based on the aggregated data.
         const baseMetrics = calculateSummaryMetrics(filteredData);
         
-        const defaultMetrics = {
-            totalFact: 0,
-            totalPotential: 0,
-            totalGrowth: 0,
-            totalClients: 0,
-            totalActiveClients: 0,
-            averageGrowthPercentage: 0,
-            topPerformingRM: { name: 'N/A', value: 0 },
-        };
+        // If baseMetrics is null (e.g., filteredData is empty), provide a default.
+        if (!baseMetrics) {
+            return {
+                totalFact: 0,
+                totalPotential: 0,
+                totalGrowth: 0,
+                totalClients: 0,
+                totalActiveClients: 0,
+                averageGrowthPercentage: 0,
+                topPerformingRM: { name: 'N/A', value: 0 },
+            };
+        }
         
-        return {
-            ...(baseMetrics || defaultMetrics),
-            totalActiveClients: filteredActiveClients.length,
-        };
-    }, [filteredData, filteredActiveClients, isDataLoaded]);
+        // The value from baseMetrics is the source of truth.
+        return baseMetrics;
+    }, [filteredData, isDataLoaded]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return []; // Return empty array instead of original data
-        const activeAddressesSet = new Set(plottableActiveClients.map(c => normalizeAddress(c.address)));
+        const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
             const normalizedAddress = normalizeAddress(address);
             return !activeAddressesSet.has(normalizedAddress);
         });
-    }, [okbData, plottableActiveClients]);
+    }, [okbData, allActiveClients]);
     
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
@@ -135,9 +136,9 @@ const App: React.FC = () => {
 
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
-        setPlottableActiveClients(data.plottableActiveClients);
+        setAllActiveClients(data.plottableActiveClients);
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп.`, 'success');
+        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
     }, [addNotification]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
@@ -231,7 +232,7 @@ const App: React.FC = () => {
                             data={filteredData} 
                             selectedRegions={filters.region} 
                             potentialClients={potentialClients}
-                            activeClients={plottableActiveClients}
+                            activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
                         />

@@ -186,7 +186,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- 2. Coordinate Resolution (INN-first approach) ---
         let lat: number | null = null;
         let lon: number | null = null;
-        let coordsSource: 'file' | 'okb_inn' | 'okb_address' | 'none' = 'none';
 
         // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
         const latVal = findValueInRow(row, ['широта', 'lat']);
@@ -197,28 +196,25 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
-                coordsSource = 'file';
             }
         }
         
         // Priority 2: If no coords in file, use the highly reliable INN index.
-        if (coordsSource === 'none' && clientInn) {
+        if (lat === null && clientInn) {
             const okbCoords = coordByInn.get(clientInn);
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
-                coordsSource = 'okb_inn';
             }
         }
         
         // Priority 3: Fallback to the less reliable address index if INN fails.
-        if (coordsSource === 'none' && clientAddress) {
+        if (lat === null && clientAddress) {
             const normalizedAddress = normalizeAddress(clientAddress);
             const okbCoords = coordByAddress.get(normalizedAddress);
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
-                coordsSource = 'okb_address';
             }
         }
 
@@ -229,28 +225,27 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         
         const groupName = (parsedCity !== 'Город не определен') ? parsedCity : region;
 
-        // --- 5. Plotting Logic ---
-        if (coordsSource !== 'none' && lat !== null && lon !== null) {
-            let correctedLon = lon;
-            if (correctedLon < -100) {
-                correctedLon += 360;
-            }
-
-            plottableActiveClients.push({
-                key: `${lat}-${lon}-${i}`, // Use index `i` to make key unique per row
-                lat: lat,
-                lon: correctedLon,
-                status: 'match',
-                name: clientName,
-                address: clientAddress || `Координаты из ОКБ: ${lat.toFixed(4)}, ${lon.toFixed(4)}`,
-                city: groupName,
-                region: region,
-                rm: rm,
-                brand: brand,
-                type: findValueInRow(row, ['канал продаж']),
-                contacts: findValueInRow(row, ['контакты']),
-            });
+        // --- 5. Client List Creation (NO MORE FILTERING) ---
+        // Every client from the file is now added to the list.
+        let correctedLon = lon;
+        if (correctedLon && correctedLon < -100) {
+            correctedLon += 360;
         }
+
+        plottableActiveClients.push({
+            key: `${clientInn || clientAddress || 'client'}-${i}`, // Unique key per row
+            lat: lat ?? undefined,
+            lon: correctedLon ?? undefined,
+            status: 'match',
+            name: clientName,
+            address: clientAddress || `Адрес не указан`,
+            city: groupName,
+            region: region,
+            rm: rm,
+            brand: brand,
+            type: findValueInRow(row, ['канал продаж']),
+            contacts: findValueInRow(row, ['контакты']),
+        });
 
         // --- 6. Aggregation Logic ---
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));

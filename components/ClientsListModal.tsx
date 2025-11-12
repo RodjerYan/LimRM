@@ -18,7 +18,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     const groupedClients = useMemo<GroupedClients>(() => {
         if (!clients) return {};
         return clients.reduce((acc, client) => {
-            const city = client.city || 'Город не определен';
+            const city = client.city || 'Регион не определен';
             if (!acc[city]) {
                 acc[city] = [];
             }
@@ -73,17 +73,28 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                     {city} ({filteredGroupedClients[city].length})
                                 </h3>
                                 <ul className="space-y-3">
-                                    {filteredGroupedClients[city].map((client) => (
-                                        <li 
-                                            key={client.key}
-                                            onClick={() => onClientSelect(client)}
-                                            className="bg-gray-800/50 p-3 rounded-md cursor-pointer hover:bg-indigo-500/20 transition-colors"
-                                        >
-                                            <p className="font-semibold text-white truncate" title={client.name}>{client.name}</p>
-
-                                            <p className="text-sm text-gray-400 truncate" title={client.address}>{client.address}</p>
-                                        </li>
-                                    ))}
+                                    {filteredGroupedClients[city].map((client) => {
+                                        const hasCoords = client.lat && client.lon;
+                                        return (
+                                            <li 
+                                                key={client.key}
+                                                onClick={() => {
+                                                    if (hasCoords) {
+                                                        onClientSelect(client);
+                                                    }
+                                                }}
+                                                className={`bg-gray-800/50 p-3 rounded-md transition-colors ${
+                                                    hasCoords 
+                                                        ? 'cursor-pointer hover:bg-indigo-500/20' 
+                                                        : 'cursor-default opacity-60'
+                                                }`}
+                                                title={hasCoords ? client.address : `${client.address} (координаты не найдены)`}
+                                            >
+                                                <p className="font-semibold text-white truncate">{client.name}</p>
+                                                <p className="text-sm text-gray-400 truncate">{client.address}</p>
+                                            </li>
+                                        );
+                                    })}
                                 </ul>
                             </div>
                         ))
