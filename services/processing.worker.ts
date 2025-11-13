@@ -5,6 +5,7 @@ import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 // FIX: Import the new, centralized address processing functions.
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -191,6 +192,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- 2. Coordinate Resolution ---
         let lat: number | null = null;
         let lon: number | null = null;
+        let accuracy: MapPoint['accuracy'] = 'exact';
 
         if (!clientAddress) {
             console.warn('%c[ОШИБКА] Адрес не найден в строке. Невозможно найти координаты.', 'color: #f87171; font-weight: bold;');
@@ -208,6 +210,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(parsedLat) && !isNaN(parsedLon) && parsedLat >= -90 && parsedLat <= 90 && parsedLon >= -180 && parsedLon <= 180) {
                 lat = parsedLat;
                 lon = parsedLon;
+                accuracy = 'exact';
                 console.log(`%c[УСПЕХ] Найдены явные координаты в столбцах файла: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
             }
         }
@@ -283,16 +286,31 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (okbCoords) {
                 lat = okbCoords.lat;
                 lon = okbCoords.lon;
+                accuracy = 'exact';
                 console.log(`%c[УСПЕХ] Найдено совпадение по методу "${matchMethod}".`, 'color: #a78bfa; font-weight: bold;');
                 if ('originalAddress' in okbCoords && okbCoords.originalAddress) {
                      console.info(`Совпадение с адресом из ОКБ: "${okbCoords.originalAddress}"`);
                 }
             } else {
-                console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ.`, 'color: #f87171; font-weight: bold;');
-                console.info(`%c[РЕКОМЕНДАЦИЯ] 
+                // Priority 3: Fallback to city center coordinates
+                const parsedAddr = parseRussianAddress(clientAddress);
+                if (parsedAddr.city && parsedAddr.city !== 'Город не определен') {
+                    const cityData = REGION_BY_CITY_WITH_INDEXES[parsedAddr.city.toLowerCase()];
+                    if (cityData && cityData.lat && cityData.lon) {
+                        lat = cityData.lat;
+                        lon = cityData.lon;
+                        accuracy = 'approximate';
+                        console.log(`%c[ИНФО] Точные координаты не найдены. Используются координаты центра города: ${parsedAddr.city}.`, 'color: #fbbf24;');
+                    }
+                }
+
+                if (lat === null) {
+                    console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ и не удалось определить координаты города.`, 'color: #f87171; font-weight: bold;');
+                    console.info(`%c[РЕКОМЕНДАЦИЯ] 
 1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице.
 2. Убедитесь, что для этого клиента в Google Таблице указаны координаты в столбцах 'lat' и 'lon'.
 3. Алгоритм создал ключи: "${strictNormalized}" (строгий) и "${simplifiedNormalized}" (упрощенный). Если они неверны, упростите адрес в исходном файле.`, 'color: #fbbf24;');
+                }
             }
         }
 
@@ -317,7 +335,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             key: `${clientAddress || 'client'}-${i}`, // Unique key per row
             lat: lat ?? undefined,
             lon: correctedLon ?? undefined,
-            status: 'match',
+            accuracy: lat !== null ? accuracy : 'exact',
             name: clientName,
             address: clientAddress || `Адрес не указан`,
             city: groupName,

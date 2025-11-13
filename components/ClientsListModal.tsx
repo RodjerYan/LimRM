@@ -17,11 +17,17 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     const [rowsPerPage, setRowsPerPage] = useState(15);
     const [copied, setCopied] = useState(false);
 
+    const { clientsWithCoordsCount, modalTitle } = useMemo(() => {
+        const withCoords = clients.filter(c => !!(c.lat && c.lon)).length;
+        const title = `Список активных клиентов (Всего: ${clients.length} | На карте: ${withCoords} | Без координат: ${clients.length - withCoords})`;
+        return { clientsWithCoordsCount: withCoords, modalTitle: title };
+    }, [clients]);
+
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['Наименование', 'Адрес', 'Город/Группа', 'Регион', 'РМ', 'Бренд', 'Канал продаж'].join('\t'),
+            ['Наименование', 'Адрес', 'Город/Группа', 'Регион', 'РМ', 'Бренд', 'Канал продаж', 'Есть координаты'].join('\t'),
             ...sortedData.map(row => [
-                row.name, row.address, row.city, row.region, row.rm, row.brand, row.type
+                row.name, row.address, row.city, row.region, row.rm, row.brand, row.type, !!(row.lat && row.lon)
             ].join('\t'))
         ].join('\n');
         navigator.clipboard.writeText(tsv).then(() => {
@@ -95,7 +101,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     }, [isOpen]);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Список активных клиентов (${clients.length})`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle}>
             <div className="flex flex-col h-[70vh]">
                 <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700 flex-shrink-0">
                     <div className="relative w-full md:w-auto flex-grow">

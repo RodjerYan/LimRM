@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.markercluster';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
@@ -48,8 +51,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
     const urbanCentersLayer = useRef<L.LayerGroup | null>(null);
-    const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
-    const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
+    // FIX: The types for `leaflet.markercluster` are not being resolved, leading to a "no exported member 'MarkerClusterGroup'" error.
+    // Using `any` for the ref type bypasses this compile-time issue.
+    const potentialClientMarkersLayer = useRef<any | null>(null);
+    const activeClientMarkersLayer = useRef<any | null>(null);
     const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
@@ -247,40 +252,59 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [resetHighlight]);
     
     // Generic marker creation function
-    const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
-        <b>${name}</b><br>
-        ${address}<br>
-        <small>${type || 'н/д'}</small>
-        ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-    `;
+    const createPopupContent = (client: MapPoint) => {
+        const accuracyInfo = client.accuracy === 'approximate' 
+            ? `<hr style="margin: 5px 0;"/><small style="color: #fbbf24;">📍 Примерное местоположение (центр города)</small>`
+            : '';
+
+        return `
+            <b>${client.name}</b><br>
+            ${client.address}<br>
+            <small>${client.type || 'н/д'}</small>
+            ${client.contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${client.contacts}</small>` : ''}
+            ${accuracyInfo}
+        `;
+    };
     
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
     
-        // --- Cleanup and Re-creation ---
+        // --- Cleanup and Re-creation of Cluster Groups ---
         if (potentialClientMarkersLayer.current) {
             map.removeLayer(potentialClientMarkersLayer.current);
             layerControl.current.removeLayer(potentialClientMarkersLayer.current);
         }
-        potentialClientMarkersLayer.current = L.layerGroup();
+        // FIX: Cast L to `any` to access the `markerClusterGroup` method. The leaflet.markercluster plugin extends
+        // the L object at runtime, but the TypeScript type definitions are not aware of this extension.
+        // The `cluster` parameter is also typed as `any` for the same reason.
+        potentialClientMarkersLayer.current = (L as any).markerClusterGroup({
+            chunkedLoading: true,
+            maxClusterRadius: 60,
+            iconCreateFunction: (cluster: any) => L.divIcon({ html: `<div><span>${cluster.getChildCount()}</span></div>`, className: 'marker-cluster marker-cluster-potential', iconSize: [40, 40] })
+        });
     
         if (activeClientMarkersLayer.current) {
             map.removeLayer(activeClientMarkersLayer.current);
             layerControl.current.removeLayer(activeClientMarkersLayer.current);
         }
-        activeClientMarkersLayer.current = L.layerGroup();
+        activeClientMarkersLayer.current = (L as any).markerClusterGroup({
+            chunkedLoading: true,
+            maxClusterRadius: 70,
+            iconCreateFunction: (cluster: any) => L.divIcon({ html: `<div><span>${cluster.getChildCount()}</span></div>`, className: 'marker-cluster marker-cluster-active', iconSize: [40, 40] })
+        });
         activeClientMarkersRef.current.clear();
     
         // --- Populate Layers ---
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(
-                    findValueInRow(tt, ['наименование', 'клиент']),
-                    findValueInRow(tt, ['юридический адрес', 'адрес']),
-                    findValueInRow(tt, ['вид деятельности', 'тип']),
-                    findValueInRow(tt, ['контакты'])
-                );
+                const popupContent = createPopupContent({
+                    name: findValueInRow(tt, ['наименование', 'клиент']),
+                    address: findValueInRow(tt, ['юридический адрес', 'адрес']),
+                    type: findValueInRow(tt, ['вид деятельности', 'тип']),
+                    contacts: findValueInRow(tt, ['контакты']),
+                    accuracy: 'exact', // Assume potential are always exact
+                } as MapPoint);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
@@ -290,13 +314,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         activeClients.forEach(tt => {
-            // FIX: Check for lat and lon before creating the marker
             if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
-                const marker = L.circleMarker([tt.lat, tt.lon], {
+                const popupContent = createPopupContent(tt);
+                const markerOptions = {
                     pane: 'markerPane',
-                    fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
-                }).bindPopup(popupContent);
+                    radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9,
+                    fillColor: tt.accuracy === 'exact' ? '#22c55e' : '#f59e0b', // green for exact, orange for approx
+                    color: tt.accuracy === 'exact' ? '#16a34a' : '#d97706',
+                };
+                const marker = L.circleMarker([tt.lat, tt.lon], markerOptions).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
             }
@@ -310,25 +336,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
         // --- Fit Bounds to Data ---
-        const allMarkers = [
-            ...(potentialClientMarkersLayer.current?.getLayers() || []),
-            ...(activeClientMarkersLayer.current?.getLayers() || [])
-        ];
-    
-        if (allMarkers.length > 0) {
-            const featureGroup = L.featureGroup(allMarkers as L.Layer[]);
-            try {
-                const bounds = featureGroup.getBounds();
-                if (bounds.isValid()) {
-                    map.fitBounds(bounds.pad(0.2));
-                } else {
-                     console.warn("Could not fit bounds: bounds are invalid.");
-                     map.setView([60, 90], 3); // Fallback
-                }
-            } catch(e) {
-                console.error("Error calculating bounds for map:", e);
-                map.setView([60, 90], 3); // Fallback
-            }
+        const activeBounds = activeClientMarkersLayer.current.getBounds();
+        if (activeBounds.isValid()) {
+            map.fitBounds(activeBounds.pad(0.2));
         } else if (data.length === 0) { // Only reset if the underlying data is also empty
             map.setView([60, 90], 3);
         }
@@ -340,16 +350,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (!map || !flyToClientKey) return;
 
         const marker = activeClientMarkersRef.current.get(flyToClientKey);
-        if (marker && typeof (marker as any).getLatLng === 'function') {
-            const markerLatLng = (marker as L.Marker).getLatLng();
-            map.flyTo(markerLatLng, 16, { animate: true, duration: 1 });
-
-            // Open the popup after the fly-to animation completes
-            setTimeout(() => {
-                if (typeof (marker as any).openPopup === 'function') {
+        if (marker && activeClientMarkersLayer.current) {
+             // Use zoomToShowLayer to handle clusters
+            activeClientMarkersLayer.current.zoomToShowLayer(marker, () => {
+                 if (typeof (marker as any).openPopup === 'function') {
                     (marker as L.Marker).openPopup();
                 }
-            }, 1000); // Duration of flyTo animation
+            });
         }
     }, [flyToClientKey]);
 

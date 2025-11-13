@@ -6,29 +6,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Гео-Анализ Рынка | Limkorm</title>
     <script type="importmap">
-      {
-        "imports": {
-          "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
-          "react/": "https://aistudiocdn.com/react@^19.2.0/",
-          "react": "https://aistudiocdn.com/react@^19.2.0",
-          "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
-          "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-          "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
-          "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
-          "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
-          "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
-          "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
-          "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
-          "marked": "https://aistudiocdn.com/marked@^17.0.0",
-          "vite": "https://aistudiocdn.com/vite@^7.2.2",
-          "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
-          "geojson": "https://aistudiocdn.com/geojson@^0.5.0",
-          "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
-          "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.4",
-          "@vercel/speed-insights/": "https://aistudiocdn.com/@vercel/speed-insights@^1.0.12/"
-        }
-      }
-    </script>
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
+    "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
+    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "marked": "https://aistudiocdn.com/marked@^17.0.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.2",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
+    "geojson": "https://aistudiocdn.com/geojson@^0.5.0",
+    "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
+    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.4",
+    "@vercel/speed-insights/": "https://aistudiocdn.com/@vercel/speed-insights@^1.0.12/",
+    "leaflet.markercluster": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3",
+    "leaflet.markercluster/": "https://aistudiocdn.com/leaflet.markercluster@^1.5.3/"
+  }
+}
+</script>
     <link rel="stylesheet" href="/index.css">
     <style>
       /* --- Dark Theme Styles --- */
@@ -146,6 +148,27 @@
       .leaflet-control-layers-overlays label span:first-child:has(span:contains("⚠️")) {
           color: #f87171; /* danger color */
           font-weight: bold;
+      }
+
+      /* Marker Cluster Styles */
+      .marker-cluster div {
+        width: 30px;
+        height: 30px;
+        margin-left: 5px;
+        margin-top: 5px;
+        color: #fff;
+        text-align: center;
+        border-radius: 15px;
+        font: 12px "Helvetica Neue", Arial, Helvetica, sans-serif;
+        line-height: 30px;
+      }
+      .marker-cluster-active {
+        background-color: rgba(34, 197, 94, 0.6);
+        border: 2px solid rgba(22, 163, 74, 0.8);
+      }
+      .marker-cluster-potential {
+        background-color: rgba(59, 130, 246, 0.6);
+        border: 2px solid rgba(37, 99, 235, 0.8);
       }
     </style>
   </head>
