@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 // FIX: Explicitly import `Buffer` to resolve the "Cannot find name 'Buffer'" TypeScript error.
 // This ensures the type is available even if Node.js globals are not automatically included in the compilation scope.
 import { Buffer } from 'buffer';
-import { getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets.js';
+import { getOKBAddresses, batchUpdateOKBStatus } from './lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const updates: { rowIndex: number, status: string }[] = [];
         const results: { okbAddress: string, status: string }[] = [];
 
-        okbAddresses.forEach((okbAddress, index) => {
+        okbAddresses.forEach((okbAddress: string, index: number) => {
             const status = akbAddresses.has(okbAddress) ? 'Совпадение' : 'Не найдено';
             // Sheet is 1-indexed, and our data starts from row 2.
             updates.push({ rowIndex: index + 2, status });

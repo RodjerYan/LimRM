@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { OkbDataRow } from '../types';
+import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const SHEET_NAME = 'Base';
