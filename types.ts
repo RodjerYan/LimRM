@@ -28,6 +28,7 @@ export interface MapPoint {
     brand: string;
     type: string;
     contacts?: string;
+    isCached?: boolean; // To distinguish between new and cached clients on the map
 }
 
 export interface ParsedAddress {
@@ -100,6 +101,7 @@ export type OkbStatus = {
 export type WorkerProgressPayload = {
     percentage: number;
     message: string;
+    isBackground?: boolean;
 };
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
@@ -107,7 +109,17 @@ export type WorkerResultPayload = {
 };
 export type WorkerErrorPayload = string;
 
+export type WorkerBackgroundMessage = 
+    | { type: 'cache-update', payload: { rmName: string, rows: { address: string }[] } }
+    | { type: 'geocode-request', payload: { rmName: string, addresses: string[] } }
+    | { type: 'geocode-result', payload: { rmName: string, updates: { address: string, lat: number, lon: number }[] } };
+
 export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
     | { type: 'result', payload: WorkerResultPayload }
-    | { type: 'error', payload: WorkerErrorPayload };
+    | { type: 'error', payload: WorkerErrorPayload }
+    | { type: 'background', payload: WorkerBackgroundMessage };
+
+
+// Type for the coordinate cache data structure from Google Sheets
+export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number }[]>;

@@ -2,6 +2,7 @@ import { google } from 'googleapis';
 import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
+const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
 
 /**
@@ -60,7 +61,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             return null;
         }
 
-        // Create an object from the row array and header
         const row: { [key: string]: any } = {};
         header.forEach((key, index) => {
             if (key) {
@@ -68,7 +68,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        // User's requested logic for finding coordinates
         const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
         const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
@@ -76,7 +75,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
 
-            // User's requested check for NaN
             if (!isNaN(lat) && !isNaN(lon)) {
                 row.lat = lat;
                 row.lon = lon;
@@ -98,7 +96,7 @@ export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!C2:C`, // FIX: Fetch from column C (Юридический адрес)
+        range: `${SHEET_NAME}!C2:C`,
     });
 
     const rows = res.data.values || [];
@@ -116,7 +114,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     const sheets = await getGoogleSheetsClient();
 
     const data = updates.map(update => ({
-        range: `${SHEET_NAME}!F${update.rowIndex}`, // FIX: Column F is 'Статус'
+        range: `${SHEET_NAME}!F${update.rowIndex}`,
         values: [[update.status]],
     }));
 
@@ -127,4 +125,159 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
             data: data,
         },
     });
+}
+
+
+// --- NEW FUNCTIONS FOR COORDINATE CACHE ---
+
+/**
+ * Fetches all data from the coordinate cache spreadsheet.
+ * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
+ */
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number }[]>> {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheet = await sheets.spreadsheets.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+    });
+
+    const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[] || [];
+    if (sheetTitles.length === 0) return {};
+
+    const ranges = sheetTitles.map(title => `'${title}'!A:C`); // Address, lat, lon
+    const response = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        ranges,
+    });
+    
+    const cache: Record<string, { address: string; lat?: number; lon?: number }[]> = {};
+    response.data.valueRanges?.forEach((valueRange) => {
+        let title = valueRange.range?.split('!')[0] || 'Unknown';
+        if (title.startsWith("'") && title.endsWith("'")) {
+             title = title.substring(1, title.length - 1); // unquote if sheet name has spaces
+        }
+        const values = valueRange.values || [];
+        if (values.length > 1) { // Skip header
+            cache[title] = values.slice(1).map(row => {
+                const latStr = String(row[1] || '').replace(',', '.').trim();
+                const lonStr = String(row[2] || '').replace(',', '.').trim();
+                const lat = latStr ? parseFloat(latStr) : undefined;
+                const lon = lonStr ? parseFloat(lonStr) : undefined;
+                return {
+                    address: String(row[0] || '').trim(),
+                    lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
+                    lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
+                };
+            }).filter(item => item.address); // Only include items with an address
+        }
+    });
+
+    return cache;
+}
+
+/**
+ * Ensures a sheet exists for an RM and creates it with headers if not.
+ * @param sheets The Google Sheets API client.
+ * @param rmName The name of the sheet.
+ */
+async function ensureSheetExists(sheets: any, rmName: string) {
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
+    const sheetExists = spreadsheet.data.sheets?.some(s => s.properties?.title === rmName);
+
+    if (!sheetExists) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            requestBody: {
+                requests: [{ addSheet: { properties: { title: rmName } } }],
+            },
+        });
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `${rmName}!A1`,
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [['Адрес ТТ', 'lat', 'lon']],
+            },
+        });
+    }
+}
+
+/**
+ * Appends new rows to a specific RM's sheet in the cache. Creates the sheet if it doesn't exist.
+ * This version also checks for existing addresses to avoid duplicates.
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param rowsToAppend An array of rows to add, where each row is an array of strings/numbers.
+ */
+export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
+    if (rowsToAppend.length === 0) return;
+    
+    const sheets = await getGoogleSheetsClient();
+    await ensureSheetExists(sheets, rmName);
+
+    const existingAddressesResponse = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${rmName}'!A2:A`,
+    });
+    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => String(a).trim()) || []);
+
+    const uniqueRowsToAppend = rowsToAppend.filter(row => {
+        const address = String(row[0] || '').trim();
+        return address && !existingAddresses.has(address);
+    });
+
+    if (uniqueRowsToAppend.length === 0) {
+        return;
+    }
+
+    await sheets.spreadsheets.values.append({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${rmName}'!A1`,
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS',
+        requestBody: {
+            values: uniqueRowsToAppend,
+        },
+    });
+}
+
+
+/**
+ * Updates coordinates for existing addresses in a specific RM's sheet.
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param updates An array of objects containing the address and new coordinates.
+ */
+export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
+    if (updates.length === 0) return;
+    
+    const sheets = await getGoogleSheetsClient();
+    await ensureSheetExists(sheets, rmName);
+    
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${rmName}'!A:A`,
+    });
+
+    const addressesInSheet = response.data.values?.flat() || [];
+    const addressIndexMap = new Map<string, number>();
+    addressesInSheet.forEach((addr, i) => {
+        if(addr) addressIndexMap.set(String(addr).trim(), i + 1)
+    });
+
+    const dataForUpdate = updates.map(update => {
+        const rowIndex = addressIndexMap.get(String(update.address).trim());
+        if (!rowIndex) return null;
+        return {
+            range: `'${rmName}'!B${rowIndex}:C${rowIndex}`,
+            values: [[update.lat, update.lon]],
+        };
+    }).filter((item): item is NonNullable<typeof item> => item !== null);
+    
+    if (dataForUpdate.length > 0) {
+        await sheets.spreadsheets.values.batchUpdate({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            requestBody: {
+                valueInputOption: 'USER_ENTERED',
+                data: dataForUpdate,
+            },
+        });
+    }
 }

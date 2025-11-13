@@ -1,6 +1,7 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { WorkerMessage, AggregatedDataRow, OkbStatus, WorkerResultPayload } from '../types';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { WorkerMessage, OkbStatus, WorkerResultPayload, CoordsCache } from '../types';
 import { formatETR } from '../utils/timeUtils';
+import { LoaderIcon } from './icons';
 
 interface FileUploadProps {
     onFileProcessed: (data: WorkerResultPayload) => void;
@@ -16,16 +17,34 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     const [message, setMessage] = useState('Загрузите файл с данными');
     const [etr, setEtr] = useState<number | null>(null);
     const [isDragging, setIsDragging] = useState(false);
+    const [backgroundMessage, setBackgroundMessage] = useState<string | null>(null);
     const workerRef = useRef<Worker | null>(null);
     const startTimeRef = useRef<number | null>(null);
 
-    const processFile = useCallback((file: File) => {
+    const processFile = useCallback(async (file: File) => {
         onProcessingStateChange(true, 'Начало обработки...');
         setFileName(file.name);
         setProgress(0);
-        setMessage('Инициализация воркера...');
+        setMessage('Загрузка кэша координат...');
+        setBackgroundMessage(null);
         setEtr(null);
         startTimeRef.current = Date.now();
+
+        let cacheData: CoordsCache = {};
+        try {
+            const response = await fetch('/api/get-full-cache');
+            if (response.ok) {
+                cacheData = await response.json();
+                setMessage('Кэш загружен, инициализация воркера...');
+            } else {
+                console.warn('Не удалось загрузить кэш координат, обработка продолжится без него.');
+                setMessage('Не удалось загрузить кэш, инициализация воркера...');
+            }
+        } catch (error) {
+            console.error('Ошибка при загрузке кэша координат:', error);
+            setMessage('Ошибка кэша, инициализация воркера...');
+        }
+
 
         if (workerRef.current) {
             workerRef.current.terminate();
@@ -37,27 +56,32 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             const { type, payload } = e.data;
             switch (type) {
                 case 'progress':
-                    setProgress(payload.percentage);
-                    setMessage(payload.message);
-                    if (startTimeRef.current && payload.percentage > 0 && payload.percentage < 100) {
-                        const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
-                        const totalTime = (elapsedTime / payload.percentage) * 100;
-                        setEtr(totalTime - elapsedTime);
+                    if (payload.isBackground) {
+                        setBackgroundMessage(payload.message);
                     } else {
-                        setEtr(null);
+                        setProgress(payload.percentage);
+                        setMessage(payload.message);
+                        if (startTimeRef.current && payload.percentage > 0 && payload.percentage < 100) {
+                            const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
+                            const totalTime = (elapsedTime / payload.percentage) * 100;
+                            setEtr(totalTime - elapsedTime);
+                        } else {
+                            setEtr(null);
+                        }
                     }
                     break;
                 case 'result':
                     onFileProcessed(payload);
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
-                    setMessage(`Обработка завершена!`);
-                    setProgress(100); // Ensure progress is 100 on completion
+                    setMessage(`Основная обработка завершена!`);
+                    setProgress(100);
                     setEtr(0);
                     break;
                 case 'error':
                     onProcessingStateChange(false, `Ошибка при обработке файла: ${payload}`);
                     setMessage(`Ошибка: ${payload}`);
                     setEtr(null);
+                    setBackgroundMessage(null);
                     break;
                 default:
                     break;
@@ -70,19 +94,29 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             setMessage(`Критическая ошибка: ${e.message}`);
         };
         
-        workerRef.current.postMessage({ file, okbData });
+        workerRef.current.postMessage({ file, okbData, cacheData });
     }, [onFileProcessed, onProcessingStateChange, okbData]);
+    
+    // Cleanup worker on component unmount
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+        }
+    }, []);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
             processFile(file);
         }
+        // Reset input value to allow re-uploading the same file
+        event.target.value = '';
     }, [processFile]);
 
     const handleDragEnter = (e: React.DragEvent<HTMLLabelElement>) => {
         e.preventDefault();
         e.stopPropagation();
+        if (disabled) return;
         setIsDragging(true);
     };
 
@@ -96,11 +130,12 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         e.preventDefault();
         e.stopPropagation();
         setIsDragging(false);
+        if (disabled) return;
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             processFile(e.dataTransfer.files[0]);
             e.dataTransfer.clearData();
         }
-    }, [processFile]);
+    }, [processFile, disabled]);
 
     const isProcessing = progress > 0 && progress < 100;
 
@@ -142,7 +177,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                             </div>
                         )}
                     </div>
-                    <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing} />
+                    <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing || disabled} />
                 </label>
             </div>
              <div className="mt-4 text-center text-xs text-gray-400 bg-gray-900/50 p-2 rounded-md border border-gray-700">
@@ -172,6 +207,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                             </p>
                         )}
                     </div>
+                    {backgroundMessage && (
+                        <div className="text-xs text-cyan-400 bg-cyan-900/30 p-2 rounded-md flex items-center gap-2 animate-fade-in">
+                           <LoaderIcon /> {backgroundMessage}
+                        </div>
+                    )}
                 </div>
             )}
              {!okbStatus || okbStatus.status !== 'ready' ? (

@@ -17,6 +17,22 @@
       "destination": "/api/get-conflict-zones"
     },
     {
+      "source": "/api/get-full-cache",
+      "destination": "/api/get-full-cache"
+    },
+    {
+      "source": "/api/add-to-cache",
+      "destination": "/api/add-to-cache"
+    },
+    {
+      "source": "/api/update-coords",
+      "destination": "/api/update-coords"
+    },
+    {
+      "source": "/api/geocode",
+      "destination": "/api/geocode"
+    },
+    {
       "source": "/:path*",
       "destination": "/index.html"
     }

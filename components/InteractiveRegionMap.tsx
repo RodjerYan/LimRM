@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+// FIX: Import ReactDOM from 'react-dom/client' to use it in a module context.
+import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
@@ -23,13 +25,6 @@ interface SearchableLocation {
     lon?: number;
 }
 
-/**
- * A robust helper to find a value in a data row by searching for keywords in its keys.
- * This makes data extraction resilient to variations in column names from the source file.
- * @param row The data row object (e.g., from OKB).
- * @param keywords An array of lowercase keywords to search for (e.g., ['наименование', 'клиент']).
- * @returns The found string value or an empty string if not found.
- */
 const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
@@ -40,6 +35,20 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     }
     return '';
 };
+
+const MapLegend: React.FC = () => (
+     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700" style={{ color: 'white', maxWidth: '200px' }}>
+        <h4 className="font-bold text-sm mb-2">Легенда</h4>
+        <div className="flex items-center mb-1">
+            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#22c55e' }}></i>
+            <span className="text-xs">Активные ТТ (из файла)</span>
+        </div>
+        <div className="flex items-center">
+            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#3b82f6' }}></i>
+            <span className="text-xs">Потенциал (из ОКБ)</span>
+        </div>
+    </div>
+);
 
 
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey }) => {
@@ -125,7 +134,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return aggregation;
     }, [data]);
     
-    // FIX: This style makes region polygons completely invisible by default to remove "пятна"
     const invisibleStyle = {
         weight: 0,
         color: 'transparent',
@@ -136,7 +144,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
-            // Reset to the default invisible style
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
         highlightedLayer.current = null;
@@ -176,13 +183,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [highlightRegion]);
 
-    // FIX: Add useEffect to invalidate map size when data changes, fixing the "white map" issue.
     useEffect(() => {
         const map = mapInstance.current;
         if (map) {
-            // This is a robust way to ensure the map resizes correctly after
-            // parent components (like the summary metrics) finish loading and cause layout shifts.
-            // A small delay ensures the browser has finished its reflow.
             const timer = setTimeout(() => map.invalidateSize(true), 200);
             return () => clearTimeout(timer);
         }
@@ -190,7 +193,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
-            // FIX: Add worldCopyJump: true to handle data that crosses the antimeridian.
             const map = L.map(mapContainer.current, { 
                 center: [60, 90], 
                 zoom: 3, 
@@ -200,11 +202,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
             mapInstance.current = map;
 
-            // Create a dedicated pane for markers to ensure they are always on top
             map.createPane('markerPane');
             const markerPane = map.getPane('markerPane');
             if (markerPane) {
-                markerPane.style.zIndex = '650'; // Higher than default overlay pane (400)
+                markerPane.style.zIndex = '650';
             }
 
 
@@ -224,6 +225,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             
             layerControl.current = L.control.layers(baseMaps, {}).addTo(map);
 
+            const legend = new (L.Control.extend({
+                onAdd: function() {
+                    const div = L.DomUtil.create('div', 'info legend');
+                    // This is a simple container. React will render into it.
+                    return div;
+                },
+                onRemove: function() {}
+            }))({ position: 'bottomright' });
+            
+            legend.addTo(map);
+            
+            // Render the React legend component into the container created by Leaflet
+            const legendContainer = legend.getContainer();
+            if(legendContainer){
+                 const root = (ReactDOM as any).createRoot(legendContainer);
+                 root.render(<MapLegend />);
+            }
+
             map.on('baselayerchange', function(e) {
                 if (mapContainer.current) {
                     mapContainer.current.classList.remove('theme-dark', 'theme-light');
@@ -235,7 +254,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
             });
 
-
             map.on('click', resetHighlight);
         }
         return () => {
@@ -246,7 +264,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, [resetHighlight]);
     
-    // Generic marker creation function
     const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
         <b>${name}</b><br>
         ${address}<br>
@@ -258,7 +275,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
     
-        // --- Cleanup and Re-creation ---
         if (potentialClientMarkersLayer.current) {
             map.removeLayer(potentialClientMarkersLayer.current);
             layerControl.current.removeLayer(potentialClientMarkersLayer.current);
@@ -272,7 +288,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClientMarkersLayer.current = L.layerGroup();
         activeClientMarkersRef.current.clear();
     
-        // --- Populate Layers ---
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(
@@ -290,26 +305,25 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         activeClients.forEach(tt => {
-            // FIX: Check for lat and lon before creating the marker
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
-                    fillColor: '#22c55e', color: '#16a34a', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
+                    fillColor: '#22c55e', // Green for all active clients
+                    color: '#16a34a',
+                    radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
             }
         });
     
-        // --- Add to Map and Control ---
         map.addLayer(potentialClientMarkersLayer.current);
         layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         
         map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
-        // --- Fit Bounds to Data ---
         const allMarkers = [
             ...(potentialClientMarkersLayer.current?.getLayers() || []),
             ...(activeClientMarkersLayer.current?.getLayers() || [])
@@ -323,13 +337,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     map.fitBounds(bounds.pad(0.2));
                 } else {
                      console.warn("Could not fit bounds: bounds are invalid.");
-                     map.setView([60, 90], 3); // Fallback
+                     map.setView([60, 90], 3);
                 }
             } catch(e) {
                 console.error("Error calculating bounds for map:", e);
-                map.setView([60, 90], 3); // Fallback
+                map.setView([60, 90], 3);
             }
-        } else if (data.length === 0) { // Only reset if the underlying data is also empty
+        } else if (data.length === 0) {
             map.setView([60, 90], 3);
         }
         
@@ -344,12 +358,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const markerLatLng = (marker as L.Marker).getLatLng();
             map.flyTo(markerLatLng, 16, { animate: true, duration: 1 });
 
-            // Open the popup after the fly-to animation completes
             setTimeout(() => {
                 if (typeof (marker as any).openPopup === 'function') {
                     (marker as L.Marker).openPopup();
                 }
-            }, 1000); // Duration of flyTo animation
+            }, 1000);
         }
     }, [flyToClientKey]);
 
@@ -358,7 +371,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
 
-        // Remove old layers
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         if (capitalsLayer.current) {
             layerControl.current.removeLayer(capitalsLayer.current);
@@ -383,14 +395,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 const hoverRadius = isCountryCapital ? 10 : 8;
                 
                 const options: L.CircleMarkerOptions = {
-                    pane: 'markerPane', // Render in the top pane
+                    pane: 'markerPane',
                     radius,
                     weight: 1,
                     opacity: 1,
                     fillOpacity: 0.8,
-                    fillColor: '#fbbf24', // Yellow for all
-                    color: '#f59e0b',     // Yellow border for all
-                    className: 'pulsing-marker' // Pulsing for all
+                    fillColor: '#fbbf24',
+                    color: '#f59e0b',
+                    className: 'pulsing-marker'
                 };
 
                 let tooltipContent = capital.name;
@@ -443,7 +455,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
 
-        // Remove old layer if it exists
         if (conflictZonesLayer.current) {
             layerControl.current.removeLayer(conflictZonesLayer.current);
             map.removeLayer(conflictZonesLayer.current);
@@ -454,14 +465,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 style: (feature) => {
                     const status = feature?.properties?.status;
                     if (status === 'occupied') {
-                        // Style for the main SVO zone
                         return { color: '#dc2626', weight: 1.5, fillColor: '#b91c1c', fillOpacity: 0.45 };
                     }
                     if (status === 'border_danger_zone') {
-                        // Style for Russian border danger zones
                         return { color: '#f59e0b', weight: 1, fillColor: '#f59e0b', fillOpacity: 0.4 };
                     }
-                    // Default/fallback style
                     return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
                 },
                 onEachFeature: (feature, layer) => {
@@ -516,7 +524,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             </div>
 
-            {isWarningVisible && (
+            {isWarningVisible && conflictZones && (
                 <div className="bg-red-900/50 border border-danger/50 text-danger text-sm rounded-lg p-3 mb-4 flex justify-between items-center">
                     <div className="flex items-center">
                         <div className="w-5 h-5 mr-2 flex-shrink-0"><ErrorIcon/></div>
