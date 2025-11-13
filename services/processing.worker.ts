@@ -164,8 +164,11 @@ async function processFile(jsonData: AkbRow[], headers: string[], { postMessage 
         }
 
         aggregationMap[groupKey].fact += weight;
-        // FIX: Added parentheses to help TypeScript compiler correctly infer the type as string, resolving the build error.
-        aggregationMap[groupKey].clients.add(address || (row['Уникальное наименование товара'] || `Клиент ${index}`));
+        
+        // FIX: Explicitly assign the result to a variable before adding it to the set.
+        // This provides a clear, typed value that satisfies the strict TypeScript compiler in the Vercel build environment.
+        const clientIdentifier = address || row['Уникальное наименование товара'] || `Клиент ${index}`;
+        aggregationMap[groupKey].clients.add(clientIdentifier);
 
         const lat = row.lat ? parseFloat(String(row.lat).replace(',', '.')) : undefined;
         const lon = row.lon ? parseFloat(String(row.lon).replace(',', '.')) : undefined;
