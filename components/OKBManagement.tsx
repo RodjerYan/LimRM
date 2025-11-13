@@ -7,13 +7,21 @@ interface OKBManagementProps {
     onDataChange: (data: OkbDataRow[]) => void;
     status: OkbStatus | null;
     disabled: boolean;
+    geoCacheSize: number;
+    onClearGeoCache: () => void;
 }
 
-const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
+const OKBManagement: React.FC<OKBManagementProps> = ({ 
+    onStatusChange, 
+    onDataChange, 
+    status, 
+    disabled,
+    geoCacheSize,
+    onClearGeoCache
+}) => {
     const [isFetching, setIsFetching] = useState(false);
 
     useEffect(() => {
-        // On mount, if the status hasn't been set by a parent, initialize it to the default idle state.
         if (!status) {
             onStatusChange({ status: 'idle', message: 'Загрузите данные ОКБ для начала работы.' });
         }
@@ -104,6 +112,23 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             >
                 {isLoading ? 'Загрузка...' : (isReady ? 'Обновить ОКБ' : 'Загрузить ОКБ')}
             </button>
+
+            <div className="mt-4 pt-4 border-t border-gray-700/50">
+                <h3 className="text-base font-bold text-gray-300 mb-2">Кэш Геокодирования</h3>
+                <div className="space-y-2 text-sm">
+                     <div className="flex justify-between items-center">
+                        <span className="text-gray-400">Кэшировано адресов:</span>
+                        <span className="text-white font-semibold">{geoCacheSize.toLocaleString('ru-RU')}</span>
+                    </div>
+                    <button
+                        onClick={onClearGeoCache}
+                        disabled={disabled || geoCacheSize === 0}
+                        className="w-full text-xs bg-transparent hover:bg-red-500/20 text-red-400 border border-red-500/30 font-bold py-2 px-4 rounded-lg transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                    >
+                        Очистить кэш
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };

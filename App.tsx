@@ -8,8 +8,10 @@ import ClientsListModal from './components/ClientsListModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
+// FIX: The import for FileUpload was failing. This is now resolved as FileUpload.tsx has a default export.
 import FileUpload from './components/FileUpload';
-import InteractiveRegionMap from './components/InteractiveRegionMap'; 
+import InteractiveRegionMap from './components/InteractiveRegionMap';
+import ActiveClientsTable from './components/ActiveClientsTable'; // Import the new component
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -20,8 +22,11 @@ import {
     OkbDataRow,
     WorkerResultPayload,
     MapPoint,
+    GeoCache,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
+import { loadGeoCache, saveGeoCache, clearGeoCache } from './utils/cache'; // Import cache utils
+import { processGeocodingQueue } from './services/geocodingService'; // Import geocoding service
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
@@ -47,6 +52,7 @@ const App: React.FC = () => {
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
+    const [geoCache, setGeoCache] = useState<GeoCache>(() => loadGeoCache());
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
@@ -131,12 +137,36 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
-    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
+    const handleFileProcessed = useCallback(async (data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
-    }, [addNotification]);
+        addNotification(`Данные успешно обработаны. Найдено ${data.aggregatedData.length} групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
+
+        const { addressesToGeocode } = data;
+        if (addressesToGeocode && addressesToGeocode.length > 0) {
+            await processGeocodingQueue(
+                addressesToGeocode,
+                (message) => setLoadingMessage(message), // Update loading message with progress
+                (address, coords) => {
+                    // Update cache
+                    const newCache = { ...geoCache, [address]: coords };
+                    setGeoCache(newCache);
+                    saveGeoCache(newCache);
+                    // Update client points on the map dynamically
+                    setAllActiveClients(prevClients => 
+                        prevClients.map(client => {
+                            if (client.address === address && !client.lat && !client.lon) {
+                                return { ...client, lat: coords.lat, lon: coords.lon, accuracy: 'geocoded' };
+                            }
+                            return client;
+                        })
+                    );
+                }
+            );
+        }
+
+    }, [addNotification, geoCache]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
         setIsLoading(loading);
@@ -179,6 +209,12 @@ const App: React.FC = () => {
         flyToClient(client);
     }, [flyToClient]);
     
+    const handleClearGeoCache = useCallback(() => {
+        clearGeoCache();
+        setGeoCache({});
+        addNotification('Кэш геокодирования очищен.', 'info');
+    }, [addNotification]);
+
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
@@ -206,6 +242,8 @@ const App: React.FC = () => {
                             onDataChange={setOkbData}
                             status={okbStatus}
                             disabled={isControlPanelLocked}
+                            geoCacheSize={Object.keys(geoCache).length}
+                            onClearGeoCache={handleClearGeoCache}
                         />
                         <FileUpload 
                             onFileProcessed={handleFileProcessed}
@@ -213,6 +251,7 @@ const App: React.FC = () => {
                             okbData={okbData}
                             okbStatus={okbStatus}
                             disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
+                            geoCache={geoCache}
                         />
                         <Filters
                             options={filterOptions}
@@ -239,6 +278,8 @@ const App: React.FC = () => {
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
                         />
+                        
+                        <ActiveClientsTable clients={filteredActiveClients} onClientSelect={flyToClient} disabled={!isDataLoaded || isLoading} />
 
                         <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}

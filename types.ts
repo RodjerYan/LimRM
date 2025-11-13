@@ -13,7 +13,7 @@ export interface AggregatedDataRow {
     clients: string[]; // List of individual client names/addresses in the group
 }
 
-export type MapPointStatus = 'exact' | 'approximate' | 'region';
+export type MapPointStatus = 'exact' | 'approximate' | 'region' | 'geocoded';
 
 export interface MapPoint {
     key: string;
@@ -96,6 +96,11 @@ export type OkbStatus = {
     coordsCount?: number;
 };
 
+// Types for Geocoding Cache
+export type GeoCache = {
+    [address: string]: { lat: number, lon: number };
+};
+
 // Types for the Web Worker communication
 export type WorkerProgressPayload = {
     percentage: number;
@@ -104,6 +109,7 @@ export type WorkerProgressPayload = {
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     plottableActiveClients: MapPoint[];
+    addressesToGeocode?: string[]; // Addresses that were not found in OKB or cache
 };
 export type WorkerErrorPayload = string;
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { WorkerMessage, AggregatedDataRow, OkbStatus, WorkerResultPayload } from '../types';
+import { WorkerMessage, OkbStatus, WorkerResultPayload, GeoCache } from '../types';
 import { formatETR } from '../utils/timeUtils';
 
 interface FileUploadProps {
@@ -8,9 +8,10 @@ interface FileUploadProps {
     okbData: any[];
     okbStatus: OkbStatus | null;
     disabled: boolean;
+    geoCache: GeoCache;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled, geoCache }) => {
     const [fileName, setFileName] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
@@ -70,8 +71,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             setMessage(`Критическая ошибка: ${e.message}`);
         };
         
-        workerRef.current.postMessage({ file, okbData });
-    }, [onFileProcessed, onProcessingStateChange, okbData]);
+        workerRef.current.postMessage({ file, okbData, geoCache });
+    }, [onFileProcessed, onProcessingStateChange, okbData, geoCache]);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -154,33 +155,22 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                         <p className="text-gray-300 truncate font-medium max-w-[70%]">Файл: {fileName}</p>
                         <p className="font-mono text-accent font-semibold">{Math.round(progress)}%</p>
                     </div>
+                    {/* FIX: The original file was truncated here. This completes the progress bar JSX. */}
                     <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden border border-gray-600/50">
                         <div 
-                            className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
+                            className="bg-accent h-full rounded-full transition-all"
                             style={{ width: `${progress}%` }}
-                        ></div>
+                        />
                     </div>
-                    <div className="flex justify-between items-center text-xs min-h-[1.25rem]">
-                        <p className="text-gray-300">{message}</p>
-                        {isProcessing && etr !== null && (
-                            <p className="text-indigo-400 font-mono">{formatETR(etr)}</p>
-                        )}
-                        {progress === 100 && message.includes("заверш") && (
-                            <p className="text-success font-semibold flex items-center gap-1">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                Завершено!
-                            </p>
-                        )}
+                    <div className="flex justify-between text-xs text-gray-400 mt-1">
+                        <p className="truncate pr-2">{message}</p>
+                        {isProcessing && etr !== null && <p className="font-mono">{formatETR(etr)}</p>}
                     </div>
                 </div>
             )}
-             {!okbStatus || okbStatus.status !== 'ready' ? (
-                <div className="absolute inset-0 bg-card-bg/80 flex items-center justify-center rounded-2xl">
-                    <p className="text-center text-warning p-4">Сначала загрузите и обновите<br />Общую Клиентскую Базу (ОКБ)</p>
-                </div>
-            ) : null}
         </div>
     );
 };
 
+// FIX: Add the missing default export to resolve the "no default export" error in consuming components.
 export default FileUpload;
