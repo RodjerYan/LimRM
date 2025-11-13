@@ -164,7 +164,8 @@ async function processFile(jsonData: AkbRow[], headers: string[], { postMessage 
         }
 
         aggregationMap[groupKey].fact += weight;
-        aggregationMap[groupKey].clients.add(address || row['Уникальное наименование товара'] || `Клиент ${index}`);
+        // FIX: Added parentheses to help TypeScript compiler correctly infer the type as string, resolving the build error.
+        aggregationMap[groupKey].clients.add(address || (row['Уникальное наименование товара'] || `Клиент ${index}`));
 
         const lat = row.lat ? parseFloat(String(row.lat).replace(',', '.')) : undefined;
         const lon = row.lon ? parseFloat(String(row.lon).replace(',', '.')) : undefined;
