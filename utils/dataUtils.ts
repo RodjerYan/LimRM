@@ -147,17 +147,17 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 const createStopwords = (): Set<string> => {
     const genericStopwords = [
         // Типы улиц
-        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
+        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
         'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
         // Типы населенных пунктов
         'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
-        'станица', 'ст-ца', 'аул', 'рп', 'рабочий',
+        'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское',
         // Типы административных делений
         'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Обозначения зданий - УБРАНЫ 'д', 'к', 'с' так как они обрабатываются отдельно
-        'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит', 'л',
+        // Обозначения зданий - Handled by regex, removing from generic stopwords to avoid side-effects
+        'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит',
         // Прочее
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон'
+        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'
     ];
 
     const regionNameParts = new Set<string>();
@@ -197,33 +197,42 @@ export function normalizeAddress(address: string | null | undefined, options: { 
 
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
     
-    // Step 1: Pre-normalization for specific common patterns. This happens BEFORE punctuation is stripped.
-    // Handles "дом 5", "д.5", "д5" -> "5"
-    cleaned = cleaned.replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2');
-    // Handles "10/2", "10 / 2а" -> "10к2", "10к2а"
-    cleaned = cleaned.replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2');
-
-
-    // Step 2: Unify building/structure numbers.
-    // "17 а" -> "17а", "корп 2" -> "с2", "строение 1б" -> "с1б"
+    // Step 1: Specific pattern replacements for building/structure identifiers. This is CRITICAL.
+    // This runs before general punctuation removal to preserve structure.
     cleaned = cleaned
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2')
-        .replace(/\b(корпус|корп|к|строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2');
+        // "10/2", "10 / 2а" -> "10к2", "10к2а"
+        .replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2')
+        // "корпус А", "корп. а" -> "ка"
+        .replace(/\b(корпус|корп|к)\.?\s*([а-я])\b/g, 'к$2')
+        // "строение Б", "стр-е б" -> "сб"
+        .replace(/\b(строение|стр)\.?\s*([а-я])\b/g, 'с$2')
+         // "литер В" -> "лв"
+        .replace(/\b(литер|лит)\.?\s*([а-я])\b/g, 'л$2')
+        // "корпус 1", "к.1" -> "к1"
+        .replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2')
+        // "строение 2", "стр2" -> "с2"
+        .replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
+        // "литер 3" -> "л3"
+        .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2')
+        // "дом 5", "д.5" -> "5". Also handles "д 5а" -> "5а".
+        .replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2')
+        // "17 а" -> "17а" (unifies house number with its letter)
+        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2');
 
-    // Step 3: Remove all punctuation and postal codes.
+
+    // Step 2: Replace all remaining punctuation and hyphens with spaces. This helps with tokenization.
     cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); // Remove postal codes
-    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); // Replace punctuation with spaces
+    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); 
 
-    // Step 4: Tokenize and remove all stopwords.
+    // Step 3: Tokenize and remove all stopwords.
     let parts = cleaned.split(/\s+/)
         .filter(part => part && !STOPWORDS.has(part));
     
-    // Step 5 (Optional): Simplify by removing district-like adjectives.
+    // Step 4 (Optional): Simplify by removing district-like adjectives.
     if (options.simplify) {
         parts = parts.filter(part => {
-            // Keep if it's a number (house, building, etc.) or a combined number like 'к2'
-            if (/^\d+.*$/.test(part) || /^[ксл]\d/.test(part)) return true;
+            // Keep if it's a number/structure identifier.
+            if (/^\d+.*$/.test(part) || /^[ксл]\d/.test(part) || /^[ксл][а-я]$/.test(part)) return true;
             // Keep if it's a known city
             if (ALL_CITIES.has(part)) return true;
             // Discard if it looks like a district/region adjective and is NOT a city
@@ -234,7 +243,7 @@ export function normalizeAddress(address: string | null | undefined, options: { 
         });
     }
     
-    // Step 6: Sort the remaining significant parts to make it order-independent.
+    // Step 5: Sort the remaining significant parts to make it order-independent.
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
     
     return parts.join(' ').trim();
