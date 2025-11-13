@@ -43,16 +43,18 @@ export interface PotentialClient {
     lon?: number;
 }
 
+// This type now represents a row from the NEW Google Sheet
 export interface OkbDataRow {
     [key: string]: any;
-    'Наименование': string;
-    'Юридический адрес'?: string;
-    'Регион'?: string;
-    'Город'?: string;
-    'Вид деятельности'?: string;
-    'ИНН'?: string;
-    'Статус'?: string;
-    'Контакты'?: string;
+    'Дистрибьютор'?: string;
+    'Торговая марка'?: string;
+    'Уникальное наименование товара'?: string;
+    'Фасовка'?: string;
+    'Вес, кг'?: string | number;
+    'Месяц'?: string;
+    'Адрес ТТ LimKorm'?: string;
+    'Канал продаж'?: string;
+    'РМ'?: string;
     lat?: number;
     lon?: number;
 }
@@ -88,32 +90,11 @@ export interface NotificationMessage {
     type: 'success' | 'error' | 'info';
 }
 
+// Deprecated, but kept for compatibility with DetailsModal prop type
 export type OkbStatus = {
     status: 'idle' | 'loading' | 'processing' | 'ready' | 'error';
     message: string | null;
     timestamp?: string;
     rowCount?: number;
     coordsCount?: number;
-};
-
-// Types for Geocoding Cache
-export type GeoCache = {
-    [address: string]: { lat: number, lon: number };
-};
-
-// Types for the Web Worker communication
-export type WorkerProgressPayload = {
-    percentage: number;
-    message: string;
-};
-export type WorkerResultPayload = {
-    aggregatedData: AggregatedDataRow[];
-    plottableActiveClients: MapPoint[];
-    addressesToGeocode?: string[]; // Addresses that were not found in OKB or cache
-};
-export type WorkerErrorPayload = string;
-
-export type WorkerMessage =
-    | { type: 'progress', payload: WorkerProgressPayload }
-    | { type: 'result', payload: WorkerResultPayload }
-    | { type: 'error', payload: WorkerErrorPayload };
+} | null;

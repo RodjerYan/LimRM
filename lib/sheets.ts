@@ -1,13 +1,8 @@
 import { google } from 'googleapis';
 import { OkbDataRow } from '../types';
 
-const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
-const SHEET_NAME = 'Base';
+const SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 
-/**
- * Creates and returns an authenticated Google Sheets API client.
- * It uses service account credentials stored in an environment variable.
- */
 async function getGoogleSheetsClient() {
   const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   if (!serviceAccountKey) {
@@ -19,9 +14,7 @@ async function getGoogleSheetsClient() {
     credentials = JSON.parse(serviceAccountKey);
   } catch (error) {
     console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:", error);
-    throw new Error(
-      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string without extra characters or line breaks. Check your Vercel environment variable settings.'
-    );
+    throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is valid JSON.');
   }
 
   const auth = new google.auth.GoogleAuth({
@@ -29,102 +22,92 @@ async function getGoogleSheetsClient() {
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
 
-  const sheets = google.sheets({ version: 'v4', auth });
-  return sheets;
+  return google.sheets({ version: 'v4', auth });
 }
 
-/**
- * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
- * It parses the data into an array of structured objects compatible with the application's types.
- * This version includes robust parsing to handle empty rows and headers gracefully.
- * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
- */
-export async function getOKBData(): Promise<OkbDataRow[]> {
-  const sheets = await getGoogleSheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:P`, // Fetch a wider range to include potential coordinate columns
-  });
+export async function getAllSheetTitles(): Promise<string[]> {
+    const sheets = await getGoogleSheetsClient();
+    const res = await sheets.spreadsheets.get({
+        spreadsheetId: SPREADSHEET_ID,
+        fields: 'sheets.properties.title',
+    });
+    return res.data.sheets?.map(s => s.properties?.title || '').filter(Boolean) || [];
+}
 
-  const rows = res.data.values;
-  if (!rows || rows.length < 2) {
-    return []; // No data or only a header row
-  }
+export async function ensureSheetExists(title: string, existingTitles: string[], headers: string[]) {
+    if (existingTitles.includes(title)) {
+        return; // Sheet already exists
+    }
 
-  const header = rows[0].map(h => String(h || '').trim());
-  const dataRows = rows.slice(1);
-
-  const okbData: OkbDataRow[] = dataRows
-    .map(rowArray => {
-        if (rowArray.every(cell => cell === null || cell === '' || cell === undefined)) {
-            return null;
+    const sheets = await getGoogleSheetsClient();
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+            requests: [{
+                addSheet: {
+                    properties: { title }
+                }
+            }]
         }
+    });
 
-        // Create an object from the row array and header
-        const row: { [key: string]: any } = {};
+    // Add headers to the new sheet
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${title}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: {
+            values: [headers],
+        },
+    });
+}
+
+export async function getSheetDataWithHeaders(sheetName: string): Promise<OkbDataRow[]> {
+    const sheets = await getGoogleSheetsClient();
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${sheetName}!A:Z`,
+    });
+
+    const rows = res.data.values;
+    if (!rows || rows.length < 2) {
+        return [];
+    }
+
+    const header = rows[0];
+    const dataRows = rows.slice(1);
+
+    return dataRows.map(rowArray => {
+        const rowObject: { [key: string]: any } = {};
         header.forEach((key, index) => {
-            if (key) {
-                row[key] = rowArray[index] || null;
-            }
+            rowObject[key] = rowArray[index] || null;
         });
 
-        // User's requested logic for finding coordinates
-        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
-        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
+        // Parse lat/lon
+        const latVal = rowObject['lat'] || rowObject['latitude'] || rowObject['широта'];
+        const lonVal = rowObject['lon'] || rowObject['longitude'] || rowObject['долгота'];
 
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
-
-            // User's requested check for NaN
             if (!isNaN(lat) && !isNaN(lon)) {
-                row.lat = lat;
-                row.lon = lon;
+                rowObject.lat = lat;
+                rowObject.lon = lon;
             }
         }
-
-        return row as OkbDataRow;
-    })
-    .filter((row): row is OkbDataRow => row !== null);
-
-  return okbData;
-}
-
-/**
- * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
- * @returns {Promise<string[]>} A promise that resolves to an array of address strings.
- */
-export async function getOKBAddresses(): Promise<string[]> {
-    const sheets = await getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!C2:C`, // FIX: Fetch from column C (Юридический адрес)
+        return rowObject as OkbDataRow;
     });
-
-    const rows = res.data.values || [];
-    return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
 }
 
-
-/**
- * Updates client statuses in the Google Sheet in a single batch request for efficiency.
- * @param {Array<{rowIndex: number, status: string}>} updates - An array of update objects.
- */
-export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: string }[]) {
-    if (updates.length === 0) return;
-
+export async function appendRows(sheetName: string, rows: any[][]) {
+    if (rows.length === 0) return;
     const sheets = await getGoogleSheetsClient();
-
-    const data = updates.map(update => ({
-        range: `${SHEET_NAME}!F${update.rowIndex}`, // FIX: Column F is 'Статус'
-        values: [[update.status]],
-    }));
-
-    await sheets.spreadsheets.values.batchUpdate({
+    await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
+        range: `${sheetName}!A1`,
+        valueInputOption: 'USER_ENTERED',
         requestBody: {
-            valueInputOption: 'RAW',
-            data: data,
+            values: rows,
         },
     });
 }

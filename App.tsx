@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
@@ -6,7 +6,6 @@ import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import ActiveClientsTable from './components/ActiveClientsTable';
@@ -15,30 +14,18 @@ import {
     FilterOptions, 
     FilterState, 
     NotificationMessage, 
-    OkbStatus, 
     SummaryMetrics,
     OkbDataRow,
-    WorkerResultPayload,
     MapPoint,
-    GeoCache,
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics } from './utils/dataUtils';
-import { loadGeoCache, saveGeoCache, clearGeoCache } from './utils/cache';
-import { processGeocodingQueue } from './services/geocodingService';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow } from './utils/dataUtils';
 import { parseRussianAddress } from './services/addressParser';
-import { REGION_BY_CITY_WITH_INDEXES } from './utils/regionMap';
-import { capitals } from './utils/capitals';
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-const capitalCoordsByRegion = new Map<string, { lat: number; lon: number }>();
-capitals.filter(c => c.type === 'capital' && c.region_name).forEach(c => {
-    if(c.region_name) {
-        capitalCoordsByRegion.set(c.region_name, { lat: c.lat, lon: c.lon });
-    }
-});
-
+const POLLING_INTERVAL = 5000; // 5 seconds
+const MAX_POLLING_ATTEMPTS = 3;
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -55,17 +42,163 @@ const App: React.FC = () => {
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
-    const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
-    const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
-    const [geoCache, setGeoCache] = useState<GeoCache>(() => loadGeoCache());
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
+    const pollingRef = useRef<NodeJS.Timeout | null>(null);
+
     const isDataLoaded = allData.length > 0;
 
+    const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
+        const newNotification: NotificationMessage = { id: Date.now(), message, type };
+        setNotifications(prev => [...prev, newNotification]);
+        setTimeout(() => {
+            setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
+        }, 5000);
+    }, []);
+    
+    const processApiData = useCallback((data: OkbDataRow[]) => {
+        const aggregated: { [key: string]: AggregatedDataRow & { clientsSet: Set<string> } } = {};
+        const plottableClients: MapPoint[] = [];
+
+        data.forEach((row, index) => {
+            const address = findAddressInRow(row) || `unique-id-${index}`;
+            const rm = row['РМ'] || 'Н/Д';
+            const brand = row['Торговая марка'] || 'Н/Д';
+            const parsedAddress = parseRussianAddress(address);
+            const region = parsedAddress.region;
+            
+            if (row.lat && row.lon) {
+                plottableClients.push({
+                    key: `${address}-${index}`,
+                    lat: row.lat,
+                    lon: row.lon,
+                    accuracy: 'exact',
+                    name: row['Уникальное наименование товара'] || 'Без названия',
+                    address: address,
+                    city: parsedAddress.city,
+                    region: region,
+                    rm: rm,
+                    brand: brand,
+                    type: row['Канал продаж'] || 'Н/Д',
+                });
+            }
+
+            const key = `${region}-${brand}-${rm}`.toLowerCase();
+            if (!aggregated[key]) {
+                aggregated[key] = {
+                    key,
+                    rm,
+                    brand,
+                    region,
+                    city: parsedAddress.city,
+                    clientName: `${region} (${brand})`,
+                    fact: 0,
+                    potential: 0,
+                    growthPotential: 0,
+                    growthPercentage: 0,
+                    clients: [],
+                    clientsSet: new Set(),
+                };
+            }
+            
+            const weight = parseFloat(String(row['Вес, кг'] || '0').replace(',', '.'));
+            if (!isNaN(weight)) {
+                aggregated[key].fact += weight;
+            }
+            aggregated[key].clientsSet.add(address);
+        });
+
+        const finalAggregated = Object.values(aggregated).map(group => {
+            const potential = group.fact * 1.15; // Placeholder logic
+            const growthPotential = Math.max(0, potential - group.fact);
+            const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
+            return {
+                ...group,
+                clients: Array.from(group.clientsSet),
+                potential,
+                growthPotential,
+                growthPercentage,
+            };
+        });
+        
+        setAllData(finalAggregated);
+        setAllActiveClients(plottableClients);
+
+        return { plottableCount: plottableClients.length };
+    }, []);
+
+    const pollForCoordinates = useCallback((rmSheets: string[], attempt: number) => {
+        if (attempt > MAX_POLLING_ATTEMPTS) {
+            addNotification('Завершено. Не все координаты были найдены.', 'info');
+            setIsLoading(false);
+            setLoadingMessage('');
+            return;
+        }
+
+        pollingRef.current = setTimeout(async () => {
+            try {
+                const res = await fetch('/api/poll-coordinates', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rmSheets }),
+                });
+
+                if (!res.ok) throw new Error('Ошибка при опросе данных.');
+                
+                const { allData: freshData } = await res.json();
+                const { plottableCount } = processApiData(freshData);
+                
+                addNotification(`Попытка ${attempt}/${MAX_POLLING_ATTEMPTS}: Найдено ${plottableCount} ТТ с координатами.`, 'info');
+                
+                pollForCoordinates(rmSheets, attempt + 1);
+
+            } catch (error) {
+                addNotification((error as Error).message, 'error');
+                setIsLoading(false);
+                setLoadingMessage('');
+            }
+        }, POLLING_INTERVAL);
+    }, [addNotification, processApiData]);
+
+    const handleFileProcessed = useCallback(async (responseData: any) => {
+        const { rmSheets, initialData } = responseData;
+        
+        if (pollingRef.current) {
+            clearTimeout(pollingRef.current);
+        }
+        
+        const { plottableCount } = processApiData(initialData);
+        addNotification(`Файл обработан. Найдено ${initialData.length} строк. Начальный поиск координат...`, 'success');
+        addNotification(`Найдено ${plottableCount} ТТ с координатами.`, 'info');
+        
+        setFilters({ rm: '', brand: [], region: [] });
+        
+        setIsLoading(true);
+        setLoadingMessage('Ожидание обновления координат из Google Sheets...');
+        pollForCoordinates(rmSheets, 1);
+
+    }, [addNotification, processApiData, pollForCoordinates]);
+    
+    useEffect(() => {
+        return () => {
+            if (pollingRef.current) {
+                clearTimeout(pollingRef.current);
+            }
+        };
+    }, []);
+    
+    const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
+        setIsLoading(loading);
+        setLoadingMessage(message);
+        if (!loading && message.startsWith('Ошибка')) {
+            addNotification(message, 'error');
+        }
+    }, [addNotification]);
+    
     const filteredActiveClients = useMemo(() => {
         if (!isDataLoaded) return [];
         return allActiveClients.filter(client => {
@@ -77,181 +210,29 @@ const App: React.FC = () => {
     }, [allActiveClients, filters, isDataLoaded]);
 
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
-        if (!isDataLoaded) {
-            return null;
-        }
+        if (!isDataLoaded) return null;
         const baseMetrics = calculateSummaryMetrics(filteredData);
-        
-        if (!baseMetrics) {
-            return {
-                totalFact: 0,
-                totalPotential: 0,
-                totalGrowth: 0,
-                totalClients: 0,
-                totalActiveClients: 0,
-                averageGrowthPercentage: 0,
-                topPerformingRM: { name: 'N/A', value: 0 },
-            };
-        }
+        if (!baseMetrics) return null;
         
         return {
             ...baseMetrics,
             totalActiveClients: filteredActiveClients.length
         };
     }, [filteredData, isDataLoaded, filteredActiveClients]);
-
-    const potentialClients = useMemo(() => {
-        if (!okbData.length) return [];
-        // Active clients are already derived from file, so OKB can be filtered against it
-        const activeAddressesSet = new Set(allActiveClients.map(c => c.address.toLowerCase().trim()));
-        return okbData.filter(okb => {
-            const address = (okb['Юридический адрес'] || okb['Адрес ТТ LimKorm'] || okb['Адрес'] || '').toLowerCase().trim();
-            return !activeAddressesSet.has(address);
-        });
-    }, [okbData, allActiveClients]);
     
-    const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
-        const newNotification: NotificationMessage = { id: Date.now(), message, type };
-        setNotifications(prev => [...prev, newNotification]);
-        setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
-        }, 5000);
-    }, []);
-
-    useEffect(() => {
-        const fetchConflictZones = async () => {
-            try {
-                const response = await fetch('/api/get-conflict-zones');
-                if (!response.ok) {
-                    throw new Error('Не удалось загрузить данные о зонах конфликта.');
-                }
-                const data: FeatureCollection = await response.json();
-                setConflictZones(data);
-                addNotification('Слой с зонами повышенной опасности успешно загружен.', 'info');
-            } catch (error) {
-                console.error(error);
-                addNotification((error as Error).message, 'error');
-            }
-        };
-
-        fetchConflictZones();
-    }, [addNotification]);
+    const handleFilterChange = useCallback((newFilters: FilterState) => { setFilters(newFilters); }, []);
+    const resetFilters = useCallback(() => { setFilters({ rm: '', brand: [], region: [] }); }, []);
+    const handleRowClick = useCallback((row: AggregatedDataRow) => { setSelectedRow(row); setIsModalOpen(true); }, []);
     
-    useEffect(() => {
-        if (flyToClientKey) {
-            const timer = setTimeout(() => setFlyToClientKey(null), 500);
-            return () => clearTimeout(timer);
-        }
-    }, [flyToClientKey]);
-
-    const handleFileProcessed = useCallback(async (data: WorkerResultPayload) => {
-        setAllData(data.aggregatedData);
-        setAllActiveClients(data.plottableActiveClients);
-        setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно обработаны. Найдено ${data.aggregatedData.length} групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
-    
-        const { addressesToGeocode } = data;
-        if (addressesToGeocode && addressesToGeocode.length > 0) {
-            setIsLoading(true);
-            const { successes, failures } = await processGeocodingQueue(
-                addressesToGeocode,
-                (message) => setLoadingMessage(message)
-            );
-    
-            let currentCache = { ...geoCache };
-            let updatedClients = [...data.plottableActiveClients];
-            
-            // Update state for successful geocodes
-            successes.forEach(success => {
-                currentCache[success.address] = success.coords;
-                updatedClients = updatedClients.map(client => 
-                    client.address === success.address && !client.lat && !client.lon
-                        ? { ...client, lat: success.coords.lat, lon: success.coords.lon, accuracy: 'geocoded' } 
-                        : client
-                );
-            });
-
-            // Apply fallback logic for failures
-            failures.forEach(failedAddress => {
-                updatedClients = updatedClients.map(client => {
-                    if (client.address === failedAddress && !client.lat && !client.lon) {
-                        const parsedAddr = parseRussianAddress(client.address);
-                        if (parsedAddr.city && parsedAddr.city !== 'Город не определен') {
-                            const cityData = REGION_BY_CITY_WITH_INDEXES[parsedAddr.city.toLowerCase()];
-                            if (cityData && cityData.lat && cityData.lon) {
-                               return { ...client, lat: cityData.lat, lon: cityData.lon, accuracy: 'approximate' };
-                            }
-                        }
-                        if (parsedAddr.region && parsedAddr.region !== 'Регион не определен') {
-                            const regionCoords = capitalCoordsByRegion.get(parsedAddr.region);
-                            if (regionCoords) {
-                                 return { ...client, lat: regionCoords.lat, lon: regionCoords.lon, accuracy: 'region' };
-                            }
-                        }
-                    }
-                    return client;
-                });
-            });
-    
-            setAllActiveClients(updatedClients);
-            setGeoCache(currentCache);
-            saveGeoCache(currentCache);
-            addNotification(`Геокодирование завершено: ${successes.length} успешно, ${failures.length} не найдено.`, 'info');
-            setIsLoading(false);
-            setLoadingMessage('');
-        }
-    
-    }, [addNotification, geoCache]);
-
-    
-    const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
-        setIsLoading(loading);
-        setLoadingMessage(message);
-        if (!loading && message.startsWith('Ошибка')) {
-            addNotification(message, 'error');
-        }
-    }, [addNotification]);
-
-    const handleFilterChange = useCallback((newFilters: FilterState) => {
-        setFilters(newFilters);
-    }, []);
-    
-    const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], region: [] });
-    }, []);
-
-    const handleRowClick = useCallback((row: AggregatedDataRow) => {
-        setSelectedRow(row);
-        setIsModalOpen(true);
-    }, []);
-
-    const handleOkbStatusChange = (status: OkbStatus) => {
-        setOkbStatus(status);
-        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
-        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
-    };
-
     const flyToClient = useCallback((client: MapPoint) => {
-        setTimeout(() => {
-            setFlyToClientKey(client.key);
-        }, 100);
-        
+        setTimeout(() => { setFlyToClientKey(client.key); }, 100);
         const mapElement = document.getElementById('interactive-map-container');
         mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, []);
-    
-    const handleClearGeoCache = useCallback(() => {
-        clearGeoCache();
-        setGeoCache({});
-        addNotification('Кэш геокодирования очищен.', 'info');
-    }, [addNotification]);
 
     useEffect(() => {
-        const result = applyFilters(allData, filters);
-        setFilteredData(result);
+        setFilteredData(applyFilters(allData, filters));
     }, [allData, filters]);
-    
-    const isControlPanelLocked = isLoading;
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
@@ -263,21 +244,10 @@ const App: React.FC = () => {
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
                     <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
-                         <OKBManagement 
-                            onStatusChange={handleOkbStatusChange}
-                            onDataChange={setOkbData}
-                            status={okbStatus}
-                            disabled={isControlPanelLocked}
-                            geoCacheSize={Object.keys(geoCache).length}
-                            onClearGeoCache={handleClearGeoCache}
-                        />
                         <FileUpload 
                             onFileProcessed={handleFileProcessed}
                             onProcessingStateChange={handleProcessingStateChange}
-                            okbData={okbData}
-                            okbStatus={okbStatus}
-                            disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
-                            geoCache={geoCache}
+                            disabled={isLoading}
                         />
                         <Filters
                             options={filterOptions}
@@ -291,14 +261,14 @@ const App: React.FC = () => {
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary 
                             metrics={summaryMetrics} 
-                            okbStatus={okbStatus} 
+                            okbStatus={null} 
                             disabled={!isDataLoaded}
                         />
                         
                         <InteractiveRegionMap 
                             data={filteredData} 
                             selectedRegions={filters.region} 
-                            potentialClients={potentialClients}
+                            potentialClients={[]}
                             activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
@@ -329,7 +299,7 @@ const App: React.FC = () => {
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 data={selectedRow}
-                okbStatus={okbStatus}
+                okbStatus={null}
             />
         </div>
     );

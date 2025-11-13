@@ -5,12 +5,12 @@
       "destination": "/api/gemini-proxy"
     },
     {
-      "source": "/api/get-okb",
-      "destination": "/api/get-okb"
+      "source": "/api/process-sales-data",
+      "destination": "/api/process-sales-data"
     },
     {
-      "source": "/api/get-okb-status",
-      "destination": "/api/get-okb-status"
+      "source": "/api/poll-coordinates",
+      "destination": "/api/poll-coordinates"
     },
     {
       "source": "/api/get-conflict-zones",
