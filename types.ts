@@ -13,13 +13,13 @@ export interface AggregatedDataRow {
     clients: string[]; // List of individual client names/addresses in the group
 }
 
-export type MapPointStatus = 'exact' | 'approximate' | 'region' | 'geocoded';
+export type MapPointStatus = 'match' | 'potential';
 
 export interface MapPoint {
     key: string;
     lat?: number;
     lon?: number;
-    accuracy: MapPointStatus;
+    status: MapPointStatus;
     name: string;
     address: string;
     city: string;
@@ -43,18 +43,16 @@ export interface PotentialClient {
     lon?: number;
 }
 
-// This type now represents a row from the NEW Google Sheet
 export interface OkbDataRow {
     [key: string]: any;
-    'Дистрибьютор'?: string;
-    'Торговая марка'?: string;
-    'Уникальное наименование товара'?: string;
-    'Фасовка'?: string;
-    'Вес, кг'?: string | number;
-    'Месяц'?: string;
-    'Адрес ТТ LimKorm'?: string;
-    'Канал продаж'?: string;
-    'РМ'?: string;
+    'Наименование': string;
+    'Юридический адрес'?: string;
+    'Регион'?: string;
+    'Город'?: string;
+    'Вид деятельности'?: string;
+    'ИНН'?: string;
+    'Статус'?: string;
+    'Контакты'?: string;
     lat?: number;
     lon?: number;
 }
@@ -90,11 +88,26 @@ export interface NotificationMessage {
     type: 'success' | 'error' | 'info';
 }
 
-// Deprecated, but kept for compatibility with DetailsModal prop type
 export type OkbStatus = {
     status: 'idle' | 'loading' | 'processing' | 'ready' | 'error';
     message: string | null;
     timestamp?: string;
     rowCount?: number;
     coordsCount?: number;
-} | null;
+};
+
+// Types for the Web Worker communication
+export type WorkerProgressPayload = {
+    percentage: number;
+    message: string;
+};
+export type WorkerResultPayload = {
+    aggregatedData: AggregatedDataRow[];
+    plottableActiveClients: MapPoint[];
+};
+export type WorkerErrorPayload = string;
+
+export type WorkerMessage =
+    | { type: 'progress', payload: WorkerProgressPayload }
+    | { type: 'result', payload: WorkerResultPayload }
+    | { type: 'error', payload: WorkerErrorPayload };
