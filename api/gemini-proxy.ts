@@ -43,12 +43,24 @@ export default async function handler(req: Request) {
       process.env.API_KEY_4,
     ].filter(Boolean) as string[];
 
+    // --- ENHANCED DEBUGGING ---
+    // This logic provides detailed error information if keys are missing.
     if (apiKeys.length === 0) {
-      // This specific error message is caught by the client-side error handler for a user-friendly display.
-      return new Response(JSON.stringify({ error: 'API key is not configured' }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-      });
+        // We can't log the full process.env for security, but we can check for the keys we expect.
+        const keyCheck = {
+            API_KEY_1_exists: !!process.env.API_KEY_1,
+            API_KEY_2_exists: !!process.env.API_KEY_2,
+            API_KEY_3_exists: !!process.env.API_KEY_3,
+            API_KEY_4_exists: !!process.env.API_KEY_4,
+        };
+        const detailedErrorMessage = `Server configuration error: No Gemini API keys found. The server function could not access 'API_KEY_1', 'API_KEY_2', etc. from the environment variables. Please check your Vercel project settings under 'Environment Variables' and ensure they are correctly set for the deployment environment. After adding/checking, you must redeploy the project. Key presence: ${JSON.stringify(keyCheck)}`;
+        
+        console.error(detailedErrorMessage);
+
+        return new Response(JSON.stringify({ error: "API key is not configured on the server. Please check Vercel settings and redeploy." , details: detailedErrorMessage }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+        });
     }
     
     // Select a random API key from the available pool for each request.
