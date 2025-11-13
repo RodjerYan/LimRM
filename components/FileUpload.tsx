@@ -1,16 +1,14 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { WorkerMessage, AggregatedDataRow, OkbStatus, WorkerResultPayload } from '../types';
+import { WorkerMessage, WorkerResultPayload } from '../types';
 import { formatETR } from '../utils/timeUtils';
 
 interface FileUploadProps {
     onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
-    okbData: any[];
-    okbStatus: OkbStatus | null;
     disabled: boolean;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, disabled }) => {
     const [fileName, setFileName] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
@@ -70,8 +68,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             setMessage(`Критическая ошибка: ${e.message}`);
         };
         
-        workerRef.current.postMessage({ file, okbData });
-    }, [onFileProcessed, onProcessingStateChange, okbData]);
+        // okbData is no longer passed to the worker
+        workerRef.current.postMessage({ file });
+    }, [onFileProcessed, onProcessingStateChange]);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -108,7 +107,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         <div className={`relative bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 transition-opacity ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
             <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
                  <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">1</span>
-                Загрузка данных
+                Загрузка и Анализ Данных
             </h2>
             <div className="flex items-center justify-center w-full">
                 <label 
@@ -118,7 +117,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     onDragOver={handleDragEnter}
                     onDrop={handleDrop}
                     className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg transition-colors ${
-                        isProcessing ? 'cursor-wait' : 'cursor-pointer'
+                        isProcessing || disabled ? 'cursor-wait' : 'cursor-pointer'
                     } ${
                         isDragging ? 'border-accent bg-indigo-900/40' : 'border-gray-600 bg-gray-900/50 hover:bg-gray-800/60'
                     }`}
@@ -142,7 +141,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                             </div>
                         )}
                     </div>
-                    <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing} />
+                    <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing || disabled} />
                 </label>
             </div>
              <div className="mt-4 text-center text-xs text-gray-400 bg-gray-900/50 p-2 rounded-md border border-gray-700">
@@ -174,11 +173,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     </div>
                 </div>
             )}
-             {!okbStatus || okbStatus.status !== 'ready' ? (
-                <div className="absolute inset-0 bg-card-bg/80 flex items-center justify-center rounded-2xl">
-                    <p className="text-center text-warning p-4">Сначала загрузите и обновите<br />Общую Клиентскую Базу (ОКБ)</p>
-                </div>
-            ) : null}
         </div>
     );
 };

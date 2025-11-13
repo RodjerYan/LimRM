@@ -1,16 +1,16 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
+import { AggregatedDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
 import { SearchIcon, ErrorIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
+import { AkbRow } from '../types';
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
-    potentialClients: OkbDataRow[];
     activeClients: MapPoint[];
     conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
@@ -23,32 +23,12 @@ interface SearchableLocation {
     lon?: number;
 }
 
-/**
- * A robust helper to find a value in a data row by searching for keywords in its keys.
- * This makes data extraction resilient to variations in column names from the source file.
- * @param row The data row object (e.g., from OKB).
- * @param keywords An array of lowercase keywords to search for (e.g., ['наименование', 'клиент']).
- * @returns The found string value or an empty string if not found.
- */
-const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
-    const rowKeys = Object.keys(row);
-    for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().includes(keyword));
-        if (foundKey && row[foundKey]) {
-            return String(row[foundKey]);
-        }
-    }
-    return '';
-};
-
-
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, activeClients, conflictZones, flyToClientKey }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     const capitalsLayer = useRef<L.LayerGroup | null>(null);
     const urbanCentersLayer = useRef<L.LayerGroup | null>(null);
-    const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
@@ -259,12 +239,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (!map || !layerControl.current) return;
     
         // --- Cleanup and Re-creation ---
-        if (potentialClientMarkersLayer.current) {
-            map.removeLayer(potentialClientMarkersLayer.current);
-            layerControl.current.removeLayer(potentialClientMarkersLayer.current);
-        }
-        potentialClientMarkersLayer.current = L.layerGroup();
-    
         if (activeClientMarkersLayer.current) {
             map.removeLayer(activeClientMarkersLayer.current);
             layerControl.current.removeLayer(activeClientMarkersLayer.current);
@@ -273,22 +247,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClientMarkersRef.current.clear();
     
         // --- Populate Layers ---
-        potentialClients.forEach(tt => {
-            if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(
-                    findValueInRow(tt, ['наименование', 'клиент']),
-                    findValueInRow(tt, ['юридический адрес', 'адрес']),
-                    findValueInRow(tt, ['вид деятельности', 'тип']),
-                    findValueInRow(tt, ['контакты'])
-                );
-                const marker = L.circleMarker([tt.lat, tt.lon], {
-                    pane: 'markerPane',
-                    fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
-                }).bindPopup(popupContent);
-                potentialClientMarkersLayer.current?.addLayer(marker);
-            }
-        });
-    
         activeClients.forEach(tt => {
             // FIX: Check for lat and lon before creating the marker
             if (tt.lat && tt.lon) {
@@ -303,17 +261,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         // --- Add to Map and Control ---
-        map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
-        
         map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
         // --- Fit Bounds to Data ---
-        const allMarkers = [
-            ...(potentialClientMarkersLayer.current?.getLayers() || []),
-            ...(activeClientMarkersLayer.current?.getLayers() || [])
-        ];
+        const allMarkers = activeClientMarkersLayer.current?.getLayers() || [];
     
         if (allMarkers.length > 0) {
             const featureGroup = L.featureGroup(allMarkers as L.Layer[]);
@@ -333,7 +285,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.setView([60, 90], 3);
         }
         
-    }, [potentialClients, activeClients, data]);
+    }, [activeClients, data]);
     
     useEffect(() => {
         const map = mapInstance.current;
@@ -487,7 +439,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     return (
         <div id="interactive-map-container" className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
             <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                <h2 className="text-xl font-bold text-white whitespace-nowrap">Карта рыночного потенциала</h2>
+                <h2 className="text-xl font-bold text-white whitespace-nowrap">Интерактивная карта</h2>
                 <div className="relative w-full md:w-auto md:min-w-[300px]">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                         <SearchIcon />

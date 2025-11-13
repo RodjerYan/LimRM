@@ -3,7 +3,8 @@ import {
   FilterState,
   FilterOptions,
   SummaryMetrics,
-  OkbDataRow,
+  // Fix: Replaced the non-existent `OkbDataRow` type with the correct `AkbRow` type.
+  AkbRow,
 } from '../types';
 import { REGION_KEYWORD_MAP } from './addressMappings';
 import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';

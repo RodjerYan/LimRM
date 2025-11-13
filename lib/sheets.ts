@@ -1,8 +1,7 @@
-import { google } from 'googleapis';
-import { OkbDataRow } from '../types';
+import { google, sheets_v4 } from 'googleapis';
 
-const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
-const SHEET_NAME = 'Base';
+const SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
+const OLD_SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 
 /**
  * Creates and returns an authenticated Google Sheets API client.
@@ -34,97 +33,162 @@ async function getGoogleSheetsClient() {
 }
 
 /**
- * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
- * It parses the data into an array of structured objects compatible with the application's types.
- * This version includes robust parsing to handle empty rows and headers gracefully.
- * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
+ * Fetches the entire spreadsheet metadata, including the list of sheets.
  */
-export async function getOKBData(): Promise<OkbDataRow[]> {
-  const sheets = await getGoogleSheetsClient();
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:P`, // Fetch a wider range to include potential coordinate columns
-  });
-
-  const rows = res.data.values;
-  if (!rows || rows.length < 2) {
-    return []; // No data or only a header row
-  }
-
-  const header = rows[0].map(h => String(h || '').trim());
-  const dataRows = rows.slice(1);
-
-  const okbData: OkbDataRow[] = dataRows
-    .map(rowArray => {
-        if (rowArray.every(cell => cell === null || cell === '' || cell === undefined)) {
-            return null;
-        }
-
-        // Create an object from the row array and header
-        const row: { [key: string]: any } = {};
-        header.forEach((key, index) => {
-            if (key) {
-                row[key] = rowArray[index] || null;
-            }
-        });
-
-        // User's requested logic for finding coordinates
-        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
-        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
-
-        if (latVal && lonVal) {
-            const lat = parseFloat(String(latVal).replace(',', '.').trim());
-            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
-
-            // User's requested check for NaN
-            if (!isNaN(lat) && !isNaN(lon)) {
-                row.lat = lat;
-                row.lon = lon;
-            }
-        }
-
-        return row as OkbDataRow;
-    })
-    .filter((row): row is OkbDataRow => row !== null);
-
-  return okbData;
+async function getSpreadsheet(spreadsheetId: string) {
+    const sheets = await getGoogleSheetsClient();
+    const res = await sheets.spreadsheets.get({ spreadsheetId });
+    return res.data;
 }
 
 /**
- * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
- * @returns {Promise<string[]>} A promise that resolves to an array of address strings.
+ * Creates a new sheet (tab) within a spreadsheet.
  */
-export async function getOKBAddresses(): Promise<string[]> {
+async function createSheet(spreadsheetId: string, title: string) {
     const sheets = await getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: SPREADSHEET_ID,
-        range: `${SHEET_NAME}!C2:C`, // FIX: Fetch from column C (Юридический адрес)
-    });
-
-    const rows = res.data.values || [];
-    return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
-}
-
-
-/**
- * Updates client statuses in the Google Sheet in a single batch request for efficiency.
- * @param {Array<{rowIndex: number, status: string}>} updates - An array of update objects.
- */
-export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: string }[]) {
-    if (updates.length === 0) return;
-
-    const sheets = await getGoogleSheetsClient();
-
-    const data = updates.map(update => ({
-        range: `${SHEET_NAME}!F${update.rowIndex}`, // FIX: Column F is 'Статус'
-        values: [[update.status]],
-    }));
-
-    await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
         requestBody: {
-            valueInputOption: 'RAW',
-            data: data,
+            requests: [{ addSheet: { properties: { title } } }],
         },
     });
+}
+
+/**
+ * Appends rows of data to a specific sheet.
+ */
+async function appendRows(spreadsheetId: string, range: string, values: any[][]) {
+    const sheets = await getGoogleSheetsClient();
+    await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values },
+    });
+}
+
+/**
+ * Fetches all data from a given sheet.
+ */
+async function getSheetData(spreadsheetId: string, range: string): Promise<any[][]> {
+    const sheets = await getGoogleSheetsClient();
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+    return res.data.values || [];
+}
+
+
+// --- New AKB-specific functions ---
+
+const AKB_HEADERS = [
+    'Дистрибьютор', 'Торговая марка', 'Уникальное наименование товара', 'Фасовка',
+    'Вес, кг', 'Месяц', 'Адрес ТТ LimKorm', 'Канал продаж', 'РМ', 'lat', 'lon'
+];
+const AKB_ADDRESS_COLUMN_INDEX = AKB_HEADERS.indexOf('Адрес ТТ LimKorm');
+
+/**
+ * Manages the synchronization of sales data with the Active Client Base (AKB) Google Sheet.
+ * It ensures sheets for each RM exist, finds new clients by address, and appends them.
+ * Finally, it returns the complete, up-to-date data for all relevant RMs.
+ * @param dataByRm - Data from the uploaded file, grouped by RM name.
+ * @returns An object containing all current data from the synced sheets and a list of newly added addresses.
+ */
+export async function syncAkbAndFetch(dataByRm: { [rmName: string]: any[] }) {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheet = await getSpreadsheet(SPREADSHEET_ID);
+    const existingSheetTitles = new Set(spreadsheet.sheets?.map(s => s.properties?.title || ''));
+    const relevantRms = Object.keys(dataByRm);
+    const newlyAddedAddresses: { [rmName: string]: string[] } = {};
+
+    for (const rm of relevantRms) {
+        if (!rm) continue;
+
+        // 1. Ensure sheet exists
+        if (!existingSheetTitles.has(rm)) {
+            await createSheet(SPREADSHEET_ID, rm);
+            await appendRows(SPREADSHEET_ID, rm, [AKB_HEADERS]);
+            existingSheetTitles.add(rm);
+        }
+
+        // 2. Get existing addresses to prevent duplicates
+        const sheetData = await getSheetData(SPREADSHEET_ID, `${rm}!G:G`); // Column G is 'Адрес ТТ LimKorm'
+        const existingAddresses = new Set(sheetData.flat().map(addr => String(addr || '').trim()));
+
+        // 3. Find and append new rows
+        const rowsToAdd = dataByRm[rm].filter(row => {
+            const address = row['Адрес ТТ LimKorm'] || '';
+            return address && !existingAddresses.has(address.trim());
+        });
+
+        if (rowsToAdd.length > 0) {
+            const values = rowsToAdd.map(row => AKB_HEADERS.map(header => row[header] || ''));
+            await appendRows(SPREADSHEET_ID, rm, values);
+            newlyAddedAddresses[rm] = rowsToAdd.map(row => row['Адрес ТТ LimKorm']);
+        }
+    }
+
+    // 4. Fetch all data for the relevant RMs after updates
+    const allData = await fetchFullDataForRms(relevantRms);
+    
+    return { allData, newlyAddedAddresses };
+}
+
+/**
+ * Fetches the complete data for a list of RM sheets.
+ * @param rms - An array of RM names (sheet titles).
+ * @returns A flat array of all rows from the specified sheets, parsed into objects.
+ */
+export async function fetchFullDataForRms(rms: string[]) {
+    if (rms.length === 0) return [];
+    
+    const sheets = await getGoogleSheetsClient();
+    const ranges = rms.map(rm => `${rm}!A:K`); // A to K covers the 11 headers
+
+    const response = await sheets.spreadsheets.values.batchGet({
+        spreadsheetId: SPREADSHEET_ID,
+        ranges,
+    });
+
+    const allRows: any[] = [];
+    response.data.valueRanges?.forEach(valueRange => {
+        const rows = valueRange.values;
+        if (!rows || rows.length < 2) return; // Skip if empty or only headers
+
+        const headers = rows[0].map(h => String(h));
+        const dataRows = rows.slice(1);
+        
+        dataRows.forEach(rowArray => {
+             const rowObj: { [key: string]: any } = {};
+             headers.forEach((key, index) => {
+                 rowObj[key] = rowArray[index] || null;
+             });
+             allRows.push(rowObj);
+        });
+    });
+
+    return allRows;
+}
+
+/**
+ * Fetches specific rows from the AKB sheet, identified by RM and address.
+ * Used for polling for updated coordinates.
+ * @param addressesByRm - An object where keys are RM names and values are arrays of addresses to poll.
+ * @returns A flat array of the found rows, parsed into objects.
+ */
+export async function pollCoordinates(addressesByRm: { [rmName: string]: string[] }) {
+    const rms = Object.keys(addressesByRm);
+    if (rms.length === 0) return [];
+
+    const fullData = await fetchFullDataForRms(rms);
+    const addressesToFind: { [rmName: string]: Set<string> } = {};
+    for (const rm in addressesByRm) {
+        addressesToFind[rm] = new Set(addressesByRm[rm]);
+    }
+    
+    const foundRows = fullData.filter(row => {
+        const rm = row['РМ'];
+        const address = row['Адрес ТТ LimKorm'];
+        return rm && address && addressesToFind[rm]?.has(address);
+    });
+
+    return foundRows;
 }

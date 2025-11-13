@@ -1,6 +1,6 @@
 import React from 'react';
-import { OkbStatus, SummaryMetrics } from '../types';
-import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon, CoverageIcon } from './icons';
+import { SummaryMetrics } from '../types';
+import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon } from './icons';
 
 interface MetricCardProps {
     title: string;
@@ -42,12 +42,11 @@ const formatNumber = (num: number, short = true) => {
 
 interface MetricsSummaryProps {
     metrics: SummaryMetrics | null;
-    okbStatus: OkbStatus | null;
     disabled: boolean;
     onActiveClientsClick?: () => void;
 }
 
-const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, disabled, onActiveClientsClick }) => {
+const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, disabled, onActiveClientsClick }) => {
     if (disabled || !metrics) {
         // Render placeholders
         return (
@@ -62,10 +61,7 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
         );
     }
     
-    const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && metrics.totalClients > 0) 
-        ? (metrics.totalClients / okbStatus.rowCount) * 100 
-        : 0;
+    const avgFactPerClient = metrics.totalActiveClients > 0 ? metrics.totalFact / metrics.totalActiveClients : 0;
 
     return (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -112,13 +108,6 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
                 icon={<CalculatorIcon />}
                 color="text-indigo-400"
                 tooltip={`Средние продажи на одну активную ТТ: ${formatNumber(avgFactPerClient, false)} кг/ед`}
-            />
-             <MetricCard 
-                title="Покрытие ОКБ"
-                value={`${okbCoverage.toFixed(1)}%`}
-                icon={<CoverageIcon />}
-                color="text-rose-400"
-                tooltip={`Доля активных клиентов из общей базы (${metrics.totalActiveClients} из ${okbStatus?.rowCount || 0})`}
             />
             <MetricCard 
                 title="Топ РМ (по росту)" 

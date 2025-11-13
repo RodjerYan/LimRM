@@ -1,11 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { PotentialClient } from '../types';
+// Fix: Replaced the non-existent `PotentialClient` type with the correct `MapPoint` type.
+import { MapPoint } from '../types';
 
 interface InteractiveMapProps {
     city: string;
-    clients: PotentialClient[];
+    clients: MapPoint[];
     selectedClientKey: string | null;
 }
 

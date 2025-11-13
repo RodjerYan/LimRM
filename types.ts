@@ -9,11 +9,10 @@ export interface AggregatedDataRow {
     potential: number;
     growthPotential: number;
     growthPercentage: number;
-    potentialClients?: PotentialClient[];
     clients: string[]; // List of individual client names/addresses in the group
 }
 
-export type MapPointStatus = 'match' | 'potential';
+export type MapPointStatus = 'match';
 
 export interface MapPoint {
     key: string;
@@ -35,27 +34,21 @@ export interface ParsedAddress {
     city: string;
 }
 
-export interface PotentialClient {
-    name: string;
-    address: string;
-    type: string;
-    lat?: number;
-    lon?: number;
+export interface AkbRow {
+    [key: string]: any;
+    'Дистрибьютор'?: string;
+    'Торговая марка'?: string;
+    'Уникальное наименование товара'?: string;
+    'Фасовка'?: string;
+    'Вес, кг'?: string | number;
+    'Месяц'?: string;
+    'Адрес ТТ LimKorm'?: string;
+    'Канал продаж'?: string;
+    'РМ'?: string;
+    lat?: number | string;
+    lon?: number | string;
 }
 
-export interface OkbDataRow {
-    [key: string]: any;
-    'Наименование': string;
-    'Юридический адрес'?: string;
-    'Регион'?: string;
-    'Город'?: string;
-    'Вид деятельности'?: string;
-    'ИНН'?: string;
-    'Статус'?: string;
-    'Контакты'?: string;
-    lat?: number;
-    lon?: number;
-}
 
 export interface FilterOptions {
     rms: string[];
@@ -73,8 +66,8 @@ export interface SummaryMetrics {
     totalFact: number;
     totalPotential: number;
     totalGrowth: number;
-    totalClients: number;
-    totalActiveClients: number;
+    totalClients: number; // This represents the number of groups
+    totalActiveClients: number; // This is the total number of unique trade points
     averageGrowthPercentage: number;
     topPerformingRM: {
         name: string;
@@ -87,14 +80,6 @@ export interface NotificationMessage {
     message: string;
     type: 'success' | 'error' | 'info';
 }
-
-export type OkbStatus = {
-    status: 'idle' | 'loading' | 'processing' | 'ready' | 'error';
-    message: string | null;
-    timestamp?: string;
-    rowCount?: number;
-    coordsCount?: number;
-};
 
 // Types for the Web Worker communication
 export type WorkerProgressPayload = {

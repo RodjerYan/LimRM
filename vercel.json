@@ -5,12 +5,8 @@
       "destination": "/api/gemini-proxy"
     },
     {
-      "source": "/api/get-okb",
-      "destination": "/api/get-okb"
-    },
-    {
-      "source": "/api/get-okb-status",
-      "destination": "/api/get-okb-status"
+      "source": "/api/akb",
+      "destination": "/api/akb"
     },
     {
       "source": "/api/get-conflict-zones",

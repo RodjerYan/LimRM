@@ -3,15 +3,14 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
-import { AggregatedDataRow, OkbStatus } from '../types';
+import { AggregatedDataRow } from '../types';
 import { streamClientInsights } from '../services/aiService';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon } from './icons';
 
 interface DetailsModalProps {
     isOpen: boolean;
     onClose: () => void;
     data: AggregatedDataRow | null;
-    okbStatus: OkbStatus | null;
 }
 
 // Local formatNumber utility
@@ -131,13 +130,12 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
     );
 };
 
-const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
+const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data }) => {
     if (!data) return null;
 
     const activeClients = data.clients?.length || 0;
     const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
-
+    
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
             <div className="space-y-6">
@@ -153,7 +151,6 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                                 <MetricCard title="Средний Рост" value={`${data.growthPercentage.toFixed(1)}%`} icon={<TrendingUpIcon />} color="text-yellow-400" tooltip="Средний процент неосвоенного потенциала по клиентам в группе" />
                                 <MetricCard title="Активных Клиентов" value={formatNumber(activeClients, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
                                 <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
-                                <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClients} из ${okbStatus?.rowCount || 0})`} />
                              </div>
                         </div>
                         <GroupedClientsList clients={data.clients} />
