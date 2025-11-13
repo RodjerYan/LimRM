@@ -165,12 +165,20 @@ async function processFile(jsonData: AkbRow[], headers: string[], { postMessage 
 
         aggregationMap[groupKey].fact += weight;
         
-        // FIX: This is the third attempt to resolve a stubborn TypeScript error (TS2345) in the Vercel build environment.
-        // The compiler incorrectly infers that the result of a `||` chain can be `undefined`.
-        // This fix explicitly provides a fallback empty string for the potentially undefined value using the nullish coalescing operator (`??`),
-        // ensuring every part of the logical chain is a `string` and satisfying the compiler.
-        const uniqueName = row['Уникальное наименование товара'] ?? '';
-        const clientIdentifier = address || uniqueName || `Клиент ${index}`;
+        // This logic is made intentionally verbose to resolve a stubborn build error in Vercel's TSC environment,
+        // which was repeatedly failing to infer the correct type from short-circuiting logical operators.
+        let clientIdentifier: string;
+        const uniqueNameStr = row['Уникальное наименование товара'];
+
+        // 'address' is guaranteed to be a string from the top of the loop.
+        if (address) {
+            clientIdentifier = address;
+        } else if (uniqueNameStr) {
+            // Here, uniqueNameStr is narrowed from 'string | undefined' to 'string'.
+            clientIdentifier = uniqueNameStr;
+        } else {
+            clientIdentifier = `Клиент ${index}`;
+        }
         aggregationMap[groupKey].clients.add(clientIdentifier);
 
         const lat = row.lat ? parseFloat(String(row.lat).replace(',', '.')) : undefined;
