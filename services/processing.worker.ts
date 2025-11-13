@@ -155,7 +155,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Кэш обработан: ${cacheAddressMap.size} записей.` } });
 
     const aggregatedData: AggregationMap = {};
-    const plottableActiveClients: MapPoint[] = [];
+    const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
 
@@ -168,60 +168,68 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
-        let lat: number | undefined;
-        let lon: number | undefined;
-        let isCached = false;
-
         const normalizedAddress = normalizeAddress(clientAddress);
-        const cacheEntry = cacheAddressMap.get(normalizedAddress);
+        
+        // --- Logic for plottable points (run only once per unique address) ---
+        if (!uniquePlottableClients.has(normalizedAddress)) {
+            let lat: number | undefined;
+            let lon: number | undefined;
+            let isCached = false;
 
-        if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
-            lat = cacheEntry.lat;
-            lon = cacheEntry.lon;
-            isCached = true;
-        } else {
-             if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-             // Only add if not already in the list for this RM
-             if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
-                newAddressesToCache[rm].push({ address: clientAddress });
-             }
+            const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
-            const okbEntry = okbCoordIndex.get(normalizedAddress);
-            if (okbEntry) {
-                lat = okbEntry.lat;
-                lon = okbEntry.lon;
-            } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
-                if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                if (!addressesToGeocode[rm].includes(clientAddress)) {
-                    addressesToGeocode[rm].push(clientAddress);
+            if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+                lat = cacheEntry.lat;
+                lon = cacheEntry.lon;
+                isCached = true;
+            } else {
+                if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                    newAddressesToCache[rm].push({ address: clientAddress });
+                }
+
+                const okbEntry = okbCoordIndex.get(normalizedAddress);
+                if (okbEntry) {
+                    lat = okbEntry.lat;
+                    lon = okbEntry.lon;
+                } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
+                    if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
+                    if (!addressesToGeocode[rm].includes(clientAddress)) {
+                        addressesToGeocode[rm].push(clientAddress);
+                    }
                 }
             }
+
+            const parsedAddress = parseRussianAddress(clientAddress);
+            const region = parsedAddress.region;
+            const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
+
+            uniquePlottableClients.set(normalizedAddress, {
+                key: normalizedAddress,
+                lat, lon, isCached,
+                status: 'match',
+                name: clientName,
+                address: clientAddress,
+                city: groupName,
+                region, rm, brand,
+                type: findValueInRow(row, ['канал продаж']),
+                contacts: findValueInRow(row, ['контакты']),
+            });
         }
         
-        const parsedAddress = parseRussianAddress(clientAddress);
-        const region = parsedAddress.region;
-        const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
-
-        plottableActiveClients.push({
-            key: `${clientAddress}-${i}`,
-            lat, lon, isCached,
-            status: 'match',
-            name: clientName,
-            address: clientAddress,
-            city: groupName,
-            region, rm, brand,
-            type: findValueInRow(row, ['канал продаж']),
-            contacts: findValueInRow(row, ['контакты']),
-        });
+        // --- Aggregation logic (runs for every row) ---
+        const parsedForAggregation = parseRussianAddress(clientAddress);
+        const regionForAggregation = parsedForAggregation.region;
+        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight) || region === 'Регион не определен') continue;
+        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
 
-        const key = `${region}-${brand}-${rm}`.toLowerCase();
+        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${region} (${brand})`, brand, rm, city: groupName,
-                region, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
+                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };
         }
@@ -240,8 +248,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     }
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
+    const plottableActiveClients = Array.from(uniquePlottableClients.values());
     const finalData: AggregatedDataRow[] = [];
-    const existingClientsForPotentialSearch = new Set(jsonData.map(row => normalizeAddress(findAddressInRow(row))));
+    const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
