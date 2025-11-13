@@ -13,7 +13,7 @@ export interface AggregatedDataRow {
     clients: string[]; // List of individual client names/addresses in the group
 }
 
-export type MapPointStatus = 'exact' | 'approximate';
+export type MapPointStatus = 'exact' | 'approximate' | 'region';
 
 export interface MapPoint {
     key: string;

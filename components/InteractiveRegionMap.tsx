@@ -253,9 +253,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     // Generic marker creation function
     const createPopupContent = (client: MapPoint) => {
-        const accuracyInfo = client.accuracy === 'approximate' 
-            ? `<hr style="margin: 5px 0;"/><small style="color: #fbbf24;">📍 Примерное местоположение (центр города)</small>`
-            : '';
+        const accuracyInfo = 
+            client.accuracy === 'approximate' 
+                ? `<hr style="margin: 5px 0;"/><small style="color: #fbbf24;">📍 Примерное местоположение (центр города)</small>`
+                : client.accuracy === 'region'
+                ? `<hr style="margin: 5px 0;"/><small style="color: #f87171;">📍 Очень примерное местоположение (центр региона)</small>`
+                : '';
 
         return `
             <b>${client.name}</b><br>
@@ -316,11 +319,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(tt);
+                
+                let fillColor, color;
+                switch (tt.accuracy) {
+                    case 'exact':
+                        fillColor = '#22c55e'; // green
+                        color = '#16a34a';
+                        break;
+                    case 'approximate':
+                        fillColor = '#f59e0b'; // orange
+                        color = '#d97706';
+                        break;
+                    case 'region':
+                        fillColor = '#ef4444'; // red
+                        color = '#dc2626';
+                        break;
+                    default:
+                        fillColor = '#22c55e';
+                        color = '#16a34a';
+                }
+
                 const markerOptions = {
                     pane: 'markerPane',
                     radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9,
-                    fillColor: tt.accuracy === 'exact' ? '#22c55e' : '#f59e0b', // green for exact, orange for approx
-                    color: tt.accuracy === 'exact' ? '#16a34a' : '#d97706',
+                    fillColor,
+                    color,
                 };
                 const marker = L.circleMarker([tt.lat, tt.lon], markerOptions).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);

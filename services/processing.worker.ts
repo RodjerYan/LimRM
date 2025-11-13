@@ -6,12 +6,20 @@ import { standardizeRegion } from '../utils/addressMappings';
 // FIX: Import the new, centralized address processing functions.
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
+import { capitals } from '../utils/capitals';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 // FIX: Define more specific types for the coordinate indexes for clarity and type safety.
 type CoordByAddressIndex = Map<string, { lat: number; lon: number }>;
 type SimplifiedCoordIndex = Map<string, { lat: number; lon: number; originalAddress: string }>;
+
+const capitalCoordsByRegion = new Map<string, { lat: number; lon: number }>();
+capitals.filter(c => c.type === 'capital' && c.region_name).forEach(c => {
+    if(c.region_name) {
+        capitalCoordsByRegion.set(c.region_name, { lat: c.lat, lon: c.lon });
+    }
+});
 
 
 /**
@@ -192,7 +200,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
         // --- 2. Coordinate Resolution ---
         let lat: number | null = null;
         let lon: number | null = null;
-        let accuracy: MapPoint['accuracy'] = 'exact';
+        let accuracy: MapPoint['accuracy'] | null = null;
 
         if (!clientAddress) {
             console.warn('%c[ОШИБКА] Адрес не найден в строке. Невозможно найти координаты.', 'color: #f87171; font-weight: bold;');
@@ -292,20 +300,35 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                      console.info(`Совпадение с адресом из ОКБ: "${okbCoords.originalAddress}"`);
                 }
             } else {
-                // Priority 3: Fallback to city center coordinates
                 const parsedAddr = parseRussianAddress(clientAddress);
+                let usedFallbackMethod = '';
+
+                // Priority 3: Fallback to city center coordinates
                 if (parsedAddr.city && parsedAddr.city !== 'Город не определен') {
                     const cityData = REGION_BY_CITY_WITH_INDEXES[parsedAddr.city.toLowerCase()];
                     if (cityData && cityData.lat && cityData.lon) {
                         lat = cityData.lat;
                         lon = cityData.lon;
                         accuracy = 'approximate';
-                        console.log(`%c[ИНФО] Точные координаты не найдены. Используются координаты центра города: ${parsedAddr.city}.`, 'color: #fbbf24;');
+                        usedFallbackMethod = `центра города: ${parsedAddr.city}`;
                     }
                 }
 
-                if (lat === null) {
-                    console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ и не удалось определить координаты города.`, 'color: #f87171; font-weight: bold;');
+                // NEW Priority 4: Fallback to region center (capital) coordinates
+                if (lat === null && parsedAddr.region && parsedAddr.region !== 'Регион не определен') {
+                    const regionCoords = capitalCoordsByRegion.get(parsedAddr.region);
+                    if (regionCoords) {
+                        lat = regionCoords.lat;
+                        lon = regionCoords.lon;
+                        accuracy = 'region';
+                        usedFallbackMethod = `центра региона: ${parsedAddr.region}`;
+                    }
+                }
+                
+                if (lat !== null) {
+                    console.log(`%c[ИНФО] Точные координаты не найдены. Используются координаты ${usedFallbackMethod}.`, 'color: #fbbf24;');
+                } else {
+                    console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ и не удалось определить координаты города или региона.`, 'color: #f87171; font-weight: bold;');
                     console.info(`%c[РЕКОМЕНДАЦИЯ] 
 1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице.
 2. Убедитесь, что для этого клиента в Google Таблице указаны координаты в столбцах 'lat' и 'lon'.
@@ -335,7 +358,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             key: `${clientAddress || 'client'}-${i}`, // Unique key per row
             lat: lat ?? undefined,
             lon: correctedLon ?? undefined,
-            accuracy: lat !== null ? accuracy : 'exact',
+            accuracy: accuracy ?? 'exact',
             name: clientName,
             address: clientAddress || `Адрес не указан`,
             city: groupName,
