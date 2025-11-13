@@ -1,13 +1,12 @@
 import * as XLSX from 'xlsx';
-// Fix: Replaced the non-existent `OkbDataRow` type with the correct `AkbRow` type.
-import { AkbRow, AggregatedDataRow } from '../types';
+import { OkbDataRow, AggregatedDataRow } from '../types';
 
 /**
  * Exports an array of OKB data to an XLSX file.
  * @param data The array of OKB data rows to export.
  * @param fileName The base name for the downloaded file (without extension).
  */
-export const exportToExcel = (data: AkbRow[], fileName: string): void => {
+export const exportToExcel = (data: OkbDataRow[], fileName: string): void => {
     // Define headers and their corresponding keys in the data object
     const headers = [
         { header: 'Наименование', key: 'Наименование' },

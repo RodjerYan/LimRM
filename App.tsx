@@ -7,6 +7,7 @@ import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
 import InteractiveRegionMap from './components/InteractiveRegionMap'; 
 import { 
@@ -14,11 +15,13 @@ import {
     FilterOptions, 
     FilterState, 
     NotificationMessage, 
+    OkbStatus, 
     SummaryMetrics,
+    OkbDataRow,
     WorkerResultPayload,
     MapPoint,
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
@@ -39,7 +42,9 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
-    
+
+    const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
+    const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
@@ -82,6 +87,16 @@ const App: React.FC = () => {
         };
     }, [filteredData, isDataLoaded, filteredActiveClients]);
 
+    const potentialClients = useMemo(() => {
+        if (!okbData.length) return [];
+        const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
+        return okbData.filter(okb => {
+            const address = findAddressInRow(okb);
+            const normalizedAddress = normalizeAddress(address);
+            return !activeAddressesSet.has(normalizedAddress);
+        });
+    }, [okbData, allActiveClients]);
+    
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
@@ -144,6 +159,12 @@ const App: React.FC = () => {
         setIsModalOpen(true);
     }, []);
 
+    const handleOkbStatusChange = (status: OkbStatus) => {
+        setOkbStatus(status);
+        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
+        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
+    };
+
     const flyToClient = useCallback((client: MapPoint) => {
         setTimeout(() => {
             setFlyToClientKey(client.key);
@@ -180,10 +201,18 @@ const App: React.FC = () => {
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
                     <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
+                        <OKBManagement 
+                            onStatusChange={handleOkbStatusChange}
+                            onDataChange={setOkbData}
+                            status={okbStatus}
+                            disabled={isControlPanelLocked}
+                        />
                         <FileUpload 
                             onFileProcessed={handleFileProcessed}
                             onProcessingStateChange={handleProcessingStateChange}
-                            disabled={isControlPanelLocked}
+                            okbData={okbData}
+                            okbStatus={okbStatus}
+                            disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
                         />
                         <Filters
                             options={filterOptions}
@@ -197,6 +226,7 @@ const App: React.FC = () => {
                     <div className="lg:col-span-3 space-y-6">
                         <MetricsSummary 
                             metrics={summaryMetrics} 
+                            okbStatus={okbStatus} 
                             disabled={!isDataLoaded || isLoading}
                             onActiveClientsClick={() => setIsClientsModalOpen(true)}
                         />
@@ -204,6 +234,7 @@ const App: React.FC = () => {
                         <InteractiveRegionMap 
                             data={filteredData} 
                             selectedRegions={filters.region} 
+                            potentialClients={potentialClients}
                             activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
@@ -224,6 +255,7 @@ const App: React.FC = () => {
                 isOpen={isModalOpen} 
                 onClose={() => setIsModalOpen(false)}
                 data={selectedRow}
+                okbStatus={okbStatus}
             />
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
