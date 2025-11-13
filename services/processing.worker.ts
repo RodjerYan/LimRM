@@ -221,33 +221,63 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             
             let okbCoords;
             let matchMethod = '';
-
+        
+            console.log('%c- Поиск координат в ОКБ...', 'color: #9ca3af;');
+        
             // 1. Try strict key against strict map
+            console.groupCollapsed('[Шаг 1/4] Попытка: строгий ключ -> строгий индекс');
+            console.log(`Ключ: "${strictNormalized}"`);
             okbCoords = coordByAddress.get(strictNormalized);
-            if (okbCoords) matchMethod = 'строгий -> строгий';
+            if (okbCoords) {
+                matchMethod = 'строгий -> строгий';
+                console.log('%cРезультат: Успех', 'color: #22c55e;');
+            } else {
+                console.log('%cРезультат: Провал', 'color: #f87171;');
+            }
+            console.groupEnd();
         
             // 2. Try simplified key against strict map
             if (!okbCoords && simplifiedNormalized !== strictNormalized) {
+                console.groupCollapsed('[Шаг 2/4] Попытка: упрощенный ключ -> строгий индекс');
+                console.log(`Ключ: "${simplifiedNormalized}"`);
                 okbCoords = coordByAddress.get(simplifiedNormalized);
-                if (okbCoords) matchMethod = 'упрощенный -> строгий';
+                if (okbCoords) {
+                    matchMethod = 'упрощенный -> строгий';
+                    console.log('%cРезультат: Успех', 'color: #22c55e;');
+                } else {
+                    console.log('%cРезультат: Провал', 'color: #f87171;');
+                }
+                console.groupEnd();
             }
         
             // 3. Try strict key against simplified map
             if (!okbCoords) {
+                console.groupCollapsed('[Шаг 3/4] Попытка: строгий ключ -> упрощенный индекс');
+                console.log(`Ключ: "${strictNormalized}"`);
                 const simplifiedResult = coordByAddressSimplified.get(strictNormalized);
                 if (simplifiedResult) {
                     okbCoords = simplifiedResult;
                     matchMethod = 'строгий -> упрощенный';
+                    console.log('%cРезультат: Успех', 'color: #22c55e;');
+                } else {
+                    console.log('%cРезультат: Провал', 'color: #f87171;');
                 }
+                console.groupEnd();
             }
             
             // 4. Try simplified key against simplified map
             if (!okbCoords && simplifiedNormalized !== strictNormalized) {
+                console.groupCollapsed('[Шаг 4/4] Попытка: упрощенный ключ -> упрощенный индекс');
+                console.log(`Ключ: "${simplifiedNormalized}"`);
                 const simplifiedResult = coordByAddressSimplified.get(simplifiedNormalized);
                 if (simplifiedResult) {
                     okbCoords = simplifiedResult;
                     matchMethod = 'упрощенный -> упрощенный';
+                    console.log('%cРезультат: Успех', 'color: #22c55e;');
+                } else {
+                    console.log('%cРезультат: Провал', 'color: #f87171;');
                 }
+                console.groupEnd();
             }
 
             if (okbCoords) {
