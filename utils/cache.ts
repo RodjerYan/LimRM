@@ -14,7 +14,6 @@ export const loadGeoCache = (): GeoCache => {
         }
     } catch (error) {
         console.error("Failed to load or parse geo cache:", error);
-        // If parsing fails, clear it to prevent further errors
         clearGeoCache();
     }
     return {};

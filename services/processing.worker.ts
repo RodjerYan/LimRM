@@ -1,33 +1,15 @@
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
-import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint } from '../types';
+import { AggregatedDataRow, OkbDataRow, WorkerMessage, PotentialClient, WorkerResultPayload, MapPoint, GeoCache } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-// FIX: Import the new, centralized address processing functions.
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
-import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
-import { capitals } from '../utils/capitals';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
-// FIX: Define more specific types for the coordinate indexes for clarity and type safety.
 type CoordByAddressIndex = Map<string, { lat: number; lon: number }>;
 type SimplifiedCoordIndex = Map<string, { lat: number; lon: number; originalAddress: string }>;
 
-const capitalCoordsByRegion = new Map<string, { lat: number; lon: number }>();
-capitals.filter(c => c.type === 'capital' && c.region_name).forEach(c => {
-    if(c.region_name) {
-        capitalCoordsByRegion.set(c.region_name, { lat: c.lat, lon: c.lon });
-    }
-});
-
-
-/**
- * Creates fast lookup maps (indexes) from the OKB data using both strict and simplified normalized addresses.
- * This two-tier approach is a critical performance optimization and significantly improves matching reliability.
- * @param okbData The raw OKB data from Google Sheets.
- * @returns An object containing maps for strict and simplified address-based lookups.
- */
 const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddressIndex; coordByAddressSimplified: SimplifiedCoordIndex } => {
     const coordByAddress: CoordByAddressIndex = new Map();
     const coordByAddressSimplified: SimplifiedCoordIndex = new Map();
@@ -39,7 +21,6 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddre
         const lat = row.lat;
         const lon = row.lon;
         
-        // Only index rows that have valid coordinates.
         if (address && lat && lon && !isNaN(lat) && !isNaN(lon)) {
             const coords = { lat, lon };
             const strictNormalized = normalizeAddress(address, { simplify: false });
@@ -49,7 +30,6 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddre
                 coordByAddress.set(strictNormalized, coords);
             }
             
-            // Only add to simplified index if the key is different and valid.
             if (simplifiedNormalized && simplifiedNormalized !== strictNormalized) {
                  if (!coordByAddressSimplified.has(simplifiedNormalized)) {
                     coordByAddressSimplified.set(simplifiedNormalized, { ...coords, originalAddress: address });
@@ -60,12 +40,10 @@ const createOkbIndexes = (okbData: OkbDataRow[]): { coordByAddress: CoordByAddre
     return { coordByAddress, coordByAddressSimplified };
 };
 
-
 const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        // Use trim() to handle potential whitespace in header names
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
@@ -74,14 +52,7 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     return '';
 };
 
-/**
- * Finds potential clients from the OKB data for a given region, excluding existing clients.
- */
-function findPotentialClients(
-    region: string,
-    existingClients: Set<string>,
-    okbData: OkbDataRow[]
-): PotentialClient[] {
+function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
     if (!okbData) return [];
     
     const potentialForRegion = okbData.filter(row => {
@@ -94,9 +65,7 @@ function findPotentialClients(
 
     const potential: PotentialClient[] = [];
     for (const okbRow of potentialForRegion) {
-        // USE CENTRALIZED FUNCTION
         const okbAddress = findAddressInRow(okbRow) || '';
-        // USE CENTRALIZED FUNCTION
         const normalizedOkbAddress = normalizeAddress(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
@@ -116,12 +85,6 @@ function findPotentialClients(
     return potential;
 }
 
-
-/**
- * A multi-stage algorithm to reliably find the header for the client's name.
- * @param headers An array of header strings from the file.
- * @returns The determined client name header string, or undefined if none found.
- */
 const findClientNameHeader = (headers: string[]): string | undefined => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
@@ -143,13 +106,12 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
-
-self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) => {
-    const { file, okbData } = e.data;
+self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], geoCache: GeoCache }>) => {
+    const { file, okbData, geoCache } = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
     try {
-        const commonArgs = { okbData, postMessage };
+        const commonArgs = { okbData, geoCache, postMessage };
         if (file.name.toLowerCase().endsWith('.csv')) {
             await processCsv(file, commonArgs);
         } else {
@@ -163,51 +125,36 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[] }>) 
 
 interface CommonProcessArgs {
     okbData: OkbDataRow[];
+    geoCache: GeoCache;
     postMessage: PostMessageFn;
 }
 
-async function processFile(jsonData: any[], headers: string[], { okbData, postMessage }: CommonProcessArgs) {
+async function processFile(jsonData: any[], headers: string[], { okbData, geoCache, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
-    // --- STAGE 1: CREATE OKB COORDINATE INDEXES (ADDRESS ONLY) ---
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация координат из ОКБ...' } });
     const { coordByAddress, coordByAddressSimplified } = createOkbIndexes(okbData);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Найдено ${coordByAddress.size} адресов с координатами.` } });
 
-    // --- STAGE 2: PROCESS & AGGREGATE SALES DATA (CPU-BOUND, NO NETWORK) ---
     const aggregatedData: AggregationMap = {};
     const plottableActiveClients: MapPoint[] = [];
-
-    console.group("Процесс сопоставления адресов");
+    const addressesToGeocodeSet = new Set<string>();
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        const rowIndexForLogging = i + 2; // Assuming row 1 is headers
         
-        // --- 1. Data Extraction ---
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : findValueInRow(row, ['уникальное наименование товара']) || 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
 
-        console.groupCollapsed(`[Строка ${rowIndexForLogging}] Обработка: ${clientName}`);
-        console.log("Исходные данные строки:", row);
-
-        // --- 2. Coordinate Resolution ---
-        let lat: number | null = null;
-        let lon: number | null = null;
-        let accuracy: MapPoint['accuracy'] | null = null;
-
-        if (!clientAddress) {
-            console.warn('%c[ОШИБКА] Адрес не найден в строке. Невозможно найти координаты.', 'color: #f87171; font-weight: bold;');
-            console.info('%c[РЕКОМЕНДАЦИЯ] Проверьте, что в файле есть столбец с адресом ("Юридический адрес", "Адрес" и т.п.).', 'color: #fbbf24;');
-        } else {
-             console.log(`Извлеченный адрес из файла: "${clientAddress}"`);
-        }
+        let lat: number | undefined = undefined;
+        let lon: number | undefined = undefined;
+        let accuracy: MapPoint['accuracy'] = 'exact';
 
         // Priority 1: Check for explicit lat/lon columns in the uploaded file row.
         const latVal = findValueInRow(row, ['широта', 'lat']);
@@ -219,146 +166,47 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
                 lat = parsedLat;
                 lon = parsedLon;
                 accuracy = 'exact';
-                console.log(`%c[УСПЕХ] Найдены явные координаты в столбцах файла: lat=${lat}, lon=${lon}`, 'color: #22c55e;');
             }
         }
         
-        // Priority 2: Match by address using two-tier lookup if no explicit coords found
-        if (lat === null && clientAddress) {
-            const strictNormalized = normalizeAddress(clientAddress);
-            const simplifiedNormalized = normalizeAddress(clientAddress, { simplify: true });
-            console.log(`Нормализованный адрес (строгий): "${strictNormalized}"`);
-            console.log(`Нормализованный адрес (упрощенный): "${simplifiedNormalized}"`);
-            
-            let okbCoords;
-            let matchMethod = '';
-        
-            console.log('%c- Поиск координат в ОКБ...', 'color: #9ca3af;');
-        
-            // 1. Try strict key against strict map
-            console.groupCollapsed('[Шаг 1/4] Попытка: строгий ключ -> строгий индекс');
-            console.log(`Ключ: "${strictNormalized}"`);
-            okbCoords = coordByAddress.get(strictNormalized);
-            if (okbCoords) {
-                matchMethod = 'строгий -> строгий';
-                console.log('%cРезультат: Успех', 'color: #22c55e;');
+        if (lat === undefined && clientAddress) {
+            // Priority 2: Check local geocoding cache
+            const cachedCoords = geoCache[clientAddress];
+            if (cachedCoords) {
+                lat = cachedCoords.lat;
+                lon = cachedCoords.lon;
+                accuracy = 'geocoded';
             } else {
-                console.log('%cРезультат: Провал', 'color: #f87171;');
-            }
-            console.groupEnd();
-        
-            // 2. Try simplified key against strict map
-            if (!okbCoords && simplifiedNormalized !== strictNormalized) {
-                console.groupCollapsed('[Шаг 2/4] Попытка: упрощенный ключ -> строгий индекс');
-                console.log(`Ключ: "${simplifiedNormalized}"`);
-                okbCoords = coordByAddress.get(simplifiedNormalized);
-                if (okbCoords) {
-                    matchMethod = 'упрощенный -> строгий';
-                    console.log('%cРезультат: Успех', 'color: #22c55e;');
-                } else {
-                    console.log('%cРезультат: Провал', 'color: #f87171;');
-                }
-                console.groupEnd();
-            }
-        
-            // 3. Try strict key against simplified map
-            if (!okbCoords) {
-                console.groupCollapsed('[Шаг 3/4] Попытка: строгий ключ -> упрощенный индекс');
-                console.log(`Ключ: "${strictNormalized}"`);
-                const simplifiedResult = coordByAddressSimplified.get(strictNormalized);
-                if (simplifiedResult) {
-                    okbCoords = simplifiedResult;
-                    matchMethod = 'строгий -> упрощенный';
-                    console.log('%cРезультат: Успех', 'color: #22c55e;');
-                } else {
-                    console.log('%cРезультат: Провал', 'color: #f87171;');
-                }
-                console.groupEnd();
-            }
-            
-            // 4. Try simplified key against simplified map
-            if (!okbCoords && simplifiedNormalized !== strictNormalized) {
-                console.groupCollapsed('[Шаг 4/4] Попытка: упрощенный ключ -> упрощенный индекс');
-                console.log(`Ключ: "${simplifiedNormalized}"`);
-                const simplifiedResult = coordByAddressSimplified.get(simplifiedNormalized);
-                if (simplifiedResult) {
-                    okbCoords = simplifiedResult;
-                    matchMethod = 'упрощенный -> упрощенный';
-                    console.log('%cРезультат: Успех', 'color: #22c55e;');
-                } else {
-                    console.log('%cРезультат: Провал', 'color: #f87171;');
-                }
-                console.groupEnd();
-            }
-
-            if (okbCoords) {
-                lat = okbCoords.lat;
-                lon = okbCoords.lon;
-                accuracy = 'exact';
-                console.log(`%c[УСПЕХ] Найдено совпадение по методу "${matchMethod}".`, 'color: #a78bfa; font-weight: bold;');
-                if ('originalAddress' in okbCoords && okbCoords.originalAddress) {
-                     console.info(`Совпадение с адресом из ОКБ: "${okbCoords.originalAddress}"`);
-                }
-            } else {
-                const parsedAddr = parseRussianAddress(clientAddress);
-                let usedFallbackMethod = '';
-
-                // Priority 3: Fallback to city center coordinates
-                if (parsedAddr.city && parsedAddr.city !== 'Город не определен') {
-                    const cityData = REGION_BY_CITY_WITH_INDEXES[parsedAddr.city.toLowerCase()];
-                    if (cityData && cityData.lat && cityData.lon) {
-                        lat = cityData.lat;
-                        lon = cityData.lon;
-                        accuracy = 'approximate';
-                        usedFallbackMethod = `центра города: ${parsedAddr.city}`;
-                    }
-                }
-
-                // NEW Priority 4: Fallback to region center (capital) coordinates
-                if (lat === null && parsedAddr.region && parsedAddr.region !== 'Регион не определен') {
-                    const regionCoords = capitalCoordsByRegion.get(parsedAddr.region);
-                    if (regionCoords) {
-                        lat = regionCoords.lat;
-                        lon = regionCoords.lon;
-                        accuracy = 'region';
-                        usedFallbackMethod = `центра региона: ${parsedAddr.region}`;
-                    }
-                }
+                // Priority 3: Match by address using OKB indexes
+                const strictNormalized = normalizeAddress(clientAddress);
+                const simplifiedNormalized = normalizeAddress(clientAddress, { simplify: true });
                 
-                if (lat !== null) {
-                    console.log(`%c[ИНФО] Точные координаты не найдены. Используются координаты ${usedFallbackMethod}.`, 'color: #fbbf24;');
+                let okbCoords = coordByAddress.get(strictNormalized) ||
+                                (simplifiedNormalized !== strictNormalized ? coordByAddress.get(simplifiedNormalized) : undefined) ||
+                                coordByAddressSimplified.get(strictNormalized) ||
+                                (simplifiedNormalized !== strictNormalized ? coordByAddressSimplified.get(simplifiedNormalized) : undefined);
+
+                if (okbCoords) {
+                    lat = okbCoords.lat;
+                    lon = okbCoords.lon;
+                    accuracy = 'exact';
                 } else {
-                    console.warn(`%c[ОШИБКА] Не найдено совпадение для адреса в ОКБ и не удалось определить координаты города или региона.`, 'color: #f87171; font-weight: bold;');
-                    console.info(`%c[РЕКОМЕНДАЦИЯ] 
-1. Проверьте, что адрес "${clientAddress}" в файле точно соответствует адресу в Google Таблице.
-2. Убедитесь, что для этого клиента в Google Таблице указаны координаты в столбцах 'lat' и 'lon'.
-3. Алгоритм создал ключи: "${strictNormalized}" (строгий) и "${simplifiedNormalized}" (упрощенный). Если они неверны, упростите адрес в исходном файле.`, 'color: #fbbf24;');
+                    // If not found anywhere locally, add to the geocoding queue
+                    addressesToGeocodeSet.add(clientAddress);
                 }
             }
         }
 
-        if (lat === null || lon === null) {
-            console.log(`[ИТОГ] Координаты для этой строки не найдены. Клиент не будет отображен на карте.`);
-        }
-
-        // --- 4. Unified Address Parsing & Fallback Logic ---
         const parsedAddress = parseRussianAddress(clientAddress || '');
         const region = parsedAddress.region;
         const parsedCity = parsedAddress.city;
-        
         const groupName = (parsedCity !== 'Город не определен') ? parsedCity : region;
 
-        // --- 5. Client List Creation ---
-        let correctedLon = lon;
-        if (correctedLon && correctedLon < -100) {
-            correctedLon += 360;
-        }
-
         plottableActiveClients.push({
-            key: `${clientAddress || 'client'}-${i}`, // Unique key per row
-            lat: lat ?? undefined,
-            lon: correctedLon ?? undefined,
-            accuracy: accuracy ?? 'exact',
+            key: `${clientAddress || 'client'}-${i}`,
+            lat,
+            lon,
+            accuracy,
             name: clientName,
             address: clientAddress || `Адрес не указан`,
             city: groupName,
@@ -369,15 +217,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             contacts: findValueInRow(row, ['контакты']),
         });
 
-        // --- 6. Aggregation Logic ---
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        
         const clientDisplayValue = clientAddress || clientName;
 
-        if (isNaN(weight) || region === 'Регион не определен') {
-            console.groupEnd();
-            continue;
-        };
+        if (isNaN(weight) || region === 'Регион не определен') continue;
 
         const key = `${region}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
@@ -395,17 +238,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         
-        console.groupEnd();
-        
         if (i > 0 && i % 10000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')} / ${jsonData.length.toLocaleString('ru-RU')}...` } });
         }
     }
     
-    console.groupEnd();
-    
-    // --- STAGE 3: FINAL CALCULATIONS (FAST) ---
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const finalData: AggregatedDataRow[] = [];
     const aggregatedValues = Object.values(aggregatedData);
@@ -437,11 +275,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, postMe
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Завершено!' } });
     const resultPayload: WorkerResultPayload = { 
         aggregatedData: finalData, 
-        plottableActiveClients 
+        plottableActiveClients,
+        addressesToGeocode: Array.from(addressesToGeocodeSet)
     };
     postMessage({ type: 'result', payload: resultPayload });
 }
-
 
 async function processXlsx(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
@@ -454,7 +292,6 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
     
     await processFile(jsonData, headers, args);
 }
-
 
 async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });

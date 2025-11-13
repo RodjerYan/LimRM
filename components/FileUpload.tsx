@@ -155,7 +155,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                         <p className="text-gray-300 truncate font-medium max-w-[70%]">Файл: {fileName}</p>
                         <p className="font-mono text-accent font-semibold">{Math.round(progress)}%</p>
                     </div>
-                    {/* FIX: The original file was truncated here. This completes the progress bar JSX. */}
                     <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden border border-gray-600/50">
                         <div 
                             className="bg-accent h-full rounded-full transition-all"
@@ -172,5 +171,4 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     );
 };
 
-// FIX: Add the missing default export to resolve the "no default export" error in consuming components.
 export default FileUpload;

@@ -8,15 +8,12 @@ interface MetricCardProps {
     icon: React.ReactNode;
     color: string;
     tooltip: string;
-    onClick?: () => void;
-    isClickable?: boolean;
 }
 
-const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tooltip, onClick, isClickable }) => (
+const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tooltip }) => (
     <div 
         title={tooltip} 
-        onClick={onClick}
-        className={`bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20 ${isClickable ? 'cursor-pointer' : ''}`}
+        className={`bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20`}
     >
         <div className={`p-3 rounded-lg ${color} bg-opacity-20`}>
            {icon}
@@ -44,12 +41,10 @@ interface MetricsSummaryProps {
     metrics: SummaryMetrics | null;
     okbStatus: OkbStatus | null;
     disabled: boolean;
-    onActiveClientsClick?: () => void;
 }
 
-const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, disabled, onActiveClientsClick }) => {
+const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, disabled }) => {
     if (disabled || !metrics) {
-        // Render placeholders
         return (
             <div className={`grid grid-cols-2 md:grid-cols-4 gap-4 ${disabled ? 'opacity-50' : ''}`}>
                 {Array.from({ length: 8 }).map((_, index) => (
@@ -62,9 +57,9 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
         );
     }
     
-    const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && metrics.totalClients > 0) 
-        ? (metrics.totalClients / okbStatus.rowCount) * 100 
+    const avgFactPerClient = metrics.totalActiveClients > 0 ? metrics.totalFact / metrics.totalActiveClients : 0;
+    const okbCoverage = (okbStatus?.rowCount && metrics.totalActiveClients > 0) 
+        ? (metrics.totalActiveClients / okbStatus.rowCount) * 100 
         : 0;
 
     return (
@@ -102,9 +97,7 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
                 value={formatNumber(metrics.totalActiveClients, false)}
                 icon={<UsersIcon />} 
                 color="text-cyan-400"
-                tooltip="Общее количество уникальных ТТ в загруженном файле. Нажмите для просмотра списка."
-                onClick={onActiveClientsClick}
-                isClickable={!!onActiveClientsClick}
+                tooltip="Общее количество уникальных ТТ в загруженном файле."
             />
             <MetricCard 
                 title="Средний Факт (Клиент)"
