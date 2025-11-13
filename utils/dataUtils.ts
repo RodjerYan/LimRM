@@ -140,45 +140,32 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 /**
  * Creates a comprehensive set of stopwords for address normalization.
- * This function now intelligently filters out known city names to prevent them from
- * being incorrectly removed from addresses, which was a critical bug.
+ * This function is carefully constructed to remove generic address terms without
+ * removing significant parts of street names or city names.
  * @returns A Set of lowercase stopword strings.
  */
 const createStopwords = (): Set<string> => {
-    const genericStopwords = [
+    // This is a curated list of generic terms that can usually be safely removed.
+    // NOTE: This list intentionally avoids words that are common in street/city names,
+    // such as "московская", "брянская", etc., which was a source of matching errors in previous versions.
+    // The logic to add region names as stopwords has been completely removed for this reason.
+    const stopwords = new Set([
         // Типы улиц
-        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
+        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш',
         'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
-        // Типы населенных пунктов
-        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
+        // Типы населенных пунктов (многие из них также являются названиями, но их удаление в целом безопасно)
+        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х',
         'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское',
         // Типы административных делений
         'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Обозначения зданий - Handled by regex, removing from generic stopwords to avoid side-effects
-        'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит',
+        // Обозначения зданий - эти слова обрабатываются специальными правилами (regex) в normalizeAddress
+        // и не должны быть здесь, чтобы не удалить их из контекста, где они могут быть значимы.
+        // 'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит',
         // Прочее
         'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'
-    ];
-
-    const regionNameParts = new Set<string>();
-    // Create a Set of all known city names for fast lookups.
-    const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
-
-    // Process keywords used for region identification.
-    for (const item of Object.entries(REGION_KEYWORD_MAP)) {
-        // Analyze both the keyword (e.g., 'брянская обл') and its value (e.g., 'Брянская область')
-        [item[0], item[1]].forEach(text => {
-            text.toLowerCase()
-                .replace(/[^а-я\s]/g, '') // Keep only Cyrillic letters and spaces
-                .split(/\s+/)
-                // CRITICAL FIX: Add a word to stopwords ONLY if it's not a known city name.
-                // This prevents "брянск" from being removed from addresses.
-                .filter(word => word.length > 2 && !allCities.has(word)) 
-                .forEach(word => regionNameParts.add(word));
-        });
-    }
-
-    return new Set([...genericStopwords, ...Array.from(regionNameParts)]);
+    ]);
+    
+    return stopwords;
 };
 
 const STOPWORDS = createStopwords();
