@@ -154,8 +154,8 @@ const createStopwords = (): Set<string> => {
         'станица', 'ст-ца', 'аул', 'рп', 'рабочий',
         // Типы административных делений
         'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Обозначения зданий
-        'дом', 'д', 'корпус', 'корп', 'к', 'строение', 'стр', 'с', 'литер', 'лит', 'л',
+        // Обозначения зданий - УБРАНЫ 'д', 'к', 'с' так как они обрабатываются отдельно
+        'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит', 'л',
         // Прочее
         'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон'
     ];
@@ -196,24 +196,30 @@ export function normalizeAddress(address: string | null | undefined, options: { 
     if (!address) return "";
 
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+    
+    // Step 1: Pre-normalization for specific common patterns. This happens BEFORE punctuation is stripped.
+    // Handles "дом 5", "д.5", "д5" -> "5"
+    cleaned = cleaned.replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2');
+    // Handles "10/2", "10 / 2а" -> "10к2", "10к2а"
+    cleaned = cleaned.replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2');
 
-    // Step 1: Unify building/structure numbers before removing words.
-    // "17 а" -> "17а", "корп 2" -> "к2", "строение 1б" -> "с1б"
+
+    // Step 2: Unify building/structure numbers.
+    // "17 а" -> "17а", "корп 2" -> "с2", "строение 1б" -> "с1б"
     cleaned = cleaned
         .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2')
-        .replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
+        .replace(/\b(корпус|корп|к|строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
         .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2');
 
-    // Step 2: Remove all punctuation and postal codes.
+    // Step 3: Remove all punctuation and postal codes.
     cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); // Remove postal codes
     cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); // Replace punctuation with spaces
 
-    // Step 3: Tokenize and remove all stopwords.
+    // Step 4: Tokenize and remove all stopwords.
     let parts = cleaned.split(/\s+/)
         .filter(part => part && !STOPWORDS.has(part));
     
-    // Step 4 (Optional): Simplify by removing district-like adjectives.
+    // Step 5 (Optional): Simplify by removing district-like adjectives.
     if (options.simplify) {
         parts = parts.filter(part => {
             // Keep if it's a number (house, building, etc.) or a combined number like 'к2'
@@ -228,7 +234,7 @@ export function normalizeAddress(address: string | null | undefined, options: { 
         });
     }
     
-    // Step 5: Sort the remaining significant parts to make it order-independent.
+    // Step 6: Sort the remaining significant parts to make it order-independent.
     parts.sort((a, b) => a.localeCompare(b, 'ru'));
     
     return parts.join(' ').trim();
