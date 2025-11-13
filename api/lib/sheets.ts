@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { google, sheets_v4 } from 'googleapis';
 import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
@@ -9,7 +9,7 @@ const SHEET_NAME = 'Base';
  * Creates and returns an authenticated Google Sheets API client.
  * It uses service account credentials stored in an environment variable.
  */
-async function getGoogleSheetsClient() {
+async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
   const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   if (!serviceAccountKey) {
     throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
@@ -179,9 +179,9 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
  * @param sheets The Google Sheets API client.
  * @param rmName The name of the sheet.
  */
-async function ensureSheetExists(sheets: any, rmName: string) {
+async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string) {
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
-    const sheetExists = spreadsheet.data.sheets?.some(s => s.properties?.title === rmName);
+    const sheetExists = spreadsheet.data.sheets?.some((s: sheets_v4.Schema$Sheet) => s.properties?.title === rmName);
 
     if (!sheetExists) {
         await sheets.spreadsheets.batchUpdate({
