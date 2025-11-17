@@ -10,9 +10,8 @@ import {
     CoordsCache 
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
-import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -159,51 +158,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
-    
-    const GARBAGE_PREFIXES_MAP: Record<string, string> = {
-        'нижний новгород': 'Нижегородская область',
-        'москва': 'Москва',
-        'санкт-петербург': 'Санкт-Петербург'
-    };
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        let clientAddress = findAddressInRow(row);
+        const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
 
         if (!clientAddress || !rm) continue;
         
-        // --- NEW, ROBUST ADDRESS CLEANING LOGIC ---
-        // This logic detects if an address string starts with a common "garbage" city/prefix
-        // but also contains keywords for a completely different region later in the string.
-        // If so, it strips the garbage prefix. This handles dirty data like
-        // "Нижний Новгород, Республика Беларусь, Брест..." and "Нижний Новгород, Башкортостан...".
-        const lowerAddress = clientAddress.toLowerCase().trim();
-        for (const prefix of Object.keys(GARBAGE_PREFIXES_MAP)) {
-            if (lowerAddress.startsWith(prefix + ',') || lowerAddress.startsWith(prefix + ' ')) {
-                const garbageRegion = GARBAGE_PREFIXES_MAP[prefix];
-                const restOfString = lowerAddress.substring(prefix.length);
-
-                const containsOtherRegion = Object.keys(REGION_KEYWORD_MAP).some(key => {
-                    const regionInRest = REGION_KEYWORD_MAP[key];
-                    return restOfString.includes(key) && regionInRest !== garbageRegion;
-                });
-
-                if (containsOtherRegion) {
-                    const match = clientAddress.match(new RegExp(`^${prefix}[, ]\\s*`, 'i'));
-                    if (match) {
-                        clientAddress = clientAddress.substring(match[0].length).trim();
-                        break; // Prefix removed, stop checking for others.
-                    }
-                }
-            }
-        }
-        // --- END ADDRESS CLEANING LOGIC ---
-
-        const finalClientAddress = clientAddress;
-        const normalizedAddress = normalizeAddress(finalClientAddress);
+        const normalizedAddress = normalizeAddress(clientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {
@@ -219,8 +184,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                if (!newAddressesToCache[rm].some(item => item.address === finalClientAddress)) {
-                    newAddressesToCache[rm].push({ address: finalClientAddress });
+                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                    newAddressesToCache[rm].push({ address: clientAddress });
                 }
 
                 const okbEntry = okbCoordIndex.get(normalizedAddress);
@@ -229,8 +194,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lon = okbEntry.lon;
                 } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    if (!addressesToGeocode[rm].includes(finalClientAddress)) {
-                        addressesToGeocode[rm].push(finalClientAddress);
+                    if (!addressesToGeocode[rm].includes(clientAddress)) {
+                        addressesToGeocode[rm].push(clientAddress);
                     }
                 }
             }
@@ -259,7 +224,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lon = tempLon;
             }
 
-            const parsedAddress = parseRussianAddress(row, finalClientAddress);
+            const parsedAddress = parseRussianAddress(row, clientAddress);
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -268,7 +233,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: finalClientAddress,
+                address: clientAddress,
                 city: groupName,
                 region, rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -277,7 +242,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(row, finalClientAddress);
+        const parsedForAggregation = parseRussianAddress(row, clientAddress);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
@@ -293,7 +258,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             };
         }
         aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(finalClientAddress || clientName);
+        aggregatedData[key].clients.add(clientAddress || clientName);
 
         if (hasPotentialColumn) {
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));

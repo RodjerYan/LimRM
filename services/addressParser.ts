@@ -103,9 +103,8 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 
 /**
  * Parses a Russian address string to extract the region and city.
- * It prioritizes specific settlement names (like "с. Ленинское") from the address,
- * while using the "Дистрибьютер" column as a high-priority context for determining the region.
- * If the address lacks a city, the city from the distributor is used.
+ * It uses a clear cascade of logic: checks for specific settlements, then known cities in the address,
+ * and finally falls back to using the city from the "Дистрибьютер" column if the address is ambiguous.
  * @param row The full data row object.
  * @param address The raw address string from the row.
  * @returns A ParsedAddress object with the determined region and city.
@@ -117,17 +116,16 @@ export function parseRussianAddress(row: { [key: string]: any }, address: string
     let distributorRegion: string | null = null;
 
     if (distributorValue) {
-        // Find the most likely city within the distributor string.
         for (const city of CITIES_SORTED_BY_LENGTH) {
             if (distributorValue.includes(city)) {
                 distributorCity = city;
                 distributorRegion = REGION_BY_CITY_WITH_INDEXES[city].region;
-                break; // Found longest match, which is our best bet for context.
+                break;
             }
         }
     }
 
-    // --- Step 2: Handle Empty Address String ---
+    // --- Step 2: Handle Empty/Null Address & Pre-cleaning ---
     if (!address?.trim()) {
         return {
             city: distributorCity ? capitalize(distributorCity) : 'Город не определен',
@@ -135,54 +133,75 @@ export function parseRussianAddress(row: { [key: string]: any }, address: string
         };
     }
 
-    // --- Step 3: Normalize and Clean Address ---
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-    let normalized = lowerAddress.replace(/\b(г|город|city)\.?\s*/g, ' ').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
-    
-    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
+    let cleanedAddress = address;
+    const GARBAGE_PREFIXES_MAP: Record<string, string> = {
+        'нижний новгород': 'Нижегородская область',
+        'москва': 'Москва',
+        'санкт-петербург': 'Санкт-Петербург'
+    };
+    const lowerAddress = cleanedAddress.toLowerCase().trim();
+    for (const prefix of Object.keys(GARBAGE_PREFIXES_MAP)) {
+        if (lowerAddress.startsWith(prefix + ',') || lowerAddress.startsWith(prefix + ' ')) {
+            const garbageRegion = GARBAGE_PREFIXES_MAP[prefix];
+            const restOfString = lowerAddress.substring(prefix.length);
+
+            const containsOtherRegion = Object.keys(REGION_KEYWORD_MAP).some(key => {
+                const regionInRest = REGION_KEYWORD_MAP[key];
+                return restOfString.includes(key) && regionInRest !== garbageRegion;
+            });
+
+            if (containsOtherRegion) {
+                const match = cleanedAddress.match(new RegExp(`^${prefix}[, ]\\s*`, 'i'));
+                if (match) {
+                    cleanedAddress = cleanedAddress.substring(match[0].length).trim();
+                    break;
+                }
+            }
         }
     }
 
-    // --- Step 4: Decision Logic to Determine Final City and Region ---
-    let finalCity: string | null = null;
-    let finalRegion: string | null = distributorRegion; // Start with distributor's region as default context.
+    // --- Step 3: Normalize Address ---
+    const lowerCleanedAddress = cleanedAddress.toLowerCase().replace(/ё/g, 'е');
+    let normalized = lowerCleanedAddress.replace(/\b(г|город|city)\.?\s*/g, ' ').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+        normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
+    }
+    
+    // --- Step 4: Logic Cascade ---
 
     // A. Prioritize specific settlement types (с., дер., пгт.) from the address string.
     const settlementMatch = normalized.match(/\b(с|село|дер|деревня|пгт|пос|поселок|ст-ца|станица|х|хутор|рп)\.?\s+([а-яё-]+)\b/);
     if (settlementMatch && settlementMatch[2]) {
-        finalCity = capitalize(settlementMatch[2]);
-        // The region is already set from the distributor context, which is what we want.
-    } else {
-        // B. If no specific settlement, try to find a general city name in the address.
-        const cityFromAddress = getCityFromAddress(normalized);
-        if (cityFromAddress !== 'Город не определен') {
-            finalCity = cityFromAddress;
-        } else if (distributorCity) {
-            // C. If address is ambiguous, fallback to the city from the distributor.
-            finalCity = capitalize(distributorCity);
-        }
+        const settlementName = capitalize(settlementMatch[2]);
+        const region = distributorRegion || findRegionByKeyword(normalized);
+        return {
+            city: settlementName,
+            region: standardizeRegion(region),
+        };
+    }
+    
+    // B. Check for a known city directly in the address string.
+    const cityFromAddress = getCityFromAddress(normalized);
+    if (cityFromAddress !== 'Город не определен') {
+        const region = REGION_BY_CITY_WITH_INDEXES[cityFromAddress.toLowerCase()].region;
+        return {
+            city: cityFromAddress,
+            region: standardizeRegion(region),
+        };
     }
 
-    // --- Step 5: Final Region Resolution ---
-    if (!finalRegion) {
-        // If we determined a city but still lack a region (e.g., distributor was empty),
-        // look up the region from the city map.
-        if (finalCity) {
-            const cityInfo = REGION_BY_CITY_WITH_INDEXES[finalCity.toLowerCase()];
-            if (cityInfo) {
-                finalRegion = cityInfo.region;
-            }
-        }
-        // As a last resort, scan the address for region keywords if we still don't have a region.
-        if (!finalRegion) {
-             finalRegion = findRegionByKeyword(normalized);
-        }
+    // C. If the address is ambiguous (no specific settlement or known city), GUARANTEED fallback to distributor context.
+    if (distributorCity) {
+        return {
+            city: capitalize(distributorCity),
+            region: standardizeRegion(distributorRegion),
+        };
     }
 
+    // D. Last resort: if no distributor context, try to find a region by keyword in the address.
+    const regionFromKeyword = findRegionByKeyword(normalized);
     return {
-        city: finalCity || 'Город не определен',
-        region: standardizeRegion(finalRegion),
+        city: 'Город не определен',
+        region: standardizeRegion(regionFromKeyword),
     };
 }
