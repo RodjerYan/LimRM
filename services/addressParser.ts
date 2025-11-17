@@ -99,8 +99,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // Step 1: Remove city prefixes like 'г.', 'город', etc. BEFORE other normalization.
     // This is the key fix to correctly identify city names that are followed by these prefixes.
     let normalized = lowerAddress
-        .replace(/\b(г|город|city)\.?\s*/g, '') // Handles "г.", "г ", "город " etc. and removes them.
-        .replace(/[,;.]/g, ' ') // Replace punctuation with space
+        .replace(/\b(г|город|city)\.?\s+/g, ' ') // Removes "г. ", "г ", "город "
+        .replace(/[,;.]/g, ' ') // Remove common punctuation
         .replace(/\s+/g, ' ')   // Collapse multiple spaces
         .trim();
 

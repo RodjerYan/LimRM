@@ -175,7 +175,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
         
-        // --- ROBUST ADDRESS CLEANING LOGIC ---
+        // --- NEW, ROBUST ADDRESS CLEANING LOGIC ---
+        // This logic detects if an address string starts with a common "garbage" city/prefix
+        // but also contains keywords for a completely different region later in the string.
+        // If so, it strips the garbage prefix. This handles dirty data like
+        // "Нижний Новгород, Республика Беларусь, Брест..." and "Нижний Новгород, Башкортостан...".
         const lowerAddress = clientAddress.toLowerCase().trim();
         for (const prefix of Object.keys(GARBAGE_PREFIXES_MAP)) {
             if (lowerAddress.startsWith(prefix + ',') || lowerAddress.startsWith(prefix + ' ')) {
@@ -191,32 +195,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     const match = clientAddress.match(new RegExp(`^${prefix}[, ]\\s*`, 'i'));
                     if (match) {
                         clientAddress = clientAddress.substring(match[0].length).trim();
-                        break; 
+                        break; // Prefix removed, stop checking for others.
                     }
                 }
             }
         }
-        
-        // --- FIX: Logic to add city from Distributor column if missing ---
-        const initialParse = parseRussianAddress(clientAddress);
-        const isAddressItselfACity = REGION_BY_CITY_WITH_INDEXES[clientAddress.toLowerCase().trim()];
+        // --- END ADDRESS CLEANING LOGIC ---
 
-        if (initialParse.city === 'Город не определен' && !isAddressItselfACity) {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            if (distributor) {
-                const match = distributor.match(/\(([^)]+)\)/); // Extracts text from parentheses
-                if (match && match[1]) {
-                    const cityFromDistributor = match[1].trim();
-                    const lowerCityFromDist = cityFromDistributor.toLowerCase();
-                    if (REGION_BY_CITY_WITH_INDEXES[lowerCityFromDist]) {
-                        if (!clientAddress.toLowerCase().includes(lowerCityFromDist)) {
-                            clientAddress = `${cityFromDistributor}, ${clientAddress}`;
-                        }
-                    }
-                }
-            }
-        }
-        
         const finalClientAddress = clientAddress;
         const normalizedAddress = normalizeAddress(finalClientAddress);
         
@@ -264,6 +249,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 tempLat = Math.max(-90, Math.min(90, tempLat));
         
                 // Rule 3: Correct obviously wrong longitudes for the Russia/CIS context.
+                // If latitude is in the northern hemisphere (typical for this app's data) and longitude is negative,
+                // it's almost certainly a data entry error (a stray minus sign).
                 if (tempLat > 40 && tempLon < 0) {
                     tempLon = Math.abs(tempLon);
                 }
@@ -344,6 +331,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     // --- BACKGROUND TASKS ---
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
+        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
         for (const rmName of newAddressRMs) {
             try {
@@ -354,12 +342,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     const geocodeRMs = Object.keys(addressesToGeocode);
     if (geocodeRMs.length > 0) {
+        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
         for (const rmName of geocodeRMs) {
             const updates: { address: string, lat: number, lon: number }[] = [];
             const addresses = addressesToGeocode[rmName];
             for (let i = 0; i < addresses.length; i++) {
                 const address = addresses[i];
+                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
                 
                 let coords: { lat: number, lon: number } | null = null;
@@ -377,6 +367,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
 
             if (updates.length > 0) {
+                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
                 try {
                      await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
@@ -384,6 +375,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         }
     }
+    // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
