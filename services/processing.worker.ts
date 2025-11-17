@@ -160,6 +160,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
 
+    // Memoize the sorted list of cities to avoid re-computing it on every loop.
+    const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
+
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
@@ -169,7 +172,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
         
-        // --- NEW: Enhance address with city from distributor if missing ---
+        // --- NEW/IMPROVED LOGIC: Enhance address with city from distributor only if truly missing ---
         let finalClientAddress = clientAddress;
         const parsedForCityCheck = parseRussianAddress(clientAddress);
 
@@ -179,14 +182,24 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 const cityMatch = distributor.match(/\(([^)]+)\)/);
                 if (cityMatch && cityMatch[1]) {
                     const cityFromDistributor = cityMatch[1].trim();
-                    // Check if the extracted city is a known city to avoid prepending garbage
-                    if (REGION_BY_CITY_WITH_INDEXES[cityFromDistributor.toLowerCase()]) {
+
+                    // Failsafe check: Does the original address already contain ANY known city?
+                    // This prevents prepending a distributor city if our parser just missed the real one.
+                    const lowerClientAddress = clientAddress.toLowerCase();
+                    const addressAlreadyHasCity = CITIES_SORTED_BY_LENGTH.some(city => {
+                        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                        const regex = new RegExp(`\\b${escapedCity}\\b`);
+                        return regex.test(lowerClientAddress);
+                    });
+
+                    // Only prepend if the address truly lacks a city and the distributor city is a known one.
+                    if (!addressAlreadyHasCity && REGION_BY_CITY_WITH_INDEXES[cityFromDistributor.toLowerCase()]) {
                          finalClientAddress = `${cityFromDistributor}, ${clientAddress}`;
                     }
                 }
             }
         }
-        // --- END NEW ---
+        // --- END IMPROVED LOGIC ---
 
         const normalizedAddress = normalizeAddress(finalClientAddress);
         
@@ -269,9 +282,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
-    const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
+    const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
