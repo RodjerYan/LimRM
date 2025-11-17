@@ -159,71 +159,44 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
-    
-    const GARBAGE_PREFIXES_MAP: Record<string, string> = {
-        'нижний новгород': 'Нижегородская область',
-        'москва': 'Москва',
-        'санкт-петербург': 'Санкт-Петербург'
-    };
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        let clientAddress = findAddressInRow(row);
+        const initialClientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
 
-        if (!clientAddress || !rm) continue;
+        if (!initialClientAddress || !rm) continue;
         
-        // --- ROBUST ADDRESS CLEANING LOGIC ---
-        const lowerAddress = clientAddress.toLowerCase().trim();
-        for (const prefix of Object.keys(GARBAGE_PREFIXES_MAP)) {
-            if (lowerAddress.startsWith(prefix + ',') || lowerAddress.startsWith(prefix + ' ')) {
-                const garbageRegion = GARBAGE_PREFIXES_MAP[prefix];
-                const restOfString = lowerAddress.substring(prefix.length);
-
-                const containsOtherRegion = Object.keys(REGION_KEYWORD_MAP).some(key => {
-                    const regionInRest = REGION_KEYWORD_MAP[key];
-                    return restOfString.includes(key) && regionInRest !== garbageRegion;
-                });
-
-                if (containsOtherRegion) {
-                    const match = clientAddress.match(new RegExp(`^${prefix}[, ]\\s*`, 'i'));
-                    if (match) {
-                        clientAddress = clientAddress.substring(match[0].length).trim();
-                        break; 
-                    }
-                }
-            }
-        }
+        // --- Final, Simplified Address Processing Logic ---
+        // This logic directly implements the core requirement:
+        // ONLY add the city from the distributor column if the address column itself does not contain a city.
         
-        // --- FIX: Logic to add city from Distributor column if missing ---
-        const initialParse = parseRussianAddress(clientAddress);
-        const isAddressItselfACity = REGION_BY_CITY_WITH_INDEXES[clientAddress.toLowerCase().trim()];
+        let finalAddress = initialClientAddress;
+        let finalParsedAddress = parseRussianAddress(finalAddress);
 
-        if (initialParse.city === 'Город не определен' && !isAddressItselfACity) {
+        // Check if the parser failed to find a city in the original address.
+        if (finalParsedAddress.city === 'Город не определен') {
             const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
             if (distributor) {
-                const match = distributor.match(/\(([^)]+)\)/); // Extracts text from parentheses
+                const match = distributor.match(/\(([^)]+)\)/); // Extract text from parentheses
                 if (match && match[1]) {
-                    const rawCityFromDist = match[1];
-                    // Clean the extracted city name (remove prefixes like 'г.', trim whitespace)
-                    const cleanedCityFromDist = rawCityFromDist.toLowerCase().replace(/\b(г|город)\.?\s*/g, '').trim();
+                    const cityFromDistRaw = match[1];
+                    const cityFromDistClean = cityFromDistRaw.toLowerCase().replace(/\b(г|город)\.?\s*/g, '').trim();
 
-                    if (cleanedCityFromDist && REGION_BY_CITY_WITH_INDEXES[cleanedCityFromDist]) {
-                        // Use the cleaned city name for the check, but the original (minus prefix) for prepending to preserve case.
-                        const cityToPrepend = rawCityFromDist.replace(/\b(г|город)\.?\s*/gi, '').trim();
+                    if (cityFromDistClean && REGION_BY_CITY_WITH_INDEXES[cityFromDistClean]) {
+                        const cityToPrepend = cityFromDistRaw.replace(/\b(г|город)\.?\s*/gi, '').trim();
+                        finalAddress = `${cityToPrepend}, ${finalAddress}`;
                         
-                        if (!clientAddress.toLowerCase().includes(cleanedCityFromDist)) {
-                            clientAddress = `${cityToPrepend}, ${clientAddress}`;
-                        }
+                        // Re-parse the address now that it's been enriched.
+                        finalParsedAddress = parseRussianAddress(finalAddress);
                     }
                 }
             }
         }
         
-        const finalClientAddress = clientAddress;
-        const normalizedAddress = normalizeAddress(finalClientAddress);
+        const normalizedAddress = normalizeAddress(finalAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {
@@ -239,8 +212,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                if (!newAddressesToCache[rm].some(item => item.address === finalClientAddress)) {
-                    newAddressesToCache[rm].push({ address: finalClientAddress });
+                if (!newAddressesToCache[rm].some(item => item.address === finalAddress)) {
+                    newAddressesToCache[rm].push({ address: finalAddress });
                 }
 
                 const okbEntry = okbCoordIndex.get(normalizedAddress);
@@ -249,8 +222,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lon = okbEntry.lon;
                 } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    if (!addressesToGeocode[rm].includes(finalClientAddress)) {
-                        addressesToGeocode[rm].push(finalClientAddress);
+                    if (!addressesToGeocode[rm].includes(finalAddress)) {
+                        addressesToGeocode[rm].push(finalAddress);
                     }
                 }
             }
@@ -277,16 +250,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lon = tempLon;
             }
 
-            const parsedAddress = parseRussianAddress(finalClientAddress);
-            const region = parsedAddress.region;
-            const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
+            const region = finalParsedAddress.region;
+            const groupName = (finalParsedAddress.city !== 'Город не определен') ? finalParsedAddress.city : region;
 
             uniquePlottableClients.set(normalizedAddress, {
                 key: normalizedAddress,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: finalClientAddress,
+                address: finalAddress,
                 city: groupName,
                 region, rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -295,9 +267,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(finalClientAddress);
-        const regionForAggregation = parsedForAggregation.region;
-        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
+        const regionForAggregation = finalParsedAddress.region;
+        const groupNameForAggregation = (finalParsedAddress.city !== 'Город не определен') ? finalParsedAddress.city : regionForAggregation;
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
@@ -311,122 +282,81 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             };
         }
         aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(finalClientAddress || clientName);
+        aggregatedData[key].clients.add(finalAddress || clientName);
 
         if (hasPotentialColumn) {
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(potential)) aggregatedData[key].potential += potential;
+            if (!isNaN(potential)) {
+                aggregatedData[key].potential += potential;
+            }
         }
         
-        if (i > 0 && i % 5000 === 0) {
-            const percentage = 10 + Math.round((i / jsonData.length) * 85);
-            postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
+        if ((i + 1) % Math.floor(jsonData.length / 80) === 0) {
+            await sleep(1);
+            postMessage({ type: 'progress', payload: { percentage: 10 + (i / jsonData.length) * 80, message: 'Анализ данных...' } });
         }
     }
-    
-    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
+
+    postMessage({ type: 'progress', payload: { percentage: 90, message: 'Финализация...' } });
+
+    // Final calculations
+    const finalData: AggregatedDataRow[] = Object.values(aggregatedData).map(item => {
+        const potential = item.potential > 0 ? item.potential : item.fact * 2;
+        const growthPotential = Math.max(0, potential - item.fact);
+        const growthPercentage = potential > 0 ? (growthPotential / potential) * 100 : 0;
+        
+        const existingClientsSet = new Set(Array.from(item.clients).map(c => normalizeAddress(c)));
+        const potentialClients = findPotentialClients(item.region, existingClientsSet, okbData);
+
+        return {
+            ...item,
+            potential,
+            growthPotential,
+            growthPercentage,
+            potentialClients,
+            clients: Array.from(item.clients),
+        };
+    });
+
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
-    const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
-    const finalData: AggregatedDataRow[] = [];
-    for (const item of Object.values(aggregatedData)) {
-        let potential = item.potential;
-        if (!hasPotentialColumn) potential = item.fact * 1.15;
-        else if (potential < item.fact) potential = item.fact;
-        
-        finalData.push({
-            ...item, potential,
-            growthPotential: Math.max(0, potential - item.fact),
-            growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
-            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
-            clients: Array.from(item.clients) 
-        });
-    }
-
-    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients };
+    const resultPayload: WorkerResultPayload = {
+        aggregatedData: finalData,
+        plottableActiveClients: plottableActiveClients,
+    };
+    
     postMessage({ type: 'result', payload: resultPayload });
-
-    // --- BACKGROUND TASKS ---
-    const newAddressRMs = Object.keys(newAddressesToCache);
-    if (newAddressRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
-        for (const rmName of newAddressRMs) {
-            try {
-                await fetch('/api/add-to-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, rows: newAddressesToCache[rmName] }) });
-            } catch (e) { console.error(`Failed to add to cache for ${rmName}:`, e); }
-        }
-    }
-
-    const geocodeRMs = Object.keys(addressesToGeocode);
-    if (geocodeRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
-        for (const rmName of geocodeRMs) {
-            const updates: { address: string, lat: number, lon: number }[] = [];
-            const addresses = addressesToGeocode[rmName];
-            for (let i = 0; i < addresses.length; i++) {
-                const address = addresses[i];
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
-                
-                let coords: { lat: number, lon: number } | null = null;
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
-                        if (response.ok) {
-                            coords = await response.json();
-                            break;
-                        }
-                    } catch (e) { console.error(`Geocode attempt ${attempt} failed for ${address}:`, e); }
-                    if (attempt < 3) await sleep(5000);
-                }
-                if (coords) updates.push({ address, ...coords });
-            }
-
-            if (updates.length > 0) {
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
-                try {
-                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
-                } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
-            }
-        }
-    }
-    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
 
-async function processXlsx(file: File, args: CommonProcessArgs) {
-    args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
-    const data = await file.arrayBuffer();
-    const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
+async function processXlsx(file: File, commonArgs: CommonProcessArgs) {
+    commonArgs.postMessage({ type: 'progress', payload: { percentage: 1, message: 'Чтение файла XLSX...' } });
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = xlsx.read(arrayBuffer, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
-    const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
-    
-    await processFile(jsonData, headers, args);
+    const headers: string[] = xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[];
+    const jsonData = xlsx.utils.sheet_to_json(worksheet);
+    await processFile(jsonData, headers, commonArgs);
 }
 
-
-async function processCsv(file: File, args: CommonProcessArgs) {
-    args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
+async function processCsv(file: File, commonArgs: CommonProcessArgs) {
+    commonArgs.postMessage({ type: 'progress', payload: { percentage: 1, message: 'Чтение файла CSV...' } });
     
-    const parsePromise = new Promise<{ data: any[], meta: ParseMeta }>((resolve, reject) => {
+    // FIX: Explicitly type the Promise as Promise<void> to match the signature of the `resolve` function,
+    // which is called without arguments, thus resolving a type mismatch error.
+    return new Promise<void>((resolve, reject) => {
         PapaParse(file, {
             header: true,
             skipEmptyLines: true,
-            complete: (results: ParseResult<any>) => {
-                if (results.errors.length > 0) console.warn('CSV parsing errors:', results.errors);
-                resolve({ data: results.data, meta: results.meta });
+            complete: async (results: ParseResult<any>, file: File) => {
+                const headers = results.meta.fields || [];
+                await processFile(results.data, headers, commonArgs);
+                resolve();
             },
-            error: (error: Error) => reject(error)
+            error: (error: Error, file: File) => {
+                reject(error);
+            }
         });
     });
-
-    try {
-        const { data: jsonData, meta } = await parsePromise;
-        if (!jsonData || jsonData.length === 0) throw new Error("CSV файл пуст или не удалось его прочитать.");
-        const headers = meta.fields || Object.keys(jsonData[0] || {});
-        await processFile(jsonData, headers, args);
-    } catch (error) {
-        throw new Error(`Failed to parse CSV file: ${(error as Error).message}`);
-    }
 }

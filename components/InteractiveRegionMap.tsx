@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-// FIX: Import ReactDOM from 'react-dom/client' to use it in a module context.
-import ReactDOM from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
@@ -239,7 +238,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // Render the React legend component into the container created by Leaflet
             const legendContainer = legend.getContainer();
             if(legendContainer){
-                 const root = (ReactDOM as any).createRoot(legendContainer);
+                 const root = createRoot(legendContainer);
                  root.render(<MapLegend />);
             }
 
