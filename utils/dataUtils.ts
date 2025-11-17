@@ -107,41 +107,6 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 
 /**
- * Normalizes a Regional Manager's name to create a consistent key for aggregation and sheet naming.
- * This function strips common noise like legal forms (ИП, ООО), content in parentheses, and extra words,
- * preventing data fragmentation and unwanted side-effects like the creation of hundreds of Google Sheets.
- * @param rm The raw RM name string from the data file.
- * @returns A cleaned, shortened, and sanitized string suitable for use as a key or sheet name.
- */
-export const normalizeRMName = (rm: string | null | undefined): string => {
-    if (!rm) return 'Неопределенный РМ';
-
-    let normalized = rm
-        .replace(/\(.*\)/g, '')   // Remove content in parentheses
-        .replace(/\[.*\]/g, '')   // Remove content in brackets
-        .replace(/"|«|»/g, '')    // Remove quotes
-        .replace(/\b(ип|ооо|зао|тд|тов|td)\b/gi, '') // Remove legal forms
-        .replace(/[.,;:]/g, ' ')  // Replace punctuation with space
-        .trim();
-
-    // Take up to the first 3 significant parts
-    const parts = normalized.split(/\s+/).filter(Boolean);
-    let result = parts.slice(0, 3).join(' ');
-
-    // Google Sheets doesn't like certain characters in sheet names
-    result = result.replace(/[*:/\\?\[\]']/g, '');
-
-    // Trim to a reasonable length for sheet names
-    if (result.length > 50) {
-        result = result.substring(0, 50).trim();
-    }
-    
-    // If after all cleaning the result is empty, return a default value
-    return result || 'Неопределенный РМ';
-};
-
-
-/**
  * A robust helper function to find an address value within a data row.
  * It searches for keys in a prioritized order, using both exact and partial matches.
  * This is the centralized, single source of truth for finding an address.

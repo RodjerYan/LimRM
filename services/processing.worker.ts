@@ -11,7 +11,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { normalizeRMName, normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -171,10 +171,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         let clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
-        const rawRm = findValueInRow(row, ['рм']);
-        const rm = normalizeRMName(rawRm);
+        const rm = findValueInRow(row, ['рм']);
 
-        if (!clientAddress || !rm || rm === 'Неопределенный РМ') continue;
+        if (!clientAddress || !rm) continue;
         
         // --- NEW, ROBUST ADDRESS CLEANING LOGIC ---
         // This logic detects if an address string starts with a common "garbage" city/prefix
