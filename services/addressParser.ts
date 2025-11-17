@@ -86,18 +86,25 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
+    // Initial cleaning: convert to lowercase, handle 'ё'.
     const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-    let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    // Step 1: Remove city prefixes like 'г.', 'город', etc. BEFORE other normalization.
+    // This is the key fix to correctly identify city names that are followed by these prefixes.
+    let normalized = lowerAddress
+        .replace(/\b(г|город|city)\.?\s+/g, ' ') // Removes "г. ", "г ", "город "
+        .replace(/[,;.]/g, ' ') // Remove common punctuation
+        .replace(/\s+/g, ' ')   // Collapse multiple spaces
+        .trim();
 
-    // --- Step 1: Normalization using aliases for common typos ---
+    // Step 2: Normalization using aliases for common typos
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         if (normalized.includes(alias)) {
             normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
 
-    // --- Step 2: Determine Region and City ---
+    // Step 3: Determine Region and City from the cleaned string
     const region = findRegionByKeyword(normalized);
     const city = getCityFromAddress(normalized);
 
