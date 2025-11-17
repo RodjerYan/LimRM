@@ -259,7 +259,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lon = tempLon;
             }
 
-            const parsedAddress = parseRussianAddress(finalClientAddress);
+            const parsedAddress = parseRussianAddress(row, finalClientAddress);
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -277,7 +277,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(finalClientAddress);
+        const parsedForAggregation = parseRussianAddress(row, finalClientAddress);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 

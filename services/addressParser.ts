@@ -20,6 +20,24 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
+ * A robust helper function to find a value within a data row by checking for keywords.
+ * @param row The data row object.
+ * @param keywords An array of keywords to search for in column headers.
+ * @returns The found value string or an empty string.
+ */
+const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+    if (!row) return '';
+    const rowKeys = Object.keys(row);
+    for (const keyword of keywords) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        if (foundKey && row[foundKey]) {
+            return String(row[foundKey]);
+        }
+    }
+    return '';
+};
+
+/**
  * Finds the most likely city name in a potentially messy address string.
  * If multiple known cities are present, it uses a heuristic that the city mentioned
  * last is the most specific and correct one.
@@ -84,12 +102,27 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
- * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
- * @param address The raw address string.
+ * Parses a Russian address string to extract the region and city.
+ * It now includes a fallback mechanism: if the city cannot be determined from the address,
+ * it attempts to extract it from a "Дистрибьютер" column in the row data.
+ * @param row The full data row object.
+ * @param address The raw address string from the row.
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
+export function parseRussianAddress(row: { [key: string]: any }, address: string): ParsedAddress {
+    // If the address string is empty, try the distributor fallback immediately.
     if (!address?.trim()) {
+        const distributorValue = findValueInRow(row, ['дистрибьютер', 'дистрибьютор']);
+        if (distributorValue) {
+            const match = distributorValue.match(/\(([^)]+)\)/);
+            if (match && match[1]) {
+                const cityFromDistributor = match[1].trim().toLowerCase();
+                const knownCityEntry = REGION_BY_CITY_WITH_INDEXES[cityFromDistributor];
+                if (knownCityEntry) {
+                    return { region: knownCityEntry.region, city: capitalize(cityFromDistributor) };
+                }
+            }
+        }
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
@@ -97,11 +130,10 @@ export function parseRussianAddress(address: string): ParsedAddress {
     const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
     
     // Step 1: Remove city prefixes like 'г.', 'город', etc. BEFORE other normalization.
-    // This is the key fix to correctly identify city names that are followed by these prefixes.
     let normalized = lowerAddress
-        .replace(/\b(г|город|city)\.?\s+/g, ' ') // Removes "г. ", "г ", "город "
-        .replace(/[,;.]/g, ' ') // Remove common punctuation
-        .replace(/\s+/g, ' ')   // Collapse multiple spaces
+        .replace(/\b(г|город|city)\.?\s+/g, ' ')
+        .replace(/[,;.]/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 
     // Step 2: Normalization using aliases for common typos
@@ -111,9 +143,39 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // Step 3: Determine Region and City from the cleaned string
-    const region = findRegionByKeyword(normalized);
-    const city = getCityFromAddress(normalized);
+    // Step 3: Determine Region and City from the cleaned address string
+    let region = findRegionByKeyword(normalized);
+    let city = getCityFromAddress(normalized);
+
+    // --- NEW FALLBACK LOGIC ---
+    // If city or region is still not found, check the distributor column.
+    if (city === 'Город не определен' || !region) {
+        const distributorValue = findValueInRow(row, ['дистрибьютер', 'дистрибьютор']);
+        if (distributorValue) {
+            const match = distributorValue.match(/\(([^)]+)\)/);
+            if (match && match[1]) {
+                const cityFromDistributor = match[1].trim().toLowerCase();
+                const knownCityEntry = REGION_BY_CITY_WITH_INDEXES[cityFromDistributor];
+                
+                if (knownCityEntry) {
+                    if (city === 'Город не определен') {
+                        city = capitalize(cityFromDistributor);
+                    }
+                    if (!region) {
+                        region = knownCityEntry.region;
+                    }
+                }
+            }
+        }
+    }
+
+    // If region is *still* not defined, but we have a city, try one last time to look up the region from the city.
+    if (!region && city !== 'Город не определен') {
+        const knownCityEntry = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
+        if (knownCityEntry) {
+            region = knownCityEntry.region;
+        }
+    }
 
     return {
         region: standardizeRegion(region),
