@@ -10,7 +10,7 @@ import {
     CoordsCache 
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion } from '../utils/addressMappings';
+import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
@@ -159,48 +159,50 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
-
-    // Memoize the sorted list of cities to avoid re-computing it on every loop.
-    const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
+    
+    const GARBAGE_PREFIXES_MAP: Record<string, string> = {
+        'нижний новгород': 'Нижегородская область',
+        'москва': 'Москва',
+        'санкт-петербург': 'Санкт-Петербург'
+    };
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        const clientAddress = findAddressInRow(row);
+        let clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
 
         if (!clientAddress || !rm) continue;
         
-        // --- NEW/IMPROVED LOGIC: Enhance address with city from distributor only if truly missing ---
-        let finalClientAddress = clientAddress;
-        const parsedForCityCheck = parseRussianAddress(clientAddress);
+        // --- NEW, ROBUST ADDRESS CLEANING LOGIC ---
+        // This logic detects if an address string starts with a common "garbage" city/prefix
+        // but also contains keywords for a completely different region later in the string.
+        // If so, it strips the garbage prefix. This handles dirty data like
+        // "Нижний Новгород, Республика Беларусь, Брест..." and "Нижний Новгород, Башкортостан...".
+        const lowerAddress = clientAddress.toLowerCase().trim();
+        for (const prefix of Object.keys(GARBAGE_PREFIXES_MAP)) {
+            if (lowerAddress.startsWith(prefix + ',') || lowerAddress.startsWith(prefix + ' ')) {
+                const garbageRegion = GARBAGE_PREFIXES_MAP[prefix];
+                const restOfString = lowerAddress.substring(prefix.length);
 
-        if (parsedForCityCheck.city === 'Город не определен') {
-            const distributor = findValueInRow(row, ['дистрибьютор']);
-            if (distributor) {
-                const cityMatch = distributor.match(/\(([^)]+)\)/);
-                if (cityMatch && cityMatch[1]) {
-                    const cityFromDistributor = cityMatch[1].trim();
+                const containsOtherRegion = Object.keys(REGION_KEYWORD_MAP).some(key => {
+                    const regionInRest = REGION_KEYWORD_MAP[key];
+                    return restOfString.includes(key) && regionInRest !== garbageRegion;
+                });
 
-                    // Failsafe check: Does the original address already contain ANY known city?
-                    // This prevents prepending a distributor city if our parser just missed the real one.
-                    const lowerClientAddress = clientAddress.toLowerCase();
-                    const addressAlreadyHasCity = CITIES_SORTED_BY_LENGTH.some(city => {
-                        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-                        const regex = new RegExp(`\\b${escapedCity}\\b`);
-                        return regex.test(lowerClientAddress);
-                    });
-
-                    // Only prepend if the address truly lacks a city and the distributor city is a known one.
-                    if (!addressAlreadyHasCity && REGION_BY_CITY_WITH_INDEXES[cityFromDistributor.toLowerCase()]) {
-                         finalClientAddress = `${cityFromDistributor}, ${clientAddress}`;
+                if (containsOtherRegion) {
+                    const match = clientAddress.match(new RegExp(`^${prefix}[, ]\\s*`, 'i'));
+                    if (match) {
+                        clientAddress = clientAddress.substring(match[0].length).trim();
+                        break; // Prefix removed, stop checking for others.
                     }
                 }
             }
         }
-        // --- END IMPROVED LOGIC ---
+        // --- END ADDRESS CLEANING LOGIC ---
 
+        const finalClientAddress = clientAddress;
         const normalizedAddress = normalizeAddress(finalClientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---

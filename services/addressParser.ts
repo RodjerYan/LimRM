@@ -57,23 +57,30 @@ function getCityFromAddress(normalizedAddress: string): string {
 
 /**
  * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
- * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
+ * It now finds all matches and returns the one that appears latest in the string, making it more robust against garbage data at the beginning of the address.
  * @param normalizedAddress The pre-processed, lowercased address string.
  * @returns The standardized region name or null if no match is found.
  */
 function findRegionByKeyword(normalizedAddress: string): string | null {
     // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
     const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    let lastMatch: { region: string, index: number } | null = null;
+
     for (const key of sortedKeys) {
         // This regex ensures we match the key as a whole word/phrase.
         const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
+        // 'i' for case-insensitive, 'g' to find all occurrences
+        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'gi');
 
-        if (regex.test(normalizedAddress)) {
-            return REGION_KEYWORD_MAP[key];
+        let match;
+        while ((match = regex.exec(normalizedAddress)) !== null) {
+            // If we find a match, check if its index is greater than the last one found.
+            if (!lastMatch || match.index > lastMatch.index) {
+                lastMatch = { region: REGION_KEYWORD_MAP[key], index: match.index };
+            }
         }
     }
-    return null;
+    return lastMatch ? lastMatch.region : null;
 }
 
 /**
