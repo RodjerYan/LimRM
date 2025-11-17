@@ -233,13 +233,28 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             }
 
-            // FIX: Sanitize longitude to prevent map wrapping issues.
-            // Most of the app's data is in the Eastern Hemisphere. A negative longitude for a Russian/CIS
-            // address is almost always a data entry error (a stray minus sign). This simple correction
-            // prevents Leaflet's worldCopyJump from placing single markers on a separate world map,
-            // which also fixes the excessive zoom-out issue caused by fitting bounds to distant points.
-            if (lon && lon < 0) {
-                lon = Math.abs(lon);
+            // --- NEW, ROBUST COORDINATE VALIDATION AND CORRECTION ---
+            if (typeof lat !== 'undefined' && typeof lon !== 'undefined') {
+                let tempLat = lat;
+                let tempLon = lon;
+        
+                // Rule 1: Check for swapped lat/lon. An invalid latitude is the best clue.
+                if (Math.abs(tempLat) > 90 && Math.abs(tempLon) <= 180) {
+                    [tempLat, tempLon] = [tempLon, tempLat]; // Swap them
+                }
+                
+                // Rule 2: Clamp latitude to the valid [-90, 90] range as a failsafe.
+                tempLat = Math.max(-90, Math.min(90, tempLat));
+        
+                // Rule 3: Correct obviously wrong longitudes for the Russia/CIS context.
+                // If latitude is in the northern hemisphere (typical for this app's data) and longitude is negative,
+                // it's almost certainly a data entry error (a stray minus sign).
+                if (tempLat > 40 && tempLon < 0) {
+                    tempLon = Math.abs(tempLon);
+                }
+        
+                lat = tempLat;
+                lon = tempLon;
             }
 
             const parsedAddress = parseRussianAddress(finalClientAddress);

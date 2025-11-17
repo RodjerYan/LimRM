@@ -20,21 +20,35 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Finds a city name within a normalized address string.
+ * Finds the most likely city name in a potentially messy address string.
+ * If multiple known cities are present, it uses a heuristic that the city mentioned
+ * last is the most specific and correct one.
  * @param normalizedAddress A pre-processed, lowercased address string.
  * @returns The capitalized city name or a default string if not found.
  */
 function getCityFromAddress(normalizedAddress: string): string {
     if (!normalizedAddress) return 'Город не определен';
 
-    // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
+    let lastMatch: { city: string, index: number } | null = null;
+
+    // CITIES_SORTED_BY_LENGTH is crucial. It ensures we check "Нижний Новгород" before "Новгород",
+    // preventing a partial match from incorrectly taking precedence.
     for (const city of CITIES_SORTED_BY_LENGTH) {
-        // Use regex with word boundaries to ensure we're matching the whole city name.
         const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`\\b${escapedCity}\\b`);
-        if (regex.test(normalizedAddress)) {
-            return capitalize(city);
+        const regex = new RegExp(`\\b${escapedCity}\\b`, 'g');
+        
+        let match;
+        while ((match = regex.exec(normalizedAddress)) !== null) {
+            // If we find a match, we check if it's located later in the string
+            // than our currently stored `lastMatch`. This helps resolve ambiguity.
+            if (!lastMatch || match.index > lastMatch.index) {
+                lastMatch = { city, index: match.index };
+            }
         }
+    }
+
+    if (lastMatch) {
+        return capitalize(lastMatch.city);
     }
     
     return 'Город не определен';
