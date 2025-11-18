@@ -195,9 +195,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
         if (!finalRegion) {
-            const normalizedAddressForKeyword = clientAddress.toLowerCase();
+            // FIX: Normalize the address string to handle punctuation and ensure whole-word matching.
+            // This prevents parts of words (like "ло" in "суеркулова") from being incorrectly identified as a region code.
+            const normalizedForKeyword = ` ${clientAddress.toLowerCase().replace(/[,.]/g, ' ').replace(/\s+/g, ' ')} `;
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                if (normalizedAddressForKeyword.includes(keyword)) {
+                // FIX: Match whole words by padding with spaces.
+                if (normalizedForKeyword.includes(` ${keyword} `)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
                 }
