@@ -169,17 +169,25 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!clientAddress && !distributor) continue;
         if (!rm) continue;
 
-        const normalizedAddress = normalizeAddress(clientAddress || '');
+        // FIX: Create a unique key. If address exists, normalize it.
+        // If not, create a fallback unique key to prevent collisions and data loss.
+        const uniqueKey = clientAddress
+            ? normalizeAddress(clientAddress)
+            : `__no_address_${distributor}_${clientName}_${i}`;
         
-        // --- Logic for plottable points (run only once per unique address) ---
-        if (!uniquePlottableClients.has(normalizedAddress)) {
+        // --- Logic for plottable points (run only once per unique key) ---
+        if (!uniquePlottableClients.has(uniqueKey)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
             
+            // FIX: Pass the original `clientAddress` (which can be null) to parseAddress.
             const parsedAddress = parseAddress(clientAddress, distributor);
             
-            const cacheEntry = cacheAddressMap.get(normalizedAddress);
+            // Only perform cache lookups if a real address string exists.
+            const cacheLookupKey = clientAddress ? normalizeAddress(clientAddress) : null;
+            const cacheEntry = cacheLookupKey ? cacheAddressMap.get(cacheLookupKey) : undefined;
+            
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
@@ -187,14 +195,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 // Case 2: Address is not in cache, or is in cache but without coordinates.
-                // We will not look for coordinates elsewhere.
-                // We just ensure the address is queued to be written to the АКБ sheet.
+                // Queue the address to be written to the АКБ sheet if it exists.
                 // The App Script in the sheet will handle geocoding.
-                if (clientAddress && !newAddressesToCache[rm]) {
-                    newAddressesToCache[rm] = [];
-                }
-                if (clientAddress && !newAddressesToCache[rm].some(item => item.address === clientAddress)) {
-                    newAddressesToCache[rm].push({ address: clientAddress });
+                if (clientAddress) {
+                    if (!newAddressesToCache[rm]) {
+                        newAddressesToCache[rm] = [];
+                    }
+                    if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                        newAddressesToCache[rm].push({ address: clientAddress });
+                    }
                 }
                 // lat and lon remain undefined for this session.
             }
@@ -202,8 +211,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
-            uniquePlottableClients.set(normalizedAddress, {
-                key: normalizedAddress,
+            uniquePlottableClients.set(uniqueKey, {
+                key: uniqueKey,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
@@ -216,6 +225,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
+        // FIX: Use the original `clientAddress` (which can be null) for parsing here as well.
         const parsedForAggregation = parseAddress(clientAddress, distributor);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
@@ -248,7 +258,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
     const finalData: AggregatedDataRow[] = [];
-    const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
+    
+    // FIX: Correctly build the set of existing clients for potential client search.
+    // It should only contain actual normalized addresses, not generated fallback keys.
+    const existingClientsForPotentialSearch = new Set<string>();
+    plottableActiveClients.forEach(client => {
+        if (!client.key.startsWith('__no_address_')) {
+            existingClientsForPotentialSearch.add(client.key);
+        }
+    });
 
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
