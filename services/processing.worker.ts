@@ -236,70 +236,64 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         let finalRegion: string | null = null;
         let finalCity: string | null = null;
-        let correctedClientAddress = clientAddress; // Default to original address
+        let correctedClientAddress = clientAddress;
 
-        // --- ADDRESS PROCESSING LOGIC ---
-
-        // STEP 1: Parse the original address first. This is our primary source of truth for existing data.
+        // --- STEP 1: Strict city parse from address ---
         const initialParse = parseRussianAddress(clientAddress);
-        if (initialParse.region !== 'Регион не определен') {
+        if (initialParse && initialParse.region && initialParse.region !== 'Регион не определен') {
             finalRegion = initialParse.region;
-            finalCity = initialParse.city !== 'Город не определен' ? initialParse.city : null;
+            finalCity = initialParse.city && initialParse.city !== 'Город не определен' ? initialParse.city : null;
         }
 
-        // STEP 2: Check if we need to supplement the address with a city from the distributor.
-        // We do this ONLY if our heuristic determines the address is "bare" (lacks a city).
+        // detect whether address already contains a city (heuristic)
         const addressHasCity = addressContainsCity(clientAddress);
-        if (!addressHasCity) {
-            const distributorRaw = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            if (distributorRaw) {
-                const fallbackResult = getRegionFromFallback(distributorRaw);
-                if (fallbackResult) {
-                    // Only use the distributor's info if we don't have it already.
-                    if (!finalRegion) {
-                        finalRegion = fallbackResult.region;
-                    }
-                    if (!finalCity && fallbackResult.city) {
-                        finalCity = fallbackResult.city;
-                        // CRITICAL: Only prepend the city if the original address was bare.
-                        correctedClientAddress = `г. ${finalCity}, ${clientAddress}`;
-                    }
+
+        // --- STEP 2: Fallback to distributor if step 1 fails OR address lacks city ---
+        const distributorRaw = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+        if ((!finalRegion || !finalCity || !addressHasCity) && distributorRaw) {
+            // first try the existing fallback (full metadata lookup)
+            const fallbackResult = getRegionFromFallback(distributorRaw);
+            if (fallbackResult) {
+                if (!finalRegion && fallbackResult.region) finalRegion = fallbackResult.region;
+                if (!finalCity && fallbackResult.city && fallbackResult.city !== 'Город не определен') finalCity = fallbackResult.city;
+            }
+
+            // if fallback didn't give city, attempt to extract from distributor string
+            if (!finalCity) {
+                const extracted = extractCityFromDistributor(distributorRaw);
+                if (extracted) finalCity = extracted;
+            }
+
+            // prepend city to address for consistency ONLY if address doesn't already contain city
+            if (!addressHasCity && finalCity) {
+                // avoid duplicating if address already contains the city substring in another form
+                if (!clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+                    correctedClientAddress = `г. ${finalCity}, ${clientAddress}`;
+                } else {
+                    correctedClientAddress = clientAddress;
                 }
             }
         }
-
-        // STEP 3: Fallback to get region from distributor if it's still not determined.
-        if (!finalRegion) {
-            const distributorRaw = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            if (distributorRaw) {
-                 const fallbackResult = getRegionFromFallback(distributorRaw);
-                 if (fallbackResult) {
-                    finalRegion = fallbackResult.region;
-                    // Don't overwrite city if it was already found in a previous step
-                    if (!finalCity) finalCity = fallbackResult.city;
-                 }
-            }
-        }
         
-        // STEP 4: Last resort - keyword search in the ORIGINAL address if no region found yet.
+        // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                 // FIX: Use word boundaries to prevent partial matches within words (e.g., 'ло' in 'коломенская').
-                const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
-                if (regex.test(normalizedAddressForKeyword)) {
+                // use simple includes: REGION_KEYWORD_MAP keys should be prepared (lowercase)
+                if (normalizedAddressForKeyword.includes(keyword)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
                 }
             }
         }
         
-        // STEP 5: Final standardization and cleanup.
         finalRegion = standardizeRegion(finalRegion);
+        // finalCity can be null if truly not found
+
+        // if region still missing — skip row (can't aggregate without region)
+        if (!finalRegion) continue;
+
         const groupName = finalCity || finalRegion;
-
-        if (!finalRegion || finalRegion === 'Регион не определен') continue; // Skip if we still can't determine a region.
-
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
