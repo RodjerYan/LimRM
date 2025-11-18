@@ -9,7 +9,7 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseAddress } from './addressParser';
+import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -164,30 +164,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
-        const distributor = findValueInRow(row, ['дистрибьютор']);
 
-        if (!clientAddress && !distributor) continue;
-        if (!rm) continue;
+        if (!clientAddress || !rm) continue;
 
-        // FIX: Create a unique key. If address exists, normalize it.
-        // If not, create a fallback unique key to prevent collisions and data loss.
-        const uniqueKey = clientAddress
-            ? normalizeAddress(clientAddress)
-            : `__no_address_${distributor}_${clientName}_${i}`;
+        const normalizedAddress = normalizeAddress(clientAddress);
         
-        // --- Logic for plottable points (run only once per unique key) ---
-        if (!uniquePlottableClients.has(uniqueKey)) {
+        // --- Logic for plottable points (run only once per unique address) ---
+        if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
-            
-            // FIX: Pass the original `clientAddress` (which can be null) to parseAddress.
-            const parsedAddress = parseAddress(clientAddress, distributor);
-            
-            // Only perform cache lookups if a real address string exists.
-            const cacheLookupKey = clientAddress ? normalizeAddress(clientAddress) : null;
-            const cacheEntry = cacheLookupKey ? cacheAddressMap.get(cacheLookupKey) : undefined;
-            
+
+            const cacheEntry = cacheAddressMap.get(normalizedAddress);
+
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
@@ -195,28 +184,28 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 // Case 2: Address is not in cache, or is in cache but without coordinates.
-                // Queue the address to be written to the АКБ sheet if it exists.
+                // We will not look for coordinates elsewhere.
+                // We just ensure the address is queued to be written to the АКБ sheet.
                 // The App Script in the sheet will handle geocoding.
-                if (clientAddress) {
-                    if (!newAddressesToCache[rm]) {
-                        newAddressesToCache[rm] = [];
-                    }
-                    if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
-                        newAddressesToCache[rm].push({ address: clientAddress });
-                    }
+                if (!newAddressesToCache[rm]) {
+                    newAddressesToCache[rm] = [];
+                }
+                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                    newAddressesToCache[rm].push({ address: clientAddress });
                 }
                 // lat and lon remain undefined for this session.
             }
-            
+
+            const parsedAddress = parseRussianAddress(clientAddress);
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
-            uniquePlottableClients.set(uniqueKey, {
-                key: uniqueKey,
+            uniquePlottableClients.set(normalizedAddress, {
+                key: normalizedAddress,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: clientAddress || `(адрес не указан, ${distributor})`,
+                address: clientAddress,
                 city: groupName,
                 region, rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -225,30 +214,18 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        // FIX: Use the original `clientAddress` (which can be null) for parsing here as well.
-        const parsedForAggregation = parseAddress(clientAddress, distributor);
+        const parsedForAggregation = parseRussianAddress(clientAddress);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
-        
-        // CRITICAL FIX: Use a more granular key to prevent incorrect grouping.
-        // The key now includes the client name and group (city/region) to correctly separate entries.
-        const key = `${clientName}-${brand}-${rm}-${groupNameForAggregation}`.toLowerCase();
-        
+
+        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key,
-                clientName: clientName, // Use the actual client name for the group.
-                brand,
-                rm,
-                city: groupNameForAggregation,
-                region: regionForAggregation,
-                fact: 0,
-                potential: 0,
-                growthPotential: 0,
-                growthPercentage: 0,
+                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
+                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };
         }
@@ -269,15 +246,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
     const finalData: AggregatedDataRow[] = [];
-    
-    // FIX: Correctly build the set of existing clients for potential client search.
-    // It should only contain actual normalized addresses, not generated fallback keys.
-    const existingClientsForPotentialSearch = new Set<string>();
-    plottableActiveClients.forEach(client => {
-        if (!client.key.startsWith('__no_address_')) {
-            existingClientsForPotentialSearch.add(client.key);
-        }
-    });
+    const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
