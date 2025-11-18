@@ -21,7 +21,7 @@ import {
     WorkerResultPayload,
     MapPoint,
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './src/utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';

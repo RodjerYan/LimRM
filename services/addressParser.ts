@@ -2,9 +2,9 @@ import {
     standardizeRegion, 
     REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
-} from '../utils/addressMappings';
+} from '../src/utils/addressMappings';
 import { ParsedAddress } from '../types';
-import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
+import { REGION_BY_CITY_WITH_INDEXES } from '../src/utils/regionMap';
 
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
@@ -63,11 +63,11 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
- * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * Internal parsing function for a single, definite address string.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
+function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
@@ -91,4 +91,16 @@ export function parseRussianAddress(address: string): ParsedAddress {
         region: standardizeRegion(region),
         city: city 
     };
+}
+
+/**
+ * Parses address information, using a distributor as a fallback.
+ * This is the main exported function to be used by the worker, resolving the build error.
+ * @param address The primary address string from the data row.
+ * @param distributor The distributor name, used if address is unavailable.
+ * @returns A ParsedAddress object with the determined region and city.
+ */
+export function parseAddress(address: string | null | undefined, distributor: string | null | undefined): ParsedAddress {
+    const addressToParse = address?.trim() || distributor?.trim() || '';
+    return parseRussianAddress(addressToParse);
 }

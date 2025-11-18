@@ -10,8 +10,8 @@ import {
     CoordsCache 
 } from '../types';
 import { parseAddress } from './addressParser';
-import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { standardizeRegion } from '../src/utils/addressMappings';
+import { normalizeAddress, findAddressInRow } from '../src/utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
