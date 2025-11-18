@@ -197,7 +197,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                if (normalizedAddressForKeyword.includes(keyword)) {
+                // FIX: Use a regular expression with word boundaries to prevent partial matches within other words.
+                // This is the definitive fix for the 'Суеркулова' -> 'ло' (Ленинградская область) bug.
+                // The keyword is escaped to handle special characters like hyphens correctly.
+                const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+                if (regex.test(normalizedAddressForKeyword)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
                 }
