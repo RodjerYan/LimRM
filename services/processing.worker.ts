@@ -48,7 +48,8 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        // FIX: Normalize ё to е in header keys for more robust matching (e.g., "дистрибьютёр").
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
@@ -181,7 +182,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         // --- STEP 2: Fallback to distributor if step 1 fails ---
         if (!finalRegion) {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            // FIX: Added 'дистрибьютер' to the keyword list to catch common alternative spellings.
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'дистрибьютер']);
             if (distributor) {
                 const fallbackResult = getRegionFromFallback(distributor);
                 if (fallbackResult) {

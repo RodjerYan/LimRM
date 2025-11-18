@@ -69,11 +69,13 @@ export function parseRussianAddress(address: string): ParsedAddress {
 export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
     if (!fallbackString) return null;
     
-    const normalized = fallbackString.toLowerCase();
+    // More robust normalization: remove punctuation to avoid issues with word boundaries.
+    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ');
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        const regex = new RegExp(`\\b${cityName}\\b`);
+        // FIX: Escape special characters in cityName to prevent regex errors (e.g., for "Ростов-на-Дону").
+        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
         if (regex.test(normalized)) {
             const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
             return {
