@@ -195,14 +195,21 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
         if (!finalRegion) {
-            // FIX: Normalize the address string to handle punctuation and ensure whole-word matching.
-            // This prevents parts of words (like "ло" in "суеркулова") from being incorrectly identified as a region code.
-            const normalizedForKeyword = ` ${clientAddress.toLowerCase().replace(/[,.]/g, ' ').replace(/\s+/g, ' ')} `;
+            // FIX: Switched from a simple 'includes' check to a robust regular expression
+            // to ensure only whole words are matched. This definitively prevents a keyword like "ло"
+            // from matching inside another word like "суеркулова".
+            const normalizedForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                // FIX: Match whole words by padding with spaces.
-                if (normalizedForKeyword.includes(` ${keyword} `)) {
-                    finalRegion = REGION_KEYWORD_MAP[keyword];
-                    break;
+                try {
+                    // This regex finds the keyword as a whole word (\b is a word boundary).
+                    const keywordRegex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+                    if (keywordRegex.test(normalizedForKeyword)) {
+                        finalRegion = REGION_KEYWORD_MAP[keyword];
+                        break;
+                    }
+                } catch (e) {
+                    // In case a keyword creates an invalid regex, though unlikely with escaping.
+                    console.error(`Invalid regex for keyword: ${keyword}`, e);
                 }
             }
         }
@@ -276,9 +283,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
-    const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
+    const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
