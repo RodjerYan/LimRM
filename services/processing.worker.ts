@@ -195,21 +195,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
         if (!finalRegion) {
-            // FIX: Switched from a simple 'includes' check to a robust regular expression
-            // to ensure only whole words are matched. This definitively prevents a keyword like "ло"
-            // from matching inside another word like "суеркулова".
-            const normalizedForKeyword = clientAddress.toLowerCase();
+            const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                try {
-                    // This regex finds the keyword as a whole word (\b is a word boundary).
-                    const keywordRegex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-                    if (keywordRegex.test(normalizedForKeyword)) {
-                        finalRegion = REGION_KEYWORD_MAP[keyword];
-                        break;
-                    }
-                } catch (e) {
-                    // In case a keyword creates an invalid regex, though unlikely with escaping.
-                    console.error(`Invalid regex for keyword: ${keyword}`, e);
+                if (normalizedAddressForKeyword.includes(keyword)) {
+                    finalRegion = REGION_KEYWORD_MAP[keyword];
+                    break;
                 }
             }
         }
@@ -283,9 +273,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
+    const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
-    const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
