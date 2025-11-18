@@ -247,4 +247,4 @@ export const standardizeRegion = (input: string | null | undefined): string => {
 
     // Capitalize and return as a last resort
     return capitalize(cleanInput);
-};.
+};

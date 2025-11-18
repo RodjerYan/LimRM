@@ -528,4 +528,4 @@ export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; index
   // --- Республика Абхазия ---
   // FIX: Completed the truncated data for 'сухум' and closed the object.
   'сухум': { region: 'Республика Абхазия', indexes: [], lat: 43.0013, lon: 41.0234 },
-};.
+};

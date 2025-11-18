@@ -160,4 +160,4 @@ export const capitals: Capital[] = [
     { name: 'Каракол', lat: 42.4833, lon: 78.3833, type: 'urban_center', region_name: 'Кыргызская Республика' },
     { name: 'Токмок', lat: 42.8419, lon: 75.2869, type: 'urban_center', region_name: 'Кыргызская Республика' },
     { name: 'Кант', lat: 42.8911, lon: 74.8519, type: 'urban_center', region_name: 'Кыргызская Республика' },
-];.
+];

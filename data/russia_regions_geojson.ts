@@ -2517,4 +2517,4 @@ export const russiaRegionsGeoJSON: FeatureCollection = {
             }
         }
     ]
-}.
+}
