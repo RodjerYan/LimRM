@@ -91,4 +91,4 @@ export function parseRussianAddress(address: string): ParsedAddress {
         region: standardizeRegion(region),
         city: city 
     };
-}
+}.
