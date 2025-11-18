@@ -16,6 +16,23 @@ const capitalize = (str: string): string => {
 };
 
 /**
+ * Keywords to identify an address as belonging to a CIS country, triggering the detailed parser.
+ */
+export const CIS_KEYWORDS: string[] = [
+    // Countries
+    'кыргызстан', 'киргизия', 'казахстан', 'узбекистан', 'таджикистан', 'армения', 'азербайджан', 'туркменистан',
+    // Cities
+    'бишкек', 'ош', 'джалал-абад', 'каракол', 'нарын', 'талас', 'баткен', 'кара-балта', 'новопокровка',
+    'алматы', 'астана', 'шымкент',
+    'ташкент', 'самарканд',
+    'душанбе',
+    'ереван',
+    'баку',
+    // Regions/Markets
+    'чуйская', 'ошская', 'ысык-кульская', 'иссык-кульская', 'ортосай', 'дордой',
+];
+
+/**
  * A map for normalizing common address typos and formatting variations.
  * This is applied first to clean the input string before parsing.
  */

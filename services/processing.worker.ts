@@ -9,7 +9,7 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseRussianAddress } from './addressParser';
+import { parseAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -161,12 +161,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
-        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']);
+        const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
         const rm = findValueInRow(row, ['рм']);
 
         if (!clientAddress || !rm) continue;
 
+        // The parser now handles the distributor fallback internally.
+        const parsedAddress = parseAddress(clientAddress, distributorAddress);
+        
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+        const brand = findValueInRow(row, ['торговая марка']);
         const normalizedAddress = normalizeAddress(clientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
@@ -189,23 +193,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
             }
-
-            let parsedAddress = parseRussianAddress(clientAddress);
-
-            // --- Distributor Fallback Logic ---
-            if (parsedAddress.city === 'Город не определен') {
-                const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
-                if (distributorAddress) {
-                    const distributorParsed = parseRussianAddress(distributorAddress);
-                    if (distributorParsed.city !== 'Город не определен') {
-                        parsedAddress.city = distributorParsed.city;
-                        if (parsedAddress.region === 'Регион не определен') {
-                            parsedAddress.region = distributorParsed.region;
-                        }
-                    }
-                }
-            }
-
+            
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -223,21 +211,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(clientAddress);
-         if (parsedForAggregation.city === 'Город не определен') {
-            const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
-            if (distributorAddress) {
-                const distributorParsed = parseRussianAddress(distributorAddress);
-                if (distributorParsed.city !== 'Город не определен') {
-                    parsedForAggregation.city = distributorParsed.city;
-                    if (parsedForAggregation.region === 'Регион не определен') {
-                         parsedForAggregation.region = distributorParsed.region;
-                    }
-                }
-            }
-        }
-        const regionForAggregation = parsedForAggregation.region;
-        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
+        const regionForAggregation = parsedAddress.region;
+        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
