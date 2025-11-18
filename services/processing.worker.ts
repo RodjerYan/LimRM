@@ -48,7 +48,8 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        // FIX: Normalize 'ё' to 'е' in the header key to match keywords robustly. This is critical for columns like "Объём".
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
@@ -91,7 +92,8 @@ function findPotentialClients(region: string, existingClients: Set<string>, okbD
 
 
 const findClientNameHeader = (headers: string[]): string | undefined => {
-    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+    // FIX: Normalize 'ё' to 'е' when matching headers to handle variations like "Наименованиё".
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim().replace(/ё/g, 'е'));
 
     const priorityTerms = ['наименование клиента', 'контрагент', 'клиент', 'уникальное наименование товара'];
     for (const term of priorityTerms) {
@@ -99,10 +101,11 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
         if (foundIndex !== -1) return headers[foundIndex];
     }
     
-    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
+    // FIX: Normalize 'ё' to 'е' here as well for consistency.
+    const nameColumns = headers.filter(h => h.toLowerCase().trim().replace(/ё/g, 'е').includes('наименование'));
     if (nameColumns.length > 0) {
         const cleanNameColumn = nameColumns.find(h => {
-            const lH = h.toLowerCase().trim();
+            const lH = h.toLowerCase().trim().replace(/ё/g, 'е');
             return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
         });
         return cleanNameColumn || nameColumns[0];
@@ -133,8 +136,8 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cac
 async function processFile(jsonData: any[], headers: string[], { okbData, cacheData, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
-    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-    if (!headers.some(h => (h || '').toLowerCase().includes('вес') || (h || '').toLowerCase().includes('объем') || (h || '').toLowerCase().includes('факт'))) throw new Error('Файл должен содержать колонку "Вес", "Объем" или "Факт".');
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().replace(/ё/g, 'е').includes('потенциал'));
+    if (!headers.some(h => (h || '').toLowerCase().replace(/ё/g, 'е').includes('вес') || (h || '').toLowerCase().replace(/ё/g, 'е').includes('объем') || (h || '').toLowerCase().replace(/ё/g, 'е').includes('факт'))) throw new Error('Файл должен содержать колонку "Вес", "Объем" или "Факт".');
     const clientNameHeader = findClientNameHeader(headers);
     
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
