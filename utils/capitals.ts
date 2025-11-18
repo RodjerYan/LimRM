@@ -17,10 +17,9 @@ export const capitals: Capital[] = [
     { name: 'Сухум', lat: 43.0013, lon: 41.0234, type: 'country', region_name: 'Республика Абхазия' },
     { name: 'Ереван', lat: 40.1792, lon: 44.4991, type: 'country', region_name: 'Армения' },
     { name: 'Баку', lat: 40.4093, lon: 49.8671, type: 'country', region_name: 'Азербайджан' },
-    { name: 'Тбилиси', lat: 41.7151, lon: 44.8271, type: 'country', region_name: 'Грузия' },
     { name: 'Кишинёв', lat: 47.0105, lon: 28.8638, type: 'country', region_name: 'Республика Молдова' },
-    { name: 'Душанбе', lat: 38.5598, lon: 68.7870, type: 'country', region_name: 'Таджикистан' },
-    { name: 'Ташкент', lat: 41.2995, lon: 69.2401, type: 'country', region_name: 'Узбекистан' },
+    { name: 'Душанбе', lat: 38.5598, lon: 68.7870, type: 'country', region_name: 'Республика Таджикистан' },
+    { name: 'Ташкент', lat: 41.2995, lon: 69.2401, type: 'country', region_name: 'Республика Узбекистан' },
     { name: 'Ашхабад', lat: 37.9601, lon: 58.3261, type: 'country', region_name: 'Туркменистан' },
 
     // === Регионы РФ ===
@@ -161,4 +160,4 @@ export const capitals: Capital[] = [
     { name: 'Каракол', lat: 42.4833, lon: 78.3833, type: 'urban_center', region_name: 'Кыргызская Республика' },
     { name: 'Токмок', lat: 42.8419, lon: 75.2869, type: 'urban_center', region_name: 'Кыргызская Республика' },
     { name: 'Кант', lat: 42.8911, lon: 74.8519, type: 'urban_center', region_name: 'Кыргызская Республика' },
-];
+];.
