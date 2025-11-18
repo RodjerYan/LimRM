@@ -19,44 +19,42 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
- * This function has been completely refactored to be more robust and strictly prioritize city detection over any other method.
- * The ambiguous region keyword search has been REMOVED entirely.
+ * Parses a Russian address string to extract the region and city.
+ * This function has been rewritten to ONLY use a city-based lookup.
+ * All ambiguous keyword-based search logic has been completely removed to prevent
+ * incorrect region assignments based on street names (e.g., "ул. Ленинградская").
  * @param address The raw address string.
- * @returns A ParsedAddress object with the determined region and city.
+ * @returns A ParsedAddress object. If no city is found, returns a "not determined" state.
  */
 export function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    // Initial cleaning and normalization
+    // Step 1: Normalize the input string.
     let normalized = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    // Apply specific aliases for common typos.
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
-
-    // --- STEP 1: STRICT CITY-FIRST SEARCH (ONLY METHOD) ---
-    // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
+    
+    // Step 2: STRICT City-First Search. This is the only method used for region detection.
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // Use a regex to ensure we match a whole word.
+        // Use a word boundary regex to avoid partial matches (e.g., 'кант' in 'кантовский').
         const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+        
         if (regex.test(normalized)) {
-            // MATCH FOUND! Immediately return the region associated with this city.
-            // No further checks are needed. This prevents street names from causing conflicts.
+            // City found! Immediately return its region and stop all further processing.
             return {
                 region: REGION_BY_CITY_WITH_INDEXES[cityName].region,
                 city: capitalize(cityName)
             };
         }
     }
-
-    // --- STEP 2 (REMOVED): FALLBACK TO REGION KEYWORD SEARCH ---
-    // This entire block has been removed to prevent incorrect matches from street names.
-    // The logic now relies on the city search above or the distributor fallback in the worker.
-
-    // --- STEP 3: NO MATCH FOUND ---
-    // If no city is found, we return 'undefined' and let the worker handle the fallback (distributor check).
+    
+    // Step 3: If no city was found after checking the entire list, give up.
+    // The calling function (worker) is now responsible for any fallback logic.
     return { region: 'Регион не определен', city: 'Город не определен' };
 }
 
