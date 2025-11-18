@@ -1,77 +1,49 @@
+import { 
+    standardizeRegion, 
+    CITY_NORMALIZATION_MAP
+} from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
-
-// Карта нормализации теперь находится здесь, чтобы избежать циклических зависимостей
-// и проблем с загрузкой модулей в web worker.
-const CITY_NORMALIZATION_MAP: Record<string, string> = {
-  // Specific typos and variations from user data
-  'калининрад': 'калининград',
-  'калининграл': 'калининград',
-  'калиннградская': 'калининград', // Can be ambiguous, but contextually likely refers to the city
-  'красноадр': 'краснодар',
-  'снкт-петербург': 'санкт-петербург',
-  'санкт-петеребург': 'санкт-петербург',
-  'сакнт-петербург': 'санкт-петербург',
-  'б исаково': 'большое исаково',
-  'чкаловск': 'чкаловск',
-  'макевка': 'макеевка',
-  'макее': 'макеевка',
-  'мариуп': 'мариуполь',
-  'мелиополь': 'мелитополь',
-  'лугаснк': 'луганск',
-  'мелитопольул': 'мелитополь',
-  'комсомолькое': 'комсомольское',
-  'в.новгород': 'великий новгород',
-  'сланца': 'сланцы',
-  'моск.': 'москва',
-};
-
 
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
+/**
+ * Capitalizes the first letter of each word in a string.
+ * @param str The input string.
+ * @returns The capitalized string.
+ */
 const capitalize = (str: string | null): string => {
     if (!str) return '';
-    // Capitalize each word for proper display
     return str.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 };
 
 /**
- * Parses a Russian address string to extract region and city based on a strict city-first search.
- * This function has been refactored to prioritize an exact city match above all else, removing
- * ambiguous keyword-based region detection to fix misclassification errors.
+ * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * This function has been completely refactored to be more robust and strictly prioritize city detection over any other method.
+ * The ambiguous region keyword search has been REMOVED entirely.
  * @param address The raw address string.
- * @returns A ParsedAddress object. If no known city is found, returns 'Не определен'.
+ * @returns A ParsedAddress object with the determined region and city.
  */
 export function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    let normalized = address.toLowerCase().replace(/ё/g, 'е');
-    
-    // Step 1: Remove common prefixes (г., пос., село, etc.) to simplify the string.
-    // This uses word boundaries to be safe.
-    normalized = normalized.replace(/\b(г|город|пос|поселок|пгт|село|с|дер|деревня|станица|ст-ца|хутор|х)\.?,?\s+/g, ' ');
-    
-    // Step 2: Remove punctuation and collapse multiple spaces.
-    normalized = normalized.replace(/[,;()]/g, ' ').replace(/\s+/g, ' ').trim();
-
-    // Step 3: Apply a map of known specific typos and aliases.
+    // Initial cleaning and normalization
+    let normalized = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        const regex = new RegExp(`\\b${alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'g');
-        normalized = normalized.replace(regex, canonical);
+        normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
-    // Final cleanup after replacements
-    normalized = normalized.replace(/\s+/g, ' ').trim();
 
-    // --- STEP 4: STRICT CITY-FIRST SEARCH ---
+    // --- STEP 1: STRICT CITY-FIRST SEARCH (ONLY METHOD) ---
     // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // Use a regex with word boundaries to ensure we match a whole word.
+        // Use a regex to ensure we match a whole word.
         const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
         if (regex.test(normalized)) {
             // MATCH FOUND! Immediately return the region associated with this city.
+            // No further checks are needed. This prevents street names from causing conflicts.
             return {
                 region: REGION_BY_CITY_WITH_INDEXES[cityName].region,
                 city: capitalize(cityName)
@@ -79,10 +51,15 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // --- STEP 5: NO MATCH FOUND ---
-    // The calling function will handle the fallback to the distributor column.
+    // --- STEP 2 (REMOVED): FALLBACK TO REGION KEYWORD SEARCH ---
+    // This entire block has been removed to prevent incorrect matches from street names.
+    // The logic now relies on the city search above or the distributor fallback in the worker.
+
+    // --- STEP 3: NO MATCH FOUND ---
+    // If no city is found, we return 'undefined' and let the worker handle the fallback (distributor check).
     return { region: 'Регион не определен', city: 'Город не определен' };
 }
+
 
 /**
  * Attempts to determine a region and city by finding a known city name within a fallback string (e.g., a distributor's name).
@@ -92,12 +69,11 @@ export function parseRussianAddress(address: string): ParsedAddress {
 export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
     if (!fallbackString) return null;
     
-    // Normalize the fallback string for better matching.
-    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ');
+    const normalized = fallbackString.toLowerCase();
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+        const regex = new RegExp(`\\b${cityName}\\b`);
         if (regex.test(normalized)) {
             const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
             return {
