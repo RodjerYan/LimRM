@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { WorkerMessage, OkbStatus, WorkerResultPayload, CoordsCache } from '../types';
-import { formatETR } from '../src/utils/timeUtils';
+import { formatETR } from '../utils/timeUtils';
 import { LoaderIcon } from './icons';
 
 interface FileUploadProps {

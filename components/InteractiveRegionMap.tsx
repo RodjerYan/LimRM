@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
-import { capitals } from '../src/utils/capitals';
+import { capitals } from '../utils/capitals';
 import { SearchIcon, ErrorIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 
