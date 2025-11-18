@@ -178,25 +178,34 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
-                // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
             } else {
-                // Case 2: Address is not in cache, or is in cache but without coordinates.
-                // We will not look for coordinates elsewhere.
-                // We just ensure the address is queued to be written to the АКБ sheet.
-                // The App Script in the sheet will handle geocoding.
                 if (!newAddressesToCache[rm]) {
                     newAddressesToCache[rm] = [];
                 }
                 if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
-                // lat and lon remain undefined for this session.
             }
 
-            const parsedAddress = parseRussianAddress(clientAddress);
+            let parsedAddress = parseRussianAddress(clientAddress);
+
+            // --- Distributor Fallback Logic ---
+            if (parsedAddress.city === 'Город не определен') {
+                const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
+                if (distributorAddress) {
+                    const distributorParsed = parseRussianAddress(distributorAddress);
+                    if (distributorParsed.city !== 'Город не определен') {
+                        parsedAddress.city = distributorParsed.city;
+                        if (parsedAddress.region === 'Регион не определен') {
+                            parsedAddress.region = distributorParsed.region;
+                        }
+                    }
+                }
+            }
+
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -215,6 +224,18 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // --- Aggregation logic (runs for every row) ---
         const parsedForAggregation = parseRussianAddress(clientAddress);
+         if (parsedForAggregation.city === 'Город не определен') {
+            const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
+            if (distributorAddress) {
+                const distributorParsed = parseRussianAddress(distributorAddress);
+                if (distributorParsed.city !== 'Город не определен') {
+                    parsedForAggregation.city = distributorParsed.city;
+                    if (parsedForAggregation.region === 'Регион не определен') {
+                         parsedForAggregation.region = distributorParsed.region;
+                    }
+                }
+            }
+        }
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 

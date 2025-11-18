@@ -32,8 +32,12 @@ export interface MapPoint {
 }
 
 export interface ParsedAddress {
+    country: string;
     region: string;
     city: string;
+    street: string;
+    house: string;
+    details: string[]; // For markets, landmarks, containers, etc.
 }
 
 export interface PotentialClient {
