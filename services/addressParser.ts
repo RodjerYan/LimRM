@@ -64,31 +64,61 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 
 /**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * Now includes a fallback mechanism to parse the city from a distributor string if not found in the main address.
  * @param address The raw address string.
+ * @param distributor An optional distributor string, e.g., "Компания (Город)".
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
-    if (!address?.trim()) {
-        return { region: 'Регион не определен', city: 'Город не определен' };
+export function parseAddress(address: string, distributor?: string): ParsedAddress {
+    const defaultResult = { region: 'Регион не определен', city: 'Город не определен' };
+    
+    if (!address?.trim() && !distributor?.trim()) {
+        return defaultResult;
     }
 
-    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
+    const lowerAddress = (address || '').toLowerCase().replace(/ё/g, 'е');
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // --- Step 1: Normalization using aliases for common typos ---
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         if (normalized.includes(alias)) {
             normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
+    
+    let city = getCityFromAddress(normalized);
+    let region = findRegionByKeyword(normalized);
 
-    // --- Step 2: Determine Region and City ---
-    const region = findRegionByKeyword(normalized);
-    const city = getCityFromAddress(normalized);
+    // Fallback logic: if city is not found in address, check distributor string
+    if (city === 'Город не определен' && distributor) {
+        const distributorLower = distributor.toLowerCase();
+        const match = distributorLower.match(/\(([^)]+)\)/); // Extract content from parentheses
+        if (match && match[1]) {
+            const cityFromDistributor = match[1].trim();
+            const foundCityInfo = REGION_BY_CITY_WITH_INDEXES[cityFromDistributor];
+            if (foundCityInfo) {
+                city = capitalize(cityFromDistributor);
+                region = foundCityInfo.region; // Directly get region from our map
+            } else {
+                 // Try to find the city from the distributor in the main city list as a fallback
+                const foundCityKey = CITIES_SORTED_BY_LENGTH.find(c => cityFromDistributor.includes(c));
+                if (foundCityKey && REGION_BY_CITY_WITH_INDEXES[foundCityKey]) {
+                    city = capitalize(foundCityKey);
+                    region = REGION_BY_CITY_WITH_INDEXES[foundCityKey].region;
+                }
+            }
+        }
+    }
 
+    // If region is still not determined but city is, look up region by city
+    if (city !== 'Город не определен' && (!region || region === 'Регион не определен')) {
+        const cityInfo = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
+        if (cityInfo) {
+            region = cityInfo.region;
+        }
+    }
+    
     return {
         region: standardizeRegion(region),
-        city: city 
+        city: city
     };
 }
