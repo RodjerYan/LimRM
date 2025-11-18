@@ -72,29 +72,12 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
         if (latVal && lonVal) {
-            let lat = parseFloat(String(latVal).replace(',', '.').trim());
-            let lon = parseFloat(String(lonVal).replace(',', '.').trim());
+            const lat = parseFloat(String(latVal).replace(',', '.').trim());
+            const lon = parseFloat(String(lonVal).replace(',', '.').trim());
 
             if (!isNaN(lat) && !isNaN(lon)) {
-                // --- ROBUST COORDINATE VALIDATION AND CORRECTION ---
-                
-                // Rule 1: Check for swapped lat/lon. An invalid latitude is the best clue.
-                if (Math.abs(lat) > 90 && Math.abs(lon) <= 180) {
-                    [lat, lon] = [lon, lat]; // Swap them
-                }
-                
-                // Rule 2: If latitude is still invalid, this coordinate pair is garbage.
-                if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-                    // Do not assign lat/lon to the row, leaving them undefined.
-                } else {
-                    // Rule 3: Correct obviously wrong longitudes for the Russia/CIS context.
-                    if (lat > 40 && lon < 0) { // e.g. a point in Russia should not have a negative longitude
-                        lon = Math.abs(lon);
-                    }
-                    
-                    row.lat = lat;
-                    row.lon = lon;
-                }
+                row.lat = lat;
+                row.lon = lon;
             }
         }
 
