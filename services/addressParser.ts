@@ -1,6 +1,6 @@
 // services/addressParser.ts
-import { 
-    REGION_KEYWORD_MAP, 
+import {
+    REGION_KEYWORD_MAP,
     CITY_NORMALIZATION_MAP,
     REGION_TO_COUNTRY_MAP,
     CIS_KEYWORDS
@@ -16,7 +16,60 @@ const capitalize = (str: string): string => {
     return str.trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 };
 
-// --- START: NEW CIS-specific Parser ---
+// --- START: SELF-CONTAINED RF PARSER (ORIGINAL LOGIC RECONSTRUCTED) ---
+function _parseRF(address: string): ParsedAddress {
+    const result: ParsedAddress = {
+        country: 'Россия',
+        region: 'Регион не определен',
+        city: 'Город не определен',
+        street: '',
+        house: '',
+        details: []
+    };
+    
+    let processingAddress = address.toLowerCase().replace(/ё/g, 'е');
+
+    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+        if (processingAddress.includes(alias)) {
+            processingAddress = processingAddress.replace(new RegExp(alias.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'), ` ${canonical} `);
+        }
+    }
+    // Add padding to ensure word boundary matching
+    processingAddress = ` ${processingAddress.replace(/[,;.]/g, ' ')} `;
+
+    const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    for (const key of sortedRegionKeys) {
+        // Use word boundaries that are safe for strings with padding
+        const regex = new RegExp(`\\s${key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}(\\s|$)`, 'i');
+        if (regex.test(processingAddress)) {
+            result.region = REGION_KEYWORD_MAP[key];
+            processingAddress = processingAddress.replace(regex, ' ').trim();
+            break;
+        }
+    }
+
+    for (const city of CITIES_SORTED_BY_LENGTH) {
+        const regex = new RegExp(`\\s${city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}(\\s|$)`, 'i');
+        if (regex.test(processingAddress)) {
+            result.city = capitalize(city);
+            if (result.region === 'Регион не определен') {
+                result.region = REGION_BY_CITY_WITH_INDEXES[city]?.region || 'Регион не определен';
+            }
+            processingAddress = processingAddress.replace(regex, ' ').trim();
+            break;
+        }
+    }
+    
+    if (result.region !== 'Регион не определен') {
+        result.country = REGION_TO_COUNTRY_MAP[result.region] || 'Россия';
+    }
+
+    result.street = capitalize(processingAddress.replace(/\s+/g, ' ').trim());
+
+    return result;
+}
+
+// --- START: SELF-CONTAINED CIS PARSER ---
 const CIS_PATTERNS = {
     MARKET: /(р-к|рынок)\s*([\w\s"-]+)/i,
     MICRODISTRICT: /(мкр|микрорайон|ж\/м|жм)\.?\s*([\w\d\s-]+)/i,
@@ -39,19 +92,36 @@ function extractPart(address: string, pattern: RegExp, prefix: string = ''): [st
     return [address, null];
 }
 
-// This interface is used internally to pass unprocessed parts of the string
-interface TempParsedAddress extends ParsedAddress {
-    _unprocessed?: string;
-}
-
-function parseCISAddress(address: string): TempParsedAddress {
-    const result: TempParsedAddress = {
-        country: 'Страна не определена', region: 'Регион не определен', city: 'Город не определен',
-        street: '', house: '', details: [],
+function _parseCIS(address: string): ParsedAddress {
+    const result: ParsedAddress = {
+        country: 'Страна не определена',
+        region: 'Регион не определен',
+        city: 'Город не определен',
+        street: '',
+        house: '',
+        details: []
     };
 
-    let processingAddress = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ');
+    let processingAddress = address.toLowerCase().replace(/ё/g, 'е');
+    
+    // First, find location
+    for (const city of CITIES_SORTED_BY_LENGTH) {
+        const regex = new RegExp(`\\b${city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+        if (regex.test(processingAddress)) {
+            result.city = capitalize(city);
+            result.region = REGION_BY_CITY_WITH_INDEXES[city]?.region || 'Регион не определен';
+            if (result.region !== 'Регион не определен') {
+                 result.country = REGION_TO_COUNTRY_MAP[result.region] || 'Страна не определена';
+            }
+            processingAddress = processingAddress.replace(regex, ' ');
+            break;
+        }
+    }
+    
+    // Cleanup before parsing details
+    processingAddress = processingAddress.replace(/[,;.]/g, ' ');
 
+    // Second, parse details from the rest of the string
     let extracted;
     [processingAddress, extracted] = extractPart(processingAddress, CIS_PATTERNS.MARKET);
     if (extracted) result.details.push(capitalize(extracted));
@@ -75,115 +145,47 @@ function parseCISAddress(address: string): TempParsedAddress {
         if (extracted) result.street = capitalize(extracted);
     }
     
-    result._unprocessed = processingAddress.replace(/\s+/g, ' ').trim();
+    const remainder = processingAddress.replace(/\s+/g, ' ').trim();
+    if (remainder && !result.street) {
+        result.street = capitalize(remainder);
+    } else if (remainder) {
+        result.details.push(capitalize(remainder));
+    }
+
     return result;
 }
-// --- END: NEW CIS-specific Parser ---
 
-// --- START: Simplified Russian Parser (Restored Logic) ---
-function parseRussianAddress(address: string): TempParsedAddress {
-    // This function emulates a simpler, more direct approach for Russian addresses.
-    // It primarily focuses on finding the location and leaves the rest as unprocessed.
-    return {
-        country: 'Страна не определена', region: 'Регион не определен', city: 'Город не определен',
-        street: '', house: '', details: [],
-        _unprocessed: address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ')
-    };
-}
-// --- END: Simplified Russian Parser ---
-
-/**
- * Determines the final location details (city, region, country) for a partially parsed address.
- * This is a shared function used by both CIS and Russian parsers.
- */
-function finalizeLocation(parsed: TempParsedAddress): ParsedAddress {
-    let processingAddress = parsed._unprocessed || '';
-    
-    // Apply normalizations for common typos and abbreviations
-    for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (processingAddress.includes(alias)) {
-            processingAddress = processingAddress.replace(new RegExp(alias, 'g'), canonical);
-        }
-    }
-
-    // Try to find region by keyword first
-    const sortedRegionKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
-    for (const key of sortedRegionKeys) {
-        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
-        if (regex.test(processingAddress)) {
-            parsed.region = REGION_KEYWORD_MAP[key];
-            processingAddress = processingAddress.replace(regex, ' ').trim();
-            break;
-        }
-    }
-
-    // Then, try to find the city from the remaining string
-    for (const city of CITIES_SORTED_BY_LENGTH) {
-        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`\\b${escapedCity}\\b`, 'i');
-        if (regex.test(processingAddress)) {
-            parsed.city = capitalize(city);
-            if (parsed.region === 'Регион не определен') {
-                parsed.region = REGION_BY_CITY_WITH_INDEXES[city]?.region || 'Регион не определен';
-            }
-            processingAddress = processingAddress.replace(regex, ' ').trim();
-            break;
-        }
-    }
-    
-    // Determine country from the region, defaulting to Russia if not found
-    if (parsed.region !== 'Регион не определен') {
-        parsed.country = REGION_TO_COUNTRY_MAP[parsed.region] || 'Россия';
-    }
-
-    // If street is still empty, use what's left of the string
-    processingAddress = processingAddress.replace(/\s+/g, ' ').trim();
-    if (!parsed.street && processingAddress.length > 2 && !/^\d+[а-я]?$/.test(processingAddress)) {
-        parsed.street = capitalize(processingAddress);
-    }
-    
-    delete (parsed as any)._unprocessed;
-    return parsed;
-}
-
-/**
- * Main dispatcher function. Parses a raw address string, determines if it's from the CIS,
- * and applies the appropriate parsing logic. Also handles fallback to a distributor's address.
- * @param mainAddress The primary address string of the trade point.
- * @param distributorAddress Optional address string of the distributor.
- * @returns A fully parsed address object.
- */
+// --- DISPATCHER ---
 export function parseAddress(mainAddress: string, distributorAddress?: string): ParsedAddress {
     if (!mainAddress || !mainAddress.trim()) {
-        return {
-            country: 'Страна не определена', region: 'Регион не определен', city: 'Город не определен',
-            street: '', house: '', details: [],
-        };
+        return { country: 'Страна не определена', region: 'Регион не определен', city: 'Город не определен', street: '', house: '', details: [] };
     }
 
     const lowerMainAddress = mainAddress.toLowerCase();
     const isCIS = CIS_KEYWORDS.some(keyword => lowerMainAddress.includes(keyword));
 
-    let parsed: TempParsedAddress = isCIS ? parseCISAddress(mainAddress) : parseRussianAddress(mainAddress);
-    let finalParsed = finalizeLocation(parsed);
-
+    let finalParsed = isCIS ? _parseCIS(mainAddress) : _parseRF(mainAddress);
+    
     // --- Distributor Fallback Logic ---
     if (finalParsed.city === 'Город не определен' && distributorAddress) {
         const lowerDistributorAddress = distributorAddress.toLowerCase();
+        // Check distributor address geography independently
         const isDistributorCIS = CIS_KEYWORDS.some(keyword => lowerDistributorAddress.includes(keyword));
         
-        const distributorParsed: TempParsedAddress = isDistributorCIS ? parseCISAddress(distributorAddress) : parseRussianAddress(distributorAddress);
-        const finalDistributorParsed = finalizeLocation(distributorParsed);
+        const distributorParsed = isDistributorCIS ? _parseCIS(distributorAddress) : _parseRF(distributorAddress);
         
-        if (finalDistributorParsed.city !== 'Город не определен') {
-            finalParsed.city = finalDistributorParsed.city;
-            if (finalParsed.region === 'Регион не определен') {
-                finalParsed.region = finalDistributorParsed.region;
-                finalParsed.country = finalDistributorParsed.country;
-            }
+        if (distributorParsed.city !== 'Город не определен') {
+            finalParsed.city = distributorParsed.city;
+            finalParsed.region = distributorParsed.region;
+            finalParsed.country = distributorParsed.country;
         }
     }
+
+    // Final check for country if region is known but country isn't
+    if (finalParsed.country === 'Страна не определена' && finalParsed.region !== 'Регион не определен') {
+        finalParsed.country = REGION_TO_COUNTRY_MAP[finalParsed.region] || 'Россия';
+    }
+
 
     return finalParsed;
 }
