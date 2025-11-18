@@ -69,12 +69,8 @@ export function parseRussianAddress(address: string): ParsedAddress {
 export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
     if (!fallbackString) return null;
     
-    // More robust normalization: remove all non-alphanumeric characters except spaces.
-    const normalized = fallbackString
-        .toLowerCase()
-        .replace(/[()\[\].,;:"']/g, ' ') // Replace common punctuation with space
-        .replace(/\s+/g, ' ') // Collapse multiple spaces
-        .trim();
+    // More robust normalization: remove punctuation to avoid issues with word boundaries.
+    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ');
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
