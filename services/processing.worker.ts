@@ -169,7 +169,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!clientAddress && !distributor) continue;
         if (!rm) continue;
 
-        const normalizedAddress = normalizeAddress(clientAddress);
+        const normalizedAddress = normalizeAddress(clientAddress || '');
         
         // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {

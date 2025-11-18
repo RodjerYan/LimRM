@@ -69,7 +69,7 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
  * @param distributor An optional distributor string, e.g., "Компания (Город)".
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseAddress(address: string, distributor?: string): ParsedAddress {
+export function parseAddress(address: string | null | undefined, distributor?: string): ParsedAddress {
     const defaultResult = { region: 'Регион не определен', city: 'Город не определен' };
     
     if (!address?.trim() && !distributor?.trim()) {
