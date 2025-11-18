@@ -113,72 +113,6 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
 
 const REGION_KEYWORDS_SORTED = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
 
-// --- NEW --- helpers to detect/extract city
-function addressContainsCity(address: string | null | undefined): boolean {
-    if (!address) return false;
-    const lower = address.toLowerCase();
-
-    // common patterns that indicate a city/settlement is present
-    const cityIndicators = [
-        'г.', 'г ', 'город', 'поселок', 'пос.', 'пгт', 'дер.', 'село', 'ст-ца', 'р-н', 'р-н', 'район',
-        'обл.', 'область', 'респ.', 'республика', 'штат'
-    ];
-
-    for (const ind of cityIndicators) {
-        if (lower.includes(ind)) return true;
-    }
-
-    // also check for "CityName, " or "CityName " patterns by simple heuristic:
-    // if string starts with capitalized word + space + street-like token, it's ambiguous; but we keep simple approach
-    // If there is a comma and the left token looks short (<=3 words) and starts with uppercase russian/latin char → consider city present
-    const parts = address.split(',');
-    if (parts.length > 1) {
-        const first = parts[0].trim();
-        if (first.split(/\s+/).length <= 3 && /^[А-ЯЁA-Z]/.test(first)) return true;
-    }
-
-    return false;
-}
-
-function extractCityFromDistributor(distributorRaw: string | null | undefined): string | null {
-    if (!distributorRaw) return null;
-    const d = String(distributorRaw).trim();
-
-    // 1) extract content in parentheses: "Компани (Бишкек)" -> "Бишкек"
-    const bracket = d.match(/\(([^)]+)\)/);
-    if (bracket && bracket[1]) {
-        return bracket[1].trim();
-    }
-
-    // 2) patterns like "Name / г. Астана" or "Name - Алматы"
-    // check for "г. <name>"
-    const gMatch = d.match(/г\.?\s*([A-Яа-яA-Za-z\-\s]+)/i);
-    if (gMatch && gMatch[1]) return gMatch[1].trim();
-
-    // after slash or dash take last token
-    const slashParts = d.split(/[\/\\\-–—]/).map(p => p.trim()).filter(Boolean);
-    if (slashParts.length > 1) {
-        const last = slashParts[slashParts.length - 1];
-        // avoid returning full company names — try to see if it contains letters and small length
-        if (last.length <= 40) return last;
-    }
-
-    // if contains comma, maybe "Company, Bishkek"
-    const commaParts = d.split(',').map(p => p.trim()).filter(Boolean);
-    if (commaParts.length > 1) {
-        const last = commaParts[commaParts.length - 1];
-        if (last.length <= 40) return last;
-    }
-
-    // fallback: try to match known city list fragments (small heuristic)
-    const simpleCityMatch = d.match(/\b(Бишкек|Ош|Нарын|Джалал-Абад|Токмок|Кара-Балта|Кант|Алматы|Астана|Нур-Султан|Шымкент|Самарканд|Ташкент)\b/i);
-    if (simpleCityMatch && simpleCityMatch[0]) return simpleCityMatch[0].trim();
-
-    return null;
-}
-// --- /NEW ---
-
-
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const { file, okbData, cacheData } = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
@@ -240,37 +174,21 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         // --- STEP 1: Strict city parse from address ---
         const initialParse = parseRussianAddress(clientAddress);
-        if (initialParse && initialParse.region && initialParse.region !== 'Регион не определен') {
+        if (initialParse.region !== 'Регион не определен') {
             finalRegion = initialParse.region;
-            finalCity = initialParse.city && initialParse.city !== 'Город не определен' ? initialParse.city : null;
+            finalCity = initialParse.city;
         }
 
-        // detect whether address already contains a city (heuristic)
-        const addressHasCity = addressContainsCity(clientAddress);
-
-        // --- STEP 2: Fallback to distributor if step 1 fails OR address lacks city ---
-        const distributorRaw = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        if ((!finalRegion || !finalCity || !addressHasCity) && distributorRaw) {
-            // first try the existing fallback (full metadata lookup)
-            const fallbackResult = getRegionFromFallback(distributorRaw);
+        // --- STEP 2: Fallback to distributor if step 1 fails ---
+        if (!finalRegion) {
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const fallbackResult = getRegionFromFallback(distributor);
             if (fallbackResult) {
-                if (!finalRegion && fallbackResult.region) finalRegion = fallbackResult.region;
-                if (!finalCity && fallbackResult.city && fallbackResult.city !== 'Город не определен') finalCity = fallbackResult.city;
-            }
-
-            // if fallback didn't give city, attempt to extract from distributor string
-            if (!finalCity) {
-                const extracted = extractCityFromDistributor(distributorRaw);
-                if (extracted) finalCity = extracted;
-            }
-
-            // prepend city to address for consistency ONLY if address doesn't already contain city
-            if (!addressHasCity && finalCity) {
-                // avoid duplicating if address already contains the city substring in another form
-                if (!clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                    correctedClientAddress = `г. ${finalCity}, ${clientAddress}`;
-                } else {
-                    correctedClientAddress = clientAddress;
+                finalRegion = fallbackResult.region;
+                finalCity = fallbackResult.city;
+                // Prepend city to address for consistency
+                if (finalCity && finalCity !== 'Город не определен') {
+                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
                 }
             }
         }
@@ -279,7 +197,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                // use simple includes: REGION_KEYWORD_MAP keys should be prepared (lowercase)
                 if (normalizedAddressForKeyword.includes(keyword)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
@@ -288,12 +205,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         finalRegion = standardizeRegion(finalRegion);
-        // finalCity can be null if truly not found
+        if (!finalCity) {
+            finalCity = 'Город не определен';
+        }
 
-        // if region still missing — skip row (can't aggregate without region)
-        if (!finalRegion) continue;
-
-        const groupName = finalCity || finalRegion;
+        const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
@@ -331,7 +247,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight)) continue;
+        if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
         const key = `${finalRegion}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
