@@ -232,12 +232,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
-
-        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+        
+        // CRITICAL FIX: Use a more granular key to prevent incorrect grouping.
+        // The key now includes the client name and group (city/region) to correctly separate entries.
+        const key = `${clientName}-${brand}-${rm}-${groupNameForAggregation}`.toLowerCase();
+        
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
-                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                key,
+                clientName: clientName, // Use the actual client name for the group.
+                brand,
+                rm,
+                city: groupNameForAggregation,
+                region: regionForAggregation,
+                fact: 0,
+                potential: 0,
+                growthPotential: 0,
+                growthPercentage: 0,
                 clients: new Set<string>(),
             };
         }
