@@ -1,3 +1,2 @@
-// This file is intentionally left empty to resolve a build error caused by duplicate files.
-// All logic has been consolidated into `/utils/regionMap.ts`.
-export {};
+// Re-export all named exports from the correct file location to fix resolution issues.
+export * from '../../utils/regionMap';
