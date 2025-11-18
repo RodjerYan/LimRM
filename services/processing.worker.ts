@@ -9,7 +9,7 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseRussianAddress } from './addressParser';
+import { parseAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -164,8 +164,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
+        const distributor = findValueInRow(row, ['дистрибьютор']);
 
-        if (!clientAddress || !rm) continue;
+        if (!clientAddress && !distributor) continue;
+        if (!rm) continue;
 
         const normalizedAddress = normalizeAddress(clientAddress);
         
@@ -174,9 +176,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
-
+            
+            const parsedAddress = parseAddress(clientAddress, distributor);
+            
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
-
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
@@ -187,16 +190,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 // We will not look for coordinates elsewhere.
                 // We just ensure the address is queued to be written to the АКБ sheet.
                 // The App Script in the sheet will handle geocoding.
-                if (!newAddressesToCache[rm]) {
+                if (clientAddress && !newAddressesToCache[rm]) {
                     newAddressesToCache[rm] = [];
                 }
-                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                if (clientAddress && !newAddressesToCache[rm].some(item => item.address === clientAddress)) {
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
                 // lat and lon remain undefined for this session.
             }
-
-            const parsedAddress = parseRussianAddress(clientAddress);
+            
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -205,7 +207,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: clientAddress,
+                address: clientAddress || `(адрес не указан, ${distributor})`,
                 city: groupName,
                 region, rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -214,7 +216,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(clientAddress);
+        const parsedForAggregation = parseAddress(clientAddress, distributor);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
