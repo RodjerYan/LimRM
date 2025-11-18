@@ -171,7 +171,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         let finalRegion: string | null = null;
         let finalCity: string | null = null;
-        let correctedClientAddress = clientAddress;
 
         // --- NEW LOGIC STEP 1: Prioritize Distributor for Region/City determination ---
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'дистрибьютер']);
@@ -180,10 +179,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
                 finalCity = fallbackResult.city;
-                // Prepend city to address for consistency if it's not already there
-                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
-                }
             }
         }
 
@@ -200,7 +195,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                if (normalizedAddressForKeyword.includes(keyword)) {
+                // FIX: Replaced '.includes()' with a regular expression using word boundaries (\b).
+                // This prevents incorrect partial matches within words (e.g., matching "ло" in "Коломенская").
+                const keywordRegex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+                if (keywordRegex.test(normalizedAddressForKeyword)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
                 }
@@ -210,6 +208,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         finalRegion = standardizeRegion(finalRegion);
         if (!finalCity) {
             finalCity = 'Город не определен';
+        }
+        
+        // FIX: Centralize the logic for correcting the client address.
+        // Now, if a city is found through any method, it is prepended to the address string for consistency.
+        let correctedClientAddress = clientAddress;
+        if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+            correctedClientAddress = `${finalCity}, ${clientAddress}`;
         }
 
         const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
