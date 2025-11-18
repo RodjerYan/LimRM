@@ -48,8 +48,7 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        // FIX: Normalize 'ё' to 'е' in the header key to match keywords robustly. This is critical for columns like "Объём".
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
@@ -92,8 +91,7 @@ function findPotentialClients(region: string, existingClients: Set<string>, okbD
 
 
 const findClientNameHeader = (headers: string[]): string | undefined => {
-    // FIX: Normalize 'ё' to 'е' when matching headers to handle variations like "Наименованиё".
-    const lowerHeaders = headers.map(h => h.toLowerCase().trim().replace(/ё/g, 'е'));
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
     const priorityTerms = ['наименование клиента', 'контрагент', 'клиент', 'уникальное наименование товара'];
     for (const term of priorityTerms) {
@@ -101,11 +99,10 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
         if (foundIndex !== -1) return headers[foundIndex];
     }
     
-    // FIX: Normalize 'ё' to 'е' here as well for consistency.
-    const nameColumns = headers.filter(h => h.toLowerCase().trim().replace(/ё/g, 'е').includes('наименование'));
+    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
     if (nameColumns.length > 0) {
         const cleanNameColumn = nameColumns.find(h => {
-            const lH = h.toLowerCase().trim().replace(/ё/g, 'е');
+            const lH = h.toLowerCase().trim();
             return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
         });
         return cleanNameColumn || nameColumns[0];
@@ -136,8 +133,8 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cac
 async function processFile(jsonData: any[], headers: string[], { okbData, cacheData, postMessage }: CommonProcessArgs) {
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
-    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().replace(/ё/g, 'е').includes('потенциал'));
-    if (!headers.some(h => (h || '').toLowerCase().replace(/ё/g, 'е').includes('вес') || (h || '').toLowerCase().replace(/ё/g, 'е').includes('объем') || (h || '').toLowerCase().replace(/ё/g, 'е').includes('факт'))) throw new Error('Файл должен содержать колонку "Вес", "Объем" или "Факт".');
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
@@ -166,8 +163,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка', 'бренд']);
-        const rm = findValueInRow(row, ['рм', 'региональный менеджер']);
+        const brand = findValueInRow(row, ['торговая марка']);
+        const rm = findValueInRow(row, ['рм']);
 
         if (!clientAddress || !rm) continue;
 
@@ -184,7 +181,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         // --- STEP 2: Fallback to distributor if step 1 fails ---
         if (!finalRegion) {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'поставщик']);
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
             const fallbackResult = getRegionFromFallback(distributor);
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
@@ -198,13 +195,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
         if (!finalRegion) {
-            const normalizedAddressForKeyword = clientAddress.toLowerCase();
+            // FIX: Normalize the address string to handle punctuation and ensure whole-word matching.
+            // This prevents parts of words (like "ло" in "суеркулова") from being incorrectly identified as a region code.
+            const normalizedForKeyword = ` ${clientAddress.toLowerCase().replace(/[,.]/g, ' ').replace(/\s+/g, ' ')} `;
             for (const keyword of REGION_KEYWORDS_SORTED) {
-                // FIX: Use a regular expression with word boundaries to prevent partial matches within other words.
-                // This is the definitive fix for the 'Суеркулова' -> 'ло' (Ленинградская область) bug.
-                // The keyword is escaped to handle special characters like hyphens correctly.
-                const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-                if (regex.test(normalizedAddressForKeyword)) {
+                // FIX: Match whole words by padding with spaces.
+                if (normalizedForKeyword.includes(` ${keyword} `)) {
                     finalRegion = REGION_KEYWORD_MAP[keyword];
                     break;
                 }
@@ -248,12 +244,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 city: groupName,
                 region: finalRegion,
                 rm, brand,
-                type: findValueInRow(row, ['канал продаж', 'тип клиента', 'канал']),
-                contacts: findValueInRow(row, ['контакты', 'телефон']),
+                type: findValueInRow(row, ['канал продаж']),
+                contacts: findValueInRow(row, ['контакты']),
             });
         }
         
-        const weight = parseFloat(String(findValueInRow(row, ['вес', 'объем', 'факт']) || '0').replace(/\s/g, '').replace(',', '.'));
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
         const key = `${finalRegion}-${brand}-${rm}`.toLowerCase();
@@ -268,7 +264,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         aggregatedData[key].clients.add(correctedClientAddress || clientName);
 
         if (hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал', 'прогноз']) || '0').replace(/\s/g, '').replace(',', '.'));
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         

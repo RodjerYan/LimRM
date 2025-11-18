@@ -120,19 +120,17 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
     for (const pKey of prioritizedKeys) {
-        // FIX: Normalize 'ё' to 'е' for robust header matching.
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е') === pKey);
+        // Find a key that matches exactly when lowercased and trimmed
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
         if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
 
     // Fallback to partial match if no exact match is found
-    // FIX: Normalize 'ё' to 'е' here as well.
-    const addressKey = rowKeys.find(key => key.toLowerCase().replace(/ё/g, 'е').includes('адрес'));
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
     // Last resort fallback
-    // FIX: Normalize 'ё' to 'е' for the fallback.
-    const fallbackKey = rowKeys.find(key => key.toLowerCase().replace(/ё/g, 'е').includes('город') || key.toLowerCase().replace(/ё/g, 'е').includes('регион'));
+    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
