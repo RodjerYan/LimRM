@@ -9,33 +9,7 @@ export const REGION_BY_CITY_MAP: Record<string, string> = Object.fromEntries(
     Object.entries(REGION_BY_CITY_WITH_INDEXES).map(([city, data]) => [city, data.region])
 );
 
-/**
- * A map for normalizing specific, known address typos and variations.
- * This is applied during the parsing process to clean the input string.
- * All keys should be lowercase. This map should NOT contain generic prefixes like "г." or "пос.".
- */
-export const CITY_NORMALIZATION_MAP: Record<string, string> = {
-  // Specific typos and variations from user data
-  'калининрад': 'калининград',
-  'калининграл': 'калининград',
-  'калиннградская': 'калининград', // Can be ambiguous, but contextually likely refers to the city
-  'красноадр': 'краснодар',
-  'снкт-петербург': 'санкт-петербург',
-  'санкт-петеребург': 'санкт-петербург',
-  'сакнт-петербург': 'санкт-петербург',
-  'б исаково': 'большое исаково',
-  'чкаловск': 'чкаловск',
-  'макевка': 'макеевка',
-  'макее': 'макеевка',
-  'мариуп': 'мариуполь',
-  'мелиополь': 'мелитополь',
-  'лугаснк': 'луганск',
-  'мелитопольул': 'мелитополь',
-  'комсомолькое': 'комсомольское',
-  'в.новгород': 'великий новгород',
-  'сланца': 'сланцы',
-  'моск.': 'москва',
-};
+// Карта CITY_NORMALIZATION_MAP была перенесена в services/addressParser.ts для упрощения зависимостей модулей.
 
 // Fix: Added REGION_KEYWORD_MAP to provide canonical region names from various keywords.
 // This resolves import errors in `utils/dataUtils.ts`.

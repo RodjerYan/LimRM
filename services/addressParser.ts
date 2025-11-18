@@ -1,6 +1,31 @@
 import { ParsedAddress } from '../types';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
-import { CITY_NORMALIZATION_MAP } from '../utils/addressMappings';
+
+// Карта нормализации теперь находится здесь, чтобы избежать циклических зависимостей
+// и проблем с загрузкой модулей в web worker.
+const CITY_NORMALIZATION_MAP: Record<string, string> = {
+  // Specific typos and variations from user data
+  'калининрад': 'калининград',
+  'калининграл': 'калининград',
+  'калиннградская': 'калининград', // Can be ambiguous, but contextually likely refers to the city
+  'красноадр': 'краснодар',
+  'снкт-петербург': 'санкт-петербург',
+  'санкт-петеребург': 'санкт-петербург',
+  'сакнт-петербург': 'санкт-петербург',
+  'б исаково': 'большое исаково',
+  'чкаловск': 'чкаловск',
+  'макевка': 'макеевка',
+  'макее': 'макеевка',
+  'мариуп': 'мариуполь',
+  'мелиополь': 'мелитополь',
+  'лугаснк': 'луганск',
+  'мелитопольул': 'мелитополь',
+  'комсомолькое': 'комсомольское',
+  'в.новгород': 'великий новгород',
+  'сланца': 'сланцы',
+  'моск.': 'москва',
+};
+
 
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
