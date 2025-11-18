@@ -173,31 +173,30 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
 
-        // --- STEP 1: Strict city parse from address ---
-        const initialParse = parseRussianAddress(clientAddress);
-        if (initialParse.region !== 'Регион не определен') {
-            finalRegion = initialParse.region;
-            finalCity = initialParse.city;
-        }
-
-        // --- STEP 2: Fallback to distributor if step 1 fails ---
-        if (!finalRegion) {
-            // FIX: Added 'дистрибьютер' to the keyword list to catch common alternative spellings.
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'дистрибьютер']);
-            if (distributor) {
-                const fallbackResult = getRegionFromFallback(distributor);
-                if (fallbackResult) {
-                    finalRegion = fallbackResult.region;
-                    finalCity = fallbackResult.city;
-                    // Prepend city to address for consistency
-                    if (finalCity && finalCity !== 'Город не определен') {
-                        correctedClientAddress = `${finalCity}, ${clientAddress}`;
-                    }
+        // --- NEW LOGIC STEP 1: Prioritize Distributor for Region/City determination ---
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'дистрибьютер']);
+        if (distributor) {
+            const fallbackResult = getRegionFromFallback(distributor);
+            if (fallbackResult) {
+                finalRegion = fallbackResult.region;
+                finalCity = fallbackResult.city;
+                // Prepend city to address for consistency if it's not already there
+                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
                 }
             }
         }
+
+        // --- NEW LOGIC STEP 2: Fallback to address parsing ONLY if distributor check fails ---
+        if (!finalRegion) {
+            const initialParse = parseRussianAddress(clientAddress);
+            if (initialParse.region !== 'Регион не определен') {
+                finalRegion = initialParse.region;
+                finalCity = initialParse.city;
+            }
+        }
         
-        // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
+        // --- NEW LOGIC STEP 3: Last resort keyword search if both above fail ---
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
