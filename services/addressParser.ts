@@ -1,5 +1,6 @@
 import { 
     standardizeRegion, 
+    REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
@@ -19,42 +20,70 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Parses a Russian address string to extract the region and city.
- * This function has been rewritten to ONLY use a city-based lookup.
- * All ambiguous keyword-based search logic has been completely removed to prevent
- * incorrect region assignments based on street names (e.g., "ул. Ленинградская").
+ * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
+ * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
+ */
+function findRegionByKeyword(normalizedAddress: string): string | null {
+    // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
+    const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
+        // This regex ensures we match the key as a whole word/phrase.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
+
+        if (regex.test(normalizedAddress)) {
+            return REGION_KEYWORD_MAP[key];
+        }
+    }
+    return null;
+}
+
+
+/**
+ * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * This function has been completely refactored to be more robust and strictly prioritize city detection over region keyword detection.
  * @param address The raw address string.
- * @returns A ParsedAddress object. If no city is found, returns a "not determined" state.
+ * @returns A ParsedAddress object with the determined region and city.
  */
 export function parseRussianAddress(address: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    // Step 1: Normalize the input string.
+    // Initial cleaning and normalization
     let normalized = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
-    
-    // Apply specific aliases for common typos.
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
-    
-    // Step 2: STRICT City-First Search. This is the only method used for region detection.
+
+    // --- STEP 1: STRICT CITY-FIRST SEARCH ---
+    // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // Use a word boundary regex to avoid partial matches (e.g., 'кант' in 'кантовский').
+        // Use a regex to ensure we match a whole word.
         const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-        
         if (regex.test(normalized)) {
-            // City found! Immediately return its region and stop all further processing.
+            // MATCH FOUND! Immediately return the region associated with this city.
+            // No further checks are needed. This prevents street names from causing conflicts.
             return {
                 region: REGION_BY_CITY_WITH_INDEXES[cityName].region,
                 city: capitalize(cityName)
             };
         }
     }
-    
-    // Step 3: If no city was found after checking the entire list, give up.
-    // The calling function (worker) is now responsible for any fallback logic.
+
+    // --- STEP 2: FALLBACK TO REGION KEYWORD SEARCH ---
+    // This step only runs if NO city was found in Step 1.
+    const regionFromKeyword = findRegionByKeyword(normalized);
+    if (regionFromKeyword) {
+        return {
+            region: standardizeRegion(regionFromKeyword),
+            city: 'Город не определен' // We know no city was found.
+        };
+    }
+
+    // --- STEP 3: NO MATCH FOUND ---
     return { region: 'Регион не определен', city: 'Город не определен' };
 }
 
