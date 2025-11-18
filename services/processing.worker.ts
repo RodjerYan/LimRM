@@ -9,7 +9,7 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseAddress } from './addressParser';
+import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -161,16 +161,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
-        const distributorAddress = findValueInRow(row, ['дистрибьютор', 'поставщик']);
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+        const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
 
         if (!clientAddress || !rm) continue;
 
-        // The parser now handles the distributor fallback internally.
-        const parsedAddress = parseAddress(clientAddress, distributorAddress);
-        
-        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']);
         const normalizedAddress = normalizeAddress(clientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
@@ -182,18 +178,25 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+                // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
             } else {
+                // Case 2: Address is not in cache, or is in cache but without coordinates.
+                // We will not look for coordinates elsewhere.
+                // We just ensure the address is queued to be written to the АКБ sheet.
+                // The App Script in the sheet will handle geocoding.
                 if (!newAddressesToCache[rm]) {
                     newAddressesToCache[rm] = [];
                 }
                 if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
+                // lat and lon remain undefined for this session.
             }
-            
+
+            const parsedAddress = parseRussianAddress(clientAddress);
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -211,8 +214,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const regionForAggregation = parsedAddress.region;
-        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
+        const parsedForAggregation = parseRussianAddress(clientAddress);
+        const regionForAggregation = parsedForAggregation.region;
+        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
