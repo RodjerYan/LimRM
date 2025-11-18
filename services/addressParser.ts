@@ -41,8 +41,28 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
+ * Helper function to find a city and its corresponding region from a normalized address string.
+ * @param normalizedAddress The address string to search within.
+ * @returns An object with city and region, or nulls if not found.
+ */
+function findCityAndRegion(normalizedAddress: string): { city: string | null; region: string | null } {
+    for (const cityName of CITIES_SORTED_BY_LENGTH) {
+        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+        if (regex.test(normalizedAddress)) {
+            return {
+                city: capitalize(cityName),
+                region: REGION_BY_CITY_WITH_INDEXES[cityName].region
+            };
+        }
+    }
+    return { city: null, region: null };
+}
+
+
+/**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
  * This function has been significantly improved to handle CIS countries and avoid false positives from street names.
+ * The logic now strictly prioritizes city detection over region keyword detection.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
@@ -58,33 +78,24 @@ export function parseRussianAddress(address: string): ParsedAddress {
     }
 
     // --- Determination Logic ---
-    let region: string | null = null;
-    let city: string = 'Город не определен';
 
-    // Step 1: Attempt to find a city first. This is often the most reliable identifier.
-    for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        const escapedCity = cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`\\b${escapedCity}\\b`);
-        if (regex.test(normalized)) {
-            city = capitalize(cityName);
-            // If a city is found, its associated region is the strongest candidate.
-            region = REGION_BY_CITY_WITH_INDEXES[cityName].region;
-            break; // Stop after finding the first (longest) city.
-        }
+    // Step 1: HIGH PRIORITY - City search. This is the most reliable method.
+    // If a city is found, we trust its region completely and stop processing.
+    const cityResult = findCityAndRegion(normalized);
+    if (cityResult.region) {
+        return {
+            region: standardizeRegion(cityResult.region),
+            city: cityResult.city || 'Город не определен'
+        };
     }
 
-    // Step 2: Check for explicit region keywords ONLY IF a region was not found via city.
-    // This prevents a street name like "Ленинградская" from overriding the region found via a city like "Бишкек".
-    if (!region) {
-        const keywordRegion = findRegionByKeyword(normalized);
-        if (keywordRegion) {
-            region = keywordRegion;
-        }
-    }
+    // Step 2: Fallback to keyword search ONLY if NO city was found above.
+    // This prevents a street name (e.g., "ул. Ленинградская") from overriding a region determined by a city (e.g., "Бишкек").
+    const keywordResult = findRegionByKeyword(normalized);
 
     return {
-        region: standardizeRegion(region),
-        city: city 
+        region: standardizeRegion(keywordResult), // Will become 'Регион не определен' if null
+        city: 'Город не определен' // We know no city was found at this point
     };
 }
 

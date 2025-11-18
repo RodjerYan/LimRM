@@ -170,10 +170,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- START: UNIFIED REGION/CITY DETERMINATION ---
         let finalRegion: string;
         let finalCity: string;
+        let correctedClientAddress = clientAddress; // Start with original address
+        let cityFromFallback = false;
 
         const initialParse = parseRussianAddress(clientAddress);
         
-        // Use initial parse if successful, otherwise try fallback
         if (initialParse.region !== 'Регион не определен') {
             finalRegion = initialParse.region;
             finalCity = initialParse.city;
@@ -184,16 +185,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
                 finalCity = fallbackResult.city;
+                cityFromFallback = true;
             } else {
-                // If both fail, use the original failed parse
                 finalRegion = initialParse.region;
                 finalCity = initialParse.city;
             }
         }
+        
+        // If city was found from fallback, prepend it to the address string.
+        if (cityFromFallback && finalCity !== 'Город не определен') {
+            correctedClientAddress = `${finalCity}, ${clientAddress}`;
+        }
+
         const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
         // --- END: UNIFIED REGION/CITY DETERMINATION ---
 
-        const normalizedAddress = normalizeAddress(clientAddress);
+        const normalizedAddress = normalizeAddress(correctedClientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {
@@ -211,8 +218,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 if (!newAddressesToCache[rm]) {
                     newAddressesToCache[rm] = [];
                 }
-                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
-                    newAddressesToCache[rm].push({ address: clientAddress });
+                if (!newAddressesToCache[rm].some(item => item.address === correctedClientAddress)) {
+                    newAddressesToCache[rm].push({ address: correctedClientAddress });
                 }
             }
 
@@ -221,7 +228,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: clientAddress,
+                address: correctedClientAddress,
                 city: groupName,
                 region: finalRegion,
                 rm, brand,
@@ -243,7 +250,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             };
         }
         aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(clientAddress || clientName);
+        aggregatedData[key].clients.add(correctedClientAddress || clientName);
 
         if (hasPotentialColumn) {
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
