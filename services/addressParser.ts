@@ -1,6 +1,5 @@
 import { 
     standardizeRegion, 
-    REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
@@ -20,30 +19,9 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
- * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
- * @param normalizedAddress The pre-processed, lowercased address string.
- * @returns The standardized region name or null if no match is found.
- */
-function findRegionByKeyword(normalizedAddress: string): string | null {
-    // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
-    const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-        // This regex ensures we match the key as a whole word/phrase.
-        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
-
-        if (regex.test(normalizedAddress)) {
-            return REGION_KEYWORD_MAP[key];
-        }
-    }
-    return null;
-}
-
-
-/**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
- * This function has been completely refactored to be more robust and strictly prioritize city detection over region keyword detection.
+ * This function has been completely refactored to be more robust and strictly prioritize city detection over any other method.
+ * The ambiguous region keyword search has been REMOVED entirely.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
@@ -58,7 +36,7 @@ export function parseRussianAddress(address: string): ParsedAddress {
         normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
 
-    // --- STEP 1: STRICT CITY-FIRST SEARCH ---
+    // --- STEP 1: STRICT CITY-FIRST SEARCH (ONLY METHOD) ---
     // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
         // Use a regex to ensure we match a whole word.
@@ -73,17 +51,12 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // --- STEP 2: FALLBACK TO REGION KEYWORD SEARCH ---
-    // This step only runs if NO city was found in Step 1.
-    const regionFromKeyword = findRegionByKeyword(normalized);
-    if (regionFromKeyword) {
-        return {
-            region: standardizeRegion(regionFromKeyword),
-            city: 'Город не определен' // We know no city was found.
-        };
-    }
+    // --- STEP 2 (REMOVED): FALLBACK TO REGION KEYWORD SEARCH ---
+    // This entire block has been removed to prevent incorrect matches from street names.
+    // The logic now relies on the city search above or the distributor fallback in the worker.
 
     // --- STEP 3: NO MATCH FOUND ---
+    // If no city is found, we return 'undefined' and let the worker handle the fallback (distributor check).
     return { region: 'Регион не определен', city: 'Город не определен' };
 }
 
