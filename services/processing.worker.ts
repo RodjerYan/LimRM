@@ -9,7 +9,7 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseRussianAddress } from './addressParser';
+import { parseRussianAddress, getRegionFromFallback } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -167,6 +167,32 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
+        // --- START: UNIFIED REGION/CITY DETERMINATION ---
+        let finalRegion: string;
+        let finalCity: string;
+
+        const initialParse = parseRussianAddress(clientAddress);
+        
+        // Use initial parse if successful, otherwise try fallback
+        if (initialParse.region !== 'Регион не определен') {
+            finalRegion = initialParse.region;
+            finalCity = initialParse.city;
+        } else {
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const fallbackResult = getRegionFromFallback(distributor);
+            
+            if (fallbackResult) {
+                finalRegion = fallbackResult.region;
+                finalCity = fallbackResult.city;
+            } else {
+                // If both fail, use the original failed parse
+                finalRegion = initialParse.region;
+                finalCity = initialParse.city;
+            }
+        }
+        const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
+        // --- END: UNIFIED REGION/CITY DETERMINATION ---
+
         const normalizedAddress = normalizeAddress(clientAddress);
         
         // --- Logic for plottable points (run only once per unique address) ---
@@ -178,27 +204,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
-                // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
             } else {
-                // Case 2: Address is not in cache, or is in cache but without coordinates.
-                // We will not look for coordinates elsewhere.
-                // We just ensure the address is queued to be written to the АКБ sheet.
-                // The App Script in the sheet will handle geocoding.
                 if (!newAddressesToCache[rm]) {
                     newAddressesToCache[rm] = [];
                 }
                 if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
-                // lat and lon remain undefined for this session.
             }
-
-            const parsedAddress = parseRussianAddress(clientAddress);
-            const region = parsedAddress.region;
-            const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
             uniquePlottableClients.set(normalizedAddress, {
                 key: normalizedAddress,
@@ -207,25 +223,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 name: clientName,
                 address: clientAddress,
                 city: groupName,
-                region, rm, brand,
+                region: finalRegion,
+                rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
             });
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(clientAddress);
-        const regionForAggregation = parsedForAggregation.region;
-        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
-
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
+        if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
-        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+        const key = `${finalRegion}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
-                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                key, clientName: `${finalRegion} (${brand})`, brand, rm, city: groupName,
+                region: finalRegion, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };
         }

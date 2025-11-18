@@ -73,18 +73,43 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // Step 2: If we didn't find a city match, or to confirm/override, check for explicit region keywords.
-    // This can correct cases where a city name is ambiguous (e.g. "Киров").
-    const keywordRegion = findRegionByKeyword(normalized);
-    if (keywordRegion) {
-        region = keywordRegion;
+    // Step 2: Check for explicit region keywords ONLY IF a region was not found via city.
+    // This prevents a street name like "Ленинградская" from overriding the region found via a city like "Бишкек".
+    if (!region) {
+        const keywordRegion = findRegionByKeyword(normalized);
+        if (keywordRegion) {
+            region = keywordRegion;
+        }
     }
-
-    // If city is still not determined but we have a region, we can leave it as is.
-    // The main goal is to get the region right.
 
     return {
         region: standardizeRegion(region),
         city: city 
     };
+}
+
+
+/**
+ * Attempts to determine a region and city by finding a known city name within a fallback string (e.g., a distributor's name).
+ * @param fallbackString The string to search within, e.g., "ООО Ромашка (г. Воронеж)".
+ * @returns An object with `region` and `city` if a match is found, otherwise null.
+ */
+export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
+    if (!fallbackString) return null;
+    
+    const normalized = fallbackString.toLowerCase();
+
+    // Iterate through sorted cities to find the longest possible match
+    for (const cityName of CITIES_SORTED_BY_LENGTH) {
+        const regex = new RegExp(`\\b${cityName}\\b`);
+        if (regex.test(normalized)) {
+            const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
+            return {
+                region: cityData.region,
+                city: capitalize(cityName),
+            };
+        }
+    }
+    
+    return null;
 }
