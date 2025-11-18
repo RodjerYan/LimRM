@@ -10,7 +10,7 @@ import {
     CoordsCache 
 } from '../types';
 import { parseRussianAddress, getRegionFromFallback } from './addressParser';
-import { standardizeRegion } from '../utils/addressMappings';
+import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -111,6 +111,7 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
+const REGION_KEYWORDS_SORTED = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const { file, okbData, cacheData } = e.data;
@@ -167,42 +168,50 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
-        // --- START: UNIFIED REGION/CITY DETERMINATION ---
-        let finalRegion: string;
-        let finalCity: string;
-        let correctedClientAddress = clientAddress; // Start with original address
-        let cityFromFallback = false;
+        let finalRegion: string | null = null;
+        let finalCity: string | null = null;
+        let correctedClientAddress = clientAddress;
 
+        // --- STEP 1: Strict city parse from address ---
         const initialParse = parseRussianAddress(clientAddress);
-        
         if (initialParse.region !== 'Регион не определен') {
             finalRegion = initialParse.region;
             finalCity = initialParse.city;
-        } else {
+        }
+
+        // --- STEP 2: Fallback to distributor if step 1 fails ---
+        if (!finalRegion) {
             const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
             const fallbackResult = getRegionFromFallback(distributor);
-            
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
                 finalCity = fallbackResult.city;
-                cityFromFallback = true;
-            } else {
-                finalRegion = initialParse.region;
-                finalCity = initialParse.city;
+                // Prepend city to address for consistency
+                if (finalCity && finalCity !== 'Город не определен') {
+                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
+                }
             }
         }
         
-        // If city was found from fallback, prepend it to the address string.
-        if (cityFromFallback && finalCity !== 'Город не определен') {
-            correctedClientAddress = `${finalCity}, ${clientAddress}`;
+        // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
+        if (!finalRegion) {
+            const normalizedAddressForKeyword = clientAddress.toLowerCase();
+            for (const keyword of REGION_KEYWORDS_SORTED) {
+                if (normalizedAddressForKeyword.includes(keyword)) {
+                    finalRegion = REGION_KEYWORD_MAP[keyword];
+                    break;
+                }
+            }
+        }
+        
+        finalRegion = standardizeRegion(finalRegion);
+        if (!finalCity) {
+            finalCity = 'Город не определен';
         }
 
         const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
-        // --- END: UNIFIED REGION/CITY DETERMINATION ---
-
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
-        // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -237,7 +246,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             });
         }
         
-        // --- Aggregation logic (runs for every row) ---
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
