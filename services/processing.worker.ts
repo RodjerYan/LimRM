@@ -134,7 +134,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
+    if (!headers.some(h => (h || '').toLowerCase().includes('вес') || (h || '').toLowerCase().includes('объем') || (h || '').toLowerCase().includes('факт'))) throw new Error('Файл должен содержать колонку "Вес", "Объем" или "Факт".');
     const clientNameHeader = findClientNameHeader(headers);
     
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
@@ -163,8 +163,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const row = jsonData[i];
         const clientAddress = findAddressInRow(row);
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']);
-        const rm = findValueInRow(row, ['рм']);
+        const brand = findValueInRow(row, ['торговая марка', 'бренд']);
+        const rm = findValueInRow(row, ['рм', 'региональный менеджер']);
 
         if (!clientAddress || !rm) continue;
 
@@ -181,7 +181,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         // --- STEP 2: Fallback to distributor if step 1 fails ---
         if (!finalRegion) {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор', 'поставщик']);
             const fallbackResult = getRegionFromFallback(distributor);
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
@@ -245,12 +245,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 city: groupName,
                 region: finalRegion,
                 rm, brand,
-                type: findValueInRow(row, ['канал продаж']),
-                contacts: findValueInRow(row, ['контакты']),
+                type: findValueInRow(row, ['канал продаж', 'тип клиента', 'канал']),
+                contacts: findValueInRow(row, ['контакты', 'телефон']),
             });
         }
         
-        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        const weight = parseFloat(String(findValueInRow(row, ['вес', 'объем', 'факт']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
         const key = `${finalRegion}-${brand}-${rm}`.toLowerCase();
@@ -265,7 +265,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         aggregatedData[key].clients.add(correctedClientAddress || clientName);
 
         if (hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал', 'прогноз']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         
