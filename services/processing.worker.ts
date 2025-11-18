@@ -182,13 +182,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- STEP 2: Fallback to distributor if step 1 fails ---
         if (!finalRegion) {
             const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            const fallbackResult = getRegionFromFallback(distributor);
-            if (fallbackResult) {
-                finalRegion = fallbackResult.region;
-                finalCity = fallbackResult.city;
-                // Prepend city to address for consistency
-                if (finalCity && finalCity !== 'Город не определен') {
-                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
+            if (distributor) {
+                const fallbackResult = getRegionFromFallback(distributor);
+                if (fallbackResult) {
+                    finalRegion = fallbackResult.region;
+                    finalCity = fallbackResult.city;
+                    // Prepend city to address for consistency
+                    if (finalCity && finalCity !== 'Город не определен') {
+                        correctedClientAddress = `${finalCity}, ${clientAddress}`;
+                    }
                 }
             }
         }
@@ -273,9 +275,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
-    const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
+    const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
