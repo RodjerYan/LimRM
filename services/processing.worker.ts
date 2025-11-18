@@ -157,7 +157,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const aggregatedData: AggregationMap = {};
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
-    const addressesToGeocode: { [rmName: string]: string[] } = {};
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
@@ -179,25 +178,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+                // Case 1: Address and coordinates are found in the АКБ cache sheet. Use them.
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
             } else {
-                if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                // Case 2: Address is not in cache, or is in cache but without coordinates.
+                // We will not look for coordinates elsewhere.
+                // We just ensure the address is queued to be written to the АКБ sheet.
+                // The App Script in the sheet will handle geocoding.
+                if (!newAddressesToCache[rm]) {
+                    newAddressesToCache[rm] = [];
+                }
                 if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
                     newAddressesToCache[rm].push({ address: clientAddress });
                 }
-
-                const okbEntry = okbCoordIndex.get(normalizedAddress);
-                if (okbEntry) {
-                    lat = okbEntry.lat;
-                    lon = okbEntry.lon;
-                } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
-                    if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    if (!addressesToGeocode[rm].includes(clientAddress)) {
-                        addressesToGeocode[rm].push(clientAddress);
-                    }
-                }
+                // lat and lon remain undefined for this session.
             }
 
             const parsedAddress = parseRussianAddress(clientAddress);
@@ -272,7 +268,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     // --- BACKGROUND TASKS ---
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
-        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
         for (const rmName of newAddressRMs) {
             try {
@@ -281,42 +276,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
     }
 
-    const geocodeRMs = Object.keys(addressesToGeocode);
-    if (geocodeRMs.length > 0) {
-        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
-        for (const rmName of geocodeRMs) {
-            const updates: { address: string, lat: number, lon: number }[] = [];
-            const addresses = addressesToGeocode[rmName];
-            for (let i = 0; i < addresses.length; i++) {
-                const address = addresses[i];
-                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
-                
-                let coords: { lat: number, lon: number } | null = null;
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
-                        if (response.ok) {
-                            coords = await response.json();
-                            break;
-                        }
-                    } catch (e) { console.error(`Geocode attempt ${attempt} failed for ${address}:`, e); }
-                    if (attempt < 3) await sleep(5000);
-                }
-                if (coords) updates.push({ address, ...coords });
-            }
-
-            if (updates.length > 0) {
-                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
-                try {
-                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
-                } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
-            }
-        }
-    }
-    // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
