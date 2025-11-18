@@ -20,28 +20,6 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Finds a city name within a normalized address string.
- * @param normalizedAddress A pre-processed, lowercased address string.
- * @returns The capitalized city name or a default string if not found.
- */
-function getCityFromAddress(normalizedAddress: string): string {
-    if (!normalizedAddress) return 'Город не определен';
-
-    // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
-    for (const city of CITIES_SORTED_BY_LENGTH) {
-        // Use regex with word boundaries to ensure we're matching the whole city name.
-        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`\\b${escapedCity}\\b`);
-        if (regex.test(normalizedAddress)) {
-            return capitalize(city);
-        }
-    }
-    
-    return 'Город не определен';
-}
-
-
-/**
  * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
  * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
  * @param normalizedAddress The pre-processed, lowercased address string.
@@ -64,6 +42,7 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 
 /**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * This function has been significantly improved to handle CIS countries and avoid false positives from street names.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
@@ -72,20 +51,37 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
-    let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
-
-    // --- Step 1: Normalization using aliases for common typos ---
+    // Initial cleaning and normalization
+    let normalized = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
+        normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
+    }
+
+    // --- Determination Logic ---
+    let region: string | null = null;
+    let city: string = 'Город не определен';
+
+    // Step 1: Attempt to find a city first. This is often the most reliable identifier.
+    for (const cityName of CITIES_SORTED_BY_LENGTH) {
+        const escapedCity = cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedCity}\\b`);
+        if (regex.test(normalized)) {
+            city = capitalize(cityName);
+            // If a city is found, its associated region is the strongest candidate.
+            region = REGION_BY_CITY_WITH_INDEXES[cityName].region;
+            break; // Stop after finding the first (longest) city.
         }
     }
 
-    // --- Step 2: Determine Region and City ---
-    const region = findRegionByKeyword(normalized);
-    const city = getCityFromAddress(normalized);
+    // Step 2: If we didn't find a city match, or to confirm/override, check for explicit region keywords.
+    // This can correct cases where a city name is ambiguous (e.g. "Киров").
+    const keywordRegion = findRegionByKeyword(normalized);
+    if (keywordRegion) {
+        region = keywordRegion;
+    }
+
+    // If city is still not determined but we have a region, we can leave it as is.
+    // The main goal is to get the region right.
 
     return {
         region: standardizeRegion(region),
