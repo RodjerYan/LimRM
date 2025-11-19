@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
 
@@ -9,7 +9,8 @@ interface OKBManagementProps {
     disabled: boolean;
 }
 
-const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
+// FIX: Convert the component to use `forwardRef` to accept a ref from its parent.
+const OKBManagement = forwardRef<{ fetchData: () => Promise<void> }, OKBManagementProps>(({ onStatusChange, onDataChange, status, disabled }, ref) => {
     const [isFetching, setIsFetching] = useState(false);
 
     useEffect(() => {
@@ -44,6 +45,11 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             setIsFetching(false);
         }
     };
+
+    // FIX: Expose the `fetchData` function to the parent component using `useImperativeHandle`.
+    useImperativeHandle(ref, () => ({
+        fetchData: handleFetchData
+    }));
 
     const isLoading = isFetching || status?.status === 'loading';
     const isReady = status?.status === 'ready';
@@ -106,6 +112,6 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             </button>
         </div>
     );
-};
+});
 
 export default OKBManagement;

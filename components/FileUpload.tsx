@@ -1,17 +1,18 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { WorkerMessage, OkbStatus, WorkerResultPayload, CoordsCache } from '../types';
 import { formatETR } from '../utils/timeUtils';
 import { LoaderIcon } from './icons';
 
 interface FileUploadProps {
-    onFileProcessed: (data: WorkerResultPayload) => void;
+    // FIX: Update signature to include the `file` object, matching the handler in App.tsx.
+    onFileProcessed: (data: WorkerResultPayload, file: File) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
     okbData: any[];
     okbStatus: OkbStatus | null;
     disabled: boolean;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }) => {
+const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadProps>(({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }, ref) => {
     const [fileName, setFileName] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
@@ -71,7 +72,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     }
                     break;
                 case 'result':
-                    onFileProcessed(payload);
+                    // FIX: Pass the `file` object to the callback to match the updated prop type.
+                    onFileProcessed(payload, file);
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Основная обработка завершена!`);
                     setProgress(100);
@@ -96,6 +98,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         
         workerRef.current.postMessage({ file, okbData, cacheData });
     }, [onFileProcessed, onProcessingStateChange, okbData]);
+    
+    // FIX: Expose the `processFile` function to the parent component via the ref.
+    useImperativeHandle(ref, () => ({
+        processFile
+    }));
     
     // Cleanup worker on component unmount
     useEffect(() => {
@@ -221,6 +228,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             ) : null}
         </div>
     );
-};
+});
 
 export default FileUpload;

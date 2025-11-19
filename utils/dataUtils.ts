@@ -16,6 +16,7 @@ import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
   return data.filter(row => {
+    if (row.region === 'Неопределенные адреса') return true; // Always include unidentified rows for separate display
     const rmMatch = !filters.rm || row.rm === filters.rm;
     const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
     const regionMatch = filters.region.length === 0 || filters.region.includes(row.region);
@@ -36,7 +37,7 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
   data.forEach(row => {
     if (row.rm) rms.add(row.rm);
     if (row.brand) brands.add(row.brand);
-    if (row.region && row.region !== 'Регион не определен') regions.add(row.region);
+    if (row.region && row.region !== 'Регион не определен' && row.region !== 'Неопределенные адреса') regions.add(row.region);
   });
 
   return {
@@ -57,8 +58,14 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
   if (data.length === 0) {
     return null;
   }
+    
+  const dataForMetrics = data.filter(row => row.region !== "Неопределенные адреса");
 
-  const metrics = data.reduce(
+  if (dataForMetrics.length === 0) {
+      return null;
+  }
+
+  const metrics = dataForMetrics.reduce(
     (acc, row) => {
       acc.totalFact += row.fact;
       acc.totalPotential += row.potential;
@@ -98,7 +105,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     totalFact: metrics.totalFact,
     totalPotential: metrics.totalPotential,
     totalGrowth: metrics.totalGrowth,
-    totalClients: data.length, // Total number of groups
+    totalClients: dataForMetrics.length, // Total number of groups
     totalActiveClients: metrics.totalActiveClients, // This count is based on unique addresses per group.
     averageGrowthPercentage,
     topPerformingRM,
