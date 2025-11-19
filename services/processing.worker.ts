@@ -48,7 +48,8 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        // FIX: Add ё -> е normalization for header keys to make matching more robust (e.g., "Дистрибьютёр").
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }

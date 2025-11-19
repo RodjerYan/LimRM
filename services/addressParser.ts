@@ -70,7 +70,8 @@ export function getRegionFromFallback(fallbackString: string): { region: string;
     if (!fallbackString) return null;
     
     // More robust normalization: remove punctuation to avoid issues with word boundaries.
-    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ');
+    // FIX: Added .replace(/ё/g, 'е') to handle cases like "Орёл" correctly.
+    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ').replace(/ё/g, 'е');
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
