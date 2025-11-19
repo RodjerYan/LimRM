@@ -111,82 +111,94 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     // --- 1. Normalization & Initial Data Extraction ---
     const lowerAddress = originalAddress.toLowerCase().replace(/ё/g, 'е');
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
-
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
-        }
+        normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
     }
-
     const cityFromAddress = getCityFromAddress(normalized);
     const regionFromKeyword = findRegionByKeyword(normalized);
     const cityFromDistributorRaw = distributor ? extractCityFromDistributor(distributor) : null;
-    
+
+    // --- 2. Determine Authoritative Region and City ---
     let authRegion: string | null = null;
     let authCity: string | null = null;
-    
-    // --- 2. Determine Authoritative Region and City ---
-    
-    // Case 1: An explicit RF/BY region keyword is found. This is the highest priority.
-    // We completely ignore the distributor in this case.
+    let isCISCase = false;
+
+    // Path A: Explicit RF/BY region keyword is found. This is the highest priority. Distributor is IGNORED.
     if (regionFromKeyword && RF_AND_BY_REGIONS.has(regionFromKeyword)) {
         authRegion = regionFromKeyword;
         authCity = cityFromAddress;
-    } else {
-        // Case 2: This is a CIS country or an ambiguous address. We establish a hierarchy.
+    } 
+    // Path B: CIS or ambiguous address. Use city-first hierarchy.
+    else {
         // Priority 1: City found within the address string.
         if (cityFromAddress) {
             authCity = cityFromAddress;
             const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === authCity!.toLowerCase());
-            if (cityKey) {
-                authRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
-            }
+            if (cityKey) authRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
         } 
-        // Priority 2: City from the distributor (used for region lookup).
+        // Priority 2: City from the distributor (only used if no city in address).
         else if (cityFromDistributorRaw) {
             const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === cityFromDistributorRaw);
             if (cityKey) {
-                authRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
-                // The city is only authoritative if it's for a non-RF/BY country.
-                if (!RF_AND_BY_REGIONS.has(authRegion!)) {
-                    authCity = capitalize(cityFromDistributorRaw);
+                const potentialRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+                // Only apply this logic if it points to a CIS country.
+                if (!RF_AND_BY_REGIONS.has(potentialRegion)) {
+                    authRegion = potentialRegion;
+                    authCity = capitalize(cityFromDistributorRaw); // This city will enrich the address.
                 }
             }
         }
         
-        // Priority 3: Last resort fallback to any keyword match if region is still unknown.
-        if (!authRegion) {
-            authRegion = regionFromKeyword;
-        }
+        // Fallback to any keyword match if region is still unknown (e.g., "казахстан").
+        if (!authRegion) authRegion = regionFromKeyword;
     }
 
+    // --- 3. Construct Clean Final Address ---
     const finalRegionStr = standardizeRegion(authRegion);
-    
-    // For the final display, the city from the address always takes precedence over the distributor city.
     const displayCity = cityFromAddress || authCity;
+    isCISCase = !!(authRegion && !RF_AND_BY_REGIONS.has(authRegion));
+    
+    let addressRemainder = originalAddress;
 
-    // --- 3. Construct Final Address ---
-    let finalAddress = originalAddress;
-
-    // RULE: Enrich address with city from distributor ONLY if the address has no settlement AND it's a CIS case.
+    // Determine the single, primary city for this address.
+    let primaryCity = cityFromAddress;
     const addressHasOwnSettlement = cityFromAddress || hasSettlementInAddress(lowerAddress);
-    const isCISCaseForEnrichment = finalRegionStr && !RF_AND_BY_REGIONS.has(finalRegionStr);
-
-    if (!addressHasOwnSettlement && cityFromDistributorRaw && isCISCaseForEnrichment) {
-        finalAddress = originalAddress ? `г. ${capitalize(cityFromDistributorRaw)}, ${originalAddress}` : `г. ${capitalize(cityFromDistributorRaw)}`;
+    // Enrich with distributor city ONLY if it's a CIS case AND address has NO settlement.
+    if (!addressHasOwnSettlement && isCISCase && cityFromDistributorRaw) {
+        primaryCity = capitalize(cityFromDistributorRaw);
     }
 
-    // RULE: Prepend the region, but be careful not to duplicate it.
-    if (finalRegionStr !== 'Регион не определен') {
-        const regionBase = finalRegionStr.replace(/область|край|республика/i, '').trim().toLowerCase();
-        // A simple check to see if a significant part of the region name is already in the address.
-        if (!lowerAddress.includes(regionBase.substring(0, Math.min(regionBase.length, 5)))) {
-             finalAddress = `${finalRegionStr}, ${finalAddress}`;
+    // Clean the remainder by removing geo identifiers we are about to prepend.
+    if (primaryCity) {
+        const cityRegex = new RegExp(`(г\\.?\\s*)?\\b${primaryCity.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'gi');
+        addressRemainder = addressRemainder.replace(cityRegex, '');
+    }
+    if (authRegion) {
+        const regionBase = authRegion.replace(/область|край|республика|народная/i, '').trim();
+        if (regionBase.length > 4) {
+             const regionRegex = new RegExp(`\\b${regionBase.toLowerCase()}(\\w*)?\\b`, 'gi');
+             addressRemainder = addressRemainder.replace(regionRegex, '');
         }
     }
     
-    // Final cleanup for any stray commas, multiple spaces, or accidental duplications.
-    finalAddress = finalAddress.replace(/, ,/g, ',').replace(/,\s*,/g, ',').replace(/\s+/g, ' ').trim().replace(/^,/, '').trim();
+    // Tidy up the remainder string.
+    addressRemainder = addressRemainder.replace(/\b\d{6}\b/g, '').replace(/(\s*,\s*){2,}/g, ', ').replace(/^\s*,\s*|\s*,\s*$/g, '').trim();
+    
+    const finalParts: string[] = [];
+    if (finalRegionStr !== 'Регион не определен') {
+        finalParts.push(finalRegionStr);
+    }
+    if (primaryCity) {
+        // Use the original prefix if available (с., р-к etc.), otherwise default to "г."
+        const settlementMatch = originalAddress.match(new RegExp(`(\\b(с|село|г|город|пгт|пос|р-к|мкр)\\b\\.?)\\s*${primaryCity.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}`, 'i'));
+        const prefix = settlementMatch ? settlementMatch[1] : 'г.';
+        finalParts.push(`${prefix} ${primaryCity}`);
+    }
+    if (addressRemainder) {
+        finalParts.push(addressRemainder);
+    }
+
+    const finalAddress = finalParts.join(', ');
 
     return {
         region: finalRegionStr,
