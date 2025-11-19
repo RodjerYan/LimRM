@@ -168,43 +168,52 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
+        // --- STRICT PRIORITY REGION DETECTION ---
         let finalRegion: string | null = null;
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
 
-        // --- REFINED REGION DETECTION LOGIC ---
-
-        // Step A: First, try to parse the main address. This is the most reliable source.
+        // PRIORITY 1: Parse the main address string for a known city.
         const initialParse = parseRussianAddress(clientAddress);
-
-        // Step B: Independently, check the distributor column as a fallback.
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        const fallbackResult = getRegionFromFallback(distributor);
-
-        // Step C: Prioritize results.
         if (initialParse.region !== 'Регион не определен') {
-            // Priority 1: Main address parsing was successful. Use it.
             finalRegion = initialParse.region;
             finalCity = initialParse.city;
-        } else if (fallbackResult) {
-            // Priority 2: Main address failed, but distributor lookup succeeded. Use it.
-            finalRegion = fallbackResult.region;
-            finalCity = fallbackResult.city;
-            // Prepend city to address for consistency if it's not already there
-            if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                correctedClientAddress = `${finalCity}, ${clientAddress}`;
-            }
-        } else {
-            // Priority 3 (Last Resort): Both methods failed. Try keyword search on the address.
-            const normalizedAddressForKeyword = clientAddress.toLowerCase();
-            for (const keyword of REGION_KEYWORDS_SORTED) {
-                if (normalizedAddressForKeyword.includes(keyword)) {
-                    finalRegion = REGION_KEYWORD_MAP[keyword];
-                    break;
+        }
+
+        // PRIORITY 2: If address fails, parse the distributor string. This is crucial for CIS countries.
+        if (!finalRegion) {
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const fallbackResult = getRegionFromFallback(distributor);
+            if (fallbackResult) {
+                finalRegion = fallbackResult.region;
+                finalCity = fallbackResult.city;
+                // Enrich the address for better consistency and display
+                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
                 }
             }
         }
         
+        // PRIORITY 3 (LAST RESORT): If both fail, use a strict keyword search on the address.
+        if (!finalRegion) {
+            // Normalize for regex: remove punctuation but keep letters, numbers, and spaces.
+            const normalizedAddressForKeyword = clientAddress.toLowerCase().replace(/[^а-я0-9\s-]/g, ' '); 
+            for (const keyword of REGION_KEYWORDS_SORTED) {
+                // Use a word boundary regex to prevent partial matches (e.g., 'ло' in 'молдо').
+                try {
+                    const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+                    if (regex.test(normalizedAddressForKeyword)) {
+                        finalRegion = REGION_KEYWORD_MAP[keyword];
+                        break;
+                    }
+                } catch (e) {
+                    // In case a keyword creates a bad regex, log it and continue
+                    console.error(`Invalid regex for keyword: ${keyword}`, e);
+                }
+            }
+        }
+
+        // Final standardization and assignment
         finalRegion = standardizeRegion(finalRegion);
         if (finalRegion === 'Регион не определен') {
             finalRegion = "Неопределенные адреса";
@@ -213,7 +222,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!finalCity || finalCity === 'Город не определен') {
             finalCity = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
         }
-
+        
         const groupName = finalCity;
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
@@ -284,23 +293,26 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const rm = findValueInRow(row, ['рм']);
         if (!clientAddress || !rm) return;
         
+        let regionDetermined = false;
         const initialParse = parseRussianAddress(clientAddress);
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        const fallbackResult = getRegionFromFallback(distributor);
-        let finalRegion: string | null = null;
-         if (initialParse.region !== 'Регион не определен') {
-            finalRegion = initialParse.region;
-        } else if (fallbackResult) {
-            finalRegion = fallbackResult.region;
+        if (initialParse.region !== 'Регион не определен') {
+            regionDetermined = true;
+        } else {
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const fallbackResult = getRegionFromFallback(distributor);
+            if (fallbackResult) {
+                regionDetermined = true;
+            }
         }
-        if (!finalRegion) {
+        
+        if (!regionDetermined) {
              const key = `unidentified-${clientAddress}-${rm}`.toLowerCase();
              if (!aggregatedData[key]) {
                  aggregatedData[key] = {
                      key,
                      clientName: findValueInRow(row, ['наименование клиента', 'контрагент', 'клиент']) || clientAddress,
-                     brand: findValueInRow(row, ['торговая марка']),
-                     rm,
+                     brand: findValueInRow(row, ['торговая марка']) || 'Без бренда',
+                     rm: rm || 'Неизвестный РМ',
                      city: "Неопределенный город",
                      region: "Неопределенные адреса",
                      fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
