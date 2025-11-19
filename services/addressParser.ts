@@ -119,93 +119,138 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     }
 
     const cityFromAddress = getCityFromAddress(normalized);
-    const regionFromKeyword = findRegionByKeyword(normalized);
+    const keywordRegionInAddress = findRegionByKeyword(normalized);
     const cityFromDistributorRaw = distributor ? extractCityFromDistributor(distributor) : null;
     
     let authRegion: string | null = null;
     let authCity: string | null = null;
-    let isCISCase = false;
     
     // --- 2. Determine Authoritative Region and City ---
-    
-    // Case 1: An explicit RF/BY region keyword is found. This is the highest priority.
-    // The distributor is completely ignored in this case.
-    if (regionFromKeyword && RF_AND_BY_REGIONS.has(regionFromKeyword)) {
-        authRegion = regionFromKeyword;
+    const isRuByCase = keywordRegionInAddress && RF_AND_BY_REGIONS.has(keywordRegionInAddress);
+
+    if (isRuByCase) {
+        // --- LOGIC FOR RUSSIA & BELARUS ---
+        // Distributor is ignored. Region from keyword is authoritative.
+        authRegion = keywordRegionInAddress;
         authCity = cityFromAddress;
     } else {
-        // Case 2: It's likely a CIS country or an ambiguous address.
-        isCISCase = true;
-
-        let contextCityRaw: string | null = null;
+        // --- LOGIC FOR CIS (or ambiguous addresses) ---
+        let contextCityForRegionLookup = cityFromDistributorRaw;
         
-        // The most reliable context for CIS is the distributor's city.
-        if (cityFromDistributorRaw) {
-            contextCityRaw = cityFromDistributorRaw;
-        } else if (cityFromAddress) {
-            contextCityRaw = cityFromAddress.toLowerCase();
-        }
-        
-        if (contextCityRaw) {
-            const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === contextCityRaw);
+        // The most reliable context for CIS region is the distributor's city.
+        if (contextCityForRegionLookup) {
+            const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === contextCityForRegionLookup);
             if (cityKey) {
                 authRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
             }
         }
         
-        // If region still not found, fallback to keyword (e.g. 'кыргызстан' in address)
+        // If region still not found via distributor, try keyword in address (e.g. "кыргызстан").
         if (!authRegion) {
-             authRegion = regionFromKeyword;
+             authRegion = keywordRegionInAddress;
         }
 
-        // Determine the authoritative city for display.
+        // Determine the city to display. Priority is always given to the city in the address.
         if (cityFromAddress) {
             authCity = cityFromAddress;
-        } else if (isCISCase && !hasSettlementInAddress(lowerAddress) && cityFromDistributorRaw) {
-             // Enrich with distributor city ONLY if no other settlement is mentioned.
+        // Enrich with distributor city ONLY if the address is truly empty of any settlement info.
+        } else if (!hasSettlementInAddress(lowerAddress) && cityFromDistributorRaw) {
             authCity = capitalize(cityFromDistributorRaw);
         }
     }
 
-    // --- 3. Construct Final Address without Duplicates ---
-    
+    // --- 3. Construct Final Address by Cleaning and Assembling ---
     let addressRemainder = originalAddress;
-    
-    // Clean remainder: remove authoritative city and region to prevent duplication.
+    const finalRegionStr = standardizeRegion(authRegion);
+
+    // Create a list of all names/aliases for the region and city to remove them from the original string.
+    const termsToRemove: string[] = [];
+    if (finalRegionStr !== 'Регион не определен') {
+        const regionCore = finalRegionStr.replace(/область|край|республика/i, '').trim();
+        termsToRemove.push(regionCore.toLowerCase());
+    }
     if (authCity) {
-        const cityRegex = new RegExp(`(г\\.?\\s*)?${authCity.toLowerCase()}\\b`, 'gi');
-        addressRemainder = addressRemainder.replace(cityRegex, '');
+        termsToRemove.push(authCity.toLowerCase());
     }
-    if (authRegion) {
-        const regionCore = authRegion.replace(/область|край|республика/i, '').trim().toLowerCase();
-        if (regionCore.length > 3) {
-            const regionRegex = new RegExp(`\\b${regionCore}[а-я]*(\\s*обл\\.?)?`, 'gi');
-            addressRemainder = addressRemainder.replace(regionRegex, '');
-        }
+    
+    // Build a regex from unique terms to perform cleaning.
+    if (termsToRemove.length > 0) {
+        const uniqueTerms = [...new Set(termsToRemove)].sort((a, b) => b.length - a.length);
+        const regexParts = uniqueTerms.map(term => {
+             // Match term as a whole word, optionally with prefixes/suffixes
+            return `(г\\.\\s*)?\\b${term}[а-я]*\\b(\\s*обл|область|край|респ)?\\.?`;
+        });
+        const cleaningRegex = new RegExp(regexParts.join('|'), 'gi');
+        addressRemainder = addressRemainder.replace(cleaningRegex, '');
     }
+    
+    // Clean up leftover punctuation and extra spaces from the replacements.
     addressRemainder = addressRemainder.replace(/, ,/g, ',').replace(/\s+/g, ' ').trim().replace(/^,/, '').trim();
     
-    // Assemble the final address from clean parts.
-    const finalRegionStr = standardizeRegion(authRegion);
+    // Assemble the final address from clean parts to guarantee no duplication.
     const parts = [];
     if (finalRegionStr !== 'Регион не определен') {
         parts.push(finalRegionStr);
     }
+    // Always add the authoritative city if one was determined.
     if (authCity) {
-        parts.push(`г. ${authCity}`);
+        // If the original address already contains a settlement, we respect its format.
+        // If not, we prepend "г. ".
+        if (cityFromAddress) {
+             // The original address already contains this city, so we just let it be in the remainder.
+             // But we need to avoid adding it twice. The cleaning step should have handled this.
+             // Let's ensure the city is only added if it's NOT the one from the address.
+             if (authCity !== cityFromAddress) {
+                parts.push(`г. ${authCity}`);
+             }
+        } else {
+            parts.push(`г. ${authCity}`);
+        }
     }
+
     if (addressRemainder) {
         parts.push(addressRemainder);
     }
 
-    let finalAddress = parts.join(', ');
+    // A simpler assembly logic that should be more robust
+    const finalParts: string[] = [];
+    if (finalRegionStr !== 'Регион не определен') {
+        finalParts.push(finalRegionStr);
+    }
     
-    // Final cleanup for any stray commas or multiple spaces.
-    finalAddress = finalAddress.replace(/ ,/g, ',').replace(/, ,/g, ',').replace(/\s+/g, ' ').trim();
+    // The address content is either the enriched one (with new city) or the original
+    let contentPart = originalAddress;
+    if (authCity && !cityFromAddress && !hasSettlementInAddress(lowerAddress)) {
+        contentPart = `г. ${authCity}, ${originalAddress}`;
+    }
+
+    // Now, clean duplicates from the content part before joining
+    if (finalRegionStr !== 'Регион не определен') {
+        const regionCore = finalRegionStr.replace(/область|край|республика/i, '').trim();
+        const regionRegex = new RegExp(`\\b${regionCore}[а-я]*(\\s*(обл|область|край|респ))?\\.?,?`, 'gi');
+        contentPart = contentPart.replace(regionRegex, '').trim().replace(/^,/, '').trim();
+    }
+    
+    if (authCity && cityFromAddress) { // If city came from address, it might be duplicated
+        const cityRegex = new RegExp(`(г\\.\\s*)?\\b${authCity}\\b,?`, 'gi');
+        // Replace all but the first occurrence
+        let firstMatch = true;
+        contentPart = contentPart.replace(cityRegex, (match) => {
+            if (firstMatch) {
+                firstMatch = false;
+                return match; // keep the first one
+            }
+            return ''; // remove subsequent ones
+        });
+    }
+
+    finalParts.push(contentPart);
+
+    let finalAddress = finalParts.join(', ').replace(/, ,/g, ',').replace(/\s+/g, ' ').trim();
 
     return {
         region: finalRegionStr,
-        city: authCity || 'Город не определен',
+        city: authCity || cityFromAddress || 'Город не определен',
         finalAddress
     };
 }
