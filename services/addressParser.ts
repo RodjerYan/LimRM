@@ -32,8 +32,9 @@ export function parseRussianAddress(address: string): ParsedAddress {
 
     const lowerAddress = address.toLowerCase();
 
-    // HARDCODED FIX for "Орёл" to be "iron-clad" as requested.
-    if (/\bор[её]л\b/.test(lowerAddress)) {
+    // FINAL "IRON-CLAD" FIX: Use simple includes() which is very aggressive but will catch all variations
+    // including cases with strange punctuation or spacing that might break a \b word boundary check.
+    if (lowerAddress.includes('орел') || lowerAddress.includes('орёл')) {
         return {
             region: 'Орловская область',
             city: 'Орёл'
@@ -84,8 +85,9 @@ export function getRegionFromFallback(fallbackString: string): { region: string;
     if (!fallbackString) return null;
     
     const lowerFallback = fallbackString.toLowerCase();
-    // HARDCODED FIX for "Орёл" to be "iron-clad" as requested.
-    if (/\bор[её]л\b/.test(lowerFallback)) {
+
+    // FINAL "IRON-CLAD" FIX: Use simple includes() for the same reasons as in parseRussianAddress.
+    if (lowerFallback.includes('орел') || lowerFallback.includes('орёл')) {
         return {
             region: 'Орловская область',
             city: 'Орёл',

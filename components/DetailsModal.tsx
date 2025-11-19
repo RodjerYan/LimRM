@@ -28,9 +28,6 @@ const formatNumber = (num: number, short = false) => {
 const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; color: string; tooltip: string }> = ({ title, value, icon, color, tooltip }) => (
     <div title={tooltip} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 flex items-start space-x-3">
         <div className={`p-2 rounded-md ${color} bg-opacity-10`}>
-           {/* FIX: Add a more specific type assertion to React.cloneElement to resolve the TypeScript error.
-               This informs the compiler that the cloned element can accept a `small` prop, which is true
-               for all icons used in this context. */}
            {React.cloneElement(icon as React.ReactElement<{ small?: boolean }>, { small: true })}
         </div>
         <div>
@@ -131,25 +128,24 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
     );
 };
 
+
 const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
     if (!data) return null;
 
-    // FIX: Make the check for unidentified regions more robust by using a case-insensitive `includes` check.
-    // This will correctly identify both "Неопределенные адреса" and "Регион не определен" and hide the AI/chart sections.
     const isUnidentified = data.region?.toLowerCase().includes('не определен');
-    const activeClients = data.clients?.length || 0;
-    const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
+    
+    const AnalyticsContent: React.FC = () => {
+        const activeClients = data.clients?.length || 0;
+        const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
+        const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
 
-    return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
+        return (
             <div className="space-y-6">
-                {/* Top Section: Metrics and AI Insights */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     <div className="space-y-4">
                         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                             <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
-                             <div className="grid grid-cols-2 gap-3">
+                            <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
+                            <div className="grid grid-cols-2 gap-3">
                                 <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
                                 <MetricCard title="Общий Потенциал" value={formatNumber(data.potential, true)} icon={<PotentialIcon />} color="text-accent" tooltip={`Прогнозируемый объем рынка для группы: ${formatNumber(data.potential, false)} кг/ед`} />
                                 <MetricCard title="Потенциал Роста" value={formatNumber(data.growthPotential, false)} icon={<GrowthIcon />} color="text-warning" tooltip={`Неосвоенный объем рынка для группы: ${formatNumber(data.growthPotential, false)} кг/ед`} />
@@ -157,31 +153,36 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                                 <MetricCard title="Активных Клиентов" value={formatNumber(activeClients, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
                                 <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
                                 <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClients} из ${okbStatus?.rowCount || 0})`} />
-                             </div>
+                            </div>
                         </div>
                         <GroupedClientsList clients={data.clients} />
                     </div>
-                    {isUnidentified ? (
-                        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col items-center justify-center text-center">
-                            <h4 className="font-bold text-lg mb-2 text-accent">Рекомендации от Gemini</h4>
-                            <p className="text-gray-400">Аналитика недоступна для неопределенных адресов.</p>
-                            <p className="text-xs text-gray-500 mt-2">Пожалуйста, уточните адрес клиента в таблице ниже, чтобы получить рекомендации.</p>
-                        </div>
-                    ) : (
-                        <AiInsightSection data={data} />
-                    )}
+                    <AiInsightSection data={data} />
                 </div>
-                
-                {/* Bottom Section: Chart */}
-                {!isUnidentified && (
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                        <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
-                        <div className="h-64">
-                            <DetailChart fact={data.fact} potential={data.potential} />
-                        </div>
+                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                    <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
+                    <div className="h-64">
+                        <DetailChart fact={data.fact} potential={data.potential} />
                     </div>
-                )}
+                </div>
             </div>
+        );
+    };
+    
+    const UnidentifiedContent: React.FC = () => (
+        <div className="space-y-6">
+            <div className="bg-gray-900/50 p-6 rounded-lg border border-yellow-500/20 text-center">
+                <h4 className="font-bold text-lg mb-2 text-warning">Аналитика недоступна</h4>
+                <p className="text-gray-400">Эта запись относится к неопределенным адресам.</p>
+                <p className="text-sm text-gray-500 mt-2">Пожалуйста, уточните адрес клиента, чтобы получить полные данные и рекомендации.</p>
+            </div>
+            <GroupedClientsList clients={data.clients} />
+        </div>
+    );
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
+            {isUnidentified ? <UnidentifiedContent /> : <AnalyticsContent />}
         </Modal>
     );
 };
