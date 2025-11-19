@@ -174,10 +174,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         const coordsFromOkb = okbCoordIndex.get(normalizedAddress);
+        const cacheEntry = cacheAddressMap.get(normalizedAddress);
+        const hasCoords = !!((coordsFromOkb?.lat && coordsFromOkb?.lon) || (cacheEntry?.lat && cacheEntry?.lon));
 
-        // THE CORE LOGIC CHANGE IS HERE
-        if (coordsFromOkb?.lat && coordsFromOkb?.lon) {
-            // Coordinates exist, so parse region normally.
+        if (hasCoords) {
+            // Coordinates exist in either OKB (main DB) or AKB (cache), so parse region normally.
             const initialParse = parseRussianAddress(clientAddress);
             const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
             const fallbackResult = getRegionFromFallback(distributor);
@@ -203,7 +204,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 finalRegion = foundRegion || 'Регион не определен';
             }
         } else {
-            // No coordinates in OKB, so it's "Unidentified".
+            // No coordinates found in any database, so it's "Unidentified".
             finalRegion = "Неопределенные адреса";
         }
         
@@ -223,9 +224,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             let lon: number | undefined;
             let isCached = false;
 
-            const cacheEntry = cacheAddressMap.get(normalizedAddress);
-
-            // Prioritize OKB coords
+            // Prioritize OKB coords, then fall back to AKB (cache)
             if (coordsFromOkb?.lat && coordsFromOkb?.lon) {
                 lat = coordsFromOkb.lat;
                 lon = coordsFromOkb.lon;
