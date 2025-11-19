@@ -114,16 +114,35 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 
 /**
- * A robust helper function to find an address value within a data row.
- * It searches for keys in a prioritized order, using both exact and partial matches.
- * This is the centralized, single source of truth for finding an address.
+ * A robust helper function to find a value within a data row.
+ * If keywords are provided, it searches for keys containing them.
+ * If not, it defaults to finding an address using a prioritized list.
+ * This is the centralized, single source of truth for finding a value by key.
  * @param row The data row object.
- * @returns The found address string or null.
+ * @param keywords Optional array of keywords to search for in keys.
+ * @returns The found value string or null.
  */
-export const findAddressInRow = (row: { [key: string]: any }): string | null => {
+// FIX: Updated function signature to accept an optional 'keywords' array.
+// This allows the function to be used for generic value lookups (e.g., finding 'brand', 'rm')
+// while maintaining its default behavior of finding an address when no keywords are provided.
+// This single change fixes all "Expected 1 arguments, but got 2" errors in the worker.
+export const findAddressInRow = (row: { [key: string]: any }, keywords?: string[]): string | null => {
     if (!row) return null;
     const rowKeys = Object.keys(row);
-    // Prioritized, exact matches first for reliability
+
+    if (keywords) {
+        for (const keyword of keywords) {
+            const lowerKeyword = keyword.toLowerCase();
+            // Find a key that includes the keyword, also normalize 'ё' to 'е' for consistency.
+            const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(lowerKeyword));
+            if (foundKey && row[foundKey] != null && String(row[foundKey]).trim() !== '') {
+                return String(row[foundKey]);
+            }
+        }
+        return null; // Return null if no keyword matches
+    }
+
+    // Default behavior: find an address
     const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
 
     for (const pKey of prioritizedKeys) {

@@ -47,7 +47,7 @@ export interface PotentialClient {
 
 export interface OkbDataRow {
     [key: string]: any;
-    'Наименование': string;
+    'Наименование'?: string;
     'Юридический адрес'?: string;
     'Регион'?: string;
     'Город'?: string;
