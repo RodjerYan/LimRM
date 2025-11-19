@@ -102,7 +102,7 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     const addressCityExists = foundCityFromAddress !== 'Город не определен';
     const distributorCityRaw = distributor ? extractCityFromDistributor(distributor) : null;
     const distributorCityCapitalized = distributorCityRaw ? capitalize(distributorCityRaw) : null;
-    const primaryCity = addressCityExists ? foundCityFromAddress : (distributorCityCapitalized || null);
+    const primaryCity = addressCityExists ? foundCityFromAddress : distributorCityCapitalized;
 
     // 2. Determine Region: Priority is the Primary City, fallback to keywords.
     let finalRegion: string | null = null;
@@ -118,34 +118,29 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     }
     
     // 3. Construct Final Address: Clean the original address and assemble correctly.
-    let finalAddress = originalAddress.trim();
     let addressRemainder = originalAddress.trim();
 
-    // If a city was found in the address, clean the remainder by removing city prefixes to avoid duplication.
-    if (addressCityExists) {
-        // This regex removes variations of the city name (e.g., "г. Токмок, ", "Токмок ") from the start.
-        const cityRegex = new RegExp(`^(г\\.\\s*)?${foundCityFromAddress.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]*`, 'i');
-        addressRemainder = addressRemainder.replace(cityRegex, '').trim();
+    // Clean the remainder by removing the primary city to prevent duplication.
+    if (primaryCity) {
+        // This regex removes variations of the city name (e.g., "г. Токмок, ", "Токмок ") from the string.
+        const cityRegex = new RegExp(`(г\\.\\s*)?${primaryCity.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}[, ]*`, 'ig');
+        addressRemainder = addressRemainder.replace(cityRegex, '');
     }
     
+    // Final cleanup of the remainder to remove leading/trailing junk
+    addressRemainder = addressRemainder.replace(/^[ ,]*/, '').trim();
+
     const regionPart = finalRegion ? standardizeRegion(finalRegion) : null;
     const cityPart = primaryCity ? `г. ${primaryCity}` : null;
     
     // Assemble the final address string from the clean parts.
     const parts = [];
-    if (regionPart) {
-        parts.push(regionPart);
-    }
-    if (cityPart) {
-        parts.push(cityPart);
-    }
-    if (addressRemainder) {
-        parts.push(addressRemainder);
-    }
+    if (regionPart) parts.push(regionPart);
+    if (cityPart) parts.push(cityPart);
+    if (addressRemainder) parts.push(addressRemainder);
 
-    // Join with commas, but filter out any null/empty parts first.
-    finalAddress = parts.filter(Boolean).join(', ');
-
+    let finalAddress = parts.filter(Boolean).join(', ');
+    
     // Final cleanup for presentation
     finalAddress = finalAddress.replace(/ ,/g, ',').replace(/, ,/g, ',');
 
