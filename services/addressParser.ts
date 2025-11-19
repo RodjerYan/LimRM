@@ -63,8 +63,7 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
- * Returns the city name from the distributor's parentheses (in lowercase),
- * even if it is not in REGION_KEYWORD_MAP - we will look for the city in REGION_BY_CITY_WITH_INDEXES.
+ * Returns the city name from the distributor's parentheses (in lowercase).
  */
 function extractCityFromDistributor(distributor: string): string | null {
   if (!distributor) return null;
@@ -73,11 +72,21 @@ function extractCityFromDistributor(distributor: string): string | null {
   return match[1].trim().toLowerCase();
 }
 
+/**
+ * Checks if the address string contains a common settlement prefix (like 'г.', 'с.', 'пос.').
+ * @param address The address string (preferably lowercased).
+ * @returns True if a settlement prefix is found, false otherwise.
+ */
+function hasSettlementPrefix(address: string): boolean {
+    const settlementRegex = /(^|[\s,])(с|село|г|город|пгт|пос|деревня|дер|хутор|х|станица|ст-ца|аул|рп|р-к)\b\.?/i;
+    return settlementRegex.test(address);
+}
+
 
 /**
  * Parses a Russian address string to extract the region and city using a hierarchical approach.
- * If the address is ambiguous, it uses the distributor string as a fallback to determine the region
- * and enriches the original address.
+ * It separates logic for Russian/Belarusian addresses from other CIS countries, using the distributor
+ * string as a key piece of context for the latter.
  * @param address The raw address string.
  * @param distributor An optional distributor string which may contain a city hint in parentheses.
  * @returns An EnrichedParsedAddress object with the determined region, city, and a potentially modified finalAddress.
@@ -103,16 +112,15 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
         'Туркменистан', 'Грузия'
     ]);
 
-    // --- Path A: Check for explicit Russian/Belarusian region first ---
+    // --- Path A: High-priority check for explicit Russian/Belarusian region keywords ---
     const regionFromKeyword = findRegionByKeyword(normalized);
     if (regionFromKeyword && !CIS_REGIONS_FOR_DISTRIBUTOR_LOGIC.has(regionFromKeyword)) {
+        // This is Russia or Belarus. The keyword is reliable. Ignore the distributor.
         const city = getCityFromAddress(normalized);
         const finalRegionStr = standardizeRegion(regionFromKeyword);
-
         let finalAddress = originalAddress.trim();
-        // Avoid prepending region if it's already mentioned to prevent duplication
-        const regionKeyword = Object.keys(REGION_KEYWORD_MAP).find(k => REGION_KEYWORD_MAP[k] === regionFromKeyword)?.toLowerCase() || 'unlikely-string';
-        if (!lowerAddress.includes(regionKeyword) && !lowerAddress.includes(finalRegionStr.toLowerCase())) {
+
+        if (!lowerAddress.includes(finalRegionStr.toLowerCase().substring(0, 5))) {
              finalAddress = `${finalRegionStr}, ${finalAddress}`;
         }
         
@@ -125,64 +133,62 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
 
     // --- Path B: CIS & Unknown Region Logic ---
     const cityFromAddress = getCityFromAddress(normalized);
-    const hasCityInAddress = cityFromAddress !== 'Город не определен';
+    const addressCityExists = cityFromAddress !== 'Город не определен';
+    const addressHasSettlement = hasSettlementPrefix(lowerAddress);
+
     const distributorCityRaw = distributor ? extractCityFromDistributor(distributor) : null;
-
-    let primaryCity: string | null = hasCityInAddress ? cityFromAddress : null;
-    let citySource: 'address' | 'distributor' | null = hasCityInAddress ? 'address' : null;
     
-    let finalRegion = regionFromKeyword; // Could be a CIS region like 'казахстан' from keywords
-
-    if (!primaryCity && distributorCityRaw) {
-        // No city in address; try to use distributor only if it helps identify a CIS region
+    let primaryCity = addressCityExists ? cityFromAddress : null;
+    let finalRegion: string | null = null;
+    
+    // --- Region & City Determination for CIS ---
+    let regionFromDistributor: string | null = null;
+    if (distributorCityRaw) {
         const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === distributorCityRaw);
         if (cityKey) {
-            const potentialRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
-            if (CIS_REGIONS_FOR_DISTRIBUTOR_LOGIC.has(potentialRegion)) {
-                primaryCity = capitalize(distributorCityRaw);
-                citySource = 'distributor';
-                if (!finalRegion) finalRegion = potentialRegion;
-            }
-        }
-    }
-    
-    // If region is still not found, try to determine it from the city found in the address
-    if (!finalRegion && citySource === 'address' && primaryCity) {
-        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === primaryCity.toLowerCase());
-        if (cityKey) {
-            finalRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+            regionFromDistributor = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
         }
     }
 
-    // Assemble the final address string based on the rules
-    const finalRegionStr = standardizeRegion(finalRegion);
-    let finalAddress: string;
-    
-    const isSpecialCIS = finalRegion && CIS_REGIONS_FOR_DISTRIBUTOR_LOGIC.has(finalRegion);
-
-    if (isSpecialCIS && citySource === 'distributor' && primaryCity) {
-        // Rule 2: No city in address, so enrich the address with the city from the distributor.
-        const parts = [finalRegionStr, `г. ${primaryCity}`, originalAddress.trim()].filter(Boolean);
-        finalAddress = parts.join(', ');
+    // For CIS addresses, the distributor is the most reliable source for the REGION.
+    if (regionFromDistributor && CIS_REGIONS_FOR_DISTRIBUTOR_LOGIC.has(regionFromDistributor)) {
+        finalRegion = regionFromDistributor;
     } else {
-        // Rule 1 / Default: City was in address, or it's not a special CIS case. Just prepend region if needed.
-        const parts = [finalRegionStr, originalAddress.trim()].filter(Boolean);
-        // Avoid prepending if a significant part of the region name is already present.
-        if (finalRegionStr !== 'Регион не определен' && 
-            (lowerAddress.includes(finalRegionStr.toLowerCase().substring(0, 5)) || (regionFromKeyword && lowerAddress.includes(regionFromKeyword.toLowerCase())))) {
-            finalAddress = originalAddress.trim();
-        } else if (finalRegionStr !== 'Регион не определен') {
-            finalAddress = parts.join(', ');
-        } else {
-            finalAddress = originalAddress.trim();
+        // Fallback to city from address, then to general keywords.
+        if (addressCityExists && primaryCity) {
+            const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === primaryCity!.toLowerCase());
+            if (cityKey) finalRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+        }
+        if (!finalRegion) finalRegion = regionFromKeyword;
+    }
+
+    // If no city/settlement in address, use the distributor's city as the primary one.
+    if (!addressCityExists && !addressHasSettlement && distributorCityRaw) {
+        primaryCity = capitalize(distributorCityRaw);
+    }
+    
+    // --- Final Address Formatting ---
+    const finalRegionStr = standardizeRegion(finalRegion);
+    let finalAddress = originalAddress.trim();
+    
+    const isCISContext = finalRegion && CIS_REGIONS_FOR_DISTRIBUTOR_LOGIC.has(finalRegion);
+    const shouldEnrichWithCity = isCISContext && !addressCityExists && !addressHasSettlement && distributorCityRaw;
+
+    if (shouldEnrichWithCity) {
+        // Rule: No settlement in address, enrich it with the city from the distributor.
+        finalAddress = `${finalRegionStr}, г. ${primaryCity}, ${finalAddress}`;
+    } else {
+        // Rule: Settlement/city exists in address, just prepend the correctly determined region.
+        if (finalRegionStr !== 'Регион не определен' && !lowerAddress.includes(finalRegionStr.toLowerCase().substring(0, 5))) {
+            finalAddress = `${finalRegionStr}, ${finalAddress}`;
         }
     }
 
-    finalAddress = finalAddress.replace(/ ,/g, ',').replace(/, ,/g, ',');
-
+    finalAddress = finalAddress.replace(/ ,/g, ',').replace(/, ,/g, ',').replace(/^,/, '').trim();
+    
     return {
         region: finalRegionStr,
-        city: primaryCity || 'Город не определен',
+        city: primaryCity || (addressHasSettlement ? 'н/д' : 'Город не определен'),
         finalAddress
     };
 }
