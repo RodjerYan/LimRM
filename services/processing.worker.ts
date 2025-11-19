@@ -172,28 +172,28 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
 
-        // --- STEP 1: Strict city parse from address ---
+        // --- STEP 1 (HIGHEST PRIORITY): Strict city parse from the address itself ---
         const initialParse = parseRussianAddress(clientAddress);
         if (initialParse.region !== 'Регион не определен') {
             finalRegion = initialParse.region;
             finalCity = initialParse.city;
         }
 
-        // --- STEP 2: Fallback to distributor if step 1 fails ---
+        // --- STEP 2 (MEDIUM PRIORITY): Fallback to distributor name if address parse fails ---
         if (!finalRegion) {
             const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
             const fallbackResult = getRegionFromFallback(distributor);
             if (fallbackResult) {
                 finalRegion = fallbackResult.region;
                 finalCity = fallbackResult.city;
-                // Prepend city to address for consistency
-                if (finalCity && finalCity !== 'Город не определен') {
+                // Prepend city to address for consistency if it's not already there
+                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
                     correctedClientAddress = `${finalCity}, ${clientAddress}`;
                 }
             }
         }
         
-        // --- STEP 3: Last resort - keyword search if steps 1 & 2 fail ---
+        // --- STEP 3 (LOWEST PRIORITY): Last resort - keyword search if both above fail ---
         if (!finalRegion) {
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
@@ -205,11 +205,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         finalRegion = standardizeRegion(finalRegion);
-        if (!finalCity) {
-            finalCity = 'Город не определен';
+        if (!finalCity || finalCity === 'Город не определен') {
+            finalCity = finalRegion; // If city is still unknown, use the region name as a fallback group
         }
 
-        const groupName = (finalCity !== 'Город не определен') ? finalCity : finalRegion;
+        const groupName = (finalCity !== 'Регион не определен') ? finalCity : finalRegion;
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
@@ -249,10 +249,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight) || finalRegion === 'Регион не определен') continue;
 
-        const key = `${finalRegion}-${brand}-${rm}`.toLowerCase();
+        const key = `${groupName}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${finalRegion} (${brand})`, brand, rm, city: groupName,
+                key, clientName: `${groupName} (${brand})`, brand, rm, city: groupName,
                 region: finalRegion, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Set<string>(),
             };
