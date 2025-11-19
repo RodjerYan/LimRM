@@ -172,29 +172,30 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
 
-        // --- STEP 1 (HIGHEST PRIORITY): Strict city parse from the address itself ---
+        // --- REFINED REGION DETECTION LOGIC ---
+
+        // Step A: First, try to parse the main address. This is the most reliable source.
         const initialParse = parseRussianAddress(clientAddress);
+
+        // Step B: Independently, check the distributor column as a fallback.
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+        const fallbackResult = getRegionFromFallback(distributor);
+
+        // Step C: Prioritize results.
         if (initialParse.region !== 'Регион не определен') {
+            // Priority 1: Main address parsing was successful. Use it.
             finalRegion = initialParse.region;
             finalCity = initialParse.city;
-        }
-
-        // --- STEP 2 (MEDIUM PRIORITY): Fallback to distributor name if address parse fails ---
-        if (!finalRegion) {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            const fallbackResult = getRegionFromFallback(distributor);
-            if (fallbackResult) {
-                finalRegion = fallbackResult.region;
-                finalCity = fallbackResult.city;
-                // Prepend city to address for consistency if it's not already there
-                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
-                }
+        } else if (fallbackResult) {
+            // Priority 2: Main address failed, but distributor lookup succeeded. Use it.
+            finalRegion = fallbackResult.region;
+            finalCity = fallbackResult.city;
+            // Prepend city to address for consistency if it's not already there
+            if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+                correctedClientAddress = `${finalCity}, ${clientAddress}`;
             }
-        }
-        
-        // --- STEP 3 (LOWEST PRIORITY): Last resort - keyword search if both above fail ---
-        if (!finalRegion) {
+        } else {
+            // Priority 3 (Last Resort): Both methods failed. Try keyword search on the address.
             const normalizedAddressForKeyword = clientAddress.toLowerCase();
             for (const keyword of REGION_KEYWORDS_SORTED) {
                 if (normalizedAddressForKeyword.includes(keyword)) {
