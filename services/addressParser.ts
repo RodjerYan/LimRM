@@ -62,27 +62,6 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
     return null;
 }
 
-/**
- * Extracts a city name from a distributor string (e.g., "Company (Bishkek)").
- * @param distributor The distributor string.
- * @returns The found city name in lowercase, or null.
- */
-function extractCityFromDistributor(distributor: string): string | null {
-  if (!distributor) return null;
-
-  const match = distributor.match(/\(([^)]+)\)/);
-  if (!match || !match[1]) return null;
-  
-  const cityInParens = match[1].trim().toLowerCase();
-
-  // Check if this city is a known keyword that maps to a region
-  if (REGION_KEYWORD_MAP[cityInParens]) {
-    return cityInParens;
-  }
-  
-  return null;
-}
-
 
 /**
  * Parses a Russian address string to extract the region and city using a hierarchical approach.
@@ -102,59 +81,65 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
-        }
+        normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
     }
     
+    // Determine city from address regardless of flow, for later use.
+    const cityFromAddress = getCityFromAddress(normalized);
+
     // --- HIERARCHICAL LOGIC ---
 
-    // 1. Try to find region from the address string itself. This is the most reliable source.
-    let region = findRegionByKeyword(normalized);
-    const city = getCityFromAddress(normalized);
-
-    // If a region is found directly, the address is explicit enough. Use the original address.
-    if (region) {
+    // 1. Primary Method: Find region from explicit keywords in the address.
+    // REGION_KEYWORD_MAP should contain explicit regions ('... обл') and major cities ('москва', 'бишкек').
+    const regionFromKeyword = findRegionByKeyword(normalized);
+    if (regionFromKeyword) {
         return {
-            region: standardizeRegion(region),
-            city: city,
+            region: standardizeRegion(regionFromKeyword),
+            city: cityFromAddress,
             finalAddress: originalAddress,
         };
     }
     
-    // 2. If NO region was found, check the distributor string for a city hint.
+    // 2. Fallback Method: If address is ambiguous, use the distributor string hint.
     if (distributor) {
-        const distributorCity = extractCityFromDistributor(distributor);
-        if (distributorCity) {
-            const regionFromDistributor = REGION_KEYWORD_MAP[distributorCity];
-            if (regionFromDistributor) {
-                const capitalizedCity = capitalize(distributorCity);
-                // Construct the new, enriched address as requested
-                const finalAddress = `г. ${capitalizedCity}, ${originalAddress.trim()}`;
+        const distLower = distributor.toLowerCase();
+        const match = distLower.match(/\(([^)]+)\)/);
+        if (match && match[1]) {
+            const cityFromDist = match[1].trim();
+            // Use the master city list for lookup
+            const cityData = REGION_BY_CITY_WITH_INDEXES[cityFromDist];
+
+            if (cityData) {
+                const regionFromDist = cityData.region;
+                const capitalizedCity = capitalize(cityFromDist);
+                // Construct the new, enriched address
+                const finalAddress = `г. ${capitalizedCity}, ${originalAddress.trim()}`.trim().replace(/^г\.\s*,\s*/, 'г. ');
                 
                 return {
-                    region: standardizeRegion(regionFromDistributor),
-                    // Use the city from distributor as the primary city if the address didn't have one
-                    city: city !== 'Город не определен' ? city : capitalizedCity,
+                    region: standardizeRegion(regionFromDist),
+                    city: cityFromAddress !== 'Город не определен' ? cityFromAddress : capitalizedCity,
                     finalAddress: finalAddress,
                 };
             }
         }
     }
 
-    // 3. Last fallback: If distributor didn't help, try to derive region from a city found in the address.
-    // This handles cases where a city name itself isn't a direct region keyword but is in our city map.
-    if (city !== 'Город не определен') {
-        const cityData = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
-        if (cityData) {
-            region = cityData.region;
+    // 3. Last Resort: If distributor didn't help, try to derive region from any city found in the address.
+    if (cityFromAddress !== 'Город не определен') {
+        const cityData = REGION_BY_CITY_WITH_INDEXES[cityFromAddress.toLowerCase()];
+        if (cityData && cityData.region) {
+            return {
+                region: standardizeRegion(cityData.region),
+                city: cityFromAddress,
+                finalAddress: originalAddress,
+            };
         }
     }
 
-    // In this fallback case, the address is not enriched, we just return what we found.
+    // 4. If nothing worked, return defaults.
     return {
-        region: standardizeRegion(region),
-        city: city,
+        region: standardizeRegion(null),
+        city: cityFromAddress,
         finalAddress: originalAddress 
     };
 }
