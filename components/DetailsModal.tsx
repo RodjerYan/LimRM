@@ -134,6 +134,7 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
 const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
     if (!data) return null;
 
+    const isUnidentified = data.region === 'Неопределенные адреса';
     const activeClients = data.clients?.length || 0;
     const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
     const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
@@ -158,16 +159,26 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                         </div>
                         <GroupedClientsList clients={data.clients} />
                     </div>
-                    <AiInsightSection data={data} />
+                    {isUnidentified ? (
+                        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col items-center justify-center text-center">
+                            <h4 className="font-bold text-lg mb-2 text-accent">Рекомендации от Gemini</h4>
+                            <p className="text-gray-400">Аналитика недоступна для неопределенных адресов.</p>
+                            <p className="text-xs text-gray-500 mt-2">Пожалуйста, уточните адрес клиента в таблице ниже, чтобы получить рекомендации.</p>
+                        </div>
+                    ) : (
+                        <AiInsightSection data={data} />
+                    )}
                 </div>
                 
                 {/* Bottom Section: Chart */}
-                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                    <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
-                    <div className="h-64">
-                        <DetailChart fact={data.fact} potential={data.potential} />
+                {!isUnidentified && (
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                        <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
+                        <div className="h-64">
+                            <DetailChart fact={data.fact} potential={data.potential} />
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </Modal>
     );

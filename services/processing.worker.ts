@@ -210,9 +210,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         finalRegion = standardizeRegion(finalRegion);
-        if (finalRegion === 'Регион не определен') {
-            finalRegion = "Неопределенные адреса";
-        }
         
         if (!finalCity || finalCity === 'Город не определен') {
             finalCity = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
