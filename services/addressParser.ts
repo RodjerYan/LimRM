@@ -3,7 +3,7 @@ import {
     REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
-import { ParsedAddress } from '../types';
+import { EnrichedParsedAddress } from '../types';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 // Memoize the sorted list of cities to avoid re-computing it on every call.
@@ -85,50 +85,76 @@ function extractCityFromDistributor(distributor: string): string | null {
 
 
 /**
- * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
+ * Parses a Russian address string to extract the region and city using a hierarchical approach.
+ * If the address is ambiguous, it uses the distributor string as a fallback to determine the region
+ * and enriches the original address.
  * @param address The raw address string.
  * @param distributor An optional distributor string which may contain a city hint in parentheses.
- * @returns A ParsedAddress object with the determined region and city.
+ * @returns An EnrichedParsedAddress object with the determined region, city, and a potentially modified finalAddress.
  */
-export function parseRussianAddress(address: string, distributor?: string): ParsedAddress {
-    if (!address?.trim()) {
-        return { region: 'Регион не определен', city: 'Город не определен' };
+export function parseRussianAddress(address: string, distributor?: string): EnrichedParsedAddress {
+    const originalAddress = address || '';
+    if (!originalAddress.trim() && !distributor?.trim()) {
+        return { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
     }
 
-    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
-    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
+    const lowerAddress = originalAddress.toLowerCase().replace(/ё/g, 'е');
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // --- Step 1: Normalization using aliases for common typos ---
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         if (normalized.includes(alias)) {
             normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
+    
+    // --- HIERARCHICAL LOGIC ---
 
-    // --- Step 2: Determine Region and City from address ---
+    // 1. Try to find region from the address string itself. This is the most reliable source.
     let region = findRegionByKeyword(normalized);
     const city = getCityFromAddress(normalized);
 
-    // --- Step 3: Fallback to distributor string if region is not found in address ---
-    if (!region && distributor) {
+    // If a region is found directly, the address is explicit enough. Use the original address.
+    if (region) {
+        return {
+            region: standardizeRegion(region),
+            city: city,
+            finalAddress: originalAddress,
+        };
+    }
+    
+    // 2. If NO region was found, check the distributor string for a city hint.
+    if (distributor) {
         const distributorCity = extractCityFromDistributor(distributor);
         if (distributorCity) {
-            // Found a valid city in the distributor string, use it to get the region
-            region = REGION_KEYWORD_MAP[distributorCity];
+            const regionFromDistributor = REGION_KEYWORD_MAP[distributorCity];
+            if (regionFromDistributor) {
+                const capitalizedCity = capitalize(distributorCity);
+                // Construct the new, enriched address as requested
+                const finalAddress = `г. ${capitalizedCity}, ${originalAddress.trim()}`;
+                
+                return {
+                    region: standardizeRegion(regionFromDistributor),
+                    // Use the city from distributor as the primary city if the address didn't have one
+                    city: city !== 'Город не определен' ? city : capitalizedCity,
+                    finalAddress: finalAddress,
+                };
+            }
         }
     }
 
-    // --- Step 4: Fallback to find region from city if not found by keyword or distributor ---
-    if (!region && city !== 'Город не определен') {
+    // 3. Last fallback: If distributor didn't help, try to derive region from a city found in the address.
+    // This handles cases where a city name itself isn't a direct region keyword but is in our city map.
+    if (city !== 'Город не определен') {
         const cityData = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
         if (cityData) {
             region = cityData.region;
         }
     }
 
+    // In this fallback case, the address is not enriched, we just return what we found.
     return {
         region: standardizeRegion(region),
-        city: city 
+        city: city,
+        finalAddress: originalAddress 
     };
 }

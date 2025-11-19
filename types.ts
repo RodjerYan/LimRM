@@ -36,6 +36,10 @@ export interface ParsedAddress {
     city: string;
 }
 
+export interface EnrichedParsedAddress extends ParsedAddress {
+    finalAddress: string;
+}
+
 export interface PotentialClient {
     name: string;
     address: string;

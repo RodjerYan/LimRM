@@ -7,7 +7,8 @@ import {
     PotentialClient, 
     WorkerResultPayload, 
     MapPoint, 
-    CoordsCache 
+    CoordsCache,
+    EnrichedParsedAddress
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
@@ -167,17 +168,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const rm = findValueInRow(row, ['рм']);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
 
-        if (!clientAddress || !rm) continue;
+        if (!clientAddress && !distributor) continue; // Skip if no address and no distributor info
+        if (!rm) continue;
 
-        const normalizedAddress = normalizeAddress(clientAddress);
+        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
+        const finalAddress = parsedAddress.finalAddress;
         
-        // --- Logic for plottable points (run only once per unique address) ---
-        if (!uniquePlottableClients.has(normalizedAddress)) {
+        // Use original address for the key to avoid duplicates within a single file run.
+        const normalizedOriginalAddress = normalizeAddress(clientAddress);
+        
+        if (!uniquePlottableClients.has(normalizedOriginalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
-
-            const cacheEntry = cacheAddressMap.get(normalizedAddress);
+            
+            const normalizedFinalAddress = normalizeAddress(finalAddress);
+            const cacheEntry = cacheAddressMap.get(normalizedFinalAddress) || cacheAddressMap.get(normalizedOriginalAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 lat = cacheEntry.lat;
@@ -185,47 +191,45 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
-                    newAddressesToCache[rm].push({ address: clientAddress });
+                // IMPORTANT: Add the FINAL, enriched address to the cache queue.
+                if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
+                    newAddressesToCache[rm].push({ address: finalAddress });
                 }
 
-                const okbEntry = okbCoordIndex.get(normalizedAddress);
+                const okbEntry = okbCoordIndex.get(normalizedFinalAddress) || okbCoordIndex.get(normalizedOriginalAddress);
                 if (okbEntry) {
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
-                } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
+                } else if (finalAddress && cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    if (!addressesToGeocode[rm].includes(clientAddress)) {
-                        addressesToGeocode[rm].push(clientAddress);
+                    // Geocode the FINAL address
+                    if (!addressesToGeocode[rm].includes(finalAddress)) {
+                        addressesToGeocode[rm].push(finalAddress);
                     }
                 }
             }
-
-            const parsedAddress = parseRussianAddress(clientAddress, distributor);
-            const region = parsedAddress.region;
-            const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
-
-            uniquePlottableClients.set(normalizedAddress, {
-                key: normalizedAddress,
+            
+            uniquePlottableClients.set(normalizedOriginalAddress, {
+                key: normalizedOriginalAddress,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: clientAddress,
-                city: groupName,
-                region, rm, brand,
+                address: finalAddress, // Use the enriched address for display and details
+                city: parsedAddress.city,
+                region: parsedAddress.region, 
+                rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
             });
         }
         
-        // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(clientAddress, distributor);
-        const regionForAggregation = parsedForAggregation.region;
-        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
-
+        // --- Aggregation logic ---
+        const regionForAggregation = parsedAddress.region;
+        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
 
+        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
+        
         const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
@@ -235,7 +239,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             };
         }
         aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(clientAddress || clientName);
+        aggregatedData[key].clients.add(finalAddress || clientName); // Add final address to the client list
 
         if (hasPotentialColumn) {
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -250,9 +254,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
-    const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
+    const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
