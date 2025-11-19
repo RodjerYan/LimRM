@@ -211,11 +211,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         finalRegion = standardizeRegion(finalRegion);
         
-        if (!finalCity || finalCity === 'Город не определен') {
-            finalCity = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
+        // Define the city for individual client points, falling back to region if no city is found.
+        let cityForPoint = finalCity;
+        if (!cityForPoint || cityForPoint === 'Город не определен') {
+            cityForPoint = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
         }
 
-        const groupName = finalCity;
+        // The group name for data aggregation will be the REGION, ensuring consistent grouping.
+        const aggregationGroupName = finalRegion;
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
@@ -246,7 +249,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 status: 'match',
                 name: clientName,
                 address: correctedClientAddress,
-                city: groupName,
+                city: cityForPoint, // Use the specific city name for the map point
                 region: finalRegion,
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -257,7 +260,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         if (isNaN(weight)) continue;
 
-        if (finalRegion === "Неопределенные адреса") {
+        if (aggregationGroupName === "Неопределенные адреса") {
             const unidentifiedKey = `unidentified-${correctedClientAddress}-${rm}`.toLowerCase();
              if (!aggregatedData[unidentifiedKey]) {
                  aggregatedData[unidentifiedKey] = {
@@ -275,11 +278,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
              aggregatedData[unidentifiedKey].fact += weight;
              aggregatedData[unidentifiedKey].originalRows.push(row);
         } else {
-            const key = `${groupName}-${brand}-${rm}`.toLowerCase();
+            const key = `${aggregationGroupName}-${brand}-${rm}`.toLowerCase();
             if (!aggregatedData[key]) {
                 aggregatedData[key] = {
-                    key, clientName: `${groupName} (${brand})`, brand, rm, city: groupName,
-                    region: finalRegion, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                    key, 
+                    clientName: `${aggregationGroupName} (${brand})`, 
+                    brand, 
+                    rm, 
+                    city: aggregationGroupName, // The group's "city" is the region itself
+                    region: finalRegion, 
+                    fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                     clients: new Set<string>(),
                     originalRows: []
                 };
