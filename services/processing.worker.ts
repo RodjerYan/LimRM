@@ -12,6 +12,7 @@ import {
 import { parseRussianAddress, getRegionFromFallback } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients' | 'originalRows'> & { clients: Set<string>, originalRows: { [key: string]: any }[] } };
@@ -195,9 +196,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             } else {
                 let foundRegion = null;
-                const normalizedAddressForKeyword = clientAddress.toLowerCase();
+                const normalizedAddressForKeyword = ` ${clientAddress.toLowerCase().replace(/[,.]/g, ' ')} `;
                 for (const keyword of REGION_KEYWORDS_SORTED) {
-                    if (normalizedAddressForKeyword.includes(keyword)) {
+                    // FIX: Use a regex with word boundaries to prevent partial matches (e.g., 'ло' in 'кабдолова').
+                    const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+                    if (regex.test(normalizedAddressForKeyword)) {
                         foundRegion = REGION_KEYWORD_MAP[keyword];
                         break;
                     }
@@ -217,8 +220,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             cityForPoint = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
         }
 
-        // The group name for data aggregation will be the REGION, ensuring consistent grouping.
-        const aggregationGroupName = finalRegion;
+        // FIX: Force the grouping to be strictly by region. If a city was identified,
+        // use its official region from the master map to prevent ambiguity (e.g., "Орёл" vs "Орловская область").
+        let groupRegion = finalRegion;
+        if (finalCity && finalCity !== 'Город не определен') {
+            const cityKey = finalCity.toLowerCase();
+            if (REGION_BY_CITY_WITH_INDEXES[cityKey]) {
+                groupRegion = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+            }
+        }
+        const aggregationGroupName = standardizeRegion(groupRegion);
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
@@ -249,8 +260,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 status: 'match',
                 name: clientName,
                 address: correctedClientAddress,
-                city: cityForPoint, // Use the specific city name for the map point
-                region: finalRegion,
+                city: cityForPoint,
+                region: aggregationGroupName, // Use the corrected group region for the point
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
@@ -285,8 +296,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     clientName: `${aggregationGroupName} (${brand})`, 
                     brand, 
                     rm, 
-                    city: aggregationGroupName, // The group's "city" is the region itself
-                    region: finalRegion, 
+                    city: finalCity || aggregationGroupName, // Use the real city if available, otherwise the region name
+                    region: aggregationGroupName, 
                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                     clients: new Set<string>(),
                     originalRows: []
