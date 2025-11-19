@@ -62,6 +62,17 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
     return null;
 }
 
+/**
+ * Returns the city name from the distributor's parentheses (in lowercase),
+ * even if it is not in REGION_KEYWORD_MAP - we will look for the city in REGION_BY_CITY_WITH_INDEXES.
+ */
+function extractCityFromDistributor(distributor: string): string | null {
+  if (!distributor) return null;
+  const match = distributor.match(/\(([^)]+)\)/);
+  if (!match || !match[1]) return null;
+  return match[1].trim().toLowerCase();
+}
+
 
 /**
  * Parses a Russian address string to extract the region and city using a hierarchical approach.
@@ -81,65 +92,53 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
-    }
-    
-    // Determine city from address regardless of flow, for later use.
-    const cityFromAddress = getCityFromAddress(normalized);
-
-    // --- HIERARCHICAL LOGIC ---
-
-    // 1. Primary Method: Find region from explicit keywords in the address.
-    // REGION_KEYWORD_MAP should contain explicit regions ('... обл') and major cities ('москва', 'бишкек').
-    const regionFromKeyword = findRegionByKeyword(normalized);
-    if (regionFromKeyword) {
-        return {
-            region: standardizeRegion(regionFromKeyword),
-            city: cityFromAddress,
-            finalAddress: originalAddress,
-        };
-    }
-    
-    // 2. Fallback Method: If address is ambiguous, use the distributor string hint.
-    if (distributor) {
-        const distLower = distributor.toLowerCase();
-        const match = distLower.match(/\(([^)]+)\)/);
-        if (match && match[1]) {
-            const cityFromDist = match[1].trim();
-            // Use the master city list for lookup
-            const cityData = REGION_BY_CITY_WITH_INDEXES[cityFromDist];
-
-            if (cityData) {
-                const regionFromDist = cityData.region;
-                const capitalizedCity = capitalize(cityFromDist);
-                // Construct the new, enriched address
-                const finalAddress = `г. ${capitalizedCity}, ${originalAddress.trim()}`.trim().replace(/^г\.\s*,\s*/, 'г. ');
-                
-                return {
-                    region: standardizeRegion(regionFromDist),
-                    city: cityFromAddress !== 'Город не определен' ? cityFromAddress : capitalizedCity,
-                    finalAddress: finalAddress,
-                };
-            }
+        if (normalized.includes(alias)) {
+            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
 
-    // 3. Last Resort: If distributor didn't help, try to derive region from any city found in the address.
-    if (cityFromAddress !== 'Город не определен') {
-        const cityData = REGION_BY_CITY_WITH_INDEXES[cityFromAddress.toLowerCase()];
-        if (cityData && cityData.region) {
-            return {
-                region: standardizeRegion(cityData.region),
-                city: cityFromAddress,
-                finalAddress: originalAddress,
-            };
-        }
+    // 1) Find the city in the address itself (priority)
+    const foundCityFromAddress = getCityFromAddress(normalized); // returns capitalized or 'Город не определен'
+    const addressCityExists = foundCityFromAddress !== 'Город не определен';
+
+    // 2) Try to extract the city from the distributor (in lower case)
+    const distributorCityRaw = distributor ? extractCityFromDistributor(distributor) : null; // e.g. "bishkek" in lower
+    const distributorCityCapitalized = distributorCityRaw ? capitalize(distributorCityRaw) : null;
+
+    // 3) Determine primaryCity: priority is address, otherwise distributor
+    const primaryCity = addressCityExists ? foundCityFromAddress : (distributorCityCapitalized || null);
+
+    // 4) Determine the region by primaryCity (using REGION_BY_CITY_WITH_INDEXES)
+    let regionFromCity: string | null = null;
+    if (primaryCity) {
+        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === primaryCity.toLowerCase());
+        if (cityKey) regionFromCity = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
     }
 
-    // 4. If nothing worked, return defaults.
+    // 5) If we haven't found the region - try by REGION_KEYWORD_MAP keys (e.g. if distributorCityRaw is 'bishkek' and there is mapping)
+    let finalRegion = findRegionByKeyword(normalized) || regionFromCity || (distributorCityRaw && REGION_KEYWORD_MAP[distributorCityRaw]) || null;
+
+    // 6) Form the correct finalAddress without duplicates:
+    // If the original address already contains primaryCity (in any case) - do not add it again.
+    const primaryCityForCheck = primaryCity ? primaryCity.toLowerCase() : null;
+    const originalContainsPrimaryCity = primaryCityForCheck ? normalized.includes(primaryCityForCheck.toLowerCase()) : false;
+
+    const regionPart = finalRegion ? standardizeRegion(finalRegion) : null;
+    let finalAddress = originalAddress.trim();
+
+    if (!originalContainsPrimaryCity && primaryCity) {
+        // add "g. <city>" before the address, and the region prefix
+        const cityStr = `г. ${primaryCity}`;
+        finalAddress = regionPart ? `${regionPart} ${cityStr}, ${originalAddress.trim()}` : `${cityStr}, ${originalAddress.trim()}`;
+    } else {
+        // if the city is already in the address - just add the region before the address (if any)
+        finalAddress = regionPart ? `${regionPart} ${originalAddress.trim()}` : originalAddress.trim();
+    }
+    
+    // 7) Return the result (with the standardized region)
     return {
-        region: standardizeRegion(null),
-        city: cityFromAddress,
-        finalAddress: originalAddress 
+        region: finalRegion ? standardizeRegion(finalRegion) : 'Регион не определен',
+        city: primaryCity || 'Город не определен',
+        finalAddress
     };
 }
