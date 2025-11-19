@@ -9,12 +9,12 @@ import {
     MapPoint, 
     CoordsCache 
 } from '../types';
-import { parseRussianAddress, getRegionFromFallback } from './addressParser';
-import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { parseRussianAddress } from './addressParser';
+import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
-type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients' | 'originalRows'> & { clients: Set<string>, originalRows: { [key: string]: any }[] } };
+type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 type CommonProcessArgs = {
     okbData: OkbDataRow[];
@@ -48,8 +48,7 @@ const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        // FIX: Add ё -> е normalization for header keys to make matching more robust (e.g., "Дистрибьютёр").
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
@@ -112,7 +111,6 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
-const REGION_KEYWORDS_SORTED = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
 
 self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const { file, okbData, cacheData } = e.data;
@@ -159,6 +157,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const aggregatedData: AggregationMap = {};
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
+    const addressesToGeocode: { [rmName: string]: string[] } = {};
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
@@ -169,140 +168,77 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
-        let finalRegion: string;
-        let finalCity: string | null = null;
-        let correctedClientAddress = clientAddress;
+        const normalizedAddress = normalizeAddress(clientAddress);
         
-        const normalizedAddress = normalizeAddress(correctedClientAddress);
-        const coordsFromOkb = okbCoordIndex.get(normalizedAddress);
-        const cacheEntry = cacheAddressMap.get(normalizedAddress);
-        const hasCoords = !!((coordsFromOkb?.lat && coordsFromOkb?.lon) || (cacheEntry?.lat && cacheEntry?.lon));
-
-        if (hasCoords) {
-            // Coordinates exist in either OKB (main DB) or AKB (cache), so parse region normally.
-            const initialParse = parseRussianAddress(clientAddress);
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            const fallbackResult = getRegionFromFallback(distributor);
-
-            if (initialParse.region !== 'Регион не определен') {
-                finalRegion = initialParse.region;
-                finalCity = initialParse.city;
-            } else if (fallbackResult) {
-                finalRegion = fallbackResult.region;
-                finalCity = fallbackResult.city;
-                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
-                }
-            } else {
-                let foundRegion = null;
-                const normalizedAddressForKeyword = clientAddress.toLowerCase();
-                for (const keyword of REGION_KEYWORDS_SORTED) {
-                    // FIX: Use a regular expression with word boundaries (\b) to prevent
-                    // matching keywords as substrings within other words (e.g., 'ло' in 'Кабдолова').
-                    const regex = new RegExp(`\\b${keyword}\\b`);
-                    if (regex.test(normalizedAddressForKeyword)) {
-                        foundRegion = REGION_KEYWORD_MAP[keyword];
-                        break;
-                    }
-                }
-                finalRegion = foundRegion || 'Регион не определен';
-            }
-        } else {
-            // No coordinates found in any database, so it's "Unidentified".
-            finalRegion = "Неопределенные адреса";
-        }
-        
-        finalRegion = standardizeRegion(finalRegion);
-        
-        // Define the city for individual client points, falling back to region if no city is found.
-        let cityForPoint = finalCity;
-        if (!cityForPoint || cityForPoint === 'Город не определен') {
-            cityForPoint = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
-        }
-
-        // The group name for data aggregation will be the REGION, ensuring consistent grouping.
-        const aggregationGroupName = finalRegion;
-        
+        // --- Logic for plottable points (run only once per unique address) ---
         if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
 
-            // Prioritize OKB coords, then fall back to AKB (cache)
-            if (coordsFromOkb?.lat && coordsFromOkb?.lon) {
-                lat = coordsFromOkb.lat;
-                lon = coordsFromOkb.lon;
-                isCached = true;
-            } else if (cacheEntry?.lat && cacheEntry?.lon) {
+            const cacheEntry = cacheAddressMap.get(normalizedAddress);
+
+            if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
             } else {
-                if (!newAddressesToCache[rm]) {
-                    newAddressesToCache[rm] = [];
+                if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                if (!newAddressesToCache[rm].some(item => item.address === clientAddress)) {
+                    newAddressesToCache[rm].push({ address: clientAddress });
                 }
-                if (!newAddressesToCache[rm].some(item => item.address === correctedClientAddress)) {
-                    newAddressesToCache[rm].push({ address: correctedClientAddress });
+
+                const okbEntry = okbCoordIndex.get(normalizedAddress);
+                if (okbEntry) {
+                    lat = okbEntry.lat;
+                    lon = okbEntry.lon;
+                } else if (cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
+                    if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
+                    if (!addressesToGeocode[rm].includes(clientAddress)) {
+                        addressesToGeocode[rm].push(clientAddress);
+                    }
                 }
             }
+
+            const parsedAddress = parseRussianAddress(clientAddress);
+            const region = parsedAddress.region;
+            const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
             uniquePlottableClients.set(normalizedAddress, {
                 key: normalizedAddress,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: correctedClientAddress,
-                city: cityForPoint, // Use the specific city name for the map point
-                region: finalRegion,
-                rm, brand,
+                address: clientAddress,
+                city: groupName,
+                region, rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
             });
         }
         
+        // --- Aggregation logic (runs for every row) ---
+        const parsedForAggregation = parseRussianAddress(clientAddress);
+        const regionForAggregation = parsedForAggregation.region;
+        const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
+
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight)) continue;
+        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
 
-        if (aggregationGroupName === "Неопределенные адреса") {
-            const unidentifiedKey = `unidentified-${correctedClientAddress}-${rm}`.toLowerCase();
-             if (!aggregatedData[unidentifiedKey]) {
-                 aggregatedData[unidentifiedKey] = {
-                     key: unidentifiedKey,
-                     clientName: clientName || correctedClientAddress,
-                     brand: findValueInRow(row, ['торговая марка']),
-                     rm,
-                     city: "Неопределенный город",
-                     region: "Неопределенные адреса",
-                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                     clients: new Set([correctedClientAddress]),
-                     originalRows: []
-                 };
-             }
-             aggregatedData[unidentifiedKey].fact += weight;
-             aggregatedData[unidentifiedKey].originalRows.push(row);
-        } else {
-            const key = `${aggregationGroupName}-${brand}-${rm}`.toLowerCase();
-            if (!aggregatedData[key]) {
-                aggregatedData[key] = {
-                    key, 
-                    clientName: `${aggregationGroupName} (${brand})`, 
-                    brand, 
-                    rm, 
-                    city: aggregationGroupName, // The group's "city" is the region itself
-                    region: finalRegion, 
-                    fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                    clients: new Set<string>(),
-                    originalRows: []
-                };
-            }
-            aggregatedData[key].fact += weight;
-            aggregatedData[key].clients.add(correctedClientAddress || clientName);
-            aggregatedData[key].originalRows.push(row);
+        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+        if (!aggregatedData[key]) {
+            aggregatedData[key] = {
+                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
+                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                clients: new Set<string>(),
+            };
+        }
+        aggregatedData[key].fact += weight;
+        aggregatedData[key].clients.add(clientAddress || clientName);
 
-            if (hasPotentialColumn) {
-                const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
-                if (!isNaN(potential)) aggregatedData[key].potential += potential;
-            }
+        if (hasPotentialColumn) {
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+            if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
         
         if (i > 0 && i % 5000 === 0) {
@@ -310,22 +246,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
         }
     }
-
+    
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
     const finalData: AggregatedDataRow[] = [];
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     for (const item of Object.values(aggregatedData)) {
-        if (item.region === 'Неопределенные адреса') {
-            finalData.push({
-                ...item,
-                clients: Array.from(item.clients),
-                originalRows: item.originalRows
-            });
-            continue;
-        }
-
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
@@ -335,8 +262,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
             potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
-            clients: Array.from(item.clients),
-            originalRows: item.originalRows
+            clients: Array.from(item.clients) 
         });
     }
 
@@ -346,6 +272,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     // --- BACKGROUND TASKS ---
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
+        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
         for (const rmName of newAddressRMs) {
             try {
@@ -354,6 +281,42 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
     }
 
+    const geocodeRMs = Object.keys(addressesToGeocode);
+    if (geocodeRMs.length > 0) {
+        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
+        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
+        for (const rmName of geocodeRMs) {
+            const updates: { address: string, lat: number, lon: number }[] = [];
+            const addresses = addressesToGeocode[rmName];
+            for (let i = 0; i < addresses.length; i++) {
+                const address = addresses[i];
+                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
+                postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
+                
+                let coords: { lat: number, lon: number } | null = null;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
+                        if (response.ok) {
+                            coords = await response.json();
+                            break;
+                        }
+                    } catch (e) { console.error(`Geocode attempt ${attempt} failed for ${address}:`, e); }
+                    if (attempt < 3) await sleep(5000);
+                }
+                if (coords) updates.push({ address, ...coords });
+            }
+
+            if (updates.length > 0) {
+                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
+                postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
+                try {
+                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
+                } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
+            }
+        }
+    }
+    // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 

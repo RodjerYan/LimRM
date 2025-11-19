@@ -16,7 +16,6 @@ import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
   return data.filter(row => {
-    if (row.region === 'Неопределенные адреса') return true; // Always include unidentified rows for separate display
     const rmMatch = !filters.rm || row.rm === filters.rm;
     const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
     const regionMatch = filters.region.length === 0 || filters.region.includes(row.region);
@@ -37,7 +36,7 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
   data.forEach(row => {
     if (row.rm) rms.add(row.rm);
     if (row.brand) brands.add(row.brand);
-    if (row.region && row.region !== 'Регион не определен' && row.region !== 'Неопределенные адреса') regions.add(row.region);
+    if (row.region && row.region !== 'Регион не определен') regions.add(row.region);
   });
 
   return {
@@ -58,14 +57,8 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
   if (data.length === 0) {
     return null;
   }
-    
-  const dataForMetrics = data.filter(row => row.region !== "Неопределенные адреса");
 
-  if (dataForMetrics.length === 0) {
-      return null;
-  }
-
-  const metrics = dataForMetrics.reduce(
+  const metrics = data.reduce(
     (acc, row) => {
       acc.totalFact += row.fact;
       acc.totalPotential += row.potential;
@@ -105,7 +98,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     totalFact: metrics.totalFact,
     totalPotential: metrics.totalPotential,
     totalGrowth: metrics.totalGrowth,
-    totalClients: dataForMetrics.length, // Total number of groups
+    totalClients: data.length, // Total number of groups
     totalActiveClients: metrics.totalActiveClients, // This count is based on unique addresses per group.
     averageGrowthPercentage,
     topPerformingRM,
@@ -128,19 +121,16 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
     for (const pKey of prioritizedKeys) {
         // Find a key that matches exactly when lowercased and trimmed
-        // FIX: Added ё -> е normalization for header keys to make matching more robust.
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е') === pKey);
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
         if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
 
     // Fallback to partial match if no exact match is found
-    // FIX: Added ё -> е normalization for header keys to make matching more robust.
-    const addressKey = rowKeys.find(key => key.toLowerCase().replace(/ё/g, 'е').includes('адрес'));
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
     // Last resort fallback
-    // FIX: Added ё -> е normalization for header keys to make matching more robust.
-    const fallbackKey = rowKeys.find(key => key.toLowerCase().replace(/ё/g, 'е').includes('город') || key.toLowerCase().replace(/ё/g, 'е').includes('регион'));
+    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;

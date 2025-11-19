@@ -11,7 +11,6 @@ export interface AggregatedDataRow {
     growthPercentage: number;
     potentialClients?: PotentialClient[];
     clients: string[]; // List of individual client names/addresses in the group
-    originalRows: { [key: string]: any }[]; // Store the original raw row(s) for editing
 }
 
 export type MapPointStatus = 'match' | 'potential';

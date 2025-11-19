@@ -1,5 +1,6 @@
 import { 
     standardizeRegion, 
+    REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
 } from '../utils/addressMappings';
 import { ParsedAddress } from '../types';
@@ -19,9 +20,50 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
+ * Finds a city name within a normalized address string.
+ * @param normalizedAddress A pre-processed, lowercased address string.
+ * @returns The capitalized city name or a default string if not found.
+ */
+function getCityFromAddress(normalizedAddress: string): string {
+    if (!normalizedAddress) return 'Город не определен';
+
+    // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
+    for (const city of CITIES_SORTED_BY_LENGTH) {
+        // Use regex with word boundaries to ensure we're matching the whole city name.
+        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedCity}\\b`);
+        if (regex.test(normalizedAddress)) {
+            return capitalize(city);
+        }
+    }
+    
+    return 'Город не определен';
+}
+
+
+/**
+ * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
+ * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
+ */
+function findRegionByKeyword(normalizedAddress: string): string | null {
+    // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
+    const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+    for (const key of sortedKeys) {
+        // This regex ensures we match the key as a whole word/phrase.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
+
+        if (regex.test(normalizedAddress)) {
+            return REGION_KEYWORD_MAP[key];
+        }
+    }
+    return null;
+}
+
+/**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
- * This function has been completely refactored to be more robust and strictly prioritize city detection over any other method.
- * The ambiguous region keyword search has been REMOVED entirely.
  * @param address The raw address string.
  * @returns A ParsedAddress object with the determined region and city.
  */
@@ -30,89 +72,23 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
-    const lowerAddress = address.toLowerCase();
+    // Initial cleaning: convert to lowercase, handle 'ё', remove commas/semicolons, and collapse whitespace.
+    const lowerAddress = address.toLowerCase().replace(/ё/g, 'е');
+    let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    // FINAL "IRON-CLAD" FIX: Use simple includes() which is very aggressive but will catch all variations
-    // including cases with strange punctuation or spacing that might break a \b word boundary check.
-    if (lowerAddress.includes('орел') || lowerAddress.includes('орёл')) {
-        return {
-            region: 'Орловская область',
-            city: 'Орёл'
-        };
-    }
-
-    // Initial cleaning and normalization
-    let normalized = lowerAddress.replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+    // --- Step 1: Normalization using aliases for common typos ---
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
-    }
-
-    // --- STEP 1: STRICT CITY-FIRST SEARCH (ONLY METHOD) ---
-    // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
-    for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // FIX: Create a regex that is insensitive to 'е' vs 'ё' to correctly match cities like 'Орёл'/'Орел'.
-        const cityRegexStr = cityName
-            .replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-            .replace(/[её]/g, '[её]');
-        const regex = new RegExp(`\\b${cityRegexStr}\\b`);
-
-        if (regex.test(normalized)) {
-            // MATCH FOUND! Immediately return the region associated with this city.
-            // No further checks are needed. This prevents street names from causing conflicts.
-            return {
-                region: REGION_BY_CITY_WITH_INDEXES[cityName].region,
-                city: capitalize(cityName)
-            };
+        if (normalized.includes(alias)) {
+            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
         }
     }
 
-    // --- STEP 2 (REMOVED): FALLBACK TO REGION KEYWORD SEARCH ---
-    // This entire block has been removed to prevent incorrect matches from street names.
-    // The logic now relies on the city search above or the distributor fallback in the worker.
+    // --- Step 2: Determine Region and City ---
+    const region = findRegionByKeyword(normalized);
+    const city = getCityFromAddress(normalized);
 
-    // --- STEP 3: NO MATCH FOUND ---
-    // If no city is found, we return 'undefined' and let the worker handle the fallback (distributor check).
-    return { region: 'Регион не определен', city: 'Город не определен' };
-}
-
-
-/**
- * Attempts to determine a region and city by finding a known city name within a fallback string (e.g., a distributor's name).
- * @param fallbackString The string to search within, e.g., "ООО Ромашка (г. Воронеж)".
- * @returns An object with `region` and `city` if a match is found, otherwise null.
- */
-export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
-    if (!fallbackString) return null;
-    
-    const lowerFallback = fallbackString.toLowerCase();
-
-    // FINAL "IRON-CLAD" FIX: Use simple includes() for the same reasons as in parseRussianAddress.
-    if (lowerFallback.includes('орел') || lowerFallback.includes('орёл')) {
-        return {
-            region: 'Орловская область',
-            city: 'Орёл',
-        };
-    }
-
-    // More robust normalization: remove punctuation to avoid issues with word boundaries.
-    const normalized = lowerFallback.replace(/[()]/g, ' ').replace(/ё/g, 'е');
-
-    // Iterate through sorted cities to find the longest possible match
-    for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // FIX: Create a regex that is insensitive to 'е' vs 'ё' and also escapes special characters.
-        const cityRegexStr = cityName
-            .replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
-            .replace(/[её]/g, '[её]');
-        const regex = new RegExp(`\\b${cityRegexStr}\\b`);
-
-        if (regex.test(normalized)) {
-            const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
-            return {
-                region: cityData.region,
-                city: capitalize(cityName),
-            };
-        }
-    }
-    
-    return null;
+    return {
+        region: standardizeRegion(region),
+        city: city 
+    };
 }

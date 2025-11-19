@@ -1,18 +1,17 @@
-import React, { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { WorkerMessage, OkbStatus, WorkerResultPayload, CoordsCache } from '../types';
 import { formatETR } from '../utils/timeUtils';
 import { LoaderIcon } from './icons';
 
 interface FileUploadProps {
-    // FIX: Update signature to include the `file` object, matching the handler in App.tsx.
-    onFileProcessed: (data: WorkerResultPayload, file: File) => void;
+    onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
     okbData: any[];
     okbStatus: OkbStatus | null;
     disabled: boolean;
 }
 
-const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadProps>(({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }, ref) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }) => {
     const [fileName, setFileName] = useState<string | null>(null);
     const [progress, setProgress] = useState(0);
     const [message, setMessage] = useState('Загрузите файл с данными');
@@ -33,7 +32,7 @@ const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadP
 
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch('/api/get-full-cache', { cache: 'no-store' });
+            const response = await fetch('/api/get-full-cache');
             if (response.ok) {
                 cacheData = await response.json();
                 setMessage('Кэш загружен, инициализация воркера...');
@@ -72,8 +71,7 @@ const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadP
                     }
                     break;
                 case 'result':
-                    // FIX: Pass the `file` object to the callback to match the updated prop type.
-                    onFileProcessed(payload, file);
+                    onFileProcessed(payload);
                     onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
                     setMessage(`Основная обработка завершена!`);
                     setProgress(100);
@@ -98,11 +96,6 @@ const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadP
         
         workerRef.current.postMessage({ file, okbData, cacheData });
     }, [onFileProcessed, onProcessingStateChange, okbData]);
-    
-    // FIX: Expose the `processFile` function to the parent component via the ref.
-    useImperativeHandle(ref, () => ({
-        processFile
-    }));
     
     // Cleanup worker on component unmount
     useEffect(() => {
@@ -228,6 +221,6 @@ const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadP
             ) : null}
         </div>
     );
-});
+};
 
 export default FileUpload;

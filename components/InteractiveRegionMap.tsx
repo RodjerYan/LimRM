@@ -28,8 +28,7 @@ interface SearchableLocation {
 const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        // FIX: Normalize ё to е in header keys for more robust matching, ensuring consistency with the worker.
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().replace(/ё/g, 'е').includes(keyword));
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().includes(keyword));
         if (foundKey && row[foundKey]) {
             return String(row[foundKey]);
         }
