@@ -30,8 +30,18 @@ export function parseRussianAddress(address: string): ParsedAddress {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
 
+    const lowerAddress = address.toLowerCase();
+
+    // HARDCODED FIX for "Орёл" to be "iron-clad" as requested.
+    if (/\bор[её]л\b/.test(lowerAddress)) {
+        return {
+            region: 'Орловская область',
+            city: 'Орёл'
+        };
+    }
+
     // Initial cleaning and normalization
-    let normalized = address.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+    let normalized = lowerAddress.replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
         normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
@@ -73,8 +83,17 @@ export function parseRussianAddress(address: string): ParsedAddress {
 export function getRegionFromFallback(fallbackString: string): { region: string; city: string } | null {
     if (!fallbackString) return null;
     
+    const lowerFallback = fallbackString.toLowerCase();
+    // HARDCODED FIX for "Орёл" to be "iron-clad" as requested.
+    if (/\bор[её]л\b/.test(lowerFallback)) {
+        return {
+            region: 'Орловская область',
+            city: 'Орёл',
+        };
+    }
+
     // More robust normalization: remove punctuation to avoid issues with word boundaries.
-    const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ').replace(/ё/g, 'е');
+    const normalized = lowerFallback.replace(/[()]/g, ' ').replace(/ё/g, 'е');
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {

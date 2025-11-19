@@ -33,7 +33,7 @@ const FileUpload = forwardRef<{ processFile: (file: File) => void }, FileUploadP
 
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch('/api/get-full-cache');
+            const response = await fetch('/api/get-full-cache', { cache: 'no-store' });
             if (response.ok) {
                 cacheData = await response.json();
                 setMessage('Кэш загружен, инициализация воркера...');
