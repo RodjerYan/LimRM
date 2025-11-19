@@ -12,59 +12,6 @@ import {
 import { parseRussianAddress, getRegionFromFallback } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
-// FIX: The user wants CIS logic separated. Import the main city map to build a CIS-specific city list.
-import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
-
-
-// --- START OF HYBRID LOGIC IMPLEMENTATION ---
-
-// Helper sets and functions for the new hybrid CIS/RF region detection logic.
-
-const CIS_REGIONS = new Set([
-    'Республика Абхазия',
-    'Республика Беларусь',
-    'Республика Казахстан',
-    'Кыргызская Республика',
-    'Республика Молдова',
-    'Республика Таджикистан',
-    'Туркменистан',
-    'Республика Узбекистан',
-    'Азербайджан',
-    'Армения'
-]);
-
-// Create a pre-sorted list of only CIS cities for a high-priority check.
-const CIS_CITIES_SORTED = Object.keys(REGION_BY_CITY_WITH_INDEXES)
-    .filter(city => CIS_REGIONS.has(REGION_BY_CITY_WITH_INDEXES[city].region))
-    .sort((a, b) => b.length - a.length);
-
-/**
- * A specialized function that ONLY checks for CIS cities in the distributor's name.
- * This acts as a high-priority "fast path" to correctly identify CIS regions
- * without being affected by the logic intended for Russian regions.
- * @param distributor The distributor name string.
- * @returns A region/city object if a CIS city is found, otherwise null.
- */
-function getCisRegionFromDistributor(distributor: string): { region: string; city: string } | null {
-    if (!distributor) return null;
-    const normalized = distributor.toLowerCase().replace(/[()]/g, ' ');
-
-    for (const cityName of CIS_CITIES_SORTED) {
-        // Use word boundaries to ensure a clean match (e.g., finds "минск" but not "минский")
-        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-        if (regex.test(normalized)) {
-            const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
-            return {
-                region: cityData.region,
-                city: cityName.charAt(0).toUpperCase() + cityName.slice(1), // Simple capitalization
-            };
-        }
-    }
-    return null;
-}
-
-// --- END OF HYBRID LOGIC IMPLEMENTATION ---
-
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients' | 'originalRows'> & { clients: Set<string>, originalRows: { [key: string]: any }[] } };
@@ -221,61 +168,43 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
-        // --- HYBRID REGION DETECTION LOGIC ---
         let finalRegion: string | null = null;
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
 
-        // PRIORITY 0: Special high-priority check for CIS countries in the distributor name.
+        // --- REFINED REGION DETECTION LOGIC ---
+
+        // Step A: First, try to parse the main address. This is the most reliable source.
+        const initialParse = parseRussianAddress(clientAddress);
+
+        // Step B: Independently, check the distributor column as a fallback.
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        const cisResult = getCisRegionFromDistributor(distributor);
-        if (cisResult) {
-            finalRegion = cisResult.region;
-            finalCity = cisResult.city;
-            // Enrich the address for better consistency if the city isn't already there.
-            if (finalCity && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+        const fallbackResult = getRegionFromFallback(distributor);
+
+        // Step C: Prioritize results.
+        if (initialParse.region !== 'Регион не определен') {
+            // Priority 1: Main address parsing was successful. Use it.
+            finalRegion = initialParse.region;
+            finalCity = initialParse.city;
+        } else if (fallbackResult) {
+            // Priority 2: Main address failed, but distributor lookup succeeded. Use it.
+            finalRegion = fallbackResult.region;
+            finalCity = fallbackResult.city;
+            // Prepend city to address for consistency if it's not already there
+            if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
                 correctedClientAddress = `${finalCity}, ${clientAddress}`;
             }
-        }
-
-        // If it's NOT a CIS case, proceed with the standard logic that works well for Russia.
-        if (!finalRegion) {
-            // STANDARD LOGIC FOR RF
-            // 1. Parse main address string for a known city.
-            const initialParse = parseRussianAddress(clientAddress);
-            if (initialParse.region !== 'Регион не определен') {
-                finalRegion = initialParse.region;
-                finalCity = initialParse.city;
-            }
-
-            // 2. If address parsing fails, use a strict keyword search.
-            if (!finalRegion) {
-                const normalizedAddressForKeyword = clientAddress.toLowerCase().replace(/[^а-я0-9\s-]/g, ' ');
-                for (const keyword of REGION_KEYWORDS_SORTED) {
-                    try {
-                        const regex = new RegExp(`\\b${keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-                        if (regex.test(normalizedAddressForKeyword)) {
-                            finalRegion = REGION_KEYWORD_MAP[keyword];
-                            break;
-                        }
-                    } catch (e) {
-                        console.error(`Invalid regex for keyword: ${keyword}`, e);
-                    }
-                }
-            }
-            
-            // 3. Last resort for RF: check distributor for ANY city (e.g. "ООО Ромашка (Воронеж)").
-            if (!finalRegion) {
-                const fallbackResult = getRegionFromFallback(distributor); // Checks all cities
-                if (fallbackResult) {
-                    finalRegion = fallbackResult.region;
-                    finalCity = fallbackResult.city;
+        } else {
+            // Priority 3 (Last Resort): Both methods failed. Try keyword search on the address.
+            const normalizedAddressForKeyword = clientAddress.toLowerCase();
+            for (const keyword of REGION_KEYWORDS_SORTED) {
+                if (normalizedAddressForKeyword.includes(keyword)) {
+                    finalRegion = REGION_KEYWORD_MAP[keyword];
+                    break;
                 }
             }
         }
         
-        // --- End of Hybrid Logic ---
-
         finalRegion = standardizeRegion(finalRegion);
         if (finalRegion === 'Регион не определен') {
             finalRegion = "Неопределенные адреса";
@@ -284,7 +213,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!finalCity || finalCity === 'Город не определен') {
             finalCity = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
         }
-        
+
         const groupName = finalCity;
         const normalizedAddress = normalizeAddress(correctedClientAddress);
         
@@ -355,26 +284,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const rm = findValueInRow(row, ['рм']);
         if (!clientAddress || !rm) return;
         
-        let regionDetermined = false;
         const initialParse = parseRussianAddress(clientAddress);
-        if (initialParse.region !== 'Регион не определен') {
-            regionDetermined = true;
-        } else {
-            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-            const fallbackResult = getRegionFromFallback(distributor);
-            if (fallbackResult) {
-                regionDetermined = true;
-            }
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+        const fallbackResult = getRegionFromFallback(distributor);
+        let finalRegion: string | null = null;
+         if (initialParse.region !== 'Регион не определен') {
+            finalRegion = initialParse.region;
+        } else if (fallbackResult) {
+            finalRegion = fallbackResult.region;
         }
-        
-        if (!regionDetermined) {
+        if (!finalRegion) {
              const key = `unidentified-${clientAddress}-${rm}`.toLowerCase();
              if (!aggregatedData[key]) {
                  aggregatedData[key] = {
                      key,
                      clientName: findValueInRow(row, ['наименование клиента', 'контрагент', 'клиент']) || clientAddress,
-                     brand: findValueInRow(row, ['торговая марка']) || 'Без бренда',
-                     rm: rm || 'Неизвестный РМ',
+                     brand: findValueInRow(row, ['торговая марка']),
+                     rm,
                      city: "Неопределенный город",
                      region: "Неопределенные адреса",
                      fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
