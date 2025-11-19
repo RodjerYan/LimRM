@@ -63,11 +63,34 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
 }
 
 /**
+ * Extracts a city name from a distributor string (e.g., "Company (Bishkek)").
+ * @param distributor The distributor string.
+ * @returns The found city name in lowercase, or null.
+ */
+function extractCityFromDistributor(distributor: string): string | null {
+  if (!distributor) return null;
+
+  const match = distributor.match(/\(([^)]+)\)/);
+  if (!match || !match[1]) return null;
+  
+  const cityInParens = match[1].trim().toLowerCase();
+
+  // Check if this city is a known keyword that maps to a region
+  if (REGION_KEYWORD_MAP[cityInParens]) {
+    return cityInParens;
+  }
+  
+  return null;
+}
+
+
+/**
  * Parses a Russian address string to extract the region and city using a lightweight, fast, and local-only approach.
  * @param address The raw address string.
+ * @param distributor An optional distributor string which may contain a city hint in parentheses.
  * @returns A ParsedAddress object with the determined region and city.
  */
-export function parseRussianAddress(address: string): ParsedAddress {
+export function parseRussianAddress(address: string, distributor?: string): ParsedAddress {
     if (!address?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен' };
     }
@@ -83,12 +106,20 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // --- Step 2: Determine Region and City ---
+    // --- Step 2: Determine Region and City from address ---
     let region = findRegionByKeyword(normalized);
     const city = getCityFromAddress(normalized);
 
-    // --- Step 3: Fallback to find region from city if not found by keyword ---
-    // This is crucial for addresses that only contain a city name (e.g., "Бишкек").
+    // --- Step 3: Fallback to distributor string if region is not found in address ---
+    if (!region && distributor) {
+        const distributorCity = extractCityFromDistributor(distributor);
+        if (distributorCity) {
+            // Found a valid city in the distributor string, use it to get the region
+            region = REGION_KEYWORD_MAP[distributorCity];
+        }
+    }
+
+    // --- Step 4: Fallback to find region from city if not found by keyword or distributor ---
     if (!region && city !== 'Город не определен') {
         const cityData = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
         if (cityData) {

@@ -165,6 +165,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
 
         if (!clientAddress || !rm) continue;
 
@@ -200,7 +201,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             }
 
-            const parsedAddress = parseRussianAddress(clientAddress);
+            const parsedAddress = parseRussianAddress(clientAddress, distributor);
             const region = parsedAddress.region;
             const groupName = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : region;
 
@@ -218,7 +219,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // --- Aggregation logic (runs for every row) ---
-        const parsedForAggregation = parseRussianAddress(clientAddress);
+        const parsedForAggregation = parseRussianAddress(clientAddress, distributor);
         const regionForAggregation = parsedForAggregation.region;
         const groupNameForAggregation = (parsedForAggregation.city !== 'Город не определен') ? parsedForAggregation.city : regionForAggregation;
 
@@ -272,7 +273,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     // --- BACKGROUND TASKS ---
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
-        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
         for (const rmName of newAddressRMs) {
             try {
@@ -283,14 +283,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     const geocodeRMs = Object.keys(addressesToGeocode);
     if (geocodeRMs.length > 0) {
-        // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
         for (const rmName of geocodeRMs) {
             const updates: { address: string, lat: number, lon: number }[] = [];
             const addresses = addressesToGeocode[rmName];
             for (let i = 0; i < addresses.length; i++) {
                 const address = addresses[i];
-                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
                 
                 let coords: { lat: number, lon: number } | null = null;
@@ -308,7 +306,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
 
             if (updates.length > 0) {
-                // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
                 try {
                      await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
@@ -316,7 +313,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         }
     }
-    // FIX: Add 'percentage' property to satisfy the WorkerProgressPayload type.
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
