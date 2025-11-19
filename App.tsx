@@ -88,7 +88,7 @@ const App: React.FC = () => {
         const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
-            return address && !activeAddressesSet.has(normalizeAddress(address));
+            return !activeAddressesSet.has(normalizeAddress(address));
         });
     }, [okbData, allActiveClients]);
     
@@ -120,6 +120,7 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
+    // FIX: Add the 'file' parameter to match the expected signature from the FileUpload component.
     const handleFileProcessed = useCallback((data: WorkerResultPayload, file: File) => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
@@ -155,7 +156,6 @@ const App: React.FC = () => {
             if (addressKey) {
                 rawRowToUpdate[addressKey] = newAddress;
             } else {
-                // Fallback if no address key is found - might need a more robust solution
                 rawRowToUpdate['Юридический адрес'] = newAddress;
             }
             
@@ -273,19 +273,13 @@ const App: React.FC = () => {
                             <UnidentifiedAddressesTable data={unidentifiedData} onEditRow={handleEditRow} />
                         )}
 
-                        {isDataLoaded && mainFilteredData.length > 0 && <PotentialChart data={mainFilteredData} />}
+                        {mainFilteredData.length > 0 && <PotentialChart data={mainFilteredData} />}
                     </div>
                 </div>
             </main>
             <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
                 {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
             </div>
-            {isLoading && (
-                <div className="fixed inset-0 bg-black/70 z-[100] flex flex-col items-center justify-center">
-                    <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-12 h-12 animate-spin"></div>
-                    <p className="mt-4 text-white text-lg">{loadingMessage}</p>
-                </div>
-            )}
 
             <DetailsModal 
                 isOpen={isDetailsModalOpen} 

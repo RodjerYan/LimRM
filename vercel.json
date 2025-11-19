@@ -29,10 +29,6 @@
       "destination": "/api/update-coords"
     },
     {
-      "source": "/api/update-okb-row",
-      "destination": "/api/update-okb-row"
-    },
-    {
       "source": "/api/geocode",
       "destination": "/api/geocode"
     },
