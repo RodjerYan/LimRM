@@ -168,54 +168,55 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (!clientAddress || !rm) continue;
 
-        let finalRegion: string | null = null;
+        let finalRegion: string;
         let finalCity: string | null = null;
         let correctedClientAddress = clientAddress;
+        
+        const normalizedAddress = normalizeAddress(correctedClientAddress);
+        const coordsFromOkb = okbCoordIndex.get(normalizedAddress);
 
-        // --- REFINED REGION DETECTION LOGIC ---
+        // THE CORE LOGIC CHANGE IS HERE
+        if (coordsFromOkb?.lat && coordsFromOkb?.lon) {
+            // Coordinates exist, so parse region normally.
+            const initialParse = parseRussianAddress(clientAddress);
+            const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
+            const fallbackResult = getRegionFromFallback(distributor);
 
-        // Step A: First, try to parse the main address. This is the most reliable source.
-        const initialParse = parseRussianAddress(clientAddress);
-
-        // Step B: Independently, check the distributor column as a fallback.
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        const fallbackResult = getRegionFromFallback(distributor);
-
-        // Step C: Prioritize results.
-        if (initialParse.region !== 'Регион не определен') {
-            // Priority 1: Main address parsing was successful. Use it.
-            finalRegion = initialParse.region;
-            finalCity = initialParse.city;
-        } else if (fallbackResult) {
-            // Priority 2: Main address failed, but distributor lookup succeeded. Use it.
-            finalRegion = fallbackResult.region;
-            finalCity = fallbackResult.city;
-            // Prepend city to address for consistency if it's not already there
-            if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-                correctedClientAddress = `${finalCity}, ${clientAddress}`;
+            if (initialParse.region !== 'Регион не определен') {
+                finalRegion = initialParse.region;
+                finalCity = initialParse.city;
+            } else if (fallbackResult) {
+                finalRegion = fallbackResult.region;
+                finalCity = fallbackResult.city;
+                if (finalCity && finalCity !== 'Город не определен' && !clientAddress.toLowerCase().includes(finalCity.toLowerCase())) {
+                    correctedClientAddress = `${finalCity}, ${clientAddress}`;
+                }
+            } else {
+                let foundRegion = null;
+                const normalizedAddressForKeyword = clientAddress.toLowerCase();
+                for (const keyword of REGION_KEYWORDS_SORTED) {
+                    if (normalizedAddressForKeyword.includes(keyword)) {
+                        foundRegion = REGION_KEYWORD_MAP[keyword];
+                        break;
+                    }
+                }
+                finalRegion = foundRegion || 'Регион не определен';
             }
         } else {
-            // Priority 3 (Last Resort): Both methods failed. Try keyword search on the address.
-            const normalizedAddressForKeyword = clientAddress.toLowerCase();
-            for (const keyword of REGION_KEYWORDS_SORTED) {
-                if (normalizedAddressForKeyword.includes(keyword)) {
-                    finalRegion = REGION_KEYWORD_MAP[keyword];
-                    break;
-                }
-            }
+            // No coordinates in OKB, so it's "Unidentified".
+            finalRegion = "Неопределенные адреса";
         }
         
         finalRegion = standardizeRegion(finalRegion);
         if (finalRegion === 'Регион не определен') {
             finalRegion = "Неопределенные адреса";
         }
-
+        
         if (!finalCity || finalCity === 'Город не определен') {
             finalCity = (finalRegion !== 'Неопределенные адреса') ? finalRegion : 'Неопределенный город';
         }
 
         const groupName = finalCity;
-        const normalizedAddress = normalizeAddress(correctedClientAddress);
         
         if (!uniquePlottableClients.has(normalizedAddress)) {
             let lat: number | undefined;
@@ -224,7 +225,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
             const cacheEntry = cacheAddressMap.get(normalizedAddress);
 
-            if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+            // Prioritize OKB coords
+            if (coordsFromOkb?.lat && coordsFromOkb?.lon) {
+                lat = coordsFromOkb.lat;
+                lon = coordsFromOkb.lon;
+                isCached = true;
+            } else if (cacheEntry?.lat && cacheEntry?.lon) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
@@ -252,24 +258,43 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight) || finalRegion === "Неопределенные адреса") continue;
+        if (isNaN(weight)) continue;
 
-        const key = `${groupName}-${brand}-${rm}`.toLowerCase();
-        if (!aggregatedData[key]) {
-            aggregatedData[key] = {
-                key, clientName: `${groupName} (${brand})`, brand, rm, city: groupName,
-                region: finalRegion, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                clients: new Set<string>(),
-                originalRows: []
-            };
-        }
-        aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(correctedClientAddress || clientName);
-        aggregatedData[key].originalRows.push(row);
+        if (finalRegion === "Неопределенные адреса") {
+            const unidentifiedKey = `unidentified-${correctedClientAddress}-${rm}`.toLowerCase();
+             if (!aggregatedData[unidentifiedKey]) {
+                 aggregatedData[unidentifiedKey] = {
+                     key: unidentifiedKey,
+                     clientName: clientName || correctedClientAddress,
+                     brand: findValueInRow(row, ['торговая марка']),
+                     rm,
+                     city: "Неопределенный город",
+                     region: "Неопределенные адреса",
+                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                     clients: new Set([correctedClientAddress]),
+                     originalRows: []
+                 };
+             }
+             aggregatedData[unidentifiedKey].fact += weight;
+             aggregatedData[unidentifiedKey].originalRows.push(row);
+        } else {
+            const key = `${groupName}-${brand}-${rm}`.toLowerCase();
+            if (!aggregatedData[key]) {
+                aggregatedData[key] = {
+                    key, clientName: `${groupName} (${brand})`, brand, rm, city: groupName,
+                    region: finalRegion, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                    clients: new Set<string>(),
+                    originalRows: []
+                };
+            }
+            aggregatedData[key].fact += weight;
+            aggregatedData[key].clients.add(correctedClientAddress || clientName);
+            aggregatedData[key].originalRows.push(row);
 
-        if (hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(potential)) aggregatedData[key].potential += potential;
+            if (hasPotentialColumn) {
+                const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+                if (!isNaN(potential)) aggregatedData[key].potential += potential;
+            }
         }
         
         if (i > 0 && i % 5000 === 0) {
@@ -277,39 +302,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
         }
     }
-    
-    // Add unidentified rows to the aggregation
-    jsonData.forEach(row => {
-        const clientAddress = findAddressInRow(row);
-        const rm = findValueInRow(row, ['рм']);
-        if (!clientAddress || !rm) return;
-        
-        const initialParse = parseRussianAddress(clientAddress);
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибутор']);
-        const fallbackResult = getRegionFromFallback(distributor);
-        let finalRegion: string | null = null;
-         if (initialParse.region !== 'Регион не определен') {
-            finalRegion = initialParse.region;
-        } else if (fallbackResult) {
-            finalRegion = fallbackResult.region;
-        }
-        if (!finalRegion) {
-             const key = `unidentified-${clientAddress}-${rm}`.toLowerCase();
-             if (!aggregatedData[key]) {
-                 aggregatedData[key] = {
-                     key,
-                     clientName: findValueInRow(row, ['наименование клиента', 'контрагент', 'клиент']) || clientAddress,
-                     brand: findValueInRow(row, ['торговая марка']),
-                     rm,
-                     city: "Неопределенный город",
-                     region: "Неопределенные адреса",
-                     fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                     clients: new Set([clientAddress]),
-                     originalRows: [row]
-                 };
-             }
-        }
-    });
 
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
@@ -317,8 +309,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     for (const item of Object.values(aggregatedData)) {
+        if (item.region === 'Неопределенные адреса') {
+            finalData.push({
+                ...item,
+                clients: Array.from(item.clients),
+                originalRows: item.originalRows
+            });
+            continue;
+        }
+
         let potential = item.potential;
-        if (!hasPotentialColumn && item.region !== "Неопределенные адреса") potential = item.fact * 1.15;
+        if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
         
         finalData.push({
