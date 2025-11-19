@@ -84,8 +84,17 @@ export function parseRussianAddress(address: string): ParsedAddress {
     }
 
     // --- Step 2: Determine Region and City ---
-    const region = findRegionByKeyword(normalized);
+    let region = findRegionByKeyword(normalized);
     const city = getCityFromAddress(normalized);
+
+    // --- Step 3: Fallback to find region from city if not found by keyword ---
+    // This is crucial for addresses that only contain a city name (e.g., "Бишкек").
+    if (!region && city !== 'Город не определен') {
+        const cityData = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
+        if (cityData) {
+            region = cityData.region;
+        }
+    }
 
     return {
         region: standardizeRegion(region),
