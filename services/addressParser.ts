@@ -6,7 +6,44 @@ import {
 import { ParsedAddress } from '../types';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
-// Memoize the sorted list of cities to avoid re-computing it on every call.
+// --- START OF REFACTORED LOGIC ---
+
+// 1. Create a single, comprehensive map for region lookups.
+// This map combines explicit region keywords with city-to-region mappings.
+// Keywords from REGION_KEYWORD_MAP are given precedence by spreading them last.
+const cityToRegionMap = Object.fromEntries(
+    Object.entries(REGION_BY_CITY_WITH_INDEXES).map(([city, data]) => [city, data.region])
+);
+const COMBINED_REGION_MAP: Record<string, string> = { ...cityToRegionMap, ...REGION_KEYWORD_MAP };
+
+// 2. Sort the keys of the combined map by length, descending.
+// This is crucial to ensure longer, more specific keys are matched first 
+// (e.g., "московская область" before "москва").
+const COMBINED_KEYS_SORTED = Object.keys(COMBINED_REGION_MAP).sort((a, b) => b.length - a.length);
+
+/**
+ * Finds a region by matching keywords or city names from the combined map in the address.
+ * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
+ * @param normalizedAddress The pre-processed, lowercased address string.
+ * @returns The standardized region name or null if no match is found.
+ */
+function findRegion(normalizedAddress: string): string | null {
+    for (const key of COMBINED_KEYS_SORTED) {
+        // This regex ensures we match the key as a whole word/phrase.
+        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
+
+        if (regex.test(normalizedAddress)) {
+            return COMBINED_REGION_MAP[key];
+        }
+    }
+    return null;
+}
+
+// --- END OF REFACTORED LOGIC ---
+
+
+// Memoize the sorted list of cities to avoid re-computing it on every call for getCityFromAddress.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
 /**
@@ -20,7 +57,7 @@ const capitalize = (str: string | null): string => {
 };
 
 /**
- * Finds a city name within a normalized address string.
+ * Finds a city name within a normalized address string. This is still needed to populate the 'city' field of the result.
  * @param normalizedAddress A pre-processed, lowercased address string.
  * @returns The capitalized city name or a default string if not found.
  */
@@ -38,28 +75,6 @@ function getCityFromAddress(normalizedAddress: string): string {
     }
     
     return 'Город не определен';
-}
-
-
-/**
- * Finds a region by matching explicit keywords (e.g., "орловская обл", "брянская") in the address.
- * Uses a robust regex to match whole phrases, preventing partial matches inside other words.
- * @param normalizedAddress The pre-processed, lowercased address string.
- * @returns The standardized region name or null if no match is found.
- */
-function findRegionByKeyword(normalizedAddress: string): string | null {
-    // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
-    const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-        // This regex ensures we match the key as a whole word/phrase.
-        const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
-
-        if (regex.test(normalizedAddress)) {
-            return REGION_KEYWORD_MAP[key];
-        }
-    }
-    return null;
 }
 
 /**
@@ -83,18 +98,9 @@ export function parseRussianAddress(address: string): ParsedAddress {
         }
     }
 
-    // --- Step 2: Determine Region and City ---
-    let region = findRegionByKeyword(normalized);
-    const city = getCityFromAddress(normalized);
-
-    // --- Step 3: Fallback to find region from city if not found by keyword ---
-    // This is crucial for addresses that only contain a city name (e.g., "Бишкек").
-    if (!region && city !== 'Город не определен') {
-        const cityData = REGION_BY_CITY_WITH_INDEXES[city.toLowerCase()];
-        if (cityData) {
-            region = cityData.region;
-        }
-    }
+    // --- Step 2: Determine Region and City using the new simplified logic ---
+    const region = findRegion(normalized); // Single, robust call to find the region.
+    const city = getCityFromAddress(normalized); // Still used to identify the city itself.
 
     return {
         region: standardizeRegion(region),
