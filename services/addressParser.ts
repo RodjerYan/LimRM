@@ -39,8 +39,12 @@ export function parseRussianAddress(address: string): ParsedAddress {
     // --- STEP 1: STRICT CITY-FIRST SEARCH (ONLY METHOD) ---
     // This is the most reliable method. We iterate through a pre-sorted list of all known cities.
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // Use a regex to ensure we match a whole word.
-        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+        // FIX: Create a regex that is insensitive to 'е' vs 'ё' to correctly match cities like 'Орёл'/'Орел'.
+        const cityRegexStr = cityName
+            .replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+            .replace(/[её]/g, '[её]');
+        const regex = new RegExp(`\\b${cityRegexStr}\\b`);
+
         if (regex.test(normalized)) {
             // MATCH FOUND! Immediately return the region associated with this city.
             // No further checks are needed. This prevents street names from causing conflicts.
@@ -70,13 +74,16 @@ export function getRegionFromFallback(fallbackString: string): { region: string;
     if (!fallbackString) return null;
     
     // More robust normalization: remove punctuation to avoid issues with word boundaries.
-    // FIX: Added .replace(/ё/g, 'е') to handle cases like "Орёл" correctly.
     const normalized = fallbackString.toLowerCase().replace(/[()]/g, ' ').replace(/ё/g, 'е');
 
     // Iterate through sorted cities to find the longest possible match
     for (const cityName of CITIES_SORTED_BY_LENGTH) {
-        // FIX: Escape special characters in cityName to prevent regex errors (e.g., for "Ростов-на-Дону").
-        const regex = new RegExp(`\\b${cityName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+        // FIX: Create a regex that is insensitive to 'е' vs 'ё' and also escapes special characters.
+        const cityRegexStr = cityName
+            .replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')
+            .replace(/[её]/g, '[её]');
+        const regex = new RegExp(`\\b${cityRegexStr}\\b`);
+
         if (regex.test(normalized)) {
             const cityData = REGION_BY_CITY_WITH_INDEXES[cityName];
             return {

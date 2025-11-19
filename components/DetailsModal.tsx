@@ -134,7 +134,9 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
 const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
     if (!data) return null;
 
-    const isUnidentified = data.region === 'Неопределенные адреса';
+    // FIX: Make the check for unidentified regions more robust by using a case-insensitive `includes` check.
+    // This will correctly identify both "Неопределенные адреса" and "Регион не определен" and hide the AI/chart sections.
+    const isUnidentified = data.region?.toLowerCase().includes('не определен');
     const activeClients = data.clients?.length || 0;
     const avgFactPerClient = activeClients > 0 ? data.fact / activeClients : 0;
     const okbCoverage = (okbStatus?.rowCount && activeClients > 0) ? (activeClients / okbStatus.rowCount) * 100 : 0;
