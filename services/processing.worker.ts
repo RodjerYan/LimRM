@@ -197,7 +197,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 let foundRegion = null;
                 const normalizedAddressForKeyword = clientAddress.toLowerCase();
                 for (const keyword of REGION_KEYWORDS_SORTED) {
-                    if (normalizedAddressForKeyword.includes(keyword)) {
+                    // FIX: Use a regular expression with word boundaries (\b) to prevent
+                    // matching keywords as substrings within other words (e.g., 'ло' in 'Кабдолова').
+                    const regex = new RegExp(`\\b${keyword}\\b`);
+                    if (regex.test(normalizedAddressForKeyword)) {
                         foundRegion = REGION_KEYWORD_MAP[keyword];
                         break;
                     }
