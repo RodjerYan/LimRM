@@ -58,8 +58,8 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
 
         streamClientInsights(
             data,
-            (chunk) => setInsight(prev => prev + chunk),
-            (err) => {
+            (chunk: string) => setInsight(prev => prev + chunk),
+            (err: Error) => {
                 if (err.name !== 'AbortError') {
                     setError(`Не удалось получить рекомендации от AI: ${err.message}. Попробуйте еще раз.`);
                 }

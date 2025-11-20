@@ -45,7 +45,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                                     </tr>
                                 </thead>
                                 <tbody className="text-gray-300">
-                                    {groupedRows[rm].map((row) => {
+                                    {groupedRows[rm].map((row: UnidentifiedRow) => {
                                         const { rowData, originalIndex } = row;
                                         const originalAddress = findAddressInRow(rowData) || 'N/A';
                                         const clientName = findValueInRow(rowData, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A';
