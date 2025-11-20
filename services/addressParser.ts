@@ -9,6 +9,15 @@ import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
+// NEW: Hard override for specific addresses to be in Kyrgyzstan
+const kyrgyzstanHardOverrides = new Set([
+  'р-к ош-й яма, холодильник 98',
+  'с. орловка, ул. кудряшева, 5/2',
+  'с. беловодское, ул. 50 лет',
+  'с. беловодское, ул. 50 лет беловодск',
+].map(addr => addr.toLowerCase().replace(/ё/g, 'е')));
+
+
 // NEW: Special rule definitions for Kyrgyzstan addresses
 const specialAddressesForBishkekRule = new Set([
   'г.кант, ул.панфилова -ванахунова 45',
@@ -108,10 +117,51 @@ function extractCityFromDistributor(distributor: string): string | null {
  */
 export function parseRussianAddress(address: string, distributor?: string): EnrichedParsedAddress {
     const originalAddress = address || '';
-    const lowerAddressForCheck = originalAddress.toLowerCase().replace(/ё/g, 'е');
+    const lowerAddressForCheck = originalAddress.toLowerCase().replace(/ё/g, 'е').trim();
     const lowerDistributor = (distributor || '').toLowerCase();
 
-    // NEW: Special override rule for specific Kyrgyzstan addresses when distributor is 'Bishkek'
+    // Priority 1: Hard override for problematic addresses that are incorrectly identified.
+    if (kyrgyzstanHardOverrides.has(lowerAddressForCheck)) {
+        const region = 'Кыргызская Республика';
+        let city = 'Город не определен';
+        let finalAddress = originalAddress.trim();
+
+        // Simple logic to determine city for these specific override cases.
+        if (lowerAddressForCheck.includes('ош-й яма')) {
+            // Osh market is famously in Bishkek, despite the name.
+            city = 'Бишкек';
+        } else if (lowerAddressForCheck.includes('орловка')) {
+            city = 'Орловка';
+        } else if (lowerAddressForCheck.includes('беловодское')) {
+            city = 'Беловодское';
+        }
+
+        // Ensure the final address is prefixed with the region for clarity and geocoding.
+        if (!finalAddress.toLowerCase().includes('кыргызская')) {
+            finalAddress = `${region}, ${finalAddress}`;
+        }
+        
+        // Clean up potential duplicates in the final address string.
+        const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
+        const uniqueParts: string[] = [];
+        const seen = new Set<string>();
+        for (const part of parts) {
+            const lowerPart = part.toLowerCase();
+            if (!seen.has(lowerPart)) {
+                uniqueParts.push(part);
+                seen.add(lowerPart);
+            }
+        }
+        finalAddress = uniqueParts.join(', ');
+
+        return {
+            region: region,
+            city: city,
+            finalAddress: finalAddress,
+        };
+    }
+
+    // Priority 2: Special override rule for specific Kyrgyzstan addresses when distributor is 'Bishkek'
     if (lowerDistributor.includes('бишкек') && specialAddressesForBishkekRule.has(lowerAddressForCheck)) {
         const region = 'Кыргызская Республика';
         let city: string;
