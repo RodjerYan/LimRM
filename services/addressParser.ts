@@ -135,42 +135,23 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     // 3. Construct Final Address (for display and geocoding)
     let finalAddress = originalAddress.trim();
     
-    const wasCityFoundInAddress = cityFromAddress !== 'Город не определен';
-    const wasCityTakenFromDistributor = !wasCityFoundInAddress && finalCity !== 'Город не определен';
-
-    // If the address is just a street and we got the city from the distributor, prepend the city.
-    if (wasCityTakenFromDistributor) {
-        const cityString = finalCity.toLowerCase().startsWith('г.') ? finalCity : `г. ${finalCity}`;
-        if (!finalAddress.toLowerCase().includes(finalCity.toLowerCase())) {
-            finalAddress = `${cityString}, ${finalAddress}`;
-        }
+    // Prepend region only if it's determined and NOT already present in the original address.
+    if (finalRegion !== 'Регион не определен' && !regionFromKeywordInAddress) {
+        finalAddress = `${finalRegion}, ${finalAddress}`;
     }
-
-    // Now, prepend the region if it's determined and not already present in the constructed address.
-    if (finalRegion !== 'Регион не определен') {
-        // A simple check to see if any significant part of the region name is already there.
-        const regionKeywords = finalRegion.toLowerCase().split(' ').filter(k => k.length > 3);
-        const isRegionPresent = regionKeywords.some(keyword => finalAddress.toLowerCase().includes(keyword));
-        
-        if (!isRegionPresent) {
-            finalAddress = `${finalRegion}, ${finalAddress}`;
-        }
-    }
-
-    // Final cleanup for duplicates
+    
+    // Clean up potential duplicates if region was added but parts were already there (e.g. city name)
     const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
     const uniqueParts = [];
-    const seen = new Set<string>();
-    for (const part of parts) {
-        // Normalize for seen check by removing prefixes and making lowercase
-        const lowerPart = part.toLowerCase().replace(/^(г\.|г|с\.|с|обл\.|обл)\s*/, '').trim();
-        if (!seen.has(lowerPart) || part.match(/^\d/)) { // keep parts that are just numbers (house/apt)
+    const seen = new Set();
+    for(const part of parts) {
+        const lowerPart = part.toLowerCase();
+        if(!seen.has(lowerPart)) {
             uniqueParts.push(part);
             seen.add(lowerPart);
         }
     }
     finalAddress = uniqueParts.join(', ');
-
 
     return {
         region: finalRegion,
