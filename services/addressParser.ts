@@ -9,6 +9,30 @@ import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
+// NEW: Special rule definitions for Kyrgyzstan addresses
+const specialAddressesForBishkekRule = new Set([
+  'г.кант, ул.панфилова -ванахунова 45',
+  'ул.крылова 35',
+  'беловодск',
+  'ул.молодая гвардия 153',
+  'маевка с., молодой гвардии 2',
+  'с. панфиловское, ул. центральная, 301',
+  'с. беловодское, светофор',
+  'г.кант ул.тастелло',
+  'р-к ош-й яма, холодильник 98',
+  'с. беловодское, ул. 50 лет беловодск',
+  'ул.л.толстого192/крылова',
+  'беловодск больница',
+  'с. ивановка, ул. григория ильина, 160',
+].map(addr => addr.toLowerCase().replace(/ё/g, 'е')));
+
+const bishkekDefaultStreets = new Set([
+    'ул.крылова 35',
+    'ул.молодая гвардия 153',
+    'ул.л.толстого192/крылова',
+].map(addr => addr.toLowerCase().replace(/ё/g, 'е')));
+
+
 /**
  * Capitalizes the first letter of each word in a string.
  * @param str The input string.
@@ -84,6 +108,54 @@ function extractCityFromDistributor(distributor: string): string | null {
  */
 export function parseRussianAddress(address: string, distributor?: string): EnrichedParsedAddress {
     const originalAddress = address || '';
+    const lowerAddressForCheck = originalAddress.toLowerCase().replace(/ё/g, 'е');
+    const lowerDistributor = (distributor || '').toLowerCase();
+
+    // NEW: Special override rule for specific Kyrgyzstan addresses when distributor is 'Bishkek'
+    if (lowerDistributor.includes('бишкек') && specialAddressesForBishkekRule.has(lowerAddressForCheck)) {
+        const region = 'Кыргызская Республика';
+        let city: string;
+        let finalAddress = originalAddress.trim();
+
+        if (bishkekDefaultStreets.has(lowerAddressForCheck)) {
+            city = 'Бишкек';
+            if (!finalAddress.toLowerCase().includes('бишкек')) {
+                finalAddress = `г. Бишкек, ${finalAddress}`;
+            }
+        } else {
+            // Re-run minimal normalization to find city
+            let normalizedForCityParse = originalAddress.toLowerCase().replace(/ё/g, 'е').replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
+            for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
+                normalizedForCityParse = normalizedForCityParse.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
+            }
+            normalizedForCityParse = normalizedForCityParse.replace(/\s+/g, ' ').trim();
+            city = getCityFromAddress(normalizedForCityParse);
+        }
+        
+        // Always prefix with region, if not already present. Check for a substring to be safe.
+        if (!finalAddress.toLowerCase().includes('кыргызская')) {
+            finalAddress = `${region}, ${finalAddress}`;
+        }
+
+        const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
+        const uniqueParts = [];
+        const seen = new Set<string>();
+        for (const part of parts) {
+            const lowerPart = part.toLowerCase();
+            if (!seen.has(lowerPart)) {
+                uniqueParts.push(part);
+                seen.add(lowerPart);
+            }
+        }
+        finalAddress = uniqueParts.join(', ');
+
+        return {
+            region: region,
+            city: city,
+            finalAddress: finalAddress,
+        };
+    }
+
     if (!originalAddress.trim() && !distributor?.trim()) {
         return { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
     }
