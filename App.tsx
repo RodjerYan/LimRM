@@ -169,15 +169,9 @@ const App: React.FC = () => {
     
     const handleUnidentifiedRowUpdate = useCallback((rowIndex: number) => {
         setUnidentifiedRows(prev => prev.filter((_, index) => index !== rowIndex));
-        addNotification('Адрес успешно обновлен и сохранен в кэше для будущих загрузок.', 'success');
-    }, [addNotification]);
+    }, []);
 
-    const handleOkbStatusChange = (status: OkbStatus) => {
-        setOkbStatus(status);
-        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
-        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
-    };
-
+    // FIX: Moved flyToClient before functions that depend on it.
     const flyToClient = useCallback((client: MapPoint) => {
         setTimeout(() => {
             setFlyToClientKey(client.key);
@@ -186,6 +180,19 @@ const App: React.FC = () => {
         const mapElement = document.getElementById('interactive-map-container');
         mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, []);
+    
+    const handleRowResolved = useCallback((newPoint: MapPoint, originalIndex: number) => {
+        setAllActiveClients(prev => [...prev, newPoint]);
+        setUnidentifiedRows(prev => prev.filter((_, i) => i !== originalIndex));
+        addNotification('Адрес распознан и добавлен на карту!', 'success');
+        flyToClient(newPoint);
+    }, [addNotification, flyToClient]);
+    
+    const handleOkbStatusChange = (status: OkbStatus) => {
+        setOkbStatus(status);
+        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
+        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
+    };
     
     const handleClientSelectFromModal = useCallback((client: MapPoint) => {
         setIsClientsModalOpen(false);
@@ -294,6 +301,7 @@ const App: React.FC = () => {
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
                 onRowUpdated={handleUnidentifiedRowUpdate}
+                onRowResolved={handleRowResolved}
             />
         </div>
     );

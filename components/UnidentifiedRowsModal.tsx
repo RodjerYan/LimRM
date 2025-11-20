@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import Modal from './Modal';
-import { findValueInRow, findAddressInRow } from '../utils/dataUtils';
+import { findValueInRow, findAddressInRow, normalizeAddress } from '../utils/dataUtils';
+import { parseRussianAddress } from '../services/addressParser';
+import { MapPoint } from '../types';
 import { LoaderIcon, CheckIcon, ErrorIcon, SaveIcon, TrashIcon } from './icons';
 
 interface UnidentifiedRow {
@@ -13,9 +15,10 @@ interface UnidentifiedRowsModalProps {
     onClose: () => void;
     rows: UnidentifiedRow[];
     onRowUpdated: (rowIndex: number) => void;
+    onRowResolved: (newPoint: MapPoint, originalIndex: number) => void;
 }
 
-type RowStatus = { status: 'idle' | 'loading' | 'success' | 'error'; message?: string };
+type RowStatus = { status: 'idle' | 'loading' | 'success' | 'error' | 'geocoding'; message?: string };
 
 interface RowItemProps {
     row: UnidentifiedRow;
@@ -37,6 +40,7 @@ const RowItem: React.FC<RowItemProps> = ({ row, originalIndex, editedAddress, st
     const isLoading = status?.status === 'loading';
     const isSuccess = status?.status === 'success';
     const isError = status?.status === 'error';
+    const isGeocoding = status?.status === 'geocoding';
     const isIdle = !status || status.status === 'idle';
 
     return (
@@ -49,21 +53,22 @@ const RowItem: React.FC<RowItemProps> = ({ row, originalIndex, editedAddress, st
                     type="text"
                     value={editedAddress}
                     onChange={e => onAddressChange(originalIndex, e.target.value)}
-                    disabled={disabled || isLoading || isSuccess}
+                    disabled={disabled || isLoading || isSuccess || isGeocoding}
                     placeholder="Введите корректный адрес..."
                     className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition disabled:opacity-50"
                 />
+                 {isGeocoding && <p className="text-cyan-400 text-xs mt-1 flex items-center gap-1"><LoaderIcon/> {status.message || 'Получение координат...'}</p>}
                 {isError && <p className="text-danger text-xs mt-1">{status.message}</p>}
             </td>
             <td className="px-4 py-2">
                 <div className="flex items-center justify-center gap-2">
                     <button 
                         onClick={() => onSave(originalIndex)} 
-                        disabled={disabled || isLoading || isSuccess}
+                        disabled={disabled || isLoading || isSuccess || isGeocoding}
                         className="p-2 bg-accent/80 hover:bg-accent text-white rounded-lg transition disabled:bg-gray-600 disabled:cursor-not-allowed flex items-center justify-center w-10 h-10"
                         title="Сохранить"
                     >
-                        {isLoading && <LoaderIcon />}
+                        {(isLoading || isGeocoding) && <LoaderIcon />}
                         {isSuccess && <CheckIcon />}
                         {isIdle && <SaveIcon />}
                         {isError && <div className="w-5 h-5"><ErrorIcon/></div>}
@@ -82,7 +87,7 @@ const RowItem: React.FC<RowItemProps> = ({ row, originalIndex, editedAddress, st
     );
 };
 
-const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, onClose, rows, onRowUpdated }) => {
+const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, onClose, rows, onRowUpdated, onRowResolved }) => {
     const [editedAddresses, setEditedAddresses] = useState<Record<number, string>>({});
     const [rowStatuses, setRowStatuses] = useState<Record<number, RowStatus>>({});
     const [isSavingAll, setIsSavingAll] = useState(false);
@@ -110,6 +115,43 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
         onRowUpdated(index);
     }, [onRowUpdated]);
 
+    const handleSaveAndGeocode = useCallback(async (index: number, newAddress: string) => {
+        setRowStatuses(prev => ({...prev, [index]: { status: 'geocoding', message: 'Ожидание 10с...' }}));
+    
+        setTimeout(async () => {
+            try {
+                setRowStatuses(prev => ({...prev, [index]: { status: 'geocoding', message: 'Запрос координат...' }}));
+                const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(newAddress)}`);
+                if (!geoRes.ok) {
+                    throw new Error('Координаты не найдены в базе.');
+                }
+                const { lat, lon } = await geoRes.json();
+                
+                const originalRow = rows[index];
+                const parsed = parseRussianAddress(newAddress, findValueInRow(originalRow.rowData, ['дистрибьютор']));
+    
+                const newPoint: MapPoint = {
+                    key: normalizeAddress(newAddress),
+                    lat, lon, isCached: true, status: 'match',
+                    name: findValueInRow(originalRow.rowData, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                    address: newAddress,
+                    city: parsed.city,
+                    region: parsed.region,
+                    rm: originalRow.rm,
+                    brand: findValueInRow(originalRow.rowData, ['торговая марка']),
+                    type: findValueInRow(originalRow.rowData, ['канал продаж']),
+                    contacts: findValueInRow(originalRow.rowData, ['контакты']),
+                };
+    
+                onRowResolved(newPoint, index);
+    
+            } catch (e) {
+                setRowStatuses(prev => ({...prev, [index]: { status: 'error', message: (e as Error).message + ' Адрес сохранен.' }}));
+                setTimeout(() => onRowUpdated(index), 3000);
+            }
+        }, 10000); // 10-секундная задержка
+    }, [rows, onRowResolved, onRowUpdated]);
+
     const handleSaveRow = useCallback(async (index: number) => {
         const originalRow = rows[index];
         if (!originalRow) return;
@@ -135,14 +177,14 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                 const errData = await cacheRes.json();
                 throw new Error(errData.details || errData.error || 'Не удалось сохранить в кэш.');
             }
-
-            setRowStatuses(prev => ({...prev, [index]: { status: 'success' }}));
-            setTimeout(() => onRowUpdated(index), 1200);
+            
+            // Запуск процесса геокодирования после успешного сохранения
+            handleSaveAndGeocode(index, newAddress);
 
         } catch (e) {
             setRowStatuses(prev => ({...prev, [index]: { status: 'error', message: (e as Error).message }}));
         }
-    }, [rows, editedAddresses, onRowUpdated]);
+    }, [rows, editedAddresses, handleSaveAndGeocode]);
 
     const handleSaveAll = useCallback(async () => {
         setIsSavingAll(true);
@@ -157,7 +199,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
             const originalAddress = findAddressInRow(originalRow.rowData) ?? '';
             const newAddress = editedAddresses[index];
 
-            if (newAddress && newAddress.trim() !== originalAddress.trim() && rowStatuses[index]?.status !== 'success') {
+            if (newAddress && newAddress.trim() !== '' && newAddress.trim() !== originalAddress.trim() && rowStatuses[index]?.status !== 'success' && rowStatuses[index]?.status !== 'geocoding') {
                 if (!updatesByRm[originalRow.rm]) {
                     updatesByRm[originalRow.rm] = [];
                 }
@@ -177,37 +219,40 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
             return newStatuses;
         });
 
-        const promises = Object.entries(updatesByRm).map(([rmName, rowsToCache]) => {
+        const savePromises = Object.entries(updatesByRm).map(([rmName, rowsToCache]) => {
             const payload = { rmName, rows: rowsToCache.map(({ address }) => ({ address })) };
             return fetch('/api/add-to-cache', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-            }).then(res => res.ok ? { rmName, rowsToCache } : res.json().then(err => Promise.reject({ error: err, rowsToCache })));
+            }).then(res => {
+                if (res.ok) return { status: 'fulfilled', value: { rmName, rowsToCache } };
+                return res.json().then(err => Promise.reject({ error: err, rowsToCache }));
+            });
         });
 
-        const results = await Promise.allSettled(promises);
-        const successfulIndices: number[] = [];
-
-        results.forEach(result => {
+        const saveResults = await Promise.allSettled(savePromises);
+        
+        const successfulSaves: { originalIndex: number, newAddress: string }[] = [];
+        saveResults.forEach(result => {
             if (result.status === 'fulfilled') {
-                result.value.rowsToCache.forEach(({ originalIndex }) => {
-                    setRowStatuses(prev => ({...prev, [originalIndex]: { status: 'success' }}));
-                    successfulIndices.push(originalIndex);
+                result.value.value.rowsToCache.forEach(({ originalIndex, address }) => {
+                    successfulSaves.push({ originalIndex, newAddress: address });
                 });
-            } else {
+            } else { // rejected
                 result.reason.rowsToCache.forEach(({ originalIndex }: { originalIndex: number }) => {
                     setRowStatuses(prev => ({...prev, [originalIndex]: { status: 'error', message: result.reason.error.details || 'Ошибка пакетной записи' }}));
                 });
             }
         });
 
-        if (successfulIndices.length > 0) {
-            setTimeout(() => {
-                successfulIndices.sort((a, b) => b - a).forEach(index => onRowUpdated(index));
-            }, 1200);
+        // Запуск геокодирования для всех успешно сохраненных строк
+        if (successfulSaves.length > 0) {
+            successfulSaves.forEach(({ originalIndex, newAddress }) => {
+                handleSaveAndGeocode(originalIndex, newAddress);
+            });
         }
         
         setIsSavingAll(false);
-    }, [editedAddresses, rows, rowStatuses, onRowUpdated]);
+    }, [editedAddresses, rows, rowStatuses, handleSaveAndGeocode]);
 
     const groupedRows = useMemo(() => {
         return rows.reduce((acc, row, index) => {
@@ -220,8 +265,9 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
     const rmOrder = useMemo(() => Object.keys(groupedRows).sort((a,b) => a.localeCompare(b)), [groupedRows]);
     const hasPendingChanges = Object.keys(editedAddresses).some(indexStr => {
         const index = parseInt(indexStr);
+        const originalAddress = findAddressInRow(rows[index]?.rowData) ?? '';
         const status = rowStatuses[index]?.status;
-        return status !== 'loading' && status !== 'success';
+        return editedAddresses[index].trim() !== '' && editedAddresses[index].trim() !== originalAddress.trim() && status !== 'loading' && status !== 'success' && status !== 'geocoding';
     });
     
     const modalTitle = (
