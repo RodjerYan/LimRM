@@ -39,7 +39,8 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
             item.clientName.toLowerCase().includes(lowercasedFilter) ||
             item.rm.toLowerCase().includes(lowercasedFilter) ||
             item.region.toLowerCase().includes(lowercasedFilter) ||
-            item.brand.toLowerCase().includes(lowercasedFilter)
+            item.brand.toLowerCase().includes(lowercasedFilter) ||
+            item.clients.some(client => client.address.toLowerCase().includes(lowercasedFilter))
         );
     }, [data, searchTerm]);
 
