@@ -43,7 +43,20 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     const [insight, setInsight] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [analysisStarted, setAnalysisStarted] = useState(false);
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    useEffect(() => {
+        setInsight('');
+        setError(null);
+        setIsLoading(false);
+        setAnalysisStarted(false);
+        abortControllerRef.current?.abort();
+
+        return () => {
+            abortControllerRef.current?.abort();
+        };
+    }, [data]);
 
     const fetchInsights = useCallback(() => {
         if (abortControllerRef.current) {
@@ -71,41 +84,48 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
         });
     }, [data]);
 
-    useEffect(() => {
-        if (!data) return;
-
+    const handleFetchClick = () => {
+        setAnalysisStarted(true);
         fetchInsights();
+    };
 
-        return () => {
-            abortControllerRef.current?.abort();
-        };
-    }, [data, fetchInsights]);
 
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(insight) as string);
 
     return (
         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col">
-            <h4 className="font-bold text-lg mb-2 text-accent">Рекомендации от Gemini</h4>
-            <div className="flex-grow min-h-0 overflow-y-auto custom-scrollbar pr-2">
-                {isLoading && !insight && (
-                    <div className="flex items-center justify-center h-full text-gray-400">
-                        <LoaderIcon />
-                        <span className="ml-2">Анализ данных...</span>
+            <h4 className="font-bold text-lg mb-2 text-accent">Анализ данных</h4>
+            <div className="flex-grow min-h-0 overflow-y-auto custom-scrollbar pr-2 flex items-center justify-center">
+                 {!analysisStarted ? (
+                    <button
+                        onClick={handleFetchClick}
+                        className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200"
+                    >
+                        Получить анализ информации
+                    </button>
+                ) : (
+                    <div className="w-full h-full">
+                        {isLoading && !insight && (
+                            <div className="flex items-center justify-center h-full text-gray-400">
+                                <LoaderIcon />
+                                <span className="ml-2">Анализ данных...</span>
+                            </div>
+                        )}
+                        {error && (
+                            <div className="text-center">
+                                <p className="text-danger text-sm mb-3">{error}</p>
+                                <button
+                                    onClick={fetchInsights}
+                                    disabled={isLoading}
+                                    className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm disabled:bg-gray-600"
+                                >
+                                    {isLoading ? 'Загрузка...' : 'Попробовать снова'}
+                                </button>
+                            </div>
+                        )}
+                        <div className="prose prose-invert prose-sm max-w-none text-slate-300" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
                     </div>
                 )}
-                {error && (
-                    <div className="text-center">
-                        <p className="text-danger text-sm mb-3">{error}</p>
-                        <button
-                            onClick={fetchInsights}
-                            disabled={isLoading}
-                            className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm disabled:bg-gray-600"
-                        >
-                            {isLoading ? 'Загрузка...' : 'Попробовать снова'}
-                        </button>
-                    </div>
-                )}
-                <div className="prose prose-invert prose-sm max-w-none text-slate-300" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
             </div>
         </div>
     );

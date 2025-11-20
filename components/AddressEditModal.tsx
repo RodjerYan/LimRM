@@ -46,7 +46,7 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
         const map = mapRef.current;
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
-            map.flyTo(latLng, 15);
+            map.setView(latLng, 15);
             
             const iconToUse = isSuccess ? greenIcon : L.Icon.Default.prototype;
 

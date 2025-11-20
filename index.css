@@ -1,6 +1,5 @@
-@import "https://assets.vercel.com/raw/upload/v1587844245/fonts/Geist/Geist-Regular.css";
-@import "https://assets.vercel.com/raw/upload/v1587844245/fonts/Geist/Geist-Bold.css";
-@import "https://assets.vercel.com/raw/upload/v1587844245/fonts/GeistMono/GeistMono-Regular.css";
+@import "https://geist-font.vercel.app/css/geist.css";
+@import "https://geist-font.vercel.app/css/geist-mono.css";
 
 @tailwind base;
 @tailwind components;
