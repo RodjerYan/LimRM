@@ -5,7 +5,7 @@ import Modal from './Modal';
 import DetailChart from './DetailChart';
 import { AggregatedDataRow, OkbStatus, MapPoint } from '../types';
 import { streamClientInsights } from '../services/aiService';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon } from './icons';
 
 interface DetailsModalProps {
     isOpen: boolean;
@@ -132,22 +132,49 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
 };
 
 const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: MapPoint) => void; }> = ({ clients, onStartEdit }) => {
+    const [searchTerm, setSearchTerm] = useState('');
+
     if (!clients || clients.length === 0) return null;
+
+    const filteredClients = clients.filter(client => {
+        const searchLower = searchTerm.toLowerCase().trim();
+        if (!searchLower) return true;
+        return (
+            client.address.toLowerCase().includes(searchLower) ||
+            client.name.toLowerCase().includes(searchLower)
+        );
+    });
 
     return (
         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
             <h4 className="font-bold text-lg mb-3 text-cyan-400">Клиенты в группе ({clients.length})</h4>
+            <div className="mb-3 relative">
+                 <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
+                    <SearchIcon />
+                </div>
+                <input 
+                    type="text" 
+                    placeholder="Поиск по адресу или названию..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full p-2 pl-10 bg-gray-800 border border-gray-600 rounded-lg focus:ring-1 focus:ring-accent focus:border-accent text-sm text-white placeholder-gray-500 transition-colors"
+                />
+            </div>
             <ul className="max-h-48 overflow-y-auto custom-scrollbar text-sm space-y-1 pr-2">
-                {clients.map((client) => (
-                    <li 
-                        key={client.key} 
-                        className="text-slate-300 bg-gray-800/50 p-1.5 rounded-md truncate cursor-pointer hover:bg-indigo-500/20"
-                        onClick={() => onStartEdit(client)}
-                        title={`${client.address}\n(Нажмите для редактирования)`}
-                    >
-                       {client.address}
-                    </li>
-                ))}
+                {filteredClients.length > 0 ? (
+                    filteredClients.map((client) => (
+                        <li 
+                            key={client.key} 
+                            className="text-slate-300 bg-gray-800/50 p-1.5 rounded-md truncate cursor-pointer hover:bg-indigo-500/20"
+                            onClick={() => onStartEdit(client)}
+                            title={`${client.address}\n(Нажмите для редактирования)`}
+                        >
+                           {client.address}
+                        </li>
+                    ))
+                ) : (
+                    <li className="text-gray-500 text-center py-2 text-xs">Ничего не найдено</li>
+                )}
             </ul>
         </div>
     );
