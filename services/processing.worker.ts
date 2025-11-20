@@ -146,9 +146,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     }
 
                     // Populate redirect map if a corrected address exists in Column D.
-                    // LOGIC UPDATE: Column A (item.address) is the NEW, correct address.
-                    // Column D (item.correctedAddress) is the OLD address (history).
-                    // We want to map OLD -> NEW, so if we see OLD in the uploaded file, we swap it.
                     if (item.correctedAddress) {
                         const normalizedOld = normalizeAddress(item.correctedAddress);
                         cacheRedirectMap.set(normalizedOld, item.address);
@@ -190,14 +187,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
-            
-            // Check if original address is marked as deleted (rare, but possible)
             if (deletedAddresses.has(normalizedRaw)) continue;
 
-            // Apply redirection (Old Address -> New Address)
             if (cacheRedirectMap.has(normalizedRaw)) {
                 clientAddress = cacheRedirectMap.get(normalizedRaw)!;
-                // Re-normalize the new address to check if IT is marked as deleted
                 normalizedRaw = normalizeAddress(clientAddress);
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
@@ -236,8 +229,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // We use the original address (after potential redirect swap) for uniqueness check 
-        // to ensure multiple source rows mapping to the same place are handled correctly.
         const normalizedOriginalAddress = normalizeAddress(clientAddress);
 
         if (!uniquePlottableClients.has(normalizedOriginalAddress)) {
@@ -282,7 +273,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
                 originalRow: row,
+                fact: weight, // Initialize fact for ABC analysis
             });
+        } else {
+             // Accumulate weight for existing client (ABC Analysis)
+             const existing = uniquePlottableClients.get(normalizedOriginalAddress);
+             if (existing) {
+                 existing.fact = (existing.fact || 0) + weight;
+             }
         }
         
         // Add the full MapPoint to the aggregation group
@@ -291,9 +289,33 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
         }
     }
+
+    postMessage({ type: 'progress', payload: { percentage: 90, message: 'ABC-анализ клиентов...' } });
     
-    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
+    
+    // --- ABC Analysis Logic ---
+    const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
+    if (totalFact > 0) {
+        // Sort clients by fact descending
+        plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+        
+        let runningTotal = 0;
+        plottableActiveClients.forEach(client => {
+            runningTotal += (client.fact || 0);
+            const percentage = runningTotal / totalFact;
+            
+            if (percentage <= 0.80) {
+                client.abcCategory = 'A';
+            } else if (percentage <= 0.95) {
+                client.abcCategory = 'B';
+            } else {
+                client.abcCategory = 'C';
+            }
+        });
+    }
+
+    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     const finalData: AggregatedDataRow[] = [];

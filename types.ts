@@ -30,6 +30,8 @@ export interface MapPoint {
     contacts?: string;
     isCached?: boolean; // To distinguish between new and cached clients on the map
     originalRow: any; // To hold the full original data row for detailed viewing
+    fact?: number; // Sales volume for this specific point
+    abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
 }
 
 export interface EnrichedParsedAddress {
