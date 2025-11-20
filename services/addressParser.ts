@@ -114,17 +114,17 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     const regionFromKeywordInAddress = findRegionByKeyword(normalized);
     region = regionFromKeywordInAddress;
 
-    // Priority 2: If no explicit region, derive from the determined city
-    if (!region && finalCity !== 'Город не определен') {
-        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === finalCity.toLowerCase());
+    // Priority 2: If no explicit region keyword, use the distributor city as the next strongest hint for the REGION.
+    if (!region && distributorCityRaw) {
+       const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === distributorCityRaw);
         if (cityKey) {
             region = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
         }
     }
-    
-    // Priority 3: As a last resort, if city was from address but region is unknown, check distributor city for a region hint
-    if (!region && distributorCityRaw) {
-       const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === distributorCityRaw);
+
+    // Priority 3: If region is still unknown, derive it from the final determined city (which could be from address or a fallback to distributor).
+    if (!region && finalCity !== 'Город не определен') {
+        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === finalCity.toLowerCase());
         if (cityKey) {
             region = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
         }
