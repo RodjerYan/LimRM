@@ -168,7 +168,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
-        if (parsedAddress.region === 'Регион не определен') {
+        if (parsedAddress.city === 'Город не определен') {
             unidentifiedRows.push({ rm, rowData: row });
             continue;
         }

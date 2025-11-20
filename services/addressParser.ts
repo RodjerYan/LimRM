@@ -97,48 +97,65 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
         }
     }
 
-    // 1) Find the city in the address itself (priority)
-    const foundCityFromAddress = getCityFromAddress(normalized); // returns capitalized or 'Город не определен'
-    const addressCityExists = foundCityFromAddress !== 'Город не определен';
-
-    // 2) Try to extract the city from the distributor (in lower case)
-    const distributorCityRaw = distributor ? extractCityFromDistributor(distributor) : null; // e.g. "bishkek" in lower
+    // 1. Determine City
+    const cityFromAddress = getCityFromAddress(normalized); // Returns capitalized city or 'Город не определен'
+    const isCityInAddress = cityFromAddress !== 'Город не определен';
+    
+    const distributorCityRaw = distributor ? extractCityFromDistributor(distributor) : null;
     const distributorCityCapitalized = distributorCityRaw ? capitalize(distributorCityRaw) : null;
 
-    // 3) Determine primaryCity: priority is address, otherwise distributor
-    const primaryCity = addressCityExists ? foundCityFromAddress : (distributorCityCapitalized || null);
+    // City from address has priority. Otherwise, use distributor city.
+    const finalCity = isCityInAddress ? cityFromAddress : (distributorCityCapitalized || 'Город не определен');
 
-    // 4) Determine the region by primaryCity (using REGION_BY_CITY_WITH_INDEXES)
-    let regionFromCity: string | null = null;
-    if (primaryCity) {
-        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === primaryCity.toLowerCase());
-        if (cityKey) regionFromCity = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
-    }
+    // 2. Determine Region
+    let region: string | null = null;
+    
+    // Priority 1: Find explicit region keyword in address string (e.g., "брянская обл")
+    const regionFromKeywordInAddress = findRegionByKeyword(normalized);
+    region = regionFromKeywordInAddress;
 
-    // 5) If we haven't found the region - try by REGION_KEYWORD_MAP keys (e.g. if distributorCityRaw is 'bishkek' and there is mapping)
-    let finalRegion = findRegionByKeyword(normalized) || regionFromCity || (distributorCityRaw && REGION_KEYWORD_MAP[distributorCityRaw]) || null;
-
-    // 6) Form the correct finalAddress without duplicates:
-    // If the original address already contains primaryCity (in any case) - do not add it again.
-    const primaryCityForCheck = primaryCity ? primaryCity.toLowerCase() : null;
-    const originalContainsPrimaryCity = primaryCityForCheck ? normalized.includes(primaryCityForCheck.toLowerCase()) : false;
-
-    const regionPart = finalRegion ? standardizeRegion(finalRegion) : null;
-    let finalAddress = originalAddress.trim();
-
-    if (!originalContainsPrimaryCity && primaryCity) {
-        // add "g. <city>" before the address, and the region prefix
-        const cityStr = `г. ${primaryCity}`;
-        finalAddress = regionPart ? `${regionPart} ${cityStr}, ${originalAddress.trim()}` : `${cityStr}, ${originalAddress.trim()}`;
-    } else {
-        // if the city is already in the address - just add the region before the address (if any)
-        finalAddress = regionPart ? `${regionPart} ${originalAddress.trim()}` : originalAddress.trim();
+    // Priority 2: If no explicit region, derive from the determined city
+    if (!region && finalCity !== 'Город не определен') {
+        const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === finalCity.toLowerCase());
+        if (cityKey) {
+            region = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+        }
     }
     
-    // 7) Return the result (with the standardized region)
+    // Priority 3: As a last resort, if city was from address but region is unknown, check distributor city for a region hint
+    if (!region && distributorCityRaw) {
+       const cityKey = Object.keys(REGION_BY_CITY_WITH_INDEXES).find(k => k.toLowerCase() === distributorCityRaw);
+        if (cityKey) {
+            region = REGION_BY_CITY_WITH_INDEXES[cityKey].region;
+        }
+    }
+
+    const finalRegion = region ? standardizeRegion(region) : 'Регион не определен';
+
+    // 3. Construct Final Address (for display and geocoding)
+    let finalAddress = originalAddress.trim();
+    
+    // Prepend region only if it's determined and NOT already present in the original address.
+    if (finalRegion !== 'Регион не определен' && !regionFromKeywordInAddress) {
+        finalAddress = `${finalRegion}, ${finalAddress}`;
+    }
+    
+    // Clean up potential duplicates if region was added but parts were already there (e.g. city name)
+    const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
+    const uniqueParts = [];
+    const seen = new Set();
+    for(const part of parts) {
+        const lowerPart = part.toLowerCase();
+        if(!seen.has(lowerPart)) {
+            uniqueParts.push(part);
+            seen.add(lowerPart);
+        }
+    }
+    finalAddress = uniqueParts.join(', ');
+
     return {
-        region: finalRegion ? standardizeRegion(finalRegion) : 'Регион не определен',
-        city: primaryCity || 'Город не определен',
-        finalAddress
+        region: finalRegion,
+        city: finalCity,
+        finalAddress: finalAddress
     };
 }
