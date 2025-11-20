@@ -9,13 +9,21 @@ import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 // Memoize the sorted list of cities to avoid re-computing it on every call.
 const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
 
-// NEW: Hard override for specific addresses to be in Kyrgyzstan
-const kyrgyzstanHardOverrides = new Set([
-  'р-к ош-й яма, холодильник 98',
-  'с. орловка, ул. кудряшева, 5/2',
-  'с. беловодское, ул. 50 лет',
-  'с. беловодское, ул. 50 лет беловодск',
-].map(addr => addr.toLowerCase().replace(/ё/g, 'е')));
+// NEW: A more robust override system using substring checks for specific problematic addresses.
+const KYRGYZSTAN_FORCE_OVERRIDES: { test: (addr: string) => boolean, city: string }[] = [
+    {
+        test: (addr) => addr.includes('р-к ош-й яма'),
+        city: 'Бишкек' // Osh market is famously in Bishkek, despite the name.
+    },
+    {
+        test: (addr) => addr.includes('орловка, ул. кудряшева'),
+        city: 'Орловка'
+    },
+    {
+        test: (addr) => addr.includes('беловодское, ул. 50 лет'),
+        city: 'Беловодское'
+    }
+];
 
 
 // NEW: Special rule definitions for Kyrgyzstan addresses
@@ -117,49 +125,43 @@ function extractCityFromDistributor(distributor: string): string | null {
  */
 export function parseRussianAddress(address: string, distributor?: string): EnrichedParsedAddress {
     const originalAddress = address || '';
-    const lowerAddressForCheck = originalAddress.toLowerCase().replace(/ё/g, 'е').trim();
+    const lowerAddress = originalAddress.toLowerCase().replace(/ё/g, 'е');
     const lowerDistributor = (distributor || '').toLowerCase();
 
     // Priority 1: Hard override for problematic addresses that are incorrectly identified.
-    if (kyrgyzstanHardOverrides.has(lowerAddressForCheck)) {
-        const region = 'Кыргызская Республика';
-        let city = 'Город не определен';
-        let finalAddress = originalAddress.trim();
+    for (const override of KYRGYZSTAN_FORCE_OVERRIDES) {
+        if (override.test(lowerAddress)) {
+            const region = 'Кыргызская Республика';
+            const city = override.city;
+            let finalAddress = originalAddress.trim();
 
-        // Simple logic to determine city for these specific override cases.
-        if (lowerAddressForCheck.includes('ош-й яма')) {
-            // Osh market is famously in Bishkek, despite the name.
-            city = 'Бишкек';
-        } else if (lowerAddressForCheck.includes('орловка')) {
-            city = 'Орловка';
-        } else if (lowerAddressForCheck.includes('беловодское')) {
-            city = 'Беловодское';
-        }
-
-        // Ensure the final address is prefixed with the region for clarity and geocoding.
-        if (!finalAddress.toLowerCase().includes('кыргызская')) {
-            finalAddress = `${region}, ${finalAddress}`;
-        }
-        
-        // Clean up potential duplicates in the final address string.
-        const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
-        const uniqueParts: string[] = [];
-        const seen = new Set<string>();
-        for (const part of parts) {
-            const lowerPart = part.toLowerCase();
-            if (!seen.has(lowerPart)) {
-                uniqueParts.push(part);
-                seen.add(lowerPart);
+            // Ensure the final address is prefixed with the region for clarity and geocoding.
+            if (!finalAddress.toLowerCase().includes('кыргызская')) {
+                finalAddress = `${region}, ${finalAddress}`;
             }
-        }
-        finalAddress = uniqueParts.join(', ');
+    
+            // Clean up potential duplicates in the final address string.
+            const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
+            const uniqueParts: string[] = [];
+            const seen = new Set<string>();
+            for (const part of parts) {
+                const lowerPart = part.toLowerCase();
+                if (!seen.has(lowerPart)) {
+                    uniqueParts.push(part);
+                    seen.add(lowerPart);
+                }
+            }
+            finalAddress = uniqueParts.join(', ');
 
-        return {
-            region: region,
-            city: city,
-            finalAddress: finalAddress,
-        };
+            return {
+                region: region,
+                city: city,
+                finalAddress: finalAddress,
+            };
+        }
     }
+
+    const lowerAddressForCheck = lowerAddress.trim();
 
     // Priority 2: Special override rule for specific Kyrgyzstan addresses when distributor is 'Bishkek'
     if (lowerDistributor.includes('бишкек') && specialAddressesForBishkekRule.has(lowerAddressForCheck)) {
@@ -210,7 +212,6 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
         return { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
     }
 
-    const lowerAddress = originalAddress.toLowerCase().replace(/ё/g, 'е');
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
