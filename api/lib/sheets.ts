@@ -175,35 +175,45 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 }
 
 /**
- * Ensures a sheet exists for an RM and creates it with headers if not.
- * @param sheets The Google Sheets API client.
- * @param rmName The name of the sheet.
+ * Ensures a sheet exists for a given RM name (case-insensitively).
+ * If it exists, returns the actual sheet title with its original casing.
+ * If not, it creates a new sheet with the provided RM name and headers.
+ * @param sheets The authenticated Google Sheets API client.
+ * @param rmName The name of the sheet (RM name) to find or create.
+ * @returns The actual title of the existing or newly created sheet.
  */
-async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string) {
+async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
-    const sheetExists = spreadsheet.data.sheets?.some((s: sheets_v4.Schema$Sheet) => s.properties?.title === rmName);
+    const lowerRmName = rmName.toLowerCase();
+    const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
 
-    if (!sheetExists) {
-        await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            requestBody: {
-                requests: [{ addSheet: { properties: { title: rmName } } }],
-            },
-        });
-        await sheets.spreadsheets.values.append({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${rmName}'!A1`,
-            valueInputOption: 'RAW',
-            requestBody: {
-                values: [['Адрес ТТ', 'lat', 'lon']],
-            },
-        });
+    if (existingSheet && existingSheet.properties?.title) {
+        return existingSheet.properties.title; // Return the existing, correctly-cased title
     }
+    
+    // If not exists, create it with the provided rmName casing
+    await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        requestBody: {
+            requests: [{ addSheet: { properties: { title: rmName } } }],
+        },
+    });
+    // Add headers to the new sheet
+    await sheets.spreadsheets.values.append({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${rmName}'!A1`,
+        valueInputOption: 'RAW',
+        requestBody: {
+            values: [['Адрес ТТ', 'lat', 'lon']],
+        },
+    });
+    return rmName; // The new sheet has this title
 }
+
 
 /**
  * Appends new rows to a specific RM's sheet in the cache. Creates the sheet if it doesn't exist.
- * This version also checks for existing addresses to avoid duplicates.
+ * This version performs a case-insensitive check to avoid adding duplicate addresses.
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param rowsToAppend An array of rows to add, where each row is an array of strings/numbers.
  */
@@ -211,17 +221,18 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     if (rowsToAppend.length === 0) return;
     
     const sheets = await getGoogleSheetsClient();
-    await ensureSheetExists(sheets, rmName);
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
     const existingAddressesResponse = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${rmName}'!A2:A`,
+        range: `'${actualSheetTitle}'!A2:A`,
     });
-    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => String(a).trim()) || []);
+
+    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => String(a).trim().toLowerCase()) || []);
 
     const uniqueRowsToAppend = rowsToAppend.filter(row => {
         const address = String(row[0] || '').trim();
-        return address && !existingAddresses.has(address);
+        return address && !existingAddresses.has(address.toLowerCase());
     });
 
     if (uniqueRowsToAppend.length === 0) {
@@ -230,7 +241,7 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
 
     await sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${rmName}'!A1`,
+        range: `'${actualSheetTitle}'!A1`,
         valueInputOption: 'USER_ENTERED',
         insertDataOption: 'INSERT_ROWS',
         requestBody: {
@@ -249,11 +260,11 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     if (updates.length === 0) return;
     
     const sheets = await getGoogleSheetsClient();
-    await ensureSheetExists(sheets, rmName);
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${rmName}'!A:A`,
+        range: `'${actualSheetTitle}'!A:A`,
     });
 
     const addressesInSheet = response.data.values?.flat() || [];
@@ -266,7 +277,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
         const rowIndex = addressIndexMap.get(String(update.address).trim());
         if (!rowIndex) return null;
         return {
-            range: `'${rmName}'!B${rowIndex}:C${rowIndex}`,
+            range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`,
             values: [[update.lat, update.lon]],
         };
     }).filter((item): item is NonNullable<typeof item> => item !== null);
@@ -283,7 +294,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 }
 
 /**
- * Replaces an old address with a new one in the cache, or appends if the old one is not found.
+ * Replaces an old address with a new one in the cache (case-insensitively).
  * Coordinates are cleared as they are no longer valid for the new address.
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param oldAddress The address to be replaced.
@@ -291,37 +302,80 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
  */
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
-    await ensureSheetExists(sheets, rmName);
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    // Fetch all addresses in the sheet to find the row index of the old address.
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${rmName}'!A:A`,
+        range: `'${actualSheetTitle}'!A:A`,
     });
 
     const addressesInSheet = response.data.values?.flat() || [];
     let rowIndex = -1;
+    const oldAddressTrimmedLower = oldAddress.trim().toLowerCase();
     for (let i = 0; i < addressesInSheet.length; i++) {
-        if (String(addressesInSheet[i]).trim() === oldAddress.trim()) {
+        if (String(addressesInSheet[i]).trim().toLowerCase() === oldAddressTrimmedLower) {
             rowIndex = i + 1; // 1-based index
             break;
         }
     }
     
     if (rowIndex !== -1) {
-        // If the old address is found, update the row with the new address and clear coords.
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${rmName}'!A${rowIndex}:C${rowIndex}`,
+            range: `'${actualSheetTitle}'!A${rowIndex}:C${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [[newAddress, '', '']],
             },
         });
     } else {
-        // If the old address is not found, simply append the new one.
-        // This is a robust fallback for cases like editing an "Unidentified" address
-        // that may not have been in the cache in the first place.
         await appendToCache(rmName, [[newAddress, '', '']]);
     }
+}
+
+/**
+ * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param address The address to search for.
+ * @returns An object with address, lat, and lon, or null if not found.
+ */
+export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number } | null> {
+    const sheets = await getGoogleSheetsClient();
+    
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
+    const lowerRmName = rmName.toLowerCase();
+    const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
+    
+    if (!existingSheet || !existingSheet.properties?.title) {
+        return null; // Sheet doesn't exist, so the address can't be there.
+    }
+    const actualSheetTitle = existingSheet.properties.title;
+
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A:C`,
+    });
+
+    const values = response.data.values || [];
+    if (values.length < 2) {
+        return null;
+    }
+
+    const trimmedAddress = address.trim().toLowerCase();
+    const foundRow = values.find(row => String(row[0] || '').trim().toLowerCase() === trimmedAddress);
+
+    if (foundRow) {
+        const latStr = String(foundRow[1] || '').replace(',', '.').trim();
+        const lonStr = String(foundRow[2] || '').replace(',', '.').trim();
+        const lat = latStr ? parseFloat(latStr) : undefined;
+        const lon = lonStr ? parseFloat(lonStr) : undefined;
+        
+        return {
+            address: String(foundRow[0]),
+            lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
+            lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
+        };
+    }
+
+    return null;
 }

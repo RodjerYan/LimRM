@@ -5,10 +5,20 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow, EnrichedParsedAddress } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'geocoding' | 'error_saving' | 'error_geocoding';
+type Status = 'idle' | 'saving' | 'geocoding' | 'error_saving' | 'error_geocoding' | 'success_geocoding';
+
+// Define a custom green icon for successfully geocoded points.
+const greenIcon = new L.Icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
 
 interface AddressEditModalProps {
   isOpen: boolean;
@@ -18,7 +28,7 @@ interface AddressEditModalProps {
 }
 
 // A simple map component for the modal
-const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string }> = ({ lat, lon, address }) => {
+const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, isSuccess: boolean }> = ({ lat, lon, address, isSuccess }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
@@ -36,13 +46,16 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string }> 
         const map = mapRef.current;
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
-            map.setView(latLng, 15);
+            map.flyTo(latLng, 15);
+            
+            const iconToUse = isSuccess ? greenIcon : L.Icon.Default.prototype;
+
             if (markerRef.current) {
-                markerRef.current.setLatLng(latLng);
+                markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             } else {
-                markerRef.current = L.marker(latLng).addTo(map);
+                markerRef.current = L.marker(latLng, { icon: iconToUse }).addTo(map);
             }
-            markerRef.current.bindPopup(address).openPopup();
+             markerRef.current.bindPopup(address).openPopup();
         } else {
             map.setView([55.75, 37.61], 5); // Default to Moscow if no coords
             if (markerRef.current) {
@@ -55,7 +68,7 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string }> 
         const timer = setTimeout(() => map.invalidateSize(), 400);
         return () => clearTimeout(timer);
 
-    }, [lat, lon, address]);
+    }, [lat, lon, address, isSuccess]);
 
     return <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800" />;
 };
@@ -65,8 +78,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
     const [editedAddress, setEditedAddress] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
+    const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lon: number } | null>(null);
 
-    const geocodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingRef = useRef<NodeJS.Timeout | null>(null);
+    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const cleanupTimers = () => {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        pollingRef.current = null;
+        timeoutRef.current = null;
+    };
 
     // Reset state when modal opens or data changes
     useEffect(() => {
@@ -75,51 +97,73 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
             setEditedAddress(currentAddress);
             setStatus('idle');
             setError(null);
+            setGeocodedCoords(null);
         }
-        return () => {
-            if (geocodeTimeoutRef.current) clearTimeout(geocodeTimeoutRef.current);
-        };
+        return cleanupTimers;
     }, [isOpen, data]);
 
-    const attemptGeocode = useCallback(async (newAddress: string, parsedInfo: EnrichedParsedAddress, baseData: EditableData) => {
-        try {
-            const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(newAddress)}`);
-            if (!geoRes.ok) {
-                throw new Error('Координаты не найдены.');
+
+    const startCoordPolling = useCallback((rmName: string, newAddress: string, parsedInfo: EnrichedParsedAddress, baseData: EditableData) => {
+        cleanupTimers();
+
+        const POLLING_INTERVAL = 3000; // 3 seconds
+        const MASTER_TIMEOUT = 120000; // 2 minutes
+
+        const performPoll = async () => {
+            try {
+                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(newAddress)}`);
+                
+                if (pollRes.ok) {
+                    const result = await pollRes.json();
+                    
+                    if (result && typeof result.lat === 'number' && typeof result.lon === 'number') {
+                        cleanupTimers();
+                        setGeocodedCoords({ lat: result.lat, lon: result.lon });
+                        setStatus('success_geocoding');
+
+                        setTimeout(() => {
+                            const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
+                            const oldAddress = (baseData as MapPoint).address || findAddressInRow(originalRow) || '';
+                            const oldKey = normalizeAddress(oldAddress);
+                            
+                            const newPoint: MapPoint = {
+                                key: normalizeAddress(newAddress),
+                                lat: result.lat, lon: result.lon, status: 'match',
+                                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                                address: newAddress,
+                                city: parsedInfo.city,
+                                region: parsedInfo.region,
+                                rm: rmName,
+                                brand: findValueInRow(originalRow, ['торговая марка']),
+                                type: findValueInRow(originalRow, ['канал продаж']),
+                                contacts: findValueInRow(originalRow, ['контакты']),
+                                originalRow: originalRow,
+                            };
+                            onSaveSuccess(oldKey, newPoint);
+                        }, 1500); // Wait a bit for the user to see the success state
+                    }
+                }
+            } catch (e) {
+                console.error("Coord poll failed:", e);
             }
-            const { lat, lon } = await geoRes.json();
-            
-            const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
-            const oldKey = normalizeAddress(findAddressInRow(originalRow));
+        };
 
-            const newPoint: MapPoint = {
-                key: normalizeAddress(newAddress),
-                lat, lon, status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
-                address: newAddress,
-                city: parsedInfo.city,
-                region: parsedInfo.region,
-                rm: findValueInRow(originalRow, ['рм']),
-                brand: findValueInRow(originalRow, ['торговая марка']),
-                type: findValueInRow(originalRow, ['канал продаж']),
-                contacts: findValueInRow(originalRow, ['контакты']),
-                originalRow: originalRow,
-            };
-            onSaveSuccess(oldKey, newPoint);
-
-        } catch (e) {
+        performPoll(); // Attempt immediately
+        pollingRef.current = setInterval(performPoll, POLLING_INTERVAL);
+        timeoutRef.current = setTimeout(() => {
+            cleanupTimers();
             setStatus('error_geocoding');
-            setError((e as Error).message);
-        }
+            setError('Не удалось получить координаты из кэша за 2 минуты.');
+        }, MASTER_TIMEOUT);
     }, [onSaveSuccess]);
 
     const handleSave = async () => {
         if (!data) return;
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-        const oldAddress = findAddressInRow(originalRow) || '';
+        const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
 
-        if (editedAddress.trim() === '' || editedAddress.trim() === oldAddress.trim()) {
+        if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
             setStatus('error_saving');
             setError('Адрес не был изменен или поле пустое.');
             return;
@@ -141,11 +185,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
             }
 
             setStatus('geocoding');
-            geocodeTimeoutRef.current = setTimeout(() => {
-                const distributor = findValueInRow(originalRow, ['дистрибьютор']);
-                const parsed = parseRussianAddress(editedAddress, distributor);
-                attemptGeocode(editedAddress, parsed, data);
-            }, 120000); // 2 minutes
+            const distributor = findValueInRow(originalRow, ['дистрибьютор']);
+            const parsed = parseRussianAddress(editedAddress, distributor);
+            startCoordPolling(rm, editedAddress, parsed, data);
 
         } catch (e) {
             setStatus('error_saving');
@@ -156,13 +198,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
     const handleRetryGeocode = () => {
         if (!data) return;
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const rm = findValueInRow(originalRow, ['рм']);
         const distributor = findValueInRow(originalRow, ['дистрибьютор']);
         const parsed = parseRussianAddress(editedAddress, distributor);
 
         setStatus('geocoding');
         setError(null);
-        // Retry immediately on user click
-        attemptGeocode(editedAddress, parsed, data);
+        startCoordPolling(rm, editedAddress, parsed, data);
     };
 
     if (!data) return null;
@@ -179,6 +221,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
 
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'geocoding';
+    const displayLat = geocodedCoords?.lat ?? currentLat;
+    const displayLon = geocodedCoords?.lon ?? currentLon;
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={modalTitle}>
@@ -201,7 +245,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
                 {/* Right side: Map and Edit Form */}
                 <div className="space-y-4">
                     <div className="h-64">
-                         <SinglePointMap lat={currentLat} lon={currentLon} address={editedAddress} />
+                         <SinglePointMap lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status === 'success_geocoding'} />
                     </div>
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
                         <h4 className="font-bold text-lg mb-3 text-accent">Адрес для геокодирования</h4>
@@ -213,7 +257,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
                                     rows={3}
                                     value={editedAddress}
                                     onChange={e => setEditedAddress(e.target.value)}
-                                    disabled={isProcessing}
+                                    disabled={isProcessing || status === 'success_geocoding'}
                                     className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50"
                                 />
                             </div>
@@ -223,13 +267,21 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
                                     <SaveIcon /> Сохранить и найти координаты
                                 </button>
                             )}
+                            
+                            {status === 'success_geocoding' && (
+                                <div className="text-center text-success flex items-center justify-center gap-2 font-semibold p-2 bg-green-500/10 rounded-md">
+                                    <CheckIcon /> Координаты успешно получены!
+                                </div>
+                            )}
 
                             {status === 'saving' && (
                                 <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение адреса в кэше...</div>
                             )}
 
                              {status === 'geocoding' && (
-                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Ожидание и поиск координат (до 2 мин)...</div>
+                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2 p-2 bg-cyan-900/20 rounded-md">
+                                    <LoaderIcon /> <span>Процесс получения новых координат может занять до 2-х минут</span>
+                                </div>
                             )}
 
                              {(status === 'error_saving' || status === 'error_geocoding') && (

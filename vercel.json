@@ -33,6 +33,10 @@
       "destination": "/api/update-address"
     },
     {
+      "source": "/api/get-cached-address",
+      "destination": "/api/get-cached-address"
+    },
+    {
       "source": "/api/geocode",
       "destination": "/api/geocode"
     },
