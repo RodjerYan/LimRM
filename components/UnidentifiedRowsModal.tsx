@@ -29,7 +29,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
             <div className="space-y-6">
                 <p className="text-gray-400 text-sm">
                     Для этих строк не удалось автоматически определить город или регион. 
-                    Дважды щелкните по строке, чтобы открыть окно редактирования, внести исправления и сохранить. 
+                    Нажмите на строку, чтобы открыть окно редактирования, внести исправления и сохранить. 
                     После сохранения адрес будет заменен в кэше и будет корректно распознаваться при следующих загрузках.
                 </p>
                 {rmOrder.map(rm => (
@@ -55,8 +55,8 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                                             <tr 
                                                 key={originalIndex} 
                                                 className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer"
-                                                onDoubleClick={() => onStartEdit(row)}
-                                                title="Двойной клик для редактирования"
+                                                onClick={() => onStartEdit(row)}
+                                                title="Нажмите для редактирования"
                                             >
                                                 <td className="px-4 py-2 text-sm text-white font-medium truncate max-w-xs" title={clientName}>{clientName}</td>
                                                 <td className="px-4 py-2 text-sm text-gray-400 truncate max-w-xs" title={originalAddress}>{originalAddress}</td>

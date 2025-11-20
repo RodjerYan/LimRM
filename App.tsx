@@ -193,9 +193,9 @@ const App: React.FC = () => {
         setIsEditModalOpen(true);
     }, []);
 
-    const handleEditSaveSuccess = useCallback((oldKey: string, newPoint: MapPoint) => {
+    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
         // This function handles both creating new points from unidentified rows
-        // and updating existing points.
+        // and updating existing points, without closing the modal.
         setAllActiveClients(prev => {
             const existingIndex = prev.findIndex(c => c.key === oldKey);
             if (existingIndex > -1) {
@@ -212,11 +212,9 @@ const App: React.FC = () => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== oldKey;
         }));
-    
-        setIsEditModalOpen(false);
-        addNotification('Адрес успешно обновлен и сохранен!', 'success');
-        flyToClient(newPoint);
-    }, [addNotification, flyToClient]);
+        
+        addNotification('Данные успешно обновлены в фоновом режиме!', 'success');
+    }, [addNotification]);
     
     const handleOkbStatusChange = (status: OkbStatus) => {
         setOkbStatus(status);
@@ -341,7 +339,7 @@ const App: React.FC = () => {
                 isOpen={isEditModalOpen}
                 onClose={() => setIsEditModalOpen(false)}
                 data={editingClient}
-                onSaveSuccess={handleEditSaveSuccess}
+                onDataUpdate={handleDataUpdate}
             />
         </div>
     );

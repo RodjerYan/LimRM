@@ -142,8 +142,8 @@ const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: 
                     <li 
                         key={client.key} 
                         className="text-slate-300 bg-gray-800/50 p-1.5 rounded-md truncate cursor-pointer hover:bg-indigo-500/20"
-                        onDoubleClick={() => onStartEdit(client)}
-                        title={`${client.address}\n(Двойной клик для редактирования)`}
+                        onClick={() => onStartEdit(client)}
+                        title={`${client.address}\n(Нажмите для редактирования)`}
                     >
                        {client.address}
                     </li>

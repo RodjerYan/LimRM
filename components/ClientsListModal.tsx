@@ -125,9 +125,8 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                     <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.name}</th>
                                     <td 
                                         className="px-4 py-3 text-gray-400 cursor-pointer"
-                                        onClick={() => onClientSelect(row)} 
-                                        onDoubleClick={() => onStartEdit(row)} 
-                                        title="Нажмите для перехода на карту, двойной клик для редактирования"
+                                        onClick={() => onStartEdit(row)} 
+                                        title="Нажмите для редактирования"
                                     >
                                         {row.address}
                                     </td>

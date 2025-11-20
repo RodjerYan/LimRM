@@ -24,7 +24,7 @@ interface AddressEditModalProps {
   isOpen: boolean;
   onClose: () => void;
   data: EditableData | null;
-  onSaveSuccess: (oldKey: string, newPoint: MapPoint) => void;
+  onDataUpdate: (oldKey: string, newPoint: MapPoint) => void;
 }
 
 // A simple map component for the modal
@@ -74,7 +74,7 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
 };
 
 
-const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, data, onSaveSuccess }) => {
+const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, data, onDataUpdate }) => {
     const [editedAddress, setEditedAddress] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
@@ -121,26 +121,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
                         setGeocodedCoords({ lat: result.lat, lon: result.lon });
                         setStatus('success_geocoding');
 
-                        setTimeout(() => {
-                            const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
-                            const oldAddress = (baseData as MapPoint).address || findAddressInRow(originalRow) || '';
-                            const oldKey = normalizeAddress(oldAddress);
-                            
-                            const newPoint: MapPoint = {
-                                key: normalizeAddress(newAddress),
-                                lat: result.lat, lon: result.lon, status: 'match',
-                                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
-                                address: newAddress,
-                                city: parsedInfo.city,
-                                region: parsedInfo.region,
-                                rm: rmName,
-                                brand: findValueInRow(originalRow, ['торговая марка']),
-                                type: findValueInRow(originalRow, ['канал продаж']),
-                                contacts: findValueInRow(originalRow, ['контакты']),
-                                originalRow: originalRow,
-                            };
-                            onSaveSuccess(oldKey, newPoint);
-                        }, 1500); // Wait a bit for the user to see the success state
+                        const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
+                        const oldAddress = (baseData as MapPoint).address || findAddressInRow(originalRow) || '';
+                        const oldKey = normalizeAddress(oldAddress);
+                        
+                        const newPoint: MapPoint = {
+                            key: normalizeAddress(newAddress),
+                            lat: result.lat, lon: result.lon, status: 'match',
+                            name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                            address: newAddress,
+                            city: parsedInfo.city,
+                            region: parsedInfo.region,
+                            rm: rmName,
+                            brand: findValueInRow(originalRow, ['торговая марка']),
+                            type: findValueInRow(originalRow, ['канал продаж']),
+                            contacts: findValueInRow(originalRow, ['контакты']),
+                            originalRow: originalRow,
+                        };
+                        onDataUpdate(oldKey, newPoint);
                     }
                 }
             } catch (e) {
@@ -155,7 +153,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
             setStatus('error_geocoding');
             setError('Не удалось получить координаты из кэша за 2 минуты.');
         }, MASTER_TIMEOUT);
-    }, [onSaveSuccess]);
+    }, [onDataUpdate]);
 
     const handleSave = async () => {
         if (!data) return;
