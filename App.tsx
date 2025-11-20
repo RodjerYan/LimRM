@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import L from 'leaflet';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
@@ -27,6 +28,19 @@ import {
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { WarningIcon } from './components/icons';
 import type { FeatureCollection } from 'geojson';
+
+// FIX: Manually set the paths for Leaflet's default icons to point to the correct CDN URL.
+// This resolves the "broken image" issue for markers across the application.
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+
+const LEAFLET_CDN_URL = 'https://aistudiocdn.com/leaflet@1.9.4/dist/images/';
+
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: `${LEAFLET_CDN_URL}marker-icon-2x.png`,
+    iconUrl: `${LEAFLET_CDN_URL}marker-icon.png`,
+    shadowUrl: `${LEAFLET_CDN_URL}marker-shadow.png`,
+});
+
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
