@@ -305,15 +305,17 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 
 /**
  * Replaces an old address with a new one in the cache (case-insensitively) by updating the existing row.
- * REVISED LOGIC v2 (Overwrite + Redirect):
+ * REVISED LOGIC v4 (Robust Handling):
  * 1. Finds the row with the old address (Col A).
- * 2. Overwrites Col A with the NEW address.
- * 3. Clears Col B and C (coordinates) to force re-geocoding.
- * 4. Writes the OLD address to Col D (Redirect/History) so the system knows this change happened if the file is re-uploaded.
- * This ensures the existing row is reused, preventing duplicates.
+ * 2. If found: Overwrites Col A with NEW address, Clears B/C, Writes OLD to Col D.
+ * 3. If NOT found:
+ *    a. Checks if the NEW address already exists in the sheet.
+ *    b. If NEW exists (e.g. merging aliases): Updates THAT row's Col D (Redirect) to include the OLD address.
+ *    c. If NEW does NOT exist: Appends a new row [NewAddress, '', '', OldAddress].
+ * This ensures that even if we are "fixing" an address to one that is already known, the mapping is preserved.
  * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced.
- * @param newAddress The new address to replace it with.
+ * @param oldAddress The address to be replaced (from the file).
+ * @param newAddress The new, corrected address.
  */
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
@@ -325,32 +327,58 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     });
 
     const addressesInSheet = response.data.values?.flat() || [];
-    let rowIndex = -1;
     const oldAddressTrimmedLower = oldAddress.trim().toLowerCase();
+    const newAddressTrimmedLower = newAddress.trim().toLowerCase();
+
+    let oldRowIndex = -1;
+    let newRowIndex = -1;
+
     for (let i = 0; i < addressesInSheet.length; i++) {
-        if (String(addressesInSheet[i]).trim().toLowerCase() === oldAddressTrimmedLower) {
-            rowIndex = i + 1; // 1-based index
-            break;
-        }
+        const currentVal = String(addressesInSheet[i]).trim().toLowerCase();
+        if (currentVal === oldAddressTrimmedLower) oldRowIndex = i + 1; // 1-based index
+        if (currentVal === newAddressTrimmedLower) newRowIndex = i + 1;
     }
     
-    if (rowIndex !== -1) {
-        // Update the EXISTING row:
+    if (oldRowIndex !== -1) {
+        // Case 1: Old address exists. Overwrite it.
         // Col A (Address) -> newAddress
         // Col B (Lat) -> empty
         // Col C (Lon) -> empty
         // Col D (Redirect) -> oldAddress
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!A${rowIndex}:D${rowIndex}`,
+            range: `'${actualSheetTitle}'!A${oldRowIndex}:D${oldRowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [[newAddress, '', '', oldAddress]],
             },
         });
+    } else if (newRowIndex !== -1) {
+        // Case 2: Old address NOT found, but New Address EXISTS.
+        // We must update the existing "correct" row to acknowledge the "old/bad" address as a redirect.
+        // We write to Column D (Redirect) of the *existing* newRowIndex.
+        // NOTE: This overwrites any previous redirect in that row.
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!D${newRowIndex}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[oldAddress]],
+            },
+        });
     } else {
-        // Fallback: If for some reason the old address isn't found, just append the new one.
-        await appendToCache(rmName, [[newAddress, '', '', '']]);
+        // Case 3: Neither exists. This is a fresh addition from an unidentified row.
+        // Append the new row WITH the old address in Col D.
+        // We bypass appendToCache's check because we already manually checked existence above.
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!A1`,
+            valueInputOption: 'USER_ENTERED',
+            insertDataOption: 'INSERT_ROWS',
+            requestBody: {
+                values: [[newAddress, '', '', oldAddress]],
+            },
+        });
     }
 }
 

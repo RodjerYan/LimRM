@@ -37,25 +37,15 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 };
 
 const MapLegend: React.FC = () => (
-     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700 text-white max-w-[220px]">
-        <h4 className="font-bold text-sm mb-2">Легенда (ABC Анализ)</h4>
-        <div className="space-y-1.5">
-            <div className="flex items-center">
-                <i className="inline-block w-3 h-3 rounded-full mr-2 bg-amber-500"></i>
-                <span className="text-xs">Категория A (Лидеры 80%)</span>
-            </div>
-             <div className="flex items-center">
-                <i className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500"></i>
-                <span className="text-xs">Категория B (Средние 15%)</span>
-            </div>
-             <div className="flex items-center">
-                <i className="inline-block w-3 h-3 rounded-full mr-2 bg-slate-400"></i>
-                <span className="text-xs">Категория C (Мелкие 5%)</span>
-            </div>
-            <div className="flex items-center mt-2 pt-2 border-t border-gray-600">
-                <i className="inline-block w-3 h-3 rounded-full mr-2 bg-red-500 animate-pulse border border-white"></i>
-                <span className="text-xs font-semibold text-red-300">Риск потери (Потенциал)</span>
-            </div>
+     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700" style={{ color: 'white', maxWidth: '200px' }}>
+        <h4 className="font-bold text-sm mb-2">Легенда</h4>
+        <div className="flex items-center mb-1">
+            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#22c55e' }}></i>
+            <span className="text-xs">Активные ТТ (из файла)</span>
+        </div>
+        <div className="flex items-center">
+            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#3b82f6' }}></i>
+            <span className="text-xs">Потенциал (из ОКБ)</span>
         </div>
     </div>
 );
@@ -274,11 +264,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, [resetHighlight]);
     
-    const createPopupContent = (name: string, address: string, type: string, contacts?: string, fact?: number, abc?: string) => `
-        <b>${name}</b>${abc ? ` <span class="px-1.5 py-0.5 rounded text-xs bg-gray-700 text-white border border-gray-500">${abc}</span>` : ''}<br>
+    const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
+        <b>${name}</b><br>
         ${address}<br>
-        <small>${type || 'н/д'}</small><br>
-        ${fact !== undefined ? `<small>Объем: ${new Intl.NumberFormat('ru-RU').format(fact)} кг</small>` : ''}
+        <small>${type || 'н/д'}</small>
         ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
     `;
     
@@ -299,7 +288,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClientMarkersLayer.current = L.layerGroup();
         activeClientMarkersRef.current.clear();
     
-        // Potential Clients (Churn Risk) - Pulsing Red
+        // Potential Clients (Blue)
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(
@@ -310,41 +299,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 );
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
-                    // Use CSS class for animation and overrides
-                    className: 'pulsing-marker-red', 
-                    radius: 5, 
-                    weight: 1,
-                    fillOpacity: 0.8
+                    fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
     
-        // Active Clients - ABC Colored
+        // Active Clients (Green)
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.fact, tt.abcCategory);
-                
-                // Determine color based on ABC category
-                let color = '#94a3b8'; // Default Gray (C or undefined)
-                let fillColor = '#94a3b8';
-                
-                if (tt.abcCategory === 'A') {
-                    color = '#f59e0b'; // Amber-500
-                    fillColor = '#fbbf24'; // Amber-400
-                } else if (tt.abcCategory === 'B') {
-                    color = '#10b981'; // Emerald-500
-                    fillColor = '#34d399'; // Emerald-400
-                }
-
+                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
-                    fillColor: fillColor,
-                    color: color,
-                    radius: tt.abcCategory === 'A' ? 6 : 5, // Make A slightly larger
-                    weight: 1, 
-                    opacity: 1, 
-                    fillOpacity: 0.9
+                    fillColor: '#22c55e', // Green
+                    color: '#16a34a',
+                    radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
@@ -352,10 +321,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "⚠️ Риск потери (ОКБ)");
+        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         
         map.addLayer(activeClientMarkersLayer.current);
-        layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (ABC)");
+        layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
         const allMarkers = [
             ...(potentialClientMarkersLayer.current?.getLayers() || []),

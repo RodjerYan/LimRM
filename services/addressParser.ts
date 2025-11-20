@@ -22,6 +22,19 @@ const KYRGYZSTAN_FORCE_OVERRIDES: { test: (addr: string) => boolean, city: strin
     {
         test: (addr) => addr.includes('беловодское, ул. 50 лет'),
         city: 'Беловодское'
+    },
+    // Added to prevent misclassification to Leningrad Region
+    {
+        test: (addr) => addr.includes('г.кант') || addr.includes('кант,') || addr.includes('кант '),
+        city: 'Кант'
+    },
+    {
+        test: (addr) => addr.includes('маевка'),
+        city: 'Маевка'
+    },
+    {
+        test: (addr) => addr.includes('беловодск'),
+        city: 'Беловодское'
     }
 ];
 
