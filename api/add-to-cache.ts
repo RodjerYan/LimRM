@@ -14,7 +14,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'A valid rmName (string) and an array of rows are required.' });
         }
         
-        const formattedRows = rows.map(row => [row.address, row.lat, row.lon]);
+        // Allow rows to be added without coordinates (e.g., from the UnidentifiedRowsModal)
+        // Default lat/lon to empty strings if they are not provided.
+        const formattedRows = rows.map(row => [row.address, row.lat ?? '', row.lon ?? '']);
 
         await appendToCache(rmName, formattedRows);
 
