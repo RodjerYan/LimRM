@@ -1,21 +1,32 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
-import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon } from './icons';
+import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon, ErrorIcon, SaveIcon } from './icons';
+import { parseRussianAddress } from '../services/addressParser';
+import { normalizeAddress } from '../utils/dataUtils';
+
+type RowStatus = 'idle' | 'loading' | 'geocoding' | 'error';
 
 interface ClientsListModalProps {
     isOpen: boolean;
     onClose: () => void;
     clients: MapPoint[];
     onClientSelect: (client: MapPoint) => void;
+    onAddressUpdate: (oldAddressKey: string, updatedPoint: MapPoint) => void;
 }
 
-const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect }) => {
+const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onAddressUpdate }) => {
     const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'name', direction: 'ascending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [rowsPerPage, setRowsPerPage] = useState(15);
     const [copied, setCopied] = useState(false);
+    
+    // State for inline editing
+    const [editingKey, setEditingKey] = useState<string | null>(null);
+    const [editedAddress, setEditedAddress] = useState('');
+    const [editingStatus, setEditingStatus] = useState<RowStatus>('idle');
+    const [editingError, setEditingError] = useState<string | null>(null);
 
     const handleCopyToClipboard = () => {
         const tsv = [
@@ -75,6 +86,76 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     const totalPages = Math.ceil(sortedData.length / rowsPerPage);
     const paginatedData = sortedData.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
 
+    const startEditing = (row: MapPoint) => {
+        setEditingKey(row.key);
+        setEditedAddress(row.address);
+        setEditingStatus('idle');
+        setEditingError(null);
+    };
+
+    const cancelEditing = () => {
+        setEditingKey(null);
+    };
+
+    const saveAddress = async (row: MapPoint) => {
+        if (editedAddress.trim() === '' || editedAddress.trim() === row.address.trim()) {
+            setEditingError('Адрес не изменен или пуст.');
+            setEditingStatus('error');
+            return;
+        }
+
+        setEditingStatus('loading');
+        setEditingError(null);
+        try {
+            const res = await fetch('/api/update-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rmName: row.rm, oldAddress: row.address, newAddress: editedAddress }),
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.details || 'Ошибка сохранения адреса.');
+            }
+            
+            setEditingStatus('geocoding');
+            // Wait 10 seconds for external systems to potentially populate coords
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(editedAddress)}`);
+            if (!geoRes.ok) {
+                // Even if geocoding fails, update the address text
+                onAddressUpdate(row.key, { ...row, address: editedAddress, key: normalizeAddress(editedAddress), lat: undefined, lon: undefined });
+                throw new Error('Координаты не найдены, но адрес обновлен.');
+            }
+
+            const { lat, lon } = await geoRes.json();
+            const parsed = parseRussianAddress(editedAddress, ''); // Re-parse to get correct region/city
+            
+            const updatedPoint: MapPoint = {
+                ...row,
+                address: editedAddress,
+                key: normalizeAddress(editedAddress),
+                region: parsed.region,
+                city: parsed.city,
+                lat,
+                lon,
+            };
+            onAddressUpdate(row.key, updatedPoint);
+            setEditingKey(null);
+
+        } catch (e) {
+            setEditingError((e as Error).message);
+            setEditingStatus('error');
+            // Hide the error and reset after a delay
+            setTimeout(() => {
+                if (editingKey === row.key) { // only reset if we are still editing the same row
+                     cancelEditing();
+                }
+            }, 3000);
+        }
+    };
+
+
     const SortableHeader: React.FC<{ sortKey: keyof MapPoint; children: React.ReactNode }> = ({ sortKey, children }) => {
         const isSorted = sortConfig?.key === sortKey;
         const icon = isSorted ? (sortConfig?.direction === 'ascending' ? <SortUpIcon /> : <SortDownIcon />) : <SortIcon />;
@@ -85,12 +166,12 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
         );
     };
 
-    // Reset state when modal opens
     React.useEffect(() => {
         if (isOpen) {
             setSearchTerm('');
             setCurrentPage(1);
             setSortConfig({ key: 'name', direction: 'ascending' });
+            cancelEditing();
         }
     }, [isOpen]);
 
@@ -121,16 +202,34 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                         </thead>
                         <tbody>
                             {paginatedData.map((row) => {
-                                const hasCoords = !!(row.lat && row.lon);
+                                const isEditing = editingKey === row.key;
                                 return (
-                                    <tr 
-                                        key={row.key} 
-                                        className={`border-b border-gray-700 ${hasCoords ? 'hover:bg-indigo-500/10 cursor-pointer' : 'opacity-60'}`} 
-                                        onClick={() => hasCoords && onClientSelect(row)}
-                                        title={hasCoords ? 'Нажмите, чтобы показать на карте' : 'Координаты для этого клиента не найдены'}
-                                    >
+                                    <tr key={row.key} className={`border-b border-gray-700 ${!isEditing ? 'hover:bg-indigo-500/10' : ''}`}>
                                         <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.name}</th>
-                                        <td className="px-4 py-3 text-gray-400">{row.address}</td>
+                                        <td className="px-4 py-3 text-gray-400">
+                                            {isEditing ? (
+                                                <div className="flex flex-col gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <input 
+                                                            type="text"
+                                                            value={editedAddress}
+                                                            onChange={e => setEditedAddress(e.target.value)}
+                                                            className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent"
+                                                            autoFocus
+                                                        />
+                                                        <button onClick={() => saveAddress(row)} disabled={editingStatus === 'loading' || editingStatus === 'geocoding'} className="p-2 bg-accent/80 hover:bg-accent rounded-lg disabled:bg-gray-600"><SaveIcon/></button>
+                                                        <button onClick={cancelEditing} className="p-2 bg-gray-600/50 hover:bg-gray-500/50 rounded-lg">Отмена</button>
+                                                    </div>
+                                                    {editingStatus === 'loading' && <div className="text-xs text-indigo-400 flex items-center gap-1"><LoaderIcon /> Сохранение...</div>}
+                                                    {editingStatus === 'geocoding' && <div className="text-xs text-cyan-400 flex items-center gap-1"><LoaderIcon /> Поиск координат...</div>}
+                                                    {editingStatus === 'error' && <div className="text-xs text-danger flex items-center gap-1"><ErrorIcon /> {editingError}</div>}
+                                                </div>
+                                            ) : (
+                                                <div onClick={() => onClientSelect(row)} onDoubleClick={() => startEditing(row)} className="cursor-pointer" title="Нажмите для перехода на карту, двойной клик для редактирования">
+                                                    {row.address}
+                                                </div>
+                                            )}
+                                        </td>
                                         <td className="px-4 py-3">{row.city}</td>
                                         <td className="px-4 py-3">{row.rm}</td>
                                         <td className="px-4 py-3">{row.brand}</td>

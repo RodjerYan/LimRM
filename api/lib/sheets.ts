@@ -192,7 +192,7 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string) {
         });
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `${rmName}!A1`,
+            range: `'${rmName}'!A1`,
             valueInputOption: 'RAW',
             requestBody: {
                 values: [['Адрес ТТ', 'lat', 'lon']],
@@ -279,5 +279,49 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
                 data: dataForUpdate,
             },
         });
+    }
+}
+
+/**
+ * Replaces an old address with a new one in the cache, or appends if the old one is not found.
+ * Coordinates are cleared as they are no longer valid for the new address.
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param oldAddress The address to be replaced.
+ * @param newAddress The new address to insert.
+ */
+export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    await ensureSheetExists(sheets, rmName);
+
+    // Fetch all addresses in the sheet to find the row index of the old address.
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${rmName}'!A:A`,
+    });
+
+    const addressesInSheet = response.data.values?.flat() || [];
+    let rowIndex = -1;
+    for (let i = 0; i < addressesInSheet.length; i++) {
+        if (String(addressesInSheet[i]).trim() === oldAddress.trim()) {
+            rowIndex = i + 1; // 1-based index
+            break;
+        }
+    }
+    
+    if (rowIndex !== -1) {
+        // If the old address is found, update the row with the new address and clear coords.
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${rmName}'!A${rowIndex}:C${rowIndex}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[newAddress, '', '']],
+            },
+        });
+    } else {
+        // If the old address is not found, simply append the new one.
+        // This is a robust fallback for cases like editing an "Unidentified" address
+        // that may not have been in the cache in the first place.
+        await appendToCache(rmName, [[newAddress, '', '']]);
     }
 }

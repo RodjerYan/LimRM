@@ -29,6 +29,10 @@
       "destination": "/api/update-coords"
     },
     {
+      "source": "/api/update-address",
+      "destination": "/api/update-address"
+    },
+    {
       "source": "/api/geocode",
       "destination": "/api/geocode"
     },

@@ -187,6 +187,20 @@ const App: React.FC = () => {
         addNotification('Адрес распознан и добавлен на карту!', 'success');
         flyToClient(newPoint);
     }, [addNotification, flyToClient]);
+
+    const handleAddressUpdate = useCallback((oldAddressKey: string, updatedPoint: MapPoint) => {
+        setAllActiveClients(prevClients => {
+            const index = prevClients.findIndex(c => c.key === oldAddressKey);
+            if (index !== -1) {
+                const newClients = [...prevClients];
+                newClients[index] = updatedPoint;
+                return newClients;
+            }
+            return prevClients; // Return old state if not found
+        });
+        addNotification('Адрес успешно обновлен и добавлен на карту!', 'success');
+        flyToClient(updatedPoint);
+    }, [addNotification, flyToClient]);
     
     const handleOkbStatusChange = (status: OkbStatus) => {
         setOkbStatus(status);
@@ -289,12 +303,14 @@ const App: React.FC = () => {
                 onClose={() => setIsModalOpen(false)}
                 data={selectedRow}
                 okbStatus={okbStatus}
+                onAddressUpdate={handleAddressUpdate}
             />
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
+                onAddressUpdate={handleAddressUpdate}
             />
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}

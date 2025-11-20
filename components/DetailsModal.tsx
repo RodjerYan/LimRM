@@ -3,15 +3,18 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
-import { AggregatedDataRow, OkbStatus } from '../types';
+import { AggregatedDataRow, OkbStatus, MapPoint } from '../types';
 import { streamClientInsights } from '../services/aiService';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon } from './icons';
+import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SaveIcon, ErrorIcon } from './icons';
+import { parseRussianAddress } from '../services/addressParser';
+import { normalizeAddress } from '../utils/dataUtils';
 
 interface DetailsModalProps {
     isOpen: boolean;
     onClose: () => void;
     data: AggregatedDataRow | null;
     okbStatus: OkbStatus | null;
+    onAddressUpdate: (oldAddressKey: string, updatedPoint: MapPoint) => void;
 }
 
 // Local formatNumber utility
@@ -28,9 +31,6 @@ const formatNumber = (num: number, short = false) => {
 const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; color: string; tooltip: string }> = ({ title, value, icon, color, tooltip }) => (
     <div title={tooltip} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 flex items-start space-x-3">
         <div className={`p-2 rounded-md ${color} bg-opacity-10`}>
-           {/* FIX: Add a more specific type assertion to React.cloneElement to resolve the TypeScript error.
-               This informs the compiler that the cloned element can accept a `small` prop, which is true
-               for all icons used in this context. */}
            {React.cloneElement(icon as React.ReactElement<{ small?: boolean }>, { small: true })}
         </div>
         <div>
@@ -113,17 +113,106 @@ const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
     );
 };
 
-const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clients }) => {
-    if (!clients || clients.length === 0) {
-        return null;
-    }
+type RowStatus = 'idle' | 'loading' | 'geocoding' | 'error';
+
+const GroupedClientsList: React.FC<{ rm: string; clients: string[] | undefined; onAddressUpdate: DetailsModalProps['onAddressUpdate'] }> = ({ rm, clients, onAddressUpdate }) => {
+    const [editingIndex, setEditingIndex] = useState<number | null>(null);
+    const [editedAddress, setEditedAddress] = useState('');
+    const [status, setStatus] = useState<RowStatus>('idle');
+    const [error, setError] = useState<string | null>(null);
+
+    const startEditing = (index: number, currentAddress: string) => {
+        setEditingIndex(index);
+        setEditedAddress(currentAddress);
+        setStatus('idle');
+        setError(null);
+    };
+
+    const cancelEditing = () => {
+        setEditingIndex(null);
+    };
+    
+    const saveAddress = async (index: number, originalAddress: string) => {
+        if (editedAddress.trim() === '' || editedAddress.trim() === originalAddress.trim()) {
+            setError('Адрес не изменен или пуст.');
+            setStatus('error');
+            return;
+        }
+
+        setStatus('loading');
+        setError(null);
+        try {
+            const res = await fetch('/api/update-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rmName: rm, oldAddress: originalAddress, newAddress: editedAddress }),
+            });
+            if (!res.ok) throw new Error('Ошибка сохранения адреса.');
+            
+            setStatus('geocoding');
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(editedAddress)}`);
+            const parsed = parseRussianAddress(editedAddress, '');
+            
+            let lat, lon;
+            if (geoRes.ok) {
+                ({ lat, lon } = await geoRes.json());
+            }
+
+            const updatedPoint: MapPoint = {
+                key: normalizeAddress(editedAddress),
+                address: editedAddress,
+                lat, lon, rm,
+                region: parsed.region,
+                city: parsed.city,
+                name: originalAddress, // Fallback name
+                status: 'match',
+                brand: '', // Info not available here
+                type: '', // Info not available here
+            };
+            
+            onAddressUpdate(normalizeAddress(originalAddress), updatedPoint);
+            setEditingIndex(null);
+
+        } catch (e) {
+            setError((e as Error).message);
+            setStatus('error');
+            setTimeout(() => cancelEditing(), 3000);
+        }
+    };
+
+
+    if (!clients || clients.length === 0) return null;
+
     return (
         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
             <h4 className="font-bold text-lg mb-3 text-cyan-400">Клиенты в группе ({clients.length})</h4>
             <ul className="max-h-48 overflow-y-auto custom-scrollbar text-sm space-y-1 pr-2">
                 {clients.map((client, index) => (
-                    <li key={index} className="text-slate-300 bg-gray-800/50 p-1.5 rounded-md truncate" title={client}>
-                        {client}
+                    <li key={index} className="text-slate-300 bg-gray-800/50 p-1.5 rounded-md">
+                        {editingIndex === index ? (
+                             <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <input 
+                                        type="text"
+                                        value={editedAddress}
+                                        onChange={e => setEditedAddress(e.target.value)}
+                                        className="w-full p-1 bg-gray-900 border border-gray-600 rounded-md"
+                                        autoFocus
+                                    />
+                                    <button onClick={() => saveAddress(index, client)} disabled={status === 'loading' || status === 'geocoding'} className="p-1.5 bg-accent/80 hover:bg-accent rounded-md disabled:bg-gray-600"><SaveIcon/></button>
+                                    <button onClick={cancelEditing} className="p-1.5 bg-gray-600/50 hover:bg-gray-500/50 rounded-md text-xs">Отмена</button>
+                                </div>
+                                {status === 'loading' && <div className="text-xs text-indigo-400 flex items-center gap-1"><LoaderIcon /> Сохранение...</div>}
+                                {status === 'geocoding' && <div className="text-xs text-cyan-400 flex items-center gap-1"><LoaderIcon /> Поиск координат...</div>}
+                                {status === 'error' && <div className="text-xs text-danger flex items-center gap-1"><ErrorIcon /> {error}</div>}
+                            </div>
+                        ) : (
+                             <div onDoubleClick={() => startEditing(index, client)} className="truncate cursor-pointer" title={client + "\n(Двойной клик для редактирования)"}>
+                                {client}
+                            </div>
+                        )}
                     </li>
                 ))}
             </ul>
@@ -131,7 +220,7 @@ const GroupedClientsList: React.FC<{ clients: string[] | undefined }> = ({ clien
     );
 };
 
-const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus }) => {
+const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus, onAddressUpdate }) => {
     if (!data) return null;
 
     const activeClients = data.clients?.length || 0;
@@ -156,7 +245,7 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                                 <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClients} из ${okbStatus?.rowCount || 0})`} />
                              </div>
                         </div>
-                        <GroupedClientsList clients={data.clients} />
+                        <GroupedClientsList rm={data.rm} clients={data.clients} onAddressUpdate={onAddressUpdate} />
                     </div>
                     <AiInsightSection data={data} />
                 </div>

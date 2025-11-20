@@ -166,19 +166,18 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
         setRowStatuses(prev => ({...prev, [index]: { status: 'loading' }}));
 
         try {
-            const cachePayload = { rmName: originalRow.rm, rows: [{ address: newAddress }] };
-            const cacheRes = await fetch('/api/add-to-cache', {
+            const payload = { rmName: originalRow.rm, oldAddress: originalAddress, newAddress };
+            const res = await fetch('/api/update-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(cachePayload)
+                body: JSON.stringify(payload)
             });
 
-            if (!cacheRes.ok) {
-                const errData = await cacheRes.json();
-                throw new Error(errData.details || errData.error || 'Не удалось сохранить в кэш.');
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.details || errData.error || 'Не удалось обновить адрес.');
             }
             
-            // Запуск процесса геокодирования после успешного сохранения
             handleSaveAndGeocode(index, newAddress);
 
         } catch (e) {
@@ -188,66 +187,42 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
 
     const handleSaveAll = useCallback(async () => {
         setIsSavingAll(true);
-        const updatesByRm: Record<string, { address: string; originalIndex: number }[]> = {};
-        const changedIndices: number[] = [];
-
-        Object.keys(editedAddresses).forEach(indexStr => {
+        
+        const savePromises = Object.keys(editedAddresses).map(async (indexStr) => {
             const index = parseInt(indexStr, 10);
             const originalRow = rows[index];
-            if (!originalRow) return;
+            if (!originalRow) return null;
 
             const originalAddress = findAddressInRow(originalRow.rowData) ?? '';
             const newAddress = editedAddresses[index];
 
             if (newAddress && newAddress.trim() !== '' && newAddress.trim() !== originalAddress.trim() && rowStatuses[index]?.status !== 'success' && rowStatuses[index]?.status !== 'geocoding') {
-                if (!updatesByRm[originalRow.rm]) {
-                    updatesByRm[originalRow.rm] = [];
+                 setRowStatuses(prev => ({ ...prev, [index]: { status: 'loading' } }));
+                 try {
+                     const payload = { rmName: originalRow.rm, oldAddress: originalAddress, newAddress };
+                     const res = await fetch('/api/update-address', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                     });
+                     if (!res.ok) {
+                         const err = await res.json();
+                         throw new Error(err.details || 'Ошибка записи');
+                     }
+                     return { index, newAddress };
+                 } catch (e) {
+                     setRowStatuses(prev => ({ ...prev, [index]: { status: 'error', message: (e as Error).message } }));
+                     return null;
+                 }
+            }
+            return null;
+        });
+
+        const results = (await Promise.all(savePromises)).filter(Boolean);
+
+        if (results.length > 0) {
+            results.forEach(result => {
+                if (result) {
+                    handleSaveAndGeocode(result.index, result.newAddress);
                 }
-                updatesByRm[originalRow.rm].push({ address: newAddress, originalIndex: index });
-                changedIndices.push(index);
-            }
-        });
-
-        if (changedIndices.length === 0) {
-            setIsSavingAll(false);
-            return;
-        }
-
-        setRowStatuses(prev => {
-            const newStatuses = { ...prev };
-            changedIndices.forEach(index => { newStatuses[index] = { status: 'loading' }; });
-            return newStatuses;
-        });
-
-        const savePromises = Object.entries(updatesByRm).map(([rmName, rowsToCache]) => {
-            const payload = { rmName, rows: rowsToCache.map(({ address }) => ({ address })) };
-            return fetch('/api/add-to-cache', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-            }).then(res => {
-                if (res.ok) return { status: 'fulfilled', value: { rmName, rowsToCache } };
-                return res.json().then(err => Promise.reject({ error: err, rowsToCache }));
-            });
-        });
-
-        const saveResults = await Promise.allSettled(savePromises);
-        
-        const successfulSaves: { originalIndex: number, newAddress: string }[] = [];
-        saveResults.forEach(result => {
-            if (result.status === 'fulfilled') {
-                result.value.value.rowsToCache.forEach(({ originalIndex, address }) => {
-                    successfulSaves.push({ originalIndex, newAddress: address });
-                });
-            } else { // rejected
-                result.reason.rowsToCache.forEach(({ originalIndex }: { originalIndex: number }) => {
-                    setRowStatuses(prev => ({...prev, [originalIndex]: { status: 'error', message: result.reason.error.details || 'Ошибка пакетной записи' }}));
-                });
-            }
-        });
-
-        // Запуск геокодирования для всех успешно сохраненных строк
-        if (successfulSaves.length > 0) {
-            successfulSaves.forEach(({ originalIndex, newAddress }) => {
-                handleSaveAndGeocode(originalIndex, newAddress);
             });
         }
         
@@ -289,7 +264,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
             <div className="space-y-6">
                 <p className="text-gray-400 text-sm">
                     Для этих строк не удалось автоматически определить город или регион. Внесите исправления в поле "Исправленный адрес" и сохраните. 
-                    После сохранения адрес будет добавлен в кэш и будет корректно распознаваться при следующих загрузках.
+                    После сохранения адрес будет заменен в кэше и будет корректно распознаваться при следующих загрузках.
                 </p>
                 {rmOrder.map(rm => (
                     <div key={rm} className="bg-card-bg/50 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-indigo-500/10">
