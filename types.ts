@@ -31,12 +31,9 @@ export interface MapPoint {
     isCached?: boolean; // To distinguish between new and cached clients on the map
 }
 
-export interface ParsedAddress {
+export interface EnrichedParsedAddress {
     region: string;
     city: string;
-}
-
-export interface EnrichedParsedAddress extends ParsedAddress {
     finalAddress: string;
 }
 
@@ -110,6 +107,7 @@ export type WorkerProgressPayload = {
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     plottableActiveClients: MapPoint[];
+    unidentifiedRows: { rm: string; rowData: any }[];
 };
 export type WorkerErrorPayload = string;
 

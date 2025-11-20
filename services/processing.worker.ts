@@ -12,7 +12,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
@@ -42,19 +42,6 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
         }
     }
     return coordIndex;
-};
-
-
-const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
-    if (!row) return '';
-    const rowKeys = Object.keys(row);
-    for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
-        if (foundKey && row[foundKey]) {
-            return String(row[foundKey]);
-        }
-    }
-    return '';
 };
 
 function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
@@ -159,24 +146,61 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
+    const unidentifiedRows: { rm: string; rowData: any }[] = [];
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        const clientAddress = findAddressInRow(row);
-        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']);
         const rm = findValueInRow(row, ['рм']);
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
 
-        if (!clientAddress && !distributor) continue; // Skip if no address and no distributor info
-        if (!rm) continue;
+        if (i > 0 && i % 5000 === 0) {
+            const percentage = 10 + Math.round((i / jsonData.length) * 85);
+            postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
+        }
+        
+        // Basic validation
+        const clientAddress = findAddressInRow(row);
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
+        if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
+        if (!rm) {
+            unidentifiedRows.push({ rm: 'РМ не указан', rowData: row });
+            continue;
+        }
 
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
+        
+        if (parsedAddress.region === 'Регион не определен') {
+            unidentifiedRows.push({ rm, rowData: row });
+            continue;
+        }
+
+        // --- Aggregation logic ---
         const finalAddress = parsedAddress.finalAddress;
+        const regionForAggregation = parsedAddress.region;
+        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+        const brand = findValueInRow(row, ['торговая марка']);
+
+        if (isNaN(weight)) continue;
         
-        // Use original address for the key to avoid duplicates within a single file run.
+        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+        if (!aggregatedData[key]) {
+            aggregatedData[key] = {
+                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
+                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                clients: new Set<string>(),
+            };
+        }
+        aggregatedData[key].fact += weight;
+        aggregatedData[key].clients.add(finalAddress || clientName);
+
+        if (hasPotentialColumn) {
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+            if (!isNaN(potential)) aggregatedData[key].potential += potential;
+        }
+
+        // --- Map Point Logic ---
         const normalizedOriginalAddress = normalizeAddress(clientAddress);
-        
         if (!uniquePlottableClients.has(normalizedOriginalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -191,7 +215,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                // IMPORTANT: Add the FINAL, enriched address to the cache queue.
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }
@@ -202,7 +225,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lon = okbEntry.lon;
                 } else if (finalAddress && cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    // Geocode the FINAL address
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
                     }
@@ -214,41 +236,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: finalAddress, // Use the enriched address for display and details
+                address: finalAddress,
                 city: parsedAddress.city,
                 region: parsedAddress.region, 
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
             });
-        }
-        
-        // --- Aggregation logic ---
-        const regionForAggregation = parsedAddress.region;
-        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
-        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-
-        if (isNaN(weight) || regionForAggregation === 'Регион не определен') continue;
-        
-        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
-        if (!aggregatedData[key]) {
-            aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
-                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                clients: new Set<string>(),
-            };
-        }
-        aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(finalAddress || clientName); // Add final address to the client list
-
-        if (hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(potential)) aggregatedData[key].potential += potential;
-        }
-        
-        if (i > 0 && i % 5000 === 0) {
-            const percentage = 10 + Math.round((i / jsonData.length) * 85);
-            postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
         }
     }
     
@@ -271,7 +265,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients };
+    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows };
     postMessage({ type: 'result', payload: resultPayload });
 
     // --- BACKGROUND TASKS ---

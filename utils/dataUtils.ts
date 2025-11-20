@@ -107,6 +107,25 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 
 /**
+ * A robust helper to find a value in a row by searching for keywords in its keys.
+ * @param row The data row object.
+ * @param keywords An array of lowercase keywords to search for.
+ * @returns The found string value or an empty string.
+ */
+export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+    if (!row) return '';
+    const rowKeys = Object.keys(row);
+    for (const keyword of keywords) {
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        if (foundKey && row[foundKey] != null) { // Check for null and undefined
+            return String(row[foundKey]);
+        }
+    }
+    return '';
+};
+
+
+/**
  * A robust helper function to find an address value within a data row.
  * It searches for keys in a prioritized order, using both exact and partial matches.
  * This is the centralized, single source of truth for finding an address.

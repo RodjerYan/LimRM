@@ -5,6 +5,7 @@ import ResultsTable from './components/ResultsTable';
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
+import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
@@ -22,6 +23,7 @@ import {
     MapPoint,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
+import { WarningIcon } from './components/icons';
 import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
@@ -40,12 +42,14 @@ const App: React.FC = () => {
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
+    const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
+    const [unidentifiedRows, setUnidentifiedRows] = useState<{ rm: string; rowData: any }[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
@@ -134,8 +138,12 @@ const App: React.FC = () => {
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
+        setUnidentifiedRows(data.unidentifiedRows);
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} уникальных групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
+        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
+        if (data.unidentifiedRows.length > 0) {
+            addNotification(`Обнаружено ${data.unidentifiedRows.length} строк с неопределенными адресами.`, 'info');
+        }
     }, [addNotification]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
@@ -158,6 +166,11 @@ const App: React.FC = () => {
         setSelectedRow(row);
         setIsModalOpen(true);
     }, []);
+    
+    const handleUnidentifiedRowUpdate = useCallback((rowIndex: number) => {
+        setUnidentifiedRows(prev => prev.filter((_, index) => index !== rowIndex));
+        addNotification('Адрес успешно обновлен и сохранен в кэше для будущих загрузок.', 'success');
+    }, [addNotification]);
 
     const handleOkbStatusChange = (status: OkbStatus) => {
         setOkbStatus(status);
@@ -190,13 +203,26 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isControlPanelLocked = isLoading;
+    const isAnyModalOpen = isModalOpen || isClientsModalOpen || isUnidentifiedModalOpen;
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
-            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isModalOpen || isClientsModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
-                <header>
-                    <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
-                    <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
+            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
+                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
+                        <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
+                    </div>
+                     {unidentifiedRows.length > 0 && !isControlPanelLocked && (
+                        <button
+                            onClick={() => setIsUnidentifiedModalOpen(true)}
+                            className="bg-danger/80 hover:bg-danger text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 animate-pulse flex-shrink-0"
+                            title="Нажмите, чтобы исправить адреса, которые не удалось распознать"
+                        >
+                            <WarningIcon/>
+                            <span>Неопределенные адреса ({unidentifiedRows.length})</span>
+                        </button>
+                    )}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -262,6 +288,12 @@ const App: React.FC = () => {
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
+            />
+            <UnidentifiedRowsModal
+                isOpen={isUnidentifiedModalOpen}
+                onClose={() => setIsUnidentifiedModalOpen(false)}
+                rows={unidentifiedRows}
+                onRowUpdated={handleUnidentifiedRowUpdate}
             />
         </div>
     );
