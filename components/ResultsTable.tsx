@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { AggregatedDataRow } from '../types';
+import { findAddressInRow } from '../utils/dataUtils';
 import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, CopyIcon, CheckIcon, WarningIcon } from './icons';
 
 interface ResultsTableProps {
@@ -34,14 +35,33 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
 
     const filteredData = useMemo(() => {
         if (!searchTerm) return data;
-        const lowercasedFilter = searchTerm.toLowerCase();
-        return data.filter(item =>
-            item.clientName.toLowerCase().includes(lowercasedFilter) ||
-            item.rm.toLowerCase().includes(lowercasedFilter) ||
-            item.region.toLowerCase().includes(lowercasedFilter) ||
-            item.brand.toLowerCase().includes(lowercasedFilter) ||
-            item.clients.some(client => client.address.toLowerCase().includes(lowercasedFilter))
-        );
+        const lowercasedFilter = searchTerm.toLowerCase().trim();
+        
+        return data.filter(item => {
+            // Check aggregated fields
+            if (item.clientName.toLowerCase().includes(lowercasedFilter)) return true;
+            if (item.rm.toLowerCase().includes(lowercasedFilter)) return true;
+            if (item.region.toLowerCase().includes(lowercasedFilter)) return true;
+            if (item.brand.toLowerCase().includes(lowercasedFilter)) return true;
+            
+            // Check individual clients within the group
+            return item.clients.some(client => {
+                // 1. Check the normalized/displayed address
+                if (client.address.toLowerCase().includes(lowercasedFilter)) return true;
+                
+                // 2. Check the client name
+                if (client.name.toLowerCase().includes(lowercasedFilter)) return true;
+
+                // 3. Check the original raw address from the source file
+                // This ensures that searching for "As written in Excel" works even if parsed differently
+                if (client.originalRow) {
+                    const rawAddress = findAddressInRow(client.originalRow);
+                    if (rawAddress && rawAddress.toLowerCase().includes(lowercasedFilter)) return true;
+                }
+                
+                return false;
+            });
+        });
     }, [data, searchTerm]);
 
     const sortedData = useMemo(() => {

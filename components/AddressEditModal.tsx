@@ -105,7 +105,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         cleanupTimers();
 
         const POLLING_INTERVAL = 3000;
-        const MASTER_TIMEOUT = 48 * 60 * 60 * 1000; // 48 hours
+        const MASTER_TIMEOUT = 48 * 60 * 60 * 1000; // 48 hours in milliseconds
 
         const performPoll = async () => {
             try {
