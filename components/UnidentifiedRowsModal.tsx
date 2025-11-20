@@ -194,7 +194,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                     successfulIndices.push(originalIndex);
                 });
             } else {
-                result.reason.rowsToCache.forEach(({ originalIndex }) => {
+                result.reason.rowsToCache.forEach(({ originalIndex }: { originalIndex: number }) => {
                     setRowStatuses(prev => ({...prev, [originalIndex]: { status: 'error', message: result.reason.error.details || 'Ошибка пакетной записи' }}));
                 });
             }
