@@ -259,16 +259,6 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
-                     {unidentifiedRows.length > 0 && !isControlPanelLocked && (
-                        <button
-                            onClick={() => setIsUnidentifiedModalOpen(true)}
-                            className="bg-danger/80 hover:bg-danger text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 animate-pulse flex-shrink-0"
-                            title="Нажмите, чтобы исправить адреса, которые не удалось распознать"
-                        >
-                            <WarningIcon/>
-                            <span>Неопределенные адреса ({unidentifiedRows.length})</span>
-                        </button>
-                    )}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -312,7 +302,13 @@ const App: React.FC = () => {
                             flyToClientKey={flyToClientKey}
                         />
 
-                        <ResultsTable data={filteredData} onRowClick={handleRowClick} disabled={!isDataLoaded || isLoading} />
+                        <ResultsTable 
+                            data={filteredData} 
+                            onRowClick={handleRowClick} 
+                            disabled={!isDataLoaded || isLoading}
+                            unidentifiedRowsCount={unidentifiedRows.length}
+                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                        />
                         {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>
                 </div>
