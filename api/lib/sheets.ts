@@ -134,7 +134,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  * Fetches all data from the coordinate cache spreadsheet.
  * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
  */
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number }[]>> {
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await sheets.spreadsheets.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
@@ -143,13 +143,14 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
 
-    const ranges = sheetTitles.map(title => `'${title}'!A:C`); // Address, lat, lon
+    // Updated range to fetch Column D (Redirect/CorrectedAddress)
+    const ranges = sheetTitles.map(title => `'${title}'!A:D`); // Address, lat, lon, correctedAddress
     const response = await sheets.spreadsheets.values.batchGet({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         ranges,
     });
     
-    const cache: Record<string, { address: string; lat?: number; lon?: number }[]> = {};
+    const cache: Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string }[]> = {};
     response.data.valueRanges?.forEach((valueRange) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) {
@@ -162,10 +163,13 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                 const lonStr = String(row[2] || '').replace(',', '.').trim();
                 const lat = latStr ? parseFloat(latStr) : undefined;
                 const lon = lonStr ? parseFloat(lonStr) : undefined;
+                const correctedAddress = row[3] ? String(row[3]).trim() : undefined;
+
                 return {
                     address: String(row[0] || '').trim(),
                     lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
                     lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
+                    correctedAddress: correctedAddress
                 };
             }).filter(item => item.address); // Only include items with an address
         }
@@ -199,12 +203,13 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
         },
     });
     // Add headers to the new sheet
+    // Updated headers to include 'Redirect' column
     await sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${rmName}'!A1`,
         valueInputOption: 'RAW',
         requestBody: {
-            values: [['Адрес ТТ', 'lat', 'lon']],
+            values: [['Адрес ТТ', 'lat', 'lon', 'Переадресация']],
         },
     });
     return rmName; // The new sheet has this title
@@ -294,11 +299,12 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 }
 
 /**
- * Replaces an old address with a new one in the cache (case-insensitively).
- * Coordinates are cleared as they are no longer valid for the new address.
+ * Replaces an old address with a new one in the cache (case-insensitively) by setting a redirect.
+ * Instead of overwriting the old address, we write the new address to column D (index 3) of the old row,
+ * establishing a permanent redirect. Then we ensure the new address exists as a separate row.
  * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced.
- * @param newAddress The new address to insert.
+ * @param oldAddress The address to be replaced (source of redirect).
+ * @param newAddress The new address (target of redirect).
  */
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
@@ -320,17 +326,21 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     }
     
     if (rowIndex !== -1) {
+        // If old address exists, add the new address as a redirect in Column D (index 3)
+        // We use Column D because A=Address, B=Lat, C=Lon
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!A${rowIndex}:C${rowIndex}`,
+            range: `'${actualSheetTitle}'!D${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[newAddress, '', '']],
+                values: [[newAddress]],
             },
         });
-    } else {
-        await appendToCache(rmName, [[newAddress, '', '']]);
     }
+    
+    // Always ensure the new address is added to the list so it can have coordinates
+    // appendToCache handles duplicate checks internally
+    await appendToCache(rmName, [[newAddress, '', '']]);
 }
 
 /**
@@ -351,9 +361,10 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     }
     const actualSheetTitle = existingSheet.properties.title;
 
+    // Fetch A:D to include redirects, though this specific function mainly cares about coords
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${actualSheetTitle}'!A:C`,
+        range: `'${actualSheetTitle}'!A:D`,
     });
 
     const values = response.data.values || [];

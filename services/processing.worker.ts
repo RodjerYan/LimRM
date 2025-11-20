@@ -130,11 +130,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number }>();
+    const cacheRedirectMap = new Map<string, string>(); // normalized old address -> final correct address
+
     if (cacheData) {
         for (const rm of Object.keys(cacheData)) {
             for (const item of cacheData[rm]) {
                 if (item.address) {
                     const normalized = normalizeAddress(item.address);
+                    
+                    // Populate redirect map if a corrected address exists
+                    if (item.correctedAddress) {
+                        cacheRedirectMap.set(normalized, item.correctedAddress);
+                    }
+
                     if (!cacheAddressMap.has(normalized)) {
                         cacheAddressMap.set(normalized, { lat: item.lat, lon: item.lon });
                     }
@@ -160,12 +168,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
         
         // Basic validation
-        const clientAddress = findAddressInRow(row);
+        let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         if (!rm) {
             unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
             continue;
+        }
+
+        // --- REDIRECT LOGIC ---
+        // Check if this address is known to have been corrected in the past.
+        // If so, silently swap it for the corrected version BEFORE parsing.
+        // This ensures we use the "good" address for region/city logic and coordinates.
+        if (clientAddress) {
+            const normalizedRaw = normalizeAddress(clientAddress);
+            if (cacheRedirectMap.has(normalizedRaw)) {
+                clientAddress = cacheRedirectMap.get(normalizedRaw)!;
+            }
         }
 
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
@@ -201,7 +220,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
+        // We use the original address (after potential redirect swap) for uniqueness check 
+        // to ensure multiple source rows mapping to the same place are handled correctly.
         const normalizedOriginalAddress = normalizeAddress(clientAddress);
+
         if (!uniquePlottableClients.has(normalizedOriginalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
