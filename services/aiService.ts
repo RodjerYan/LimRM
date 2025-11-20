@@ -19,8 +19,9 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const clientIdentifier = isGroup ? 'Группа' : 'Клиент';
     const clientName = isGroup ? `${clientData.clientName} (РМ: ${clientData.rm})` : clientData.clientName;
     
+    // FIX: Changed `c.trim()` to `c.address.trim()` to correctly access the address string from the MapPoint object.
     const clientListInfo = isGroup && clientData.clients
-    ? `\n        - **Клиенты в группе (${clientData.clients.length} ТТ). Примеры:**\n${clientData.clients.slice(0, 5).map(c => `          - ${c.trim()}`).join('\n')}`
+    ? `\n        - **Клиенты в группе (${clientData.clients.length} ТТ). Примеры:**\n${clientData.clients.slice(0, 5).map(c => `          - ${c.address.trim()}`).join('\n')}`
     : '';
 
     return `

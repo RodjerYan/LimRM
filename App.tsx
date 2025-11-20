@@ -6,6 +6,7 @@ import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
+import AddressEditModal from './components/AddressEditModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
@@ -21,6 +22,7 @@ import {
     OkbDataRow,
     WorkerResultPayload,
     MapPoint,
+    UnidentifiedRow,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { WarningIcon } from './components/icons';
@@ -40,16 +42,22 @@ const App: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [isModalOpen, setIsModalOpen] = useState(false);
+    
+    // Modal States
+    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
-    const [selectedRow, setSelectedRow] = useState<AggregatedDataRow | null>(null);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    
+    const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
+    const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
-    const [unidentifiedRows, setUnidentifiedRows] = useState<{ rm: string; rowData: any }[]>([]);
+    const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
@@ -163,15 +171,10 @@ const App: React.FC = () => {
     }, []);
 
     const handleRowClick = useCallback((row: AggregatedDataRow) => {
-        setSelectedRow(row);
-        setIsModalOpen(true);
+        setSelectedDetailsRow(row);
+        setIsDetailsModalOpen(true);
     }, []);
     
-    const handleUnidentifiedRowUpdate = useCallback((rowIndex: number) => {
-        setUnidentifiedRows(prev => prev.filter((_, index) => index !== rowIndex));
-    }, []);
-
-    // FIX: Moved flyToClient before functions that depend on it.
     const flyToClient = useCallback((client: MapPoint) => {
         setTimeout(() => {
             setFlyToClientKey(client.key);
@@ -180,26 +183,39 @@ const App: React.FC = () => {
         const mapElement = document.getElementById('interactive-map-container');
         mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, []);
-    
-    const handleRowResolved = useCallback((newPoint: MapPoint, originalIndex: number) => {
-        setAllActiveClients(prev => [...prev, newPoint]);
-        setUnidentifiedRows(prev => prev.filter((_, i) => i !== originalIndex));
-        addNotification('Адрес распознан и добавлен на карту!', 'success');
-        flyToClient(newPoint);
-    }, [addNotification, flyToClient]);
 
-    const handleAddressUpdate = useCallback((oldAddressKey: string, updatedPoint: MapPoint) => {
-        setAllActiveClients(prevClients => {
-            const index = prevClients.findIndex(c => c.key === oldAddressKey);
-            if (index !== -1) {
-                const newClients = [...prevClients];
-                newClients[index] = updatedPoint;
+    const handleStartEdit = useCallback((data: MapPoint | UnidentifiedRow) => {
+        // Close other modals before opening the edit one
+        setIsClientsModalOpen(false);
+        setIsDetailsModalOpen(false);
+        setIsUnidentifiedModalOpen(false);
+        setEditingClient(data);
+        setIsEditModalOpen(true);
+    }, []);
+
+    const handleEditSaveSuccess = useCallback((oldKey: string, newPoint: MapPoint) => {
+        // This function handles both creating new points from unidentified rows
+        // and updating existing points.
+        setAllActiveClients(prev => {
+            const existingIndex = prev.findIndex(c => c.key === oldKey);
+            if (existingIndex > -1) {
+                const newClients = [...prev];
+                newClients[existingIndex] = newPoint;
                 return newClients;
+            } else {
+                return [...prev, newPoint];
             }
-            return prevClients; // Return old state if not found
         });
-        addNotification('Адрес успешно обновлен и добавлен на карту!', 'success');
-        flyToClient(updatedPoint);
+    
+        // If the edited item was an unidentified row, remove it from that list.
+        setUnidentifiedRows(prev => prev.filter(row => {
+            const originalAddress = findAddressInRow(row.rowData);
+            return normalizeAddress(originalAddress) !== oldKey;
+        }));
+    
+        setIsEditModalOpen(false);
+        addNotification('Адрес успешно обновлен и сохранен!', 'success');
+        flyToClient(newPoint);
     }, [addNotification, flyToClient]);
     
     const handleOkbStatusChange = (status: OkbStatus) => {
@@ -224,7 +240,7 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isControlPanelLocked = isLoading;
-    const isAnyModalOpen = isModalOpen || isClientsModalOpen || isUnidentifiedModalOpen;
+    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
@@ -298,26 +314,34 @@ const App: React.FC = () => {
                 ))}
             </div>
 
+            {/* FIX: Removed `onAddressUpdate` prop and ensured `onStartEdit` is correctly passed to handle the new editing flow. */}
             <DetailsModal 
-                isOpen={isModalOpen} 
-                onClose={() => setIsModalOpen(false)}
-                data={selectedRow}
+                isOpen={isDetailsModalOpen} 
+                onClose={() => setIsDetailsModalOpen(false)}
+                data={selectedDetailsRow}
                 okbStatus={okbStatus}
-                onAddressUpdate={handleAddressUpdate}
+                onStartEdit={handleStartEdit}
             />
+            {/* FIX: Removed `onAddressUpdate` prop and ensured `onStartEdit` is correctly passed. */}
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
-                onAddressUpdate={handleAddressUpdate}
+                onStartEdit={handleStartEdit}
             />
+            {/* FIX: Corrected props for UnidentifiedRowsModal, passing `onStartEdit` instead of inline editing handlers. */}
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
-                onRowUpdated={handleUnidentifiedRowUpdate}
-                onRowResolved={handleRowResolved}
+                onStartEdit={handleStartEdit}
+            />
+             <AddressEditModal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                data={editingClient}
+                onSaveSuccess={handleEditSaveSuccess}
             />
         </div>
     );

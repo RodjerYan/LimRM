@@ -8,14 +8,16 @@ import {
     WorkerResultPayload, 
     MapPoint, 
     CoordsCache,
-    EnrichedParsedAddress
+    EnrichedParsedAddress,
+    UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
-type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Set<string> } };
+type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
+
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 type CommonProcessArgs = {
     okbData: OkbDataRow[];
@@ -146,7 +148,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const uniquePlottableClients = new Map<string, MapPoint>();
     const newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
     const addressesToGeocode: { [rmName: string]: string[] } = {};
-    const unidentifiedRows: { rm: string; rowData: any }[] = [];
+    const unidentifiedRows: UnidentifiedRow[] = [];
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
@@ -162,14 +164,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         if (!rm) {
-            unidentifiedRows.push({ rm: 'РМ не указан', rowData: row });
+            unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
             continue;
         }
 
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
         if (parsedAddress.city === 'Город не определен') {
-            unidentifiedRows.push({ rm, rowData: row });
+            unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
@@ -188,11 +190,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             aggregatedData[key] = {
                 key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
                 region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                clients: new Set<string>(),
+                clients: new Map<string, MapPoint>(),
             };
         }
         aggregatedData[key].fact += weight;
-        aggregatedData[key].clients.add(finalAddress || clientName);
 
         if (hasPotentialColumn) {
             const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -242,7 +243,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
+                originalRow: row,
             });
+        }
+        
+        // Add the full MapPoint to the aggregation group
+        const mapPointForGroup = uniquePlottableClients.get(normalizedOriginalAddress);
+        if (mapPointForGroup) {
+            aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
         }
     }
     
@@ -261,7 +269,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
             potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
-            clients: Array.from(item.clients) 
+            clients: Array.from(item.clients.values()) 
         });
     }
 

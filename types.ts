@@ -10,7 +10,7 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthPercentage: number;
     potentialClients?: PotentialClient[];
-    clients: string[]; // List of individual client names/addresses in the group
+    clients: MapPoint[]; // List of individual client objects in the group
 }
 
 export type MapPointStatus = 'match' | 'potential';
@@ -29,6 +29,7 @@ export interface MapPoint {
     type: string;
     contacts?: string;
     isCached?: boolean; // To distinguish between new and cached clients on the map
+    originalRow: any; // To hold the full original data row for detailed viewing
 }
 
 export interface EnrichedParsedAddress {
@@ -57,6 +58,12 @@ export interface OkbDataRow {
     'Контакты'?: string;
     lat?: number;
     lon?: number;
+}
+
+export interface UnidentifiedRow {
+    rm: string;
+    rowData: any;
+    originalIndex: number;
 }
 
 export interface FilterOptions {
@@ -107,7 +114,7 @@ export type WorkerProgressPayload = {
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     plottableActiveClients: MapPoint[];
-    unidentifiedRows: { rm: string; rowData: any }[];
+    unidentifiedRows: UnidentifiedRow[];
 };
 export type WorkerErrorPayload = string;
 
