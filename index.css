@@ -32,3 +32,23 @@
     background-position: 1000px 0;
   }
 }
+
+@keyframes pulse-red-animation {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+.pulsing-marker-red {
+  animation: pulse-red-animation 2s infinite;
+  border-radius: 50%;
+}

@@ -8,6 +8,7 @@ import DetailsModal from './components/DetailsModal';
 import ClientsListModal from './components/ClientsListModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal';
+import RMDashboard from './components/RMDashboard';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
@@ -26,7 +27,7 @@ import {
     UnidentifiedRow,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { WarningIcon } from './components/icons';
+import { ChartBarIcon } from './components/icons';
 import type { FeatureCollection } from 'geojson';
 
 // FIX: Manually set the paths for Leaflet's default icons to point to the correct CDN URL.
@@ -63,6 +64,7 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false);
     const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
@@ -276,7 +278,7 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isControlPanelLocked = isLoading;
-    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
+    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
@@ -286,6 +288,16 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
+                    {isDataLoaded && (
+                         <button
+                            onClick={() => setIsRMDashboardOpen(true)}
+                            className="bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 shadow-lg border border-indigo-400/30"
+                            title="Открыть рейтинг менеджеров"
+                        >
+                            <ChartBarIcon />
+                            <span>Рейтинг РМ</span>
+                        </button>
+                    )}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -376,6 +388,12 @@ const App: React.FC = () => {
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
                 onDelete={handleClientDelete}
+            />
+            <RMDashboard
+                isOpen={isRMDashboardOpen}
+                onClose={() => setIsRMDashboardOpen(false)}
+                activeClients={filteredActiveClients}
+                okbStatus={okbStatus}
             />
         </div>
     );
