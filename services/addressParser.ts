@@ -135,16 +135,20 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     // 3. Construct Final Address (for display and geocoding)
     let finalAddress = originalAddress.trim();
     
-    // Heuristic to check if an address is incomplete (e.g., just a street) and needs enrichment from the distributor's city.
-    const addressLooksLikeStreetLevel = /\b(ул|улица|пр|проспект|пер|переулок|ш|шоссе|б-р|бульвар|пл|площадь|наб|набережная|аллея|линия|проезд|тупик)\b/i.test(originalAddress) || /\d/.test(originalAddress);
-    const canEnrichFromDistributor = !isCityInAddress && !regionFromKeywordInAddress && !!distributorCityCapitalized;
+    // Ключевое правило: обогащать адрес, только если он неполный.
+    // Адрес считается неполным, если в нем НЕ найден ни город/поселок/село, НИ название региона.
+    // При этом, в поле "Дистрибьютор" должен быть город для обогащения.
+    const isAddressIncomplete = !isCityInAddress && !regionFromKeywordInAddress;
+    const canEnrichFromDistributor = isAddressIncomplete && !!distributorCityCapitalized;
 
-    if (canEnrichFromDistributor && addressLooksLikeStreetLevel) {
-        // This is the special case: address is just a street, but we have a city from the distributor.
-        // Construct a full, geocodable address.
+    // Если адрес неполный (например, "ул. Койбагарова 15" или "рынок Чинай"),
+    // но мы можем получить город/регион от дистрибьютора, мы добавляем их в начало адреса,
+    // чтобы сделать его полным и пригодным для геокодинга.
+    if (canEnrichFromDistributor) {
         finalAddress = `${finalRegion}, ${finalCity}, ${originalAddress.trim()}`;
     } else {
-        // Standard behavior: Prepend region only if it's determined and NOT already explicitly present in the original address.
+        // Стандартное поведение: добавить регион, только если он был определен (не из самого адреса)
+        // и еще не присутствует в строке.
         if (finalRegion !== 'Регион не определен' && !regionFromKeywordInAddress) {
             finalAddress = `${finalRegion}, ${finalAddress}`;
         }
