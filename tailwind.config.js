@@ -8,7 +8,8 @@ export default {
   theme: {
     extend: {
         fontFamily: {
-            sans: ['Inter', 'sans-serif'],
+            sans: ['Geist', 'sans-serif'],
+            mono: ['Geist Mono', 'monospace'],
         },
         colors: {
             'primary-dark': '#111827',
