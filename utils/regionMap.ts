@@ -1154,4 +1154,5 @@ export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; index
   'камаши': { region: 'Республика Узбекистан', indexes: ['130600'], lat: 38.8000, lon: 66.4500 },
   'касан': { region: 'Республика Узбекистан', indexes: ['130700'], lat: 39.0333, lon: 65.5667 },
   'касби': { region: 'Республика Узбекистан', indexes: ['130800'], lat: 38.7333, lon: 65.5000 },
-  'миришкор': { region: 'Республика Узбекистан', indexes: ['130900'], lat: 38.8333, lon: 65.3
+  'миришкор': { region: 'Республика Узбекистан', indexes: ['130900'], lat: 38.8333, lon: 65.3333 },
+};
