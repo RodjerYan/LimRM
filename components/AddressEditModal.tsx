@@ -105,7 +105,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         cleanupTimers();
 
         const POLLING_INTERVAL = 3000;
-        const MASTER_TIMEOUT = 120000;
+        const MASTER_TIMEOUT = 48 * 60 * 60 * 1000; // 48 hours
 
         const performPoll = async () => {
             try {
@@ -149,7 +149,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         timeoutRef.current = setTimeout(() => {
             cleanupTimers();
             setStatus('error_geocoding');
-            setError('Не удалось получить координаты из кэша за 2 минуты.');
+            setError('Не удалось получить координаты из кэша за 48 часов.');
         }, MASTER_TIMEOUT);
     }, [onDataUpdate]);
 
@@ -292,7 +292,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
                              {status === 'geocoding' && (
                                 <div className="text-center text-cyan-400 flex items-center justify-center gap-2 p-2 bg-cyan-900/20 rounded-md">
-                                    <LoaderIcon /> <span>Процесс получения новых координат может занять до 2-х минут</span>
+                                    <LoaderIcon /> <span>Спасибо, новые координаты появятся в системе в течении 15 минут</span>
                                 </div>
                             )}
 
