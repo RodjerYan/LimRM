@@ -3,12 +3,12 @@ import React, { useEffect } from 'react';
 interface ModalProps {
     isOpen: boolean;
     onClose: () => void;
-    // FIX: Changed type from 'string' to 'React.ReactNode' to allow JSX elements in the title.
     title: React.ReactNode;
     children: React.ReactNode;
+    footer?: React.ReactNode;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
 
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {
@@ -35,9 +35,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
         >
             <div 
                 className="bg-card-bg/80 backdrop-blur-lg rounded-2xl shadow-2xl w-full max-w-6xl border border-indigo-500/20 transform animate-scale-in flex flex-col max-h-[95vh]"
-                onClick={(e) => e.stopPropagation()} // Prevent closing modal when clicking inside
+                onClick={(e) => e.stopPropagation()}
             >
-                {/* FIX: Reworked header to be more flexible for complex titles by using flex-grow on the title container. */}
                 <div className="flex items-center p-5 border-b border-gray-700 flex-shrink-0">
                     <div id="modal-title" className="flex-grow text-xl font-bold text-white">{title}</div>
                     <button 
@@ -53,14 +52,18 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
                 <div className="p-6 overflow-y-auto custom-scrollbar">
                     {children}
                 </div>
-                <div className="flex justify-end p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
-                    <button 
-                        onClick={onClose} 
-                        className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200"
-                    >
-                        Закрыть
-                    </button>
-                </div>
+                {footer !== undefined ? (
+                    <>{footer}</>
+                ) : (
+                    <div className="flex justify-end p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
+                        <button 
+                            onClick={onClose} 
+                            className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200"
+                        >
+                            Закрыть
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

@@ -30,6 +30,7 @@ import type { FeatureCollection } from 'geojson';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
+type ModalType = 'details' | 'clients' | 'unidentified';
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -48,6 +49,7 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
@@ -184,18 +186,28 @@ const App: React.FC = () => {
         mapElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, []);
 
-    const handleStartEdit = useCallback((data: MapPoint | UnidentifiedRow) => {
-        // Close other modals before opening the edit one
-        setIsClientsModalOpen(false);
-        setIsDetailsModalOpen(false);
-        setIsUnidentifiedModalOpen(false);
+    const handleStartEdit = useCallback((data: MapPoint | UnidentifiedRow, source: ModalType) => {
+        setModalHistory(prev => [...prev, source]);
+        
+        if (source === 'details') setIsDetailsModalOpen(false);
+        if (source === 'clients') setIsClientsModalOpen(false);
+        if (source === 'unidentified') setIsUnidentifiedModalOpen(false);
+        
         setEditingClient(data);
         setIsEditModalOpen(true);
     }, []);
 
+    const handleGoBackFromEdit = useCallback(() => {
+        const lastModal = modalHistory[modalHistory.length - 1];
+        setModalHistory(prev => prev.slice(0, -1));
+        setIsEditModalOpen(false);
+    
+        if (lastModal === 'details') setIsDetailsModalOpen(true);
+        if (lastModal === 'clients') setIsClientsModalOpen(true);
+        if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
+    }, [modalHistory]);
+
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
-        // This function handles both creating new points from unidentified rows
-        // and updating existing points, without closing the modal.
         setAllActiveClients(prev => {
             const existingIndex = prev.findIndex(c => c.key === oldKey);
             if (existingIndex > -1) {
@@ -207,7 +219,6 @@ const App: React.FC = () => {
             }
         });
     
-        // If the edited item was an unidentified row, remove it from that list.
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== oldKey;
@@ -312,32 +323,33 @@ const App: React.FC = () => {
                 ))}
             </div>
 
-            {/* FIX: Removed `onAddressUpdate` prop and ensured `onStartEdit` is correctly passed to handle the new editing flow. */}
             <DetailsModal 
                 isOpen={isDetailsModalOpen} 
                 onClose={() => setIsDetailsModalOpen(false)}
                 data={selectedDetailsRow}
                 okbStatus={okbStatus}
-                onStartEdit={handleStartEdit}
+                onStartEdit={(client) => handleStartEdit(client, 'details')}
             />
-            {/* FIX: Removed `onAddressUpdate` prop and ensured `onStartEdit` is correctly passed. */}
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
-                onStartEdit={handleStartEdit}
+                onStartEdit={(client) => handleStartEdit(client, 'clients')}
             />
-            {/* FIX: Corrected props for UnidentifiedRowsModal, passing `onStartEdit` instead of inline editing handlers. */}
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
-                onStartEdit={handleStartEdit}
+                onStartEdit={(row) => handleStartEdit(row, 'unidentified')}
             />
              <AddressEditModal
                 isOpen={isEditModalOpen}
-                onClose={() => setIsEditModalOpen(false)}
+                onClose={() => {
+                    setIsEditModalOpen(false);
+                    setModalHistory([]);
+                }}
+                onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
             />

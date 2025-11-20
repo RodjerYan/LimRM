@@ -5,12 +5,11 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow, EnrichedParsedAddress } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon, ArrowLeftIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'error_saving' | 'error_geocoding' | 'success_geocoding';
 
-// Define a custom green icon for successfully geocoded points.
 const greenIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -19,15 +18,16 @@ const greenIcon = new L.Icon({
     popupAnchor: [1, -34],
     shadowSize: [41, 41]
 });
+const blueIcon = new L.Icon.Default(); 
 
 interface AddressEditModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onBack: () => void;
   data: EditableData | null;
   onDataUpdate: (oldKey: string, newPoint: MapPoint) => void;
 }
 
-// A simple map component for the modal
 const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, isSuccess: boolean }> = ({ lat, lon, address, isSuccess }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
@@ -46,25 +46,24 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
         const map = mapRef.current;
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
-            map.setView(latLng, 15);
             
-            const iconToUse = isSuccess ? greenIcon : L.Icon.Default.prototype;
+            const iconToUse = isSuccess ? greenIcon : blueIcon;
 
             if (markerRef.current) {
                 markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             } else {
                 markerRef.current = L.marker(latLng, { icon: iconToUse }).addTo(map);
             }
-             markerRef.current.bindPopup(address).openPopup();
+             markerRef.current.bindPopup(address, { maxWidth: 350 }).openPopup();
+             map.setView(latLng, 15);
         } else {
-            map.setView([55.75, 37.61], 5); // Default to Moscow if no coords
+            map.setView([55.75, 37.61], 5);
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
         }
         
-        // Invalidate size after modal animation
         const timer = setTimeout(() => map.invalidateSize(), 400);
         return () => clearTimeout(timer);
 
@@ -74,7 +73,7 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
 };
 
 
-const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, data, onDataUpdate }) => {
+const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate }) => {
     const [editedAddress, setEditedAddress] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
@@ -90,7 +89,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
         timeoutRef.current = null;
     };
 
-    // Reset state when modal opens or data changes
     useEffect(() => {
         if (isOpen && data) {
             const currentAddress = (data as MapPoint).address || findAddressInRow((data as UnidentifiedRow).rowData) || '';
@@ -106,8 +104,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
     const startCoordPolling = useCallback((rmName: string, newAddress: string, parsedInfo: EnrichedParsedAddress, baseData: EditableData) => {
         cleanupTimers();
 
-        const POLLING_INTERVAL = 3000; // 3 seconds
-        const MASTER_TIMEOUT = 120000; // 2 minutes
+        const POLLING_INTERVAL = 3000;
+        const MASTER_TIMEOUT = 120000;
 
         const performPoll = async () => {
             try {
@@ -146,7 +144,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
             }
         };
 
-        performPoll(); // Attempt immediately
+        performPoll();
         pollingRef.current = setInterval(performPoll, POLLING_INTERVAL);
         timeoutRef.current = setTimeout(() => {
             cleanupTimers();
@@ -222,10 +220,27 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
     const displayLat = geocodedCoords?.lat ?? currentLat;
     const displayLon = geocodedCoords?.lon ?? currentLon;
 
+    const customFooter = (
+        <div className="flex justify-between items-center p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
+            <button
+                onClick={onBack}
+                className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
+                aria-label="Вернуться к предыдущему окну"
+            >
+                <ArrowLeftIcon /> Назад
+            </button>
+            <button
+                onClick={onClose}
+                className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200"
+            >
+                Закрыть
+            </button>
+        </div>
+    );
+
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle}>
+        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Left side: Details */}
                 <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 max-h-[60vh] overflow-y-auto custom-scrollbar">
                     <h4 className="font-bold text-lg mb-3 text-indigo-400">Исходные данные строки</h4>
                     <table className="w-full text-sm">
@@ -240,7 +255,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, da
                     </table>
                 </div>
 
-                {/* Right side: Map and Edit Form */}
                 <div className="space-y-4">
                     <div className="h-64">
                          <SinglePointMap lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status === 'success_geocoding'} />
