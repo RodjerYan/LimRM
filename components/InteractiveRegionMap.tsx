@@ -37,23 +37,15 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 };
 
 const MapLegend: React.FC = () => (
-     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700" style={{ color: 'white', maxWidth: '220px' }}>
-        <h4 className="font-bold text-sm mb-2">Легенда (ABC-Анализ)</h4>
-        <div className="flex items-center mb-1">
-            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#eab308' }}></i>
-            <span className="text-xs">Категория A (Топ 80%)</span>
-        </div>
+     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700" style={{ color: 'white', maxWidth: '200px' }}>
+        <h4 className="font-bold text-sm mb-2">Легенда</h4>
         <div className="flex items-center mb-1">
             <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#22c55e' }}></i>
-            <span className="text-xs">Категория B (80-95%)</span>
+            <span className="text-xs">Активные ТТ (из файла)</span>
         </div>
-         <div className="flex items-center mb-1">
-            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#9ca3af' }}></i>
-            <span className="text-xs">Категория C (остальные)</span>
-        </div>
-        <div className="flex items-center mt-2 pt-2 border-t border-gray-600">
-            <div className="mr-2 w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
-            <span className="text-xs">Риск оттока / Потенциал</span>
+        <div className="flex items-center">
+            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#3b82f6' }}></i>
+            <span className="text-xs">Потенциал (из ОКБ)</span>
         </div>
     </div>
 );
@@ -272,11 +264,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, [resetHighlight]);
     
-    const createPopupContent = (name: string, address: string, type: string, contacts?: string, extra?: string) => `
+    const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
         <b>${name}</b><br>
         ${address}<br>
         <small>${type || 'н/д'}</small>
-        ${extra ? `<br><span style="color: #fbbf24; font-weight: bold;">${extra}</span>` : ''}
         ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
     `;
     
@@ -297,53 +288,29 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClientMarkersLayer.current = L.layerGroup();
         activeClientMarkersRef.current.clear();
     
-        // Potential Clients (Churn Risk) - Pulsing Red
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(
                     findValueInRow(tt, ['наименование', 'клиент']),
                     findValueInRow(tt, ['юридический адрес', 'адрес']),
                     findValueInRow(tt, ['вид деятельности', 'тип']),
-                    findValueInRow(tt, ['контакты']),
-                    '⚠️ Риск оттока / Потенциал'
+                    findValueInRow(tt, ['контакты'])
                 );
-                
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
-                    fillColor: '#ef4444', // Red
-                    color: '#dc2626',
-                    radius: 5, 
-                    weight: 2, 
-                    opacity: 1, 
-                    fillOpacity: 0.8,
-                    className: 'pulsing-marker-red' // Add CSS class for pulse animation
+                    fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
     
-        // Active Clients - ABC Color Coding
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                let fillColor = '#9ca3af'; // Gray (C category default)
-                let color = '#4b5563';
-                let abcLabel = 'Категория C';
-
-                if (tt.abcCategory === 'A') {
-                    fillColor = '#eab308'; // Gold/Yellow
-                    color = '#a16207';
-                    abcLabel = 'Категория A (Топ)';
-                } else if (tt.abcCategory === 'B') {
-                    fillColor = '#22c55e'; // Green
-                    color = '#15803d';
-                    abcLabel = 'Категория B (Средние)';
-                }
-
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, abcLabel);
+                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
-                    fillColor: fillColor,
-                    color: color,
+                    fillColor: '#22c55e', // Green for all active clients
+                    color: '#16a34a',
                     radius: 5, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
@@ -352,7 +319,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         });
     
         map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Риск оттока / Потенциал");
+        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         
         map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
