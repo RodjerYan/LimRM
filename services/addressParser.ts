@@ -92,10 +92,11 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     let normalized = lowerAddress.replace(/[,;.]/g, ' ').replace(/\s+/g, ' ').trim();
 
     for (const [alias, canonical] of Object.entries(CITY_NORMALIZATION_MAP)) {
-        if (normalized.includes(alias)) {
-            normalized = normalized.replace(new RegExp(alias, 'g'), canonical);
-        }
+        normalized = normalized.replace(new RegExp(`\\b${alias}\\b`, 'g'), canonical);
     }
+    // After replacements, clean up multiple spaces that might have been introduced.
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+
 
     // 1. Determine City
     const cityFromAddress = getCityFromAddress(normalized); // Returns capitalized city or 'Город не определен'
@@ -139,7 +140,8 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     // Адрес считается неполным, если в нем НЕ найден ни город/поселок/село, НИ название региона.
     // При этом, в поле "Дистрибьютор" должен быть город для обогащения.
     const isAddressIncomplete = !isCityInAddress && !regionFromKeywordInAddress;
-    const canEnrichFromDistributor = isAddressIncomplete && !!distributorCityCapitalized;
+    const canEnrichFromDistributor = isAddressIncomplete && !!distributorCityCapitalized && finalRegion !== 'Регион не определен';
+
 
     // Если адрес неполный (например, "ул. Койбагарова 15" или "рынок Чинай"),
     // но мы можем получить город/регион от дистрибьютора, мы добавляем их в начало адреса,

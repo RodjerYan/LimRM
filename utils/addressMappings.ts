@@ -56,7 +56,10 @@ export const CITY_NORMALIZATION_MAP: Record<string, string> = {
   'пгт': '',
   'поселок': '',
   'пос.': '',
-  'пос ': ''
+  'пос ': '',
+  'село': '',
+  'с.': '',
+  'с ': ''
 };
 
 export const REGION_KEYWORD_MAP: Record<string, string> = {
