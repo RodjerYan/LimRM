@@ -135,15 +135,25 @@ export function parseRussianAddress(address: string, distributor?: string): Enri
     // 3. Construct Final Address (for display and geocoding)
     let finalAddress = originalAddress.trim();
     
-    // Prepend region only if it's determined and NOT already present in the original address.
-    if (finalRegion !== 'Регион не определен' && !regionFromKeywordInAddress) {
-        finalAddress = `${finalRegion}, ${finalAddress}`;
+    // Heuristic to check if an address is incomplete (e.g., just a street) and needs enrichment from the distributor's city.
+    const addressLooksLikeStreetLevel = /\b(ул|улица|пр|проспект|пер|переулок|ш|шоссе|б-р|бульвар|пл|площадь|наб|набережная|аллея|линия|проезд|тупик)\b/i.test(originalAddress) || /\d/.test(originalAddress);
+    const canEnrichFromDistributor = !isCityInAddress && !regionFromKeywordInAddress && !!distributorCityCapitalized;
+
+    if (canEnrichFromDistributor && addressLooksLikeStreetLevel) {
+        // This is the special case: address is just a street, but we have a city from the distributor.
+        // Construct a full, geocodable address.
+        finalAddress = `${finalRegion}, ${finalCity}, ${originalAddress.trim()}`;
+    } else {
+        // Standard behavior: Prepend region only if it's determined and NOT already explicitly present in the original address.
+        if (finalRegion !== 'Регион не определен' && !regionFromKeywordInAddress) {
+            finalAddress = `${finalRegion}, ${finalAddress}`;
+        }
     }
     
-    // Clean up potential duplicates if region was added but parts were already there (e.g. city name)
+    // Clean up potential duplicates if region/city was added but parts were already there.
     const parts = finalAddress.split(',').map(p => p.trim()).filter(Boolean);
     const uniqueParts = [];
-    const seen = new Set();
+    const seen = new Set<string>();
     for(const part of parts) {
         const lowerPart = part.toLowerCase();
         if(!seen.has(lowerPart)) {
