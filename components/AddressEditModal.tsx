@@ -5,10 +5,10 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow, EnrichedParsedAddress } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon, ArrowLeftIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon, ArrowLeftIcon, TrashIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'geocoding' | 'error_saving' | 'error_geocoding' | 'success_geocoding';
+type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 
 const greenIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
@@ -26,6 +26,7 @@ interface AddressEditModalProps {
   onBack: () => void;
   data: EditableData | null;
   onDataUpdate: (oldKey: string, newPoint: MapPoint) => void;
+  onDelete: (key: string) => void;
 }
 
 const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, isSuccess: boolean }> = ({ lat, lon, address, isSuccess }) => {
@@ -73,11 +74,12 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
 };
 
 
-const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate }) => {
+const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onDelete }) => {
     const [editedAddress, setEditedAddress] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
     const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lon: number } | null>(null);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -96,6 +98,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setStatus('idle');
             setError(null);
             setGeocodedCoords(null);
+            setShowDeleteConfirm(false);
         }
         return cleanupTimers;
     }, [isOpen, data]);
@@ -190,6 +193,36 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setError((e as Error).message);
         }
     };
+
+    const handleDelete = async () => {
+        if (!data) return;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const rm = findValueInRow(originalRow, ['рм']);
+
+        setStatus('deleting');
+        setError(null);
+
+        try {
+            const res = await fetch('/api/delete-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rmName: rm, address: addressToDelete }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.details || 'Ошибка при удалении строки.');
+            }
+            
+            const keyToDelete = normalizeAddress(addressToDelete);
+            onDelete(keyToDelete);
+
+        } catch (e) {
+            setStatus('error_deleting');
+            setError((e as Error).message);
+        }
+    };
     
     const handleRetryGeocode = () => {
         if (!data) return;
@@ -216,7 +249,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
 
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
-    const isProcessing = status === 'saving' || status === 'geocoding';
+    const isProcessing = status === 'saving' || status === 'geocoding' || status === 'deleting';
     const displayLat = geocodedCoords?.lat ?? currentLat;
     const displayLon = geocodedCoords?.lon ?? currentLon;
 
@@ -260,7 +293,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                          <SinglePointMap lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status === 'success_geocoding'} />
                     </div>
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                        <h4 className="font-bold text-lg mb-3 text-accent">Адрес для геокодирования</h4>
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="font-bold text-lg text-accent">Адрес для геокодирования</h4>
+                            {!showDeleteConfirm ? (
+                                <button 
+                                    onClick={() => setShowDeleteConfirm(true)}
+                                    className="text-danger hover:text-red-400 transition-colors flex items-center gap-1 text-sm"
+                                    title="Удалить строку"
+                                >
+                                    <TrashIcon />
+                                </button>
+                            ) : (
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-gray-300">Удалить?</span>
+                                    <button onClick={handleDelete} className="text-xs bg-danger hover:bg-red-600 text-white px-2 py-1 rounded">Да</button>
+                                    <button onClick={() => setShowDeleteConfirm(false)} className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded">Нет</button>
+                                </div>
+                            )}
+                        </div>
                         <div className="space-y-3">
                             <div>
                                 <label htmlFor="address-input" className="block text-sm font-medium text-gray-300 mb-1">Адрес ТТ LimKorm</label>
@@ -289,6 +339,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             {status === 'saving' && (
                                 <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение адреса в кэше...</div>
                             )}
+                            
+                            {status === 'deleting' && (
+                                <div className="text-center text-danger flex items-center justify-center gap-2"><LoaderIcon /> Удаление строки...</div>
+                            )}
 
                              {status === 'geocoding' && (
                                 <div className="text-center text-cyan-400 flex items-center justify-center gap-2 p-2 bg-cyan-900/20 rounded-md">
@@ -296,12 +350,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 </div>
                             )}
 
-                             {(status === 'error_saving' || status === 'error_geocoding') && (
+                             {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
                                 <div className="text-center text-danger space-y-2">
                                     <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
-                                    <button onClick={status === 'error_geocoding' ? handleRetryGeocode : handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-                                        <RetryIcon /> Повторить попытку
-                                    </button>
+                                    {status !== 'error_deleting' && (
+                                        <button onClick={status === 'error_geocoding' ? handleRetryGeocode : handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
+                                            <RetryIcon /> Повторить попытку
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </div>

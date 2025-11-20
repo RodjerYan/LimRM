@@ -131,6 +131,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number }>();
     const cacheRedirectMap = new Map<string, string>(); // normalized old address -> final correct address
+    const deletedAddresses = new Set<string>(); // Set of normalized addresses marked as deleted
 
     if (cacheData) {
         for (const rm of Object.keys(cacheData)) {
@@ -138,9 +139,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 if (item.address) {
                     const normalized = normalizeAddress(item.address);
                     
-                    // Populate redirect map if a corrected address exists
+                    // Handle Soft Delete logic
+                    if (item.isDeleted) {
+                        deletedAddresses.add(normalized);
+                        continue; // Don't add to other maps if deleted
+                    }
+
+                    // Populate redirect map if a corrected address exists in Column D.
+                    // LOGIC UPDATE: Column A (item.address) is the NEW, correct address.
+                    // Column D (item.correctedAddress) is the OLD address (history).
+                    // We want to map OLD -> NEW, so if we see OLD in the uploaded file, we swap it.
                     if (item.correctedAddress) {
-                        cacheRedirectMap.set(normalized, item.correctedAddress);
+                        const normalizedOld = normalizeAddress(item.correctedAddress);
+                        cacheRedirectMap.set(normalizedOld, item.address);
                     }
 
                     if (!cacheAddressMap.has(normalized)) {
@@ -176,14 +187,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             continue;
         }
 
-        // --- REDIRECT LOGIC ---
-        // Check if this address is known to have been corrected in the past.
-        // If so, silently swap it for the corrected version BEFORE parsing.
-        // This ensures we use the "good" address for region/city logic and coordinates.
+        // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
-            const normalizedRaw = normalizeAddress(clientAddress);
+            let normalizedRaw = normalizeAddress(clientAddress);
+            
+            // Check if original address is marked as deleted (rare, but possible)
+            if (deletedAddresses.has(normalizedRaw)) continue;
+
+            // Apply redirection (Old Address -> New Address)
             if (cacheRedirectMap.has(normalizedRaw)) {
                 clientAddress = cacheRedirectMap.get(normalizedRaw)!;
+                // Re-normalize the new address to check if IT is marked as deleted
+                normalizedRaw = normalizeAddress(clientAddress);
+                if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 

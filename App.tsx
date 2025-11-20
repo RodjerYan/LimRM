@@ -240,6 +240,19 @@ const App: React.FC = () => {
         
         addNotification('Данные успешно обновлены в фоновом режиме!', 'success');
     }, [addNotification]);
+
+    const handleClientDelete = useCallback((keyToDelete: string) => {
+        setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
+        
+        setUnidentifiedRows(prev => prev.filter(row => {
+            const originalAddress = findAddressInRow(row.rowData);
+            return normalizeAddress(originalAddress) !== keyToDelete;
+        }));
+        
+        setIsEditModalOpen(false);
+        setModalHistory([]);
+        addNotification('Строка успешно удалена.', 'success');
+    }, [addNotification]);
     
     const handleOkbStatusChange = (status: OkbStatus) => {
         setOkbStatus(status);
@@ -362,6 +375,7 @@ const App: React.FC = () => {
                 onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
+                onDelete={handleClientDelete}
             />
         </div>
     );

@@ -134,7 +134,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  * Fetches all data from the coordinate cache spreadsheet.
  * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
  */
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string }[]>> {
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string; isDeleted?: boolean }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await sheets.spreadsheets.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
@@ -150,7 +150,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         ranges,
     });
     
-    const cache: Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string }[]> = {};
+    const cache: Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string; isDeleted?: boolean }[]> = {};
     response.data.valueRanges?.forEach((valueRange) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) {
@@ -159,17 +159,22 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         const values = valueRange.values || [];
         if (values.length > 1) { // Skip header
             cache[title] = values.slice(1).map(row => {
-                const latStr = String(row[1] || '').replace(',', '.').trim();
-                const lonStr = String(row[2] || '').replace(',', '.').trim();
-                const lat = latStr ? parseFloat(latStr) : undefined;
-                const lon = lonStr ? parseFloat(lonStr) : undefined;
+                const latStr = String(row[1] || '').trim();
+                const lonStr = String(row[2] || '').trim();
+                
+                // Check for soft delete flag
+                const isDeleted = latStr === 'DELETED' || lonStr === 'DELETED';
+
+                const lat = (!isDeleted && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
+                const lon = (!isDeleted && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
                 const correctedAddress = row[3] ? String(row[3]).trim() : undefined;
 
                 return {
                     address: String(row[0] || '').trim(),
                     lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
                     lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
-                    correctedAddress: correctedAddress
+                    correctedAddress: correctedAddress,
+                    isDeleted: isDeleted
                 };
             }).filter(item => item.address); // Only include items with an address
         }
@@ -299,12 +304,16 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 }
 
 /**
- * Replaces an old address with a new one in the cache (case-insensitively) by setting a redirect.
- * Instead of overwriting the old address, we write the new address to column D (index 3) of the old row,
- * establishing a permanent redirect. Then we ensure the new address exists as a separate row.
+ * Replaces an old address with a new one in the cache (case-insensitively) by updating the existing row.
+ * REVISED LOGIC v2 (Overwrite + Redirect):
+ * 1. Finds the row with the old address (Col A).
+ * 2. Overwrites Col A with the NEW address.
+ * 3. Clears Col B and C (coordinates) to force re-geocoding.
+ * 4. Writes the OLD address to Col D (Redirect/History) so the system knows this change happened if the file is re-uploaded.
+ * This ensures the existing row is reused, preventing duplicates.
  * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced (source of redirect).
- * @param newAddress The new address (target of redirect).
+ * @param oldAddress The address to be replaced.
+ * @param newAddress The new address to replace it with.
  */
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
@@ -326,22 +335,64 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     }
     
     if (rowIndex !== -1) {
-        // If old address exists, add the new address as a redirect in Column D (index 3)
-        // We use Column D because A=Address, B=Lat, C=Lon
+        // Update the EXISTING row:
+        // Col A (Address) -> newAddress
+        // Col B (Lat) -> empty
+        // Col C (Lon) -> empty
+        // Col D (Redirect) -> oldAddress
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!D${rowIndex}`,
+            range: `'${actualSheetTitle}'!A${rowIndex}:D${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[newAddress]],
+                values: [[newAddress, '', '', oldAddress]],
+            },
+        });
+    } else {
+        // Fallback: If for some reason the old address isn't found, just append the new one.
+        await appendToCache(rmName, [[newAddress, '', '', '']]);
+    }
+}
+
+/**
+ * Deletes an address row from the cache.
+ * Performs a "Soft Delete" by writing 'DELETED' to the coordinate columns.
+ * This preserves the address in Col A (and potentially history in Col D) but marks it as ignored.
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param address The address to be deleted.
+ */
+export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A:A`,
+    });
+
+    const addressesInSheet = response.data.values?.flat() || [];
+    let rowIndex = -1;
+    const addressTrimmedLower = address.trim().toLowerCase();
+    for (let i = 0; i < addressesInSheet.length; i++) {
+        if (String(addressesInSheet[i]).trim().toLowerCase() === addressTrimmedLower) {
+            rowIndex = i + 1; // 1-based index
+            break;
+        }
+    }
+
+    if (rowIndex !== -1) {
+        // Update columns B and C (coords) to 'DELETED'
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [['DELETED', 'DELETED']],
             },
         });
     }
-    
-    // Always ensure the new address is added to the list so it can have coordinates
-    // appendToCache handles duplicate checks internally
-    await appendToCache(rmName, [[newAddress, '', '']]);
 }
+
 
 /**
  * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
@@ -361,7 +412,7 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     }
     const actualSheetTitle = existingSheet.properties.title;
 
-    // Fetch A:D to include redirects, though this specific function mainly cares about coords
+    // Fetch A:D to include redirects and check for deletion
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:D`,
@@ -376,10 +427,16 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     const foundRow = values.find(row => String(row[0] || '').trim().toLowerCase() === trimmedAddress);
 
     if (foundRow) {
-        const latStr = String(foundRow[1] || '').replace(',', '.').trim();
-        const lonStr = String(foundRow[2] || '').replace(',', '.').trim();
-        const lat = latStr ? parseFloat(latStr) : undefined;
-        const lon = lonStr ? parseFloat(lonStr) : undefined;
+        const latStr = String(foundRow[1] || '').trim();
+        const lonStr = String(foundRow[2] || '').trim();
+        
+        // Check if marked as deleted
+        if (latStr === 'DELETED' || lonStr === 'DELETED') {
+             return null; // Treat as not found
+        }
+
+        const lat = latStr ? parseFloat(latStr.replace(',', '.')) : undefined;
+        const lon = lonStr ? parseFloat(lonStr.replace(',', '.')) : undefined;
         
         return {
             address: String(foundRow[0]),
