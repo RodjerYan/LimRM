@@ -221,27 +221,31 @@ const App: React.FC = () => {
     }, [modalHistory]);
 
     // Improved data update handler that syncs all state slices
-    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
+    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         // 1. Update Active Clients (Flat list for map)
         setAllActiveClients(prev => {
-            // Remove old entry by key if it exists, then add/update new
-            const withoutOld = prev.filter(c => c.key !== oldKey);
-            return [...withoutOld, newPoint];
+            // If it's already in active clients, update it. If not, add it.
+            const exists = prev.some(c => c.key === oldKey);
+            if (exists) {
+                return prev.map(c => c.key === oldKey ? newPoint : c);
+            }
+            return [...prev, newPoint];
         });
     
-        // 2. Update Unidentified Rows (remove if fixed)
-        setUnidentifiedRows(prev => prev.filter(row => {
-            const originalAddress = findAddressInRow(row.rowData);
-            // We compare normalized addresses to ensure we target the correct row
-            return normalizeAddress(originalAddress) !== oldKey;
-        }));
+        // 2. Update Unidentified Rows
+        // If we have an index (reliable), remove by index. Otherwise remove by key (fallback).
+        if (typeof originalIndex === 'number') {
+            setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
+        } else {
+            setUnidentifiedRows(prev => prev.filter(row => {
+                const originalAddress = findAddressInRow(row.rowData);
+                return normalizeAddress(originalAddress) !== oldKey;
+            }));
+        }
 
         // 3. CRITICAL: Update Aggregated Data (allData) to reflect changes in Search and Tables
         setAllData(prevData => {
-            // First, create a deep copy to avoid mutation issues
             const newData = [...prevData];
-            
-            // Try to find if this client already exists in a group and update it
             let wasUpdated = false;
 
             for (let i = 0; i < newData.length; i++) {
@@ -249,22 +253,13 @@ const App: React.FC = () => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
                 
                 if (clientIndex !== -1) {
-                    // Client found in this group.
                     const oldClient = group.clients[clientIndex];
-                    
-                    // Update the client in the list
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
                     
-                    // If the Region or Brand changed, this client might need to move to a DIFFERENT group.
-                    // Ideally we should remove it from here and let the "add" logic handle it below,
-                    // but for simple address edits (same region), in-place update is fine.
-                    
-                    // Simple In-Place Update logic:
                     newData[i] = {
                         ...group,
                         clients: updatedClients,
-                        // Fact might technically change if we merged duplicates, but usually stays same for edit
                         fact: group.fact - (oldClient.fact || 0) + (newPoint.fact || 0)
                     };
                     wasUpdated = true;
@@ -273,8 +268,7 @@ const App: React.FC = () => {
             }
 
             if (!wasUpdated) {
-                // It wasn't in any existing group (was Unidentified), OR needs to be moved.
-                // Find target group matching the NEW point's metadata.
+                // Move from Unidentified (or new client) to Group
                 const targetGroupIndex = newData.findIndex(g => 
                     g.rm === newPoint.rm && 
                     g.brand === newPoint.brand && 
@@ -282,7 +276,6 @@ const App: React.FC = () => {
                 );
 
                 if (targetGroupIndex !== -1) {
-                    // Add to existing group
                     const group = newData[targetGroupIndex];
                     const updatedClients = [...group.clients, newPoint];
                     newData[targetGroupIndex] = {
@@ -292,7 +285,6 @@ const App: React.FC = () => {
                         potential: group.potential + ((newPoint.fact || 0) * 1.1), 
                     };
                 } else {
-                    // Create a new group
                     const newGroup: AggregatedDataRow = {
                         key: `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase(),
                         rm: newPoint.rm,
@@ -307,15 +299,12 @@ const App: React.FC = () => {
                         clients: [newPoint],
                         potentialClients: []
                     };
-                    // Prepend to make it visible
                     newData.unshift(newGroup);
                 }
             }
             return newData;
         });
         
-        // Don't spam notifications for coordinate updates (polling), only for significant actions if needed.
-        // But here we'll keep it simple.
     }, []);
 
     const handleClientDelete = useCallback((keyToDelete: string) => {

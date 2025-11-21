@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
-import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon } from './icons';
+import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon } from './icons';
 
 interface ClientsListModalProps {
     isOpen: boolean;
@@ -128,7 +128,14 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                         onClick={() => onStartEdit(row)} 
                                         title="Нажмите для редактирования"
                                     >
-                                        {row.address}
+                                        <div className="flex items-center gap-2">
+                                            {row.isGeocoding && (
+                                                <div className="text-cyan-400 animate-spin" title="Получение координат...">
+                                                    <LoaderIcon />
+                                                </div>
+                                            )}
+                                            <span>{row.address}</span>
+                                        </div>
                                     </td>
                                     <td className="px-4 py-3">{row.city}</td>
                                     <td className="px-4 py-3">{row.rm}</td>

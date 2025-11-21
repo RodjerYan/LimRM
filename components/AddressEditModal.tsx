@@ -25,7 +25,7 @@ interface AddressEditModalProps {
   onClose: () => void;
   onBack: () => void;
   data: EditableData | null;
-  onDataUpdate: (oldKey: string, newPoint: MapPoint) => void;
+  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
   onDelete: (key: string) => void;
 }
 
@@ -123,6 +123,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         setStatus('success_geocoding');
 
                         const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
+                        const originalIndex = (baseData as UnidentifiedRow).originalIndex;
                         
                         const newPoint: MapPoint = {
                             key: normalizeAddress(newAddress),
@@ -136,10 +137,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             type: findValueInRow(originalRow, ['канал продаж']),
                             contacts: findValueInRow(originalRow, ['контакты']),
                             originalRow: originalRow,
-                            fact: (baseData as MapPoint).fact // Preserve existing stats
+                            fact: (baseData as MapPoint).fact,
+                            isGeocoding: false // Coords found, stop spinner
                         };
                         // Update data AGAIN with coordinates
-                        onDataUpdate(tempKey, newPoint);
+                        onDataUpdate(tempKey, newPoint, originalIndex);
                     }
                 }
             } catch (e) {
@@ -160,11 +162,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (!data) return;
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const originalIndex = (data as UnidentifiedRow).originalIndex; // Will be undefined for MapPoint
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const oldKey = normalizeAddress(oldAddress);
 
         if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
-            if (!(data as any).originalIndex) { // Is Identified
+            if (!originalIndex && originalIndex !== 0) { // Is Identified (Active Client)
                  setStatus('error_saving');
                  setError('Адрес не был изменен или поле пустое.');
                  return;
@@ -206,11 +209,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 type: findValueInRow(originalRow, ['канал продаж']),
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow,
-                fact: (data as MapPoint).fact
+                fact: (data as MapPoint).fact,
+                isGeocoding: true // Show spinner in list
             };
             
             // Immediately update the app state so search/tables work
-            onDataUpdate(oldKey, tempNewPoint);
+            // Pass originalIndex so it can be removed from UnidentifiedRows if applicable
+            onDataUpdate(oldKey, tempNewPoint, originalIndex);
 
             // 2. Start polling for coordinates
             startCoordPolling(rm, editedAddress, parsed, data, tempNewPoint.key);
