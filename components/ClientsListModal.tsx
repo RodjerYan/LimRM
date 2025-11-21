@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
 import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon } from './icons';
@@ -10,6 +10,53 @@ interface ClientsListModalProps {
     onClientSelect: (client: MapPoint) => void;
     onStartEdit: (client: MapPoint) => void;
 }
+
+// Extracted Row Component to handle local animation state
+const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) => void }> = ({ client, onStartEdit }) => {
+    const [showSuccess, setShowSuccess] = useState(false);
+    const prevGeocoding = useRef(client.isGeocoding);
+
+    useEffect(() => {
+        // If it WAS geocoding, and NOW it's not, and we have coords -> Success!
+        if (prevGeocoding.current && !client.isGeocoding && client.lat && client.lon) {
+            setShowSuccess(true);
+            const timer = setTimeout(() => setShowSuccess(false), 3000);
+            return () => clearTimeout(timer);
+        }
+        prevGeocoding.current = client.isGeocoding;
+    }, [client.isGeocoding, client.lat, client.lon]);
+
+    return (
+        <tr className='border-b border-gray-700 hover:bg-indigo-500/10'>
+            <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{client.name}</th>
+            <td 
+                className="px-4 py-3 text-gray-400 cursor-pointer"
+                onClick={() => onStartEdit(client)} 
+                title="Нажмите для редактирования"
+            >
+                <div className="flex items-center gap-2">
+                    {client.isGeocoding && (
+                        <div className="text-cyan-400 animate-spin flex-shrink-0" title="Получение координат...">
+                            <LoaderIcon />
+                        </div>
+                    )}
+                    {showSuccess && (
+                        <div className="text-green-400 flex-shrink-0 animate-pulse" title="Координаты успешно обновлены">
+                            <CheckIcon />
+                        </div>
+                    )}
+                    <span className={`${client.isGeocoding ? "text-gray-300 font-medium" : ""} ${showSuccess ? "text-green-300 transition-colors duration-500" : ""}`}>
+                        {client.address}
+                    </span>
+                    {client.isGeocoding && <span className="text-xs text-cyan-500 italic whitespace-nowrap">(Поиск...)</span>}
+                </div>
+            </td>
+            <td className="px-4 py-3">{client.city}</td>
+            <td className="px-4 py-3">{client.rm}</td>
+            <td className="px-4 py-3">{client.brand}</td>
+        </tr>
+    );
+};
 
 const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onStartEdit }) => {
     const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'name', direction: 'ascending' });
@@ -121,27 +168,11 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                         </thead>
                         <tbody>
                             {paginatedData.map((row) => (
-                                <tr key={row.key} className='border-b border-gray-700 hover:bg-indigo-500/10'>
-                                    <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.name}</th>
-                                    <td 
-                                        className="px-4 py-3 text-gray-400 cursor-pointer"
-                                        onClick={() => onStartEdit(row)} 
-                                        title="Нажмите для редактирования"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            {row.isGeocoding && (
-                                                <div className="text-cyan-400 animate-spin" title="Получение координат...">
-                                                    <LoaderIcon />
-                                                </div>
-                                            )}
-                                            <span className={row.isGeocoding ? "text-gray-300" : ""}>{row.address}</span>
-                                            {row.isGeocoding && <span className="text-xs text-cyan-500 italic">(Поиск координат...)</span>}
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3">{row.city}</td>
-                                    <td className="px-4 py-3">{row.rm}</td>
-                                    <td className="px-4 py-3">{row.brand}</td>
-                                </tr>
+                                <ClientRow 
+                                    key={row.key} 
+                                    client={row} 
+                                    onStartEdit={onStartEdit} 
+                                />
                             ))}
                         </tbody>
                     </table>

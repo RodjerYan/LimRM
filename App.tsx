@@ -78,8 +78,8 @@ const App: React.FC = () => {
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
-    // Polling references to keep track of active background jobs
-    const activePolls = useRef<Set<string>>(new Set());
+    // Processing references
+    const processingQueue = useRef<Set<string>>(new Set());
 
     const isDataLoaded = allData.length > 0;
 
@@ -230,8 +230,13 @@ const App: React.FC = () => {
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
-                // Update existing
-                return prev.map(c => c.key === oldKey ? newPoint : c);
+                // Update existing. Preserve isGeocoding if it's not explicitly passed as false in newPoint
+                return prev.map(c => {
+                    if (c.key === oldKey) {
+                        return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
+                    }
+                    return c;
+                });
             } else {
                 // New client (was unidentified)
                 return [newPoint, ...prev];
@@ -255,14 +260,11 @@ const App: React.FC = () => {
                 
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
-                    updatedClients[clientIndex] = newPoint;
+                    updatedClients[clientIndex] = { ...newPoint, isGeocoding: newPoint.isGeocoding };
                     
                     newData[i] = {
                         ...group,
                         clients: updatedClients,
-                        // If moving from unidentified, 'oldKey' won't match, so we don't subtract. 
-                        // If editing existing, we subtract old fact and add new fact.
-                        // Simplification: Re-sum fact from clients
                         fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0)
                     };
                     wasUpdated = true;
@@ -307,53 +309,65 @@ const App: React.FC = () => {
             }
             return newData;
         });
+
+        // 4. CRITICAL: Sync editingClient state so Modal receives updates even if closed/reopened
+        setEditingClient(prev => {
+            if (!prev) return prev;
+            // If we are editing a known MapPoint
+            if ((prev as MapPoint).key === oldKey) {
+                 return { ...newPoint, isGeocoding: newPoint.isGeocoding };
+            }
+            // If we are editing an UnidentifiedRow that just got an ID/Coordinates
+            if ((prev as UnidentifiedRow).originalIndex === originalIndex) {
+                 // Morph it into the MapPoint
+                 return { ...newPoint, isGeocoding: newPoint.isGeocoding };
+            }
+            return prev;
+        });
+
     }, []);
 
-    // Background Polling Logic
-    const startCoordinatePolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
-        const pollKey = `${rmName}-${address}`;
-        if (activePolls.current.has(pollKey)) return; // Already polling
-        activePolls.current.add(pollKey);
+    // Replaced passive polling with active geocoding process
+    const performGeocoding = useCallback(async (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
+        const processKey = `${rmName}-${address}`;
+        if (processingQueue.current.has(processKey)) return;
+        processingQueue.current.add(processKey);
 
-        const POLLING_INTERVAL = 3000;
-        const MAX_ATTEMPTS = 120; // ~6 minutes
-        let attempts = 0;
+        try {
+            // 1. Actively request geocoding
+            const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
+            
+            if (geoRes.ok) {
+                const coords = await geoRes.json();
+                
+                // 2. Save successful coords to sheet
+                await fetch('/api/update-coords', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
+                });
 
-        const interval = setInterval(async () => {
-            attempts++;
-            try {
-                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
-                if (pollRes.ok) {
-                    const result = await pollRes.json();
-                    if (result && typeof result.lat === 'number' && typeof result.lon === 'number') {
-                        clearInterval(interval);
-                        activePolls.current.delete(pollKey);
-                        
-                        const finalPoint = { 
-                            ...basePoint, 
-                            lat: result.lat, 
-                            lon: result.lon, 
-                            isGeocoding: false 
-                        };
-                        
-                        handleDataUpdate(tempKey, finalPoint, originalIndex);
-                        addNotification(`Координаты для "${address}" успешно найдены.`, 'success');
-                        return;
-                    }
-                }
-            } catch (e) {
-                // console.error("Poll error", e);
+                // 3. Update State with SUCCESS
+                const finalPoint = { 
+                    ...basePoint, 
+                    lat: coords.lat, 
+                    lon: coords.lon, 
+                    isGeocoding: false 
+                };
+                
+                handleDataUpdate(tempKey, finalPoint, originalIndex);
+                addNotification(`Координаты найдены: ${address}`, 'success');
+            } else {
+                throw new Error('Geocode not found');
             }
-
-            if (attempts >= MAX_ATTEMPTS) {
-                clearInterval(interval);
-                activePolls.current.delete(pollKey);
-                // Update to stop spinner, but keep old coords (or lack thereof)
-                const failedPoint = { ...basePoint, isGeocoding: false };
-                handleDataUpdate(tempKey, failedPoint, originalIndex);
-                addNotification(`Не удалось найти координаты для "${address}" (таймаут).`, 'error');
-            }
-        }, POLLING_INTERVAL);
+        } catch (e) {
+            // 4. Update State with FAILURE (stop spinner)
+            const failedPoint = { ...basePoint, isGeocoding: false };
+            handleDataUpdate(tempKey, failedPoint, originalIndex);
+            addNotification(`Не удалось определить координаты: ${address}`, 'error');
+        } finally {
+            processingQueue.current.delete(processKey);
+        }
     }, [handleDataUpdate, addNotification]);
 
 
@@ -509,7 +523,7 @@ const App: React.FC = () => {
                 onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
-                onStartPolling={startCoordinatePolling}
+                onStartPolling={performGeocoding}
                 onDelete={handleClientDelete}
             />
         </div>

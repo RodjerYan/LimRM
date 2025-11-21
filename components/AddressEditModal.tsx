@@ -84,7 +84,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (isOpen && data) {
             const currentAddress = (data as MapPoint).address || findAddressInRow((data as UnidentifiedRow).rowData) || '';
             setEditedAddress(currentAddress);
-            setStatus('idle');
+            
+            // FIX: Check if the object is already in geocoding state.
+            // This ensures that if the modal is closed and reopened during the process, the UI reflects the ongoing status.
+            if ((data as MapPoint).isGeocoding) {
+                setStatus('geocoding');
+            } else {
+                setStatus('idle');
+            }
+            
             setError(null);
             setShowDeleteConfirm(false);
         }
@@ -96,7 +104,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-        const oldKey = normalizeAddress(oldAddress);
+        
+        // CRITICAL: Use exact existing key if available to prevent duplicates
+        let oldKey = '';
+        if ((data as MapPoint).key) {
+            oldKey = (data as MapPoint).key;
+        } else {
+            oldKey = normalizeAddress(oldAddress);
+        }
 
         if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
             if (typeof originalIndex !== 'number') { // Is Identified (Active Client)
@@ -111,6 +126,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         try {
             const rm = findValueInRow(originalRow, ['рм']);
+            // 1. Save text to Cache Sheet
             const res = await fetch('/api/update-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -121,16 +137,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
             }
 
-            // 1. Optimistic Update: Update text immediately so UI reflects changes
+            // 2. Optimistic Update: Update text immediately so UI reflects changes
             setStatus('geocoding');
             const distributor = findValueInRow(originalRow, ['дистрибьютор']);
             const parsed = parseRussianAddress(editedAddress, distributor);
             const currentLat = (data as MapPoint).lat;
             const currentLon = (data as MapPoint).lon;
 
-            // Create a temporary point with new address text but old coordinates (or undefined)
             const tempNewPoint: MapPoint = {
-                key: normalizeAddress(editedAddress),
+                key: normalizeAddress(editedAddress), // This becomes the new key
                 lat: currentLat, lon: currentLon, status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress,
@@ -148,7 +163,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // Immediately update the app state
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
 
-            // 2. Hand off polling to parent component (App.tsx)
+            // 3. Start Active Geocoding Process (Handled by App.tsx)
+            // This will fetch coords, save them to sheet, and update state again when done.
             onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
 
         } catch (e) {
@@ -178,7 +194,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при удалении строки.');
             }
             
-            const keyToDelete = normalizeAddress(addressToDelete);
+            // If we have a specific key, use it. Otherwise normalize address.
+            let keyToDelete = '';
+            if ((data as MapPoint).key) {
+                keyToDelete = (data as MapPoint).key;
+            } else {
+                keyToDelete = normalizeAddress(addressToDelete);
+            }
+            
             onDelete(keyToDelete);
 
         } catch (e) {
@@ -206,7 +229,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     
-    // We show currentLat/Lon if available, otherwise if status is geocoding we show loading map
     const displayLat = currentLat;
     const displayLon = currentLon;
 
@@ -298,10 +320,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                              {status === 'geocoding' && (
                                 <div className="flex flex-col gap-3 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30 animate-pulse">
                                     <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
-                                        <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
+                                        <LoaderIcon /> <span>Запрос на геокодирование...</span>
                                     </div>
                                     <div className="text-center text-xs text-gray-300">
-                                        Запрос отправлен. Поиск координат продолжится в фоне. Вы можете закрыть это окно.
+                                        Мы ищем координаты прямо сейчас. Этот процесс продолжится даже если вы закроете окно.
                                     </div>
                                 </div>
                             )}
