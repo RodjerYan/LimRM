@@ -144,6 +144,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
 
     const isProcessing = progress > 0 && progress < 100;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
+    // Only show the "Upload Base" overlay if the base is strictly NOT ready.
+    // If isBlocked is true due to 'disabled' (processing), we should NOT show this overlay.
+    const showBaseMissingOverlay = !okbStatus || okbStatus.status !== 'ready';
 
     return (
         <div className={`relative group transition-all duration-500 ${isBlocked ? 'opacity-50 grayscale' : ''}`}>
@@ -248,7 +251,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                     </div>
                 )}
 
-                {isBlocked && (
+                {showBaseMissingOverlay && (
                     <div className="absolute inset-0 z-20 bg-gray-900/60 backdrop-blur-[2px] flex items-center justify-center rounded-2xl border border-white/5">
                         <div className="bg-gray-800/90 p-4 rounded-xl border border-yellow-500/30 shadow-xl text-center max-w-[80%]">
                             <p className="text-yellow-400 text-sm font-medium">Сначала загрузите базу (Шаг 1)</p>

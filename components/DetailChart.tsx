@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
+import { FactIcon } from './icons';
 
 interface DetailChartProps {
     fact: number;
@@ -153,12 +154,39 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
 
     return (
         <div className="relative w-full h-full flex items-end">
-            {/* LEFT WIDGET: COMPLETION (Fact) */}
-            <div className="absolute top-0 left-4 flex flex-col items-start z-10 pointer-events-none">
-                <div className="text-left mb-1">
-                    <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Выполнение</span>
+            {/* LEFT WIDGET: FACT (Centered over left bar) */}
+            <div className="absolute top-0 left-[25%] -translate-x-1/2 flex flex-col items-center z-10 pointer-events-none whitespace-nowrap">
+                <div className="text-center mb-1">
+                    <span className="text-xs text-emerald-400 uppercase tracking-wider font-semibold">Выполнение</span>
                 </div>
                 <div className="flex items-center gap-3 bg-gray-800/80 backdrop-blur-md border border-white/10 rounded-2xl p-3 shadow-xl">
+                    <div className="p-2.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <FactIcon small />
+                    </div>
+                    <div className="flex flex-col items-start">
+                        <span className="text-2xl font-bold text-emerald-400">
+                            {new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(fact)}
+                        </span>
+                        <span className="text-[10px] text-gray-400">Текущий Факт</span>
+                    </div>
+                </div>
+            </div>
+
+            {/* RIGHT WIDGET: POTENTIAL & EXECUTION (Centered over right bar) */}
+            <div className="absolute top-0 right-[25%] translate-x-1/2 flex flex-col items-center z-10 pointer-events-none whitespace-nowrap">
+                <div className="text-center mb-1">
+                    <span className="text-xs text-indigo-400 uppercase tracking-wider font-semibold">Потенциал</span>
+                </div>
+                <div className="flex items-center gap-3 bg-gray-800/80 backdrop-blur-md border border-white/10 rounded-2xl p-3 shadow-xl">
+                     <div className="flex flex-col items-end">
+                        <span className="text-2xl font-bold text-indigo-400">
+                            {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(potential)}
+                        </span>
+                        <span className="text-[10px] text-yellow-400">
+                            Рост: +{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(gap)}
+                        </span>
+                    </div>
+                    {/* Potential Execution Circle moved here */}
                     <div className="relative w-12 h-12">
                         <svg className="w-full h-full transform -rotate-90">
                             <circle cx="24" cy="24" r="20" stroke="currentColor" strokeWidth="4" fill="transparent" className="text-gray-700" />
@@ -174,34 +202,6 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
                         <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-[10px] font-bold text-white">{percentage.toFixed(0)}%</span>
                         </div>
-                    </div>
-                    <div className="flex flex-col">
-                        <span className={`text-2xl font-bold ${percentage >= 80 ? 'text-emerald-400' : 'text-white'}`}>
-                            {new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(fact)}
-                        </span>
-                        <span className="text-[10px] text-gray-400">Текущий Факт</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* RIGHT WIDGET: POTENTIAL (Gap) */}
-            <div className="absolute top-0 right-4 flex flex-col items-end z-10 pointer-events-none">
-                <div className="text-right mb-1">
-                    <span className="text-xs text-gray-400 uppercase tracking-wider font-semibold">Потенциал</span>
-                </div>
-                <div className="flex items-center gap-3 bg-gray-800/80 backdrop-blur-md border border-white/10 rounded-2xl p-3 shadow-xl">
-                     <div className="flex flex-col items-end">
-                        <span className="text-2xl font-bold text-indigo-400">
-                            {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(potential)}
-                        </span>
-                        <span className="text-[10px] text-yellow-400">
-                            Рост: +{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(gap)}
-                        </span>
-                    </div>
-                    <div className="relative w-12 h-12 flex items-center justify-center bg-indigo-500/10 rounded-full border border-indigo-500/20">
-                         <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-                        </svg>
                     </div>
                 </div>
             </div>
