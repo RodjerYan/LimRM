@@ -225,64 +225,61 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
-    // --- ROBUST DATA UPDATE LOGIC ---
+    // --- FULL SYNCHRONIZATION LOGIC ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         
-        // 1. Update Active Clients (Flat list for map and list view)
+        // 1. Update the flat list of active clients (used for Map and List Modal)
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
                 return prev.map(c => {
+                    // Replace the old client object entirely with the new one
                     if (c.key === oldKey) {
                         return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
                     }
                     return c;
                 });
             } else {
+                // It's a new client (e.g., from Unidentified list)
                 return [newPoint, ...prev];
             }
         });
     
-        // 2. Update Unidentified Rows
+        // 2. Remove from Unidentified Rows if applicable
         if (typeof originalIndex === 'number') {
             setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
         }
 
-        // 3. Update Aggregated Data (The core complex logic)
+        // 3. Update Aggregated Data (Grouped Rows in Main Table)
         setAllData(prevData => {
-            // Create a deep copy or map to avoid mutation
             const nextData = [...prevData];
             
-            // A. Find the client in the existing groups and remove it.
-            // It could be in any group, not just the one we expect, due to key changes.
-            let foundOldGroupIndex = -1;
-            let removedClientWeight = 0;
+            // Step A: Find the client in ANY existing group and remove it.
+            // We need to search all groups because changing address might change the grouping key.
+            // Also, we need to find which group was modified to update the UI.
+            let oldGroupIndex = -1;
+            let oldGroupRef: AggregatedDataRow | null = null;
 
-            // We scan all groups because the client might have been in a group with a different key
-            // (e.g. before region was corrected)
             for (let i = 0; i < nextData.length; i++) {
                 const group = nextData[i];
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 
                 if (clientIndex !== -1) {
-                    foundOldGroupIndex = i;
-                    removedClientWeight = group.clients[clientIndex].fact || 0;
+                    oldGroupIndex = i;
+                    oldGroupRef = group;
                     
-                    // Remove client
+                    const clientFact = group.clients[clientIndex].fact || 0;
                     const newClientsList = [...group.clients];
-                    newClientsList.splice(clientIndex, 1);
-                    
-                    // Update the group metrics
-                    const newFact = Math.max(0, group.fact - removedClientWeight);
-                    // Recalculate potential to keep it consistent (fact * multiplier or fixed)
-                    // Here we assume potential stays relative to remaining items, or fixed if hardcoded.
-                    // For simplicity, we reduce growth potential.
-                    const newGrowth = Math.max(0, group.potential - newFact);
+                    newClientsList.splice(clientIndex, 1); // Remove
                     
                     if (newClientsList.length === 0) {
-                        // Mark for deletion if empty
-                        nextData[i] = null as any; 
+                        // Mark group for deletion
+                        nextData[i] = null as any;
                     } else {
+                        // Update metrics for the old group
+                        const newFact = Math.max(0, group.fact - clientFact);
+                        const newGrowth = Math.max(0, group.potential - newFact);
+                        
                         nextData[i] = {
                             ...group,
                             clients: newClientsList,
@@ -291,53 +288,57 @@ const App: React.FC = () => {
                             growthPercentage: group.potential > 0 ? (newGrowth / group.potential) * 100 : 0
                         };
                     }
-                    break; // Found it
+                    break; // Found the client, stop searching
                 }
             }
 
-            // Filter out nulls (deleted groups)
+            // Clean up deleted groups
             const cleanedData = nextData.filter(Boolean);
 
-            // B. Add to the Target Group (New or Existing)
-            // Logic for target group key based on NEW properties
+            // Step B: Determine where the client SHOULD go (New Grouping Key)
+            // The key depends on Region, Brand, RM. If any changed, it moves groups.
             const targetKey = `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase();
             const targetGroupIndex = cleanedData.findIndex(g => g.key === targetKey);
+
+            let updatedGroupRef: AggregatedDataRow;
 
             if (targetGroupIndex !== -1) {
                 // Add to existing group
                 const group = cleanedData[targetGroupIndex];
-                const updatedClients = [newPoint, ...group.clients];
+                const updatedClients = [newPoint, ...group.clients]; // Prepend new/updated client
                 
-                // --- FORCE RENAME LOGIC ---
-                // If the group now has 1 client (the one we just added/moved), 
-                // OR if the previous name was generic/wrong, we force update the name.
+                // Recalculate metrics
+                const newFact = group.fact + (newPoint.fact || 0);
+                const newGrowth = Math.max(0, group.potential - newFact);
+                
+                // --- DYNAMIC RENAMING ---
+                // If this group has only 1 client (the one we just edited/added),
+                // update the group name to match that client.
+                // This ensures the Table Row Name updates when the address updates.
                 let newClientName = group.clientName;
-                
-                // If we are editing a single client row, we want the row name to reflect the change immediately.
-                // Use Name if present, else Address.
-                const displayName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
-
                 if (updatedClients.length === 1) {
-                     newClientName = displayName;
-                } 
-                // If the group name matches the *old* address (unlikely but possible), update it.
-                // Safer: if it's a single-point group, always sync.
+                    newClientName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
+                }
 
-                cleanedData[targetGroupIndex] = {
+                updatedGroupRef = {
                     ...group,
                     clientName: newClientName,
+                    city: newPoint.city !== 'Город не определен' ? newPoint.city : group.city, // Update city if better
                     clients: updatedClients,
-                    fact: group.fact + (newPoint.fact || 0),
-                    potential: group.potential, // Keep existing potential of group
-                    growthPotential: Math.max(0, group.potential - (group.fact + (newPoint.fact || 0))),
-                    // Recalculate percentage
-                    growthPercentage: group.potential > 0 ? (Math.max(0, group.potential - (group.fact + (newPoint.fact || 0))) / group.potential) * 100 : 0
+                    fact: newFact,
+                    growthPotential: newGrowth,
+                    growthPercentage: group.potential > 0 ? (newGrowth / group.potential) * 100 : 0
                 };
-            } else {
-                // Create New Group
-                const displayName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
                 
-                const newGroup: AggregatedDataRow = {
+                cleanedData[targetGroupIndex] = updatedGroupRef;
+
+            } else {
+                // Create a NEW Group
+                const displayName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
+                const newPotential = (newPoint.fact || 0) * 1.15;
+                const newGrowth = Math.max(0, newPotential - (newPoint.fact || 0));
+
+                updatedGroupRef = {
                     key: targetKey,
                     rm: newPoint.rm,
                     brand: newPoint.brand,
@@ -345,77 +346,53 @@ const App: React.FC = () => {
                     city: newPoint.city,
                     clientName: displayName,
                     fact: newPoint.fact || 0,
-                    potential: (newPoint.fact || 0) * 1.15, // Default potential logic
-                    growthPotential: 0,
-                    growthPercentage: 0,
+                    potential: newPotential,
+                    growthPotential: newGrowth,
+                    growthPercentage: newPotential > 0 ? (newGrowth / newPotential) * 100 : 0,
                     clients: [newPoint],
                     potentialClients: []
                 };
-                // Recalculate initial growth
-                newGroup.growthPotential = Math.max(0, newGroup.potential - newGroup.fact);
-                if (newGroup.potential > 0) {
-                    newGroup.growthPercentage = (newGroup.growthPotential / newGroup.potential) * 100;
-                }
-
-                cleanedData.unshift(newGroup);
+                cleanedData.unshift(updatedGroupRef);
             }
 
-            // --- SYNC OPEN DETAILS MODAL ---
-            // If the user has a modal open for the group we just modified, we MUST update the state 
-            // for that modal so they see the changes immediately.
+            // Step C: Synchronize the Open Details Modal
+            // If the user has a modal open, we must update its data source.
             if (selectedDetailsRow) {
-                // Check if the open modal corresponds to the OLD group (which might be gone or changed)
-                // or the NEW group.
+                // 1. If we are editing the client that belongs to the CURRENTLY OPEN group
+                // We need to replace selectedDetailsRow with the updated version of that group.
                 
-                // 1. Did we just modify the group currently open?
-                const updatedGroup = cleanedData.find(g => g.key === targetKey);
-                
-                // If the open row key matches the new target key, update it.
-                if (selectedDetailsRow.key === targetKey && updatedGroup) {
-                    setSelectedDetailsRow(updatedGroup);
-                } 
-                // Or if the open row key matched the *old* group index (if we tracked by index, but we track by object/key)
-                // We just search if the *old* group was the one open.
-                else if (foundOldGroupIndex !== -1) {
-                     // If we removed it from the old group, and the old group is still there (not null), update it.
-                     // Note: 'prevData[foundOldGroupIndex]' was the old group object.
-                     // We need to see if selectedDetailsRow matches that old object reference or key.
-                     if (selectedDetailsRow.key === prevData[foundOldGroupIndex]?.key) {
-                         // The user was looking at the old group.
-                         // If the client moved OUT of this group, we should update the view of this group
-                         // to show the client is gone.
-                         const oldGroupUpdated = cleanedData.find(g => g.key === selectedDetailsRow.key);
-                         if (oldGroupUpdated) {
-                             setSelectedDetailsRow(oldGroupUpdated);
-                         } else {
-                             // The group was deleted (empty). Close the modal or show the new group?
-                             // Showing the new group is better UX if they were editing the only item.
-                             if (updatedGroup) {
-                                 setSelectedDetailsRow(updatedGroup);
-                             } else {
-                                 setIsDetailsModalOpen(false);
-                             }
-                         }
-                     }
+                // Did the client move INTO the group we are looking at?
+                if (selectedDetailsRow.key === targetKey) {
+                    setSelectedDetailsRow(updatedGroupRef);
+                }
+                // Did the client move OUT OF the group we are looking at?
+                else if (oldGroupRef && selectedDetailsRow.key === oldGroupRef.key) {
+                    // Find the updated version of the old group in cleanedData
+                    const oldGroupUpdated = cleanedData.find(g => g.key === oldGroupRef!.key);
+                    if (oldGroupUpdated) {
+                        setSelectedDetailsRow(oldGroupUpdated);
+                    } else {
+                        // Group was deleted (became empty). Show the NEW group instead, so the user isn't lost.
+                        setSelectedDetailsRow(updatedGroupRef);
+                    }
                 }
             }
 
             return cleanedData;
         });
 
-        // 4. Sync editingClient state
+        // 4. Sync the editingClient state itself (so the modal reflects changes if kept open)
         setEditingClient(prev => {
             if (!prev) return prev;
-            if ((prev as MapPoint).key === oldKey) {
-                 return { ...newPoint, isGeocoding: newPoint.isGeocoding };
-            }
-            if ((prev as UnidentifiedRow).originalIndex === originalIndex) {
-                 return { ...newPoint, isGeocoding: newPoint.isGeocoding };
-            }
-            return prev;
+            // Preserve the object type (MapPoint vs UnidentifiedRow) but update fields
+            return { 
+                ...prev, 
+                ...newPoint, 
+                key: newPoint.key // Ensure key is updated
+            };
         });
 
-    }, [selectedDetailsRow]); // Dependency on selectedDetailsRow is important for the sync logic
+    }, [selectedDetailsRow]); // Dependency needed to access current modal state
 
     const MAX_POLL_TIME = 48 * 60 * 60 * 1000; 
 

@@ -207,10 +207,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const currentLon = (data as MapPoint).lon;
             const updateTimestamp = Date.now();
 
+            // EXPLICIT NAME CHECK: If no name is found, use 'Без названия' to allow App.tsx logic to work.
+            let clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
+            if (!clientName || clientName.trim() === '') {
+                clientName = 'Без названия'; 
+            }
+
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
                 lat: currentLat, lon: currentLon, status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'Без названия', // Correct fallback
+                name: clientName,
                 address: editedAddress,
                 city: parsed.city,
                 region: parsed.region,

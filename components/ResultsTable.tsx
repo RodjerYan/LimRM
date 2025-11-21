@@ -46,18 +46,20 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
             
             // Check individual clients within the group
             return item.clients.some(client => {
-                // 1. Check the normalized/displayed address
+                // 1. Check the normalized/displayed address (The "New" Value)
                 if (client.address.toLowerCase().includes(lowercasedFilter)) return true;
                 
                 // 2. Check the client name
                 if (client.name.toLowerCase().includes(lowercasedFilter)) return true;
 
-                // 3. Check the original raw address from the source file
-                // This ensures that searching for "As written in Excel" works even if parsed differently
+                // REMOVED: Searching in originalRow.
+                // This ensures searching for the OLD address returns nothing if it was corrected.
+                /*
                 if (client.originalRow) {
                     const rawAddress = findAddressInRow(client.originalRow);
                     if (rawAddress && rawAddress.toLowerCase().includes(lowercasedFilter)) return true;
                 }
+                */
                 
                 return false;
             });
