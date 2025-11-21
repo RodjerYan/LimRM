@@ -25,7 +25,7 @@ import {
     MapPoint,
     UnidentifiedRow,
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress, findValueInRow } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -89,6 +89,11 @@ const App: React.FC = () => {
             return rmMatch && brandMatch && regionMatch;
         });
     }, [allActiveClients, filters, isDataLoaded]);
+
+    // Update filteredData whenever allData or filters change
+    useEffect(() => {
+        setFilteredData(applyFilters(allData, filters));
+    }, [allData, filters]);
 
     const summaryMetrics = useMemo<SummaryMetrics | null>(() => {
         if (!isDataLoaded) {
@@ -220,99 +225,185 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
-    // Improved data update handler that syncs all state slices including lastUpdated
+    // --- ROBUST DATA UPDATE LOGIC ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         
         // 1. Update Active Clients (Flat list for map and list view)
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
-                // Update existing
                 return prev.map(c => {
                     if (c.key === oldKey) {
-                        // Merge all new props including lastUpdated
-                        return { 
-                            ...newPoint, 
-                            isGeocoding: newPoint.isGeocoding ?? c.isGeocoding 
-                        };
+                        return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
                     }
                     return c;
                 });
             } else {
-                // New client (was unidentified)
                 return [newPoint, ...prev];
             }
         });
     
-        // 2. Update Unidentified Rows (Remove if it was one)
+        // 2. Update Unidentified Rows
         if (typeof originalIndex === 'number') {
             setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
         }
 
-        // 3. Update Aggregated Data (allData) to reflect changes in Search and Tables
+        // 3. Update Aggregated Data (The core complex logic)
         setAllData(prevData => {
-            const newData = [...prevData];
-            let wasUpdated = false;
+            // Create a deep copy or map to avoid mutation
+            const nextData = [...prevData];
+            
+            // A. Find the client in the existing groups and remove it.
+            // It could be in any group, not just the one we expect, due to key changes.
+            let foundOldGroupIndex = -1;
+            let removedClientWeight = 0;
 
-            // Try to find existing client in groups
-            for (let i = 0; i < newData.length; i++) {
-                const group = newData[i];
-                const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
+            // We scan all groups because the client might have been in a group with a different key
+            // (e.g. before region was corrected)
+            for (let i = 0; i < nextData.length; i++) {
+                const group = nextData[i];
+                const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 
                 if (clientIndex !== -1) {
-                    const updatedClients = [...group.clients];
-                    // Update client preserving all properties from newPoint including lastUpdated
-                    updatedClients[clientIndex] = { ...newPoint, isGeocoding: newPoint.isGeocoding };
+                    foundOldGroupIndex = i;
+                    removedClientWeight = group.clients[clientIndex].fact || 0;
                     
-                    newData[i] = {
-                        ...group,
-                        clients: updatedClients,
-                        fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0)
-                    };
-                    wasUpdated = true;
-                    break; 
+                    // Remove client
+                    const newClientsList = [...group.clients];
+                    newClientsList.splice(clientIndex, 1);
+                    
+                    // Update the group metrics
+                    const newFact = Math.max(0, group.fact - removedClientWeight);
+                    // Recalculate potential to keep it consistent (fact * multiplier or fixed)
+                    // Here we assume potential stays relative to remaining items, or fixed if hardcoded.
+                    // For simplicity, we reduce growth potential.
+                    const newGrowth = Math.max(0, group.potential - newFact);
+                    
+                    if (newClientsList.length === 0) {
+                        // Mark for deletion if empty
+                        nextData[i] = null as any; 
+                    } else {
+                        nextData[i] = {
+                            ...group,
+                            clients: newClientsList,
+                            fact: newFact,
+                            growthPotential: newGrowth,
+                            growthPercentage: group.potential > 0 ? (newGrowth / group.potential) * 100 : 0
+                        };
+                    }
+                    break; // Found it
                 }
             }
 
-            // If not found in existing groups (e.g. was Unidentified), find target group or create new
-            if (!wasUpdated) {
-                const targetGroupIndex = newData.findIndex(g => 
-                    g.rm === newPoint.rm && 
-                    g.brand === newPoint.brand && 
-                    g.region === newPoint.region
-                );
+            // Filter out nulls (deleted groups)
+            const cleanedData = nextData.filter(Boolean);
 
-                if (targetGroupIndex !== -1) {
-                    const group = newData[targetGroupIndex];
-                    const updatedClients = [newPoint, ...group.clients];
-                    newData[targetGroupIndex] = {
-                        ...group,
-                        clients: updatedClients,
-                        fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0),
-                        potential: group.potential + ((newPoint.fact || 0) * 1.2),
-                    };
-                } else {
-                    const newGroup: AggregatedDataRow = {
-                        key: `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase(),
-                        rm: newPoint.rm,
-                        brand: newPoint.brand,
-                        region: newPoint.region,
-                        city: newPoint.city,
-                        clientName: `${newPoint.region} (${newPoint.brand})`,
-                        fact: newPoint.fact || 0,
-                        potential: (newPoint.fact || 0) * 1.2,
-                        growthPotential: 0,
-                        growthPercentage: 0,
-                        clients: [newPoint],
-                        potentialClients: []
-                    };
-                    newData.unshift(newGroup);
+            // B. Add to the Target Group (New or Existing)
+            // Logic for target group key based on NEW properties
+            const targetKey = `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase();
+            const targetGroupIndex = cleanedData.findIndex(g => g.key === targetKey);
+
+            if (targetGroupIndex !== -1) {
+                // Add to existing group
+                const group = cleanedData[targetGroupIndex];
+                const updatedClients = [newPoint, ...group.clients];
+                
+                // --- FORCE RENAME LOGIC ---
+                // If the group now has 1 client (the one we just added/moved), 
+                // OR if the previous name was generic/wrong, we force update the name.
+                let newClientName = group.clientName;
+                
+                // If we are editing a single client row, we want the row name to reflect the change immediately.
+                // Use Name if present, else Address.
+                const displayName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
+
+                if (updatedClients.length === 1) {
+                     newClientName = displayName;
+                } 
+                // If the group name matches the *old* address (unlikely but possible), update it.
+                // Safer: if it's a single-point group, always sync.
+
+                cleanedData[targetGroupIndex] = {
+                    ...group,
+                    clientName: newClientName,
+                    clients: updatedClients,
+                    fact: group.fact + (newPoint.fact || 0),
+                    potential: group.potential, // Keep existing potential of group
+                    growthPotential: Math.max(0, group.potential - (group.fact + (newPoint.fact || 0))),
+                    // Recalculate percentage
+                    growthPercentage: group.potential > 0 ? (Math.max(0, group.potential - (group.fact + (newPoint.fact || 0))) / group.potential) * 100 : 0
+                };
+            } else {
+                // Create New Group
+                const displayName = (newPoint.name && newPoint.name !== 'Без названия') ? newPoint.name : newPoint.address;
+                
+                const newGroup: AggregatedDataRow = {
+                    key: targetKey,
+                    rm: newPoint.rm,
+                    brand: newPoint.brand,
+                    region: newPoint.region,
+                    city: newPoint.city,
+                    clientName: displayName,
+                    fact: newPoint.fact || 0,
+                    potential: (newPoint.fact || 0) * 1.15, // Default potential logic
+                    growthPotential: 0,
+                    growthPercentage: 0,
+                    clients: [newPoint],
+                    potentialClients: []
+                };
+                // Recalculate initial growth
+                newGroup.growthPotential = Math.max(0, newGroup.potential - newGroup.fact);
+                if (newGroup.potential > 0) {
+                    newGroup.growthPercentage = (newGroup.growthPotential / newGroup.potential) * 100;
+                }
+
+                cleanedData.unshift(newGroup);
+            }
+
+            // --- SYNC OPEN DETAILS MODAL ---
+            // If the user has a modal open for the group we just modified, we MUST update the state 
+            // for that modal so they see the changes immediately.
+            if (selectedDetailsRow) {
+                // Check if the open modal corresponds to the OLD group (which might be gone or changed)
+                // or the NEW group.
+                
+                // 1. Did we just modify the group currently open?
+                const updatedGroup = cleanedData.find(g => g.key === targetKey);
+                
+                // If the open row key matches the new target key, update it.
+                if (selectedDetailsRow.key === targetKey && updatedGroup) {
+                    setSelectedDetailsRow(updatedGroup);
+                } 
+                // Or if the open row key matched the *old* group index (if we tracked by index, but we track by object/key)
+                // We just search if the *old* group was the one open.
+                else if (foundOldGroupIndex !== -1) {
+                     // If we removed it from the old group, and the old group is still there (not null), update it.
+                     // Note: 'prevData[foundOldGroupIndex]' was the old group object.
+                     // We need to see if selectedDetailsRow matches that old object reference or key.
+                     if (selectedDetailsRow.key === prevData[foundOldGroupIndex]?.key) {
+                         // The user was looking at the old group.
+                         // If the client moved OUT of this group, we should update the view of this group
+                         // to show the client is gone.
+                         const oldGroupUpdated = cleanedData.find(g => g.key === selectedDetailsRow.key);
+                         if (oldGroupUpdated) {
+                             setSelectedDetailsRow(oldGroupUpdated);
+                         } else {
+                             // The group was deleted (empty). Close the modal or show the new group?
+                             // Showing the new group is better UX if they were editing the only item.
+                             if (updatedGroup) {
+                                 setSelectedDetailsRow(updatedGroup);
+                             } else {
+                                 setIsDetailsModalOpen(false);
+                             }
+                         }
+                     }
                 }
             }
-            return newData;
+
+            return cleanedData;
         });
 
-        // 4. Sync editingClient state so Modal receives updates even if closed/reopened
+        // 4. Sync editingClient state
         setEditingClient(prev => {
             if (!prev) return prev;
             if ((prev as MapPoint).key === oldKey) {
@@ -324,7 +415,7 @@ const App: React.FC = () => {
             return prev;
         });
 
-    }, []);
+    }, [selectedDetailsRow]); // Dependency on selectedDetailsRow is important for the sync logic
 
     const MAX_POLL_TIME = 48 * 60 * 60 * 1000; 
 
@@ -335,6 +426,7 @@ const App: React.FC = () => {
 
         const startTime = Date.now();
 
+        // Initiate backend geocoding via Nominatim (server-side proxy)
         fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
             .then(res => res.ok ? res.json() : null)
             .then(coords => {
@@ -377,170 +469,226 @@ const App: React.FC = () => {
                 setTimeout(check, 5000); // Check every 5 seconds
 
             } catch (e) {
-                console.error("Polling stopped:", e);
-                const failedPoint = { ...basePoint, isGeocoding: false };
-                handleDataUpdate(tempKey, failedPoint, originalIndex);
-                addNotification(`Время ожидания координат истекло: ${address}`, 'error');
+                console.error("Polling error", e);
                 processingQueue.current.delete(processKey);
             }
         };
 
         check();
-
     }, [handleDataUpdate, addNotification]);
 
-
-    const handleClientDelete = useCallback((keyToDelete: string) => {
+    const handleDeleteAddress = useCallback((keyToDelete: string) => {
+        // 1. Remove from Active Clients
         setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
         
-        setUnidentifiedRows(prev => prev.filter(row => {
-            const originalAddress = findAddressInRow(row.rowData);
-            return normalizeAddress(originalAddress) !== keyToDelete;
-        }));
-
+        // 2. Remove from Aggregated Data
         setAllData(prevData => {
-            return prevData.map(group => {
+            const nextData = [...prevData];
+            let found = false;
+            for (let i = 0; i < nextData.length; i++) {
+                const group = nextData[i];
                 const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
                 if (clientIndex !== -1) {
-                    const clientFact = group.clients[clientIndex].fact || 0;
-                    return {
-                        ...group,
-                        clients: group.clients.filter(c => c.key !== keyToDelete),
-                        fact: Math.max(0, group.fact - clientFact)
-                    };
+                    const removedFact = group.clients[clientIndex].fact || 0;
+                    const newClients = [...group.clients];
+                    newClients.splice(clientIndex, 1);
+                    
+                    if (newClients.length === 0) {
+                        nextData[i] = null as any;
+                    } else {
+                        nextData[i] = {
+                            ...group,
+                            clients: newClients,
+                            fact: Math.max(0, group.fact - removedFact),
+                            growthPotential: Math.max(0, group.potential - (group.fact - removedFact))
+                        };
+                    }
+                    found = true;
+                    break;
                 }
-                return group;
-            }).filter(group => group.clients.length > 0);
+            }
+            const cleaned = nextData.filter(Boolean);
+            
+            // If we deleted the client from the currently open details modal
+            if (found && selectedDetailsRow) {
+                const updatedGroup = cleaned.find(g => g.key === selectedDetailsRow.key);
+                if (updatedGroup) {
+                    setSelectedDetailsRow(updatedGroup);
+                } else {
+                    setIsDetailsModalOpen(false);
+                }
+            }
+            return cleaned;
         });
-        
-        setIsEditModalOpen(false);
-        setModalHistory([]);
-        addNotification('Строка успешно удалена.', 'success');
-    }, [addNotification]);
-    
-    const handleOkbStatusChange = (status: OkbStatus) => {
-        setOkbStatus(status);
-        if (status.status === 'ready' && status.message) addNotification(status.message, 'success');
-        if (status.status === 'error' && status.message) addNotification(status.message, 'error');
-    };
-    
-    const handleClientSelectFromModal = useCallback((client: MapPoint) => {
-        setIsClientsModalOpen(false);
-        flyToClient(client);
-    }, [flyToClient]);
-    
-    useEffect(() => {
-        setIsLoading(true);
-        const timer = setTimeout(() => {
-            const result = applyFilters(allData, filters);
-            setFilteredData(result);
-            setIsLoading(false);
-        }, 100);
-        return () => clearTimeout(timer);
-    }, [allData, filters]);
 
-    const isControlPanelLocked = isLoading;
-    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
+        // 3. Close edit modal
+        setIsEditModalOpen(false);
+        
+        // 4. Restore previous modal
+        const lastModal = modalHistory[modalHistory.length - 1];
+        setModalHistory(prev => prev.slice(0, -1));
+        if (lastModal === 'details' && isDetailsModalOpen) setIsDetailsModalOpen(true); 
+        if (lastModal === 'clients') setIsClientsModalOpen(true);
+        if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
+
+        addNotification('Адрес успешно удален.', 'info');
+    }, [modalHistory, isDetailsModalOpen, selectedDetailsRow, addNotification]);
+
 
     return (
-        <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
-            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
-                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
-                        <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
+        <div className="min-h-screen bg-primary-dark text-white font-sans overflow-x-hidden">
+            
+            {/* Background Overlay */}
+            <div className="fixed inset-0 z-0 pointer-events-none">
+                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/20 rounded-full blur-[120px]"></div>
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-900/20 rounded-full blur-[120px]"></div>
+            </div>
+
+            <div className="relative z-10 container mx-auto px-4 py-8 max-w-7xl">
+                
+                {/* Header */}
+                <header className="mb-10 flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-gradient-to-br from-indigo-600 to-purple-600 p-3 rounded-xl shadow-lg shadow-indigo-500/20">
+                            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 7m0 13V7m0 0L9 7"></path></svg>
+                        </div>
+                        <div>
+                            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">Гео-Анализ Рынка</h1>
+                            <p className="text-sm text-gray-400">Инструмент планирования продаж Limkorm</p>
+                        </div>
+                    </div>
+                    
+                    {/* Notification Container */}
+                    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+                        {notifications.map(n => (
+                            <Notification key={n.id} message={n.message} type={n.type} />
+                        ))}
                     </div>
                 </header>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                    <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
-                        <OKBManagement 
-                            onStatusChange={handleOkbStatusChange}
-                            onDataChange={setOkbData}
-                            status={okbStatus}
-                            disabled={isControlPanelLocked}
-                        />
-                        <FileUpload 
-                            onFileProcessed={handleFileProcessed}
-                            onProcessingStateChange={handleProcessingStateChange}
+
+                {/* Main Content Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    
+                    {/* Left Sidebar: Controls */}
+                    <div className="lg:col-span-3 space-y-8">
+                        <DataControl 
+                            onDataLoaded={handleFileProcessed}
+                            onLoadingStateChange={handleProcessingStateChange}
+                            onOkbStatusChange={setOkbStatus}
+                            onOkbDataChange={setOkbData}
                             okbData={okbData}
                             okbStatus={okbStatus}
-                            disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
+                            disabled={isLoading}
                         />
-                        <Filters
+                        <Filters 
                             options={filterOptions}
                             currentFilters={filters}
                             onFilterChange={handleFilterChange}
                             onReset={resetFilters}
-                            disabled={!isDataLoaded || isLoading}
+                            disabled={!isDataLoaded}
                         />
-                    </aside>
+                    </div>
 
-                    <div className="lg:col-span-3 space-y-6">
+                    {/* Right Content: Visualization & Data */}
+                    <div className="lg:col-span-9 space-y-8">
                         <MetricsSummary 
-                            metrics={summaryMetrics} 
-                            okbStatus={okbStatus} 
-                            disabled={!isDataLoaded || isLoading}
+                            metrics={summaryMetrics}
+                            okbStatus={okbStatus}
+                            disabled={!isDataLoaded}
                             onActiveClientsClick={() => setIsClientsModalOpen(true)}
                         />
                         
-                        <InteractiveRegionMap 
-                            data={filteredData} 
-                            selectedRegions={filters.region} 
+                        {/* Interactive Map */}
+                        <InteractiveRegionMap
+                            data={filteredData}
+                            selectedRegions={filters.region}
                             potentialClients={potentialClients}
                             activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
                         />
 
+                        <PotentialChart data={filteredData} />
+                        
                         <ResultsTable 
-                            data={filteredData} 
-                            onRowClick={handleRowClick} 
-                            disabled={!isDataLoaded || isLoading}
+                            data={filteredData}
+                            onRowClick={handleRowClick}
+                            disabled={!isDataLoaded}
                             unidentifiedRowsCount={unidentifiedRows.length}
                             onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
                         />
-                        {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                     </div>
                 </div>
-            </main>
-            <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
-                {notifications.map(n => (
-                    <Notification key={n.id} message={n.message} type={n.type} />
-                ))}
             </div>
 
+            {/* Modals */}
             <DetailsModal 
-                isOpen={isDetailsModalOpen} 
+                isOpen={isDetailsModalOpen}
                 onClose={() => setIsDetailsModalOpen(false)}
                 data={selectedDetailsRow}
                 okbStatus={okbStatus}
                 onStartEdit={(client) => handleStartEdit(client, 'details')}
             />
-            <ClientsListModal 
-                isOpen={isClientsModalOpen} 
+
+            <ClientsListModal
+                isOpen={isClientsModalOpen}
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
-                onClientSelect={handleClientSelectFromModal}
+                onClientSelect={(client) => {
+                    setIsClientsModalOpen(false);
+                    flyToClient(client);
+                }}
                 onStartEdit={(client) => handleStartEdit(client, 'clients')}
             />
+
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
                 onStartEdit={(row) => handleStartEdit(row, 'unidentified')}
             />
-             <AddressEditModal
+
+            <AddressEditModal
                 isOpen={isEditModalOpen}
                 onClose={() => {
                     setIsEditModalOpen(false);
-                    setModalHistory([]);
+                    setModalHistory([]); 
                 }}
                 onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
                 onStartPolling={pollSheetForCoordinates}
-                onDelete={handleClientDelete}
+                onDelete={handleDeleteAddress}
+            />
+
+        </div>
+    );
+};
+
+// Small wrapper component to fix the import issue in the original file structure
+const DataControl: React.FC<{
+    onDataLoaded: (data: WorkerResultPayload) => void;
+    onLoadingStateChange: (isLoading: boolean, message: string) => void;
+    onOkbStatusChange: (status: OkbStatus) => void;
+    onOkbDataChange: (data: OkbDataRow[]) => void;
+    okbData: OkbDataRow[];
+    okbStatus: OkbStatus | null;
+    disabled: boolean;
+}> = (props) => {
+    return (
+        <div className="space-y-6">
+            <OKBManagement 
+                onStatusChange={props.onOkbStatusChange}
+                onDataChange={props.onOkbDataChange}
+                status={props.okbStatus}
+                disabled={props.disabled}
+            />
+            <FileUpload 
+                onFileProcessed={props.onDataLoaded}
+                onProcessingStateChange={props.onLoadingStateChange}
+                okbData={props.okbData}
+                okbStatus={props.okbStatus}
+                disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'}
             />
         </div>
     );

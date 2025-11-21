@@ -210,7 +210,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
                 lat: currentLat, lon: currentLon, status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'Без названия', // Correct fallback
                 address: editedAddress,
                 city: parsed.city,
                 region: parsed.region,
