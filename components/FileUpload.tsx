@@ -58,9 +58,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             switch (type) {
                 case 'progress':
                     if (payload.isBackground) {
-                        // FIX: If background tasks are finished, clear the message immediately
+                        // FIX: If background tasks are finished (100% or 'completed' message), clear the message immediately
                         // to remove the "eternally spinning slider" and text.
-                        if (payload.message.toLowerCase().includes('завершен')) {
+                        if (payload.percentage === 100 || payload.message.toLowerCase().includes('завершен')) {
                             setBackgroundMessage(null);
                         } else {
                             setBackgroundMessage(payload.message);
@@ -144,9 +144,11 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
 
     const isProcessing = progress > 0 && progress < 100;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
-    // Only show the "Upload Base" overlay if the base is strictly NOT ready.
-    // If isBlocked is true due to 'disabled' (processing), we should NOT show this overlay.
-    const showBaseMissingOverlay = !okbStatus || okbStatus.status !== 'ready';
+    
+    // FIX: Only show the "Upload Base" overlay if the base is strictly NOT ready
+    // AND we are NOT currently processing a file (fileName is null).
+    // This prevents the overlay from appearing on top of the progress bar during upload.
+    const showBaseMissingOverlay = (!okbStatus || okbStatus.status !== 'ready') && !isProcessing && !fileName;
 
     return (
         <div className={`relative group transition-all duration-500 ${isBlocked ? 'opacity-50 grayscale' : ''}`}>

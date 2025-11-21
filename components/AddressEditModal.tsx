@@ -5,10 +5,11 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
+type Theme = 'dark' | 'light';
 
 const greenIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
@@ -36,22 +37,37 @@ const SinglePointMap: React.FC<{
     address: string; 
     isSuccess: boolean;
     onCoordinatesChange: (lat: number, lon: number) => void;
-}> = ({ lat, lon, address, isSuccess, onCoordinatesChange }) => {
+    theme: Theme;
+    onToggleTheme: () => void;
+    onExpand?: () => void;
+    onCollapse?: () => void;
+    isExpanded?: boolean;
+}> = ({ lat, lon, address, isSuccess, onCoordinatesChange, theme, onToggleTheme, onExpand, onCollapse, isExpanded }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
+    const tileLayerRef = useRef<L.TileLayer | null>(null);
+
+    const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
     useEffect(() => {
         if (!mapContainerRef.current) return;
 
         if (!mapRef.current) {
-            mapRef.current = L.map(mapContainerRef.current, { scrollWheelZoom: false });
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; OpenStreetMap &copy; CARTO',
-            }).addTo(mapRef.current);
+            mapRef.current = L.map(mapContainerRef.current, { scrollWheelZoom: true });
         }
 
         const map = mapRef.current;
+        const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
+
+        if (!tileLayerRef.current) {
+            tileLayerRef.current = L.tileLayer(targetUrl, {
+                attribution: '&copy; OpenStreetMap &copy; CARTO',
+            }).addTo(map);
+        } else {
+            tileLayerRef.current.setUrl(targetUrl);
+        }
         
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
@@ -83,8 +99,8 @@ const SinglePointMap: React.FC<{
              
              markerRef.current.bindPopup(`<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`, { maxWidth: 350 });
              
-             // Only fly to view if it's a significant change or init
-             map.setView(latLng, 15);
+             // Only fly to view if needed
+             map.setView(latLng, isExpanded ? 16 : 15);
         } else {
             map.setView([55.75, 37.61], 5);
             if (markerRef.current) {
@@ -96,9 +112,42 @@ const SinglePointMap: React.FC<{
         const timer = setTimeout(() => map.invalidateSize(), 400);
         return () => clearTimeout(timer);
 
-    }, [lat, lon, address, isSuccess, onCoordinatesChange]);
+    }, [lat, lon, address, isSuccess, onCoordinatesChange, theme, isExpanded]);
 
-    return <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move" />;
+    return (
+        <div className="relative h-full w-full">
+            <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
+            
+            {/* Map Controls Overlay */}
+            <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+                <button 
+                    onClick={onToggleTheme}
+                    className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                    title={theme === 'dark' ? "Светлая тема" : "Темная тема"}
+                >
+                    {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                </button>
+                
+                {isExpanded ? (
+                    <button 
+                        onClick={onCollapse}
+                        className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                        title="Свернуть карту"
+                    >
+                        <MinimizeIcon />
+                    </button>
+                ) : (
+                    <button 
+                        onClick={onExpand}
+                        className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                        title="Развернуть карту"
+                    >
+                        <MaximizeIcon />
+                    </button>
+                )}
+            </div>
+        </div>
+    );
 };
 
 
@@ -115,6 +164,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     // State for manually selected coordinates
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     
+    // UI States for map
+    const [mapTheme, setMapTheme] = useState<Theme>('dark');
+    const [isMapExpanded, setIsMapExpanded] = useState(false);
+
     const justSaved = useRef(false);
 
     const fetchHistory = async (rmName: string, address: string) => {
@@ -144,6 +197,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             // Reset manual coords on open
             setManualCoords(null);
+            setIsMapExpanded(false);
             
             if ((data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
@@ -333,6 +387,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
+    const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
 
@@ -347,6 +402,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     // Display coordinates: prefer manual selection if active, otherwise fallback to current data
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
+
+    // Determine save button text
+    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
+    const isCoordsChanged = manualCoords !== null;
+    
+    let saveButtonText = "Сохранить и найти координаты";
+    if (isCoordsChanged && !isAddressChanged) {
+        saveButtonText = "Сохранить новые координаты";
+    } else if (isAddressChanged && !isCoordsChanged) {
+        saveButtonText = "Сохранить новый адрес";
+    } else if (isAddressChanged && isCoordsChanged) {
+        saveButtonText = "Сохранить все изменения";
+    }
 
     const customFooter = (
         <div className="flex justify-between items-center p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
@@ -426,6 +494,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             address={editedAddress} 
                             isSuccess={false}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
+                            theme={mapTheme}
+                            onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                            onExpand={() => setIsMapExpanded(true)}
+                            isExpanded={false}
                          />
                     </div>
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
@@ -472,13 +544,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             )}
                             
                             {status === 'idle' && (
-                                <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-                                    <SaveIcon /> Сохранить и найти координаты
+                                <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                                    <SaveIcon /> {saveButtonText}
                                 </button>
                             )}
                             
                             {status === 'saving' && (
-                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение адреса в кэше...</div>
+                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение изменений...</div>
                             )}
                             
                             {status === 'deleting' && (
@@ -510,6 +582,42 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                 </div>
             </div>
+
+            {/* Full Screen Map Modal */}
+            {isMapExpanded && (
+                <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
+                    <div className="flex justify-between items-center p-4 bg-gray-900/80 backdrop-blur-sm border-b border-gray-700">
+                        <h3 className="text-lg font-bold text-white">Уточнение координат: {editedAddress}</h3>
+                        <button 
+                            onClick={() => setIsMapExpanded(false)}
+                            className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
+                        >
+                            Закрыть
+                        </button>
+                    </div>
+                    <div className="flex-grow relative">
+                        <SinglePointMap 
+                            lat={displayLat} 
+                            lon={displayLon} 
+                            address={editedAddress} 
+                            isSuccess={false}
+                            onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
+                            theme={mapTheme}
+                            onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                            onCollapse={() => setIsMapExpanded(false)}
+                            isExpanded={true}
+                        />
+                    </div>
+                    <div className="p-4 bg-gray-900/80 backdrop-blur-sm border-t border-gray-700 flex justify-end gap-3">
+                         <div className="text-sm text-gray-400 flex items-center mr-4">
+                            Перетащите маркер в нужное место. Координаты обновятся автоматически.
+                         </div>
+                         <button onClick={() => setIsMapExpanded(false)} className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg">
+                            Применить и вернуться
+                         </button>
+                    </div>
+                </div>
+            )}
         </Modal>
     );
 };
