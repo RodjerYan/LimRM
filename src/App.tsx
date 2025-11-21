@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
-import Filters from './components/Filters';
-import MetricsSummary from './components/MetricsSummary';
-import ResultsTable from './components/ResultsTable';
-import PotentialChart from './components/PotentialChart';
-import DetailsModal from './components/DetailsModal';
-import ClientsListModal from './components/ClientsListModal';
-import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
-import AddressEditModal from './components/AddressEditModal';
-import Notification from './components/Notification';
-import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import OKBManagement from './components/OKBManagement';
-import FileUpload from './components/FileUpload';
-import InteractiveRegionMap from './components/InteractiveRegionMap'; 
+import Filters from '../components/Filters';
+import MetricsSummary from '../components/MetricsSummary';
+import ResultsTable from '../components/ResultsTable';
+import PotentialChart from '../components/PotentialChart';
+import DetailsModal from '../components/DetailsModal';
+import ClientsListModal from '../components/ClientsListModal';
+import UnidentifiedRowsModal from '../components/UnidentifiedRowsModal';
+import AddressEditModal from '../components/AddressEditModal';
+import Notification from '../components/Notification';
+import ApiKeyErrorDisplay from '../components/ApiKeyErrorDisplay';
+import OKBManagement from '../components/OKBManagement';
+import FileUpload from '../components/FileUpload';
+import InteractiveRegionMap from '../components/InteractiveRegionMap'; 
 import AuthPage from './components/Auth/AuthPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { 
@@ -26,10 +26,10 @@ import {
     WorkerResultPayload,
     MapPoint,
     UnidentifiedRow,
-} from './types';
+} from '../types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
-import { SunIcon, MoonIcon, ArrowLeftIcon } from './components/icons';
+import { SunIcon, MoonIcon, ArrowLeftIcon } from '../components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -136,7 +136,7 @@ const DashboardContent: React.FC = () => {
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
-        const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
+        const activeAddressesSet = new Set(allActiveClients.map((c: MapPoint) => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
             const normalizedAddress = normalizeAddress(address);
@@ -148,7 +148,7 @@ const DashboardContent: React.FC = () => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => {
-            setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
+            setNotifications(prev => prev.filter((n: NotificationMessage) => n.id !== newNotification.id));
         }, 5000);
     }, []);
 
@@ -242,9 +242,9 @@ const DashboardContent: React.FC = () => {
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         setAllActiveClients(prev => {
-            const exists = prev.some(c => c.key === oldKey);
+            const exists = prev.some((c: MapPoint) => c.key === oldKey);
             if (exists) {
-                return prev.map(c => {
+                return prev.map((c: MapPoint) => {
                     if (c.key === oldKey) {
                         return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
                     }
@@ -265,7 +265,7 @@ const DashboardContent: React.FC = () => {
 
             for (let i = 0; i < newData.length; i++) {
                 const group = newData[i];
-                const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
+                const clientIndex = group.clients.findIndex((c: MapPoint) => c.key === oldKey || c.key === newPoint.key);
                 
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
@@ -394,19 +394,19 @@ const DashboardContent: React.FC = () => {
 
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
-        setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
+        setAllActiveClients(prev => prev.filter((c: MapPoint) => c.key !== keyToDelete));
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== keyToDelete;
         }));
         setAllData(prevData => {
             return prevData.map(group => {
-                const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
+                const clientIndex = group.clients.findIndex((c: MapPoint) => c.key === keyToDelete);
                 if (clientIndex !== -1) {
                     const clientFact = group.clients[clientIndex].fact || 0;
                     return {
                         ...group,
-                        clients: group.clients.filter(c => c.key !== keyToDelete),
+                        clients: group.clients.filter((c: MapPoint) => c.key !== keyToDelete),
                         fact: Math.max(0, group.fact - clientFact)
                     };
                 }
@@ -520,7 +520,7 @@ const DashboardContent: React.FC = () => {
                 </div>
             </main>
             <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
-                {notifications.map(n => (
+                {notifications.map((n: NotificationMessage) => (
                     <Notification key={n.id} message={n.message} type={n.type} />
                 ))}
             </div>
@@ -530,20 +530,20 @@ const DashboardContent: React.FC = () => {
                 onClose={() => setIsDetailsModalOpen(false)}
                 data={selectedDetailsRow}
                 okbStatus={okbStatus}
-                onStartEdit={(client) => handleStartEdit(client, 'details')}
+                onStartEdit={(client: MapPoint) => handleStartEdit(client, 'details')}
             />
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
-                onStartEdit={(client) => handleStartEdit(client, 'clients')}
+                onStartEdit={(client: MapPoint) => handleStartEdit(client, 'clients')}
             />
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
-                onStartEdit={(row) => handleStartEdit(row, 'unidentified')}
+                onStartEdit={(row: UnidentifiedRow) => handleStartEdit(row, 'unidentified')}
             />
              <AddressEditModal
                 isOpen={isEditModalOpen}

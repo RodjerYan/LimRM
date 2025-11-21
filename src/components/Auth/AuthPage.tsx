@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import ReCAPTCHA from "react-google-recaptcha";
 import { useAuth } from '../../context/AuthContext';
-import { LoaderIcon, ErrorIcon, SuccessIcon } from '../icons';
+import { LoaderIcon, ErrorIcon, SuccessIcon } from '../../../components/icons';
 
 const RECAPTCHA_SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI'; // Standard Test Key
 

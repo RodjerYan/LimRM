@@ -4,7 +4,7 @@ import {
   FilterOptions,
   SummaryMetrics,
   OkbDataRow,
-} from '../types';
+} from '../../types';
 import { REGION_KEYWORD_MAP } from './addressMappings';
 import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
