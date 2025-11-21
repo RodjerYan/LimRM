@@ -131,6 +131,22 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 // --- NEW FUNCTIONS FOR COORDINATE CACHE ---
 
 /**
+ * Helper function to check if a specific address exists in a history string.
+ * Handles timestamp stripping and various separators.
+ */
+function isAddressInHistory(historyString: string, targetAddress: string): boolean {
+    if (!historyString) return false;
+    // Split by newline (new format) or double pipe (old format)
+    const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
+    return entries.some(entry => {
+        // Remove the timestamp part: " [DD.MM.YYYY HH:mm]"
+        // We split by '[' and take the first part to be safe against varied date formats
+        const addrPart = entry.split('[')[0].trim().toLowerCase();
+        return addrPart === targetAddress;
+    });
+}
+
+/**
  * Fetches all data from the coordinate cache spreadsheet.
  * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
  */
@@ -330,74 +346,68 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
+    // Fetch A:D to check both current addresses and history
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${actualSheetTitle}'!A:A`,
+        range: `'${actualSheetTitle}'!A:D`,
     });
 
-    const addressesInSheet = response.data.values?.flat() || [];
+    const rows = response.data.values || [];
     const oldAddressTrimmedLower = oldAddress.trim().toLowerCase();
     const newAddressTrimmedLower = newAddress.trim().toLowerCase();
 
-    let oldRowIndex = -1;
-    let newRowIndex = -1;
+    let rowIndexToUpdate = -1;
 
-    for (let i = 0; i < addressesInSheet.length; i++) {
-        const currentVal = String(addressesInSheet[i]).trim().toLowerCase();
-        if (currentVal === oldAddressTrimmedLower) oldRowIndex = i + 1; // 1-based index
-        if (currentVal === newAddressTrimmedLower) newRowIndex = i + 1;
-    }
+    // 1. First, try to find if the "New Address" already exists as a main row.
+    // If so, we should probably merge/update that one instead of creating a duplicate.
+    const existingNewIndex = rows.findIndex(row => String(row[0] || '').trim().toLowerCase() === newAddressTrimmedLower);
     
+    // 2. Try to find the "Old Address" in Column A (Active)
+    const existingOldIndex = rows.findIndex(row => String(row[0] || '').trim().toLowerCase() === oldAddressTrimmedLower);
+
+    // 3. Try to find "Old Address" in Column D (History) - this handles case where row was already renamed
+    let existingHistoryIndex = -1;
+    if (existingNewIndex === -1 && existingOldIndex === -1) {
+        existingHistoryIndex = rows.findIndex(row => isAddressInHistory(String(row[3] || ''), oldAddressTrimmedLower));
+    }
+
+    if (existingOldIndex !== -1) {
+        rowIndexToUpdate = existingOldIndex + 1; // 1-based
+    } else if (existingNewIndex !== -1) {
+        rowIndexToUpdate = existingNewIndex + 1;
+    } else if (existingHistoryIndex !== -1) {
+        rowIndexToUpdate = existingHistoryIndex + 1;
+    }
+
     const timestamp = new Date().toLocaleString('ru-RU', {
         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
     const historyEntry = `${oldAddress} [${timestamp}]`;
 
-    if (oldRowIndex !== -1) {
-        // Case 1: Old address exists.
-        // Fetch current history to append.
+    if (rowIndexToUpdate !== -1) {
+        // Update existing row (whether found by old name, new name, or history)
         const historyResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!D${oldRowIndex}`,
+            range: `'${actualSheetTitle}'!D${rowIndexToUpdate}`,
         });
         const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
         
-        // Use newline '\n' as delimiter to separate multiple entries in the cell
-        // This ensures history items appear vertically stacked in Google Sheets
+        // Use newline '\n' as delimiter for vertical stacking in the cell
         const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
 
-        // Col A (Address) -> newAddress
-        // Col B (Lat) -> empty (re-geocode needed)
-        // Col C (Lon) -> empty
-        // Col D (History) -> newHistory
+        // Update the row. 
+        // If we matched by existingNewIndex, we just append history.
+        // If we matched by Old or History, we assume we are renaming/correcting to 'newAddress'.
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!A${oldRowIndex}:D${oldRowIndex}`,
+            range: `'${actualSheetTitle}'!A${rowIndexToUpdate}:D${rowIndexToUpdate}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [[newAddress, '', '', newHistory]],
             },
         });
-    } else if (newRowIndex !== -1) {
-        // Case 2: Old address NOT found, but New Address EXISTS.
-        // Update the existing row's history to log this.
-        const historyResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!D${newRowIndex}`,
-        });
-        const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
-        const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
-
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!D${newRowIndex}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[newHistory]],
-            },
-        });
     } else {
-        // Case 3: Neither exists. Fresh addition.
+        // Case: Neither exists. Fresh addition.
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
@@ -453,6 +463,7 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 /**
  * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
  * Returns the full object including history from Column D.
+ * Supports finding the row even if the requested 'address' is in the history (renamed).
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param address The address to search for.
  * @returns An object with address, lat, lon, and history, or null if not found.
@@ -481,7 +492,14 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     }
 
     const trimmedAddress = address.trim().toLowerCase();
-    const foundRow = values.find(row => String(row[0] || '').trim().toLowerCase() === trimmedAddress);
+    
+    // 1. Try exact match in Column A (Current Address)
+    let foundRow = values.find(row => String(row[0] || '').trim().toLowerCase() === trimmedAddress);
+
+    // 2. If not found, search in Column D (History) to see if this address was renamed
+    if (!foundRow) {
+        foundRow = values.find(row => isAddressInHistory(String(row[3] || ''), trimmedAddress));
+    }
 
     if (foundRow) {
         const latStr = String(foundRow[1] || '').trim();
