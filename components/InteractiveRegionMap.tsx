@@ -194,8 +194,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 markerPane.style.zIndex = '650';
             }
 
-            // Tile Layer Initialization
-            const darkUrl = 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png';
+            // Tile Layer Initialization (Default to Dark)
+            // Use unified cartocdn URLs for better switching reliability
+            const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
             tileLayerRef.current = L.tileLayer(darkUrl, {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
             }).addTo(map);
@@ -232,7 +233,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Handle Theme Change
     useEffect(() => {
         if (tileLayerRef.current && mapContainer.current) {
-            const darkUrl = 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png';
+            // Use consistent domains for both styles to ensure smooth switching
+            const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
             const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
             
             tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
@@ -529,8 +531,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
                 <div ref={mapContainer} className={`h-full w-full theme-${theme} bg-gray-800 z-0`} />
                 
-                {/* Custom Controls Overlay - Top Right */}
-                <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-3 pointer-events-auto">
+                {/* Custom Controls Overlay - Top Right - Increased Z-Index to sit above all layers */}
+                <div className="absolute top-4 right-4 z-[2000] flex flex-col gap-3 pointer-events-auto">
                     {onToggleTheme && (
                         <button
                             onClick={onToggleTheme}
