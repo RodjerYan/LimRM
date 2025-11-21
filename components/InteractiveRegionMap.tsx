@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-// FIX: Import ReactDOM from 'react-dom/client' to use it in a module context.
 import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-import { SearchIcon, ErrorIcon } from './icons';
+import { SearchIcon, ErrorIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 
 interface InteractiveRegionMapProps {
@@ -37,19 +36,18 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 };
 
 const MapLegend: React.FC = () => (
-     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700" style={{ color: 'white', maxWidth: '200px' }}>
-        <h4 className="font-bold text-sm mb-2">Легенда</h4>
-        <div className="flex items-center mb-1">
-            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#22c55e' }}></i>
-            <span className="text-xs">Активные ТТ (из файла)</span>
+     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700 text-white max-w-[200px]">
+        <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-400">Легенда</h4>
+        <div className="flex items-center mb-1.5">
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
+            <span className="text-xs font-medium">Активные ТТ</span>
         </div>
         <div className="flex items-center">
-            <i className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: '#3b82f6' }}></i>
-            <span className="text-xs">Потенциал (из ОКБ)</span>
+            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
+            <span className="text-xs font-medium">Потенциал (ОКБ)</span>
         </div>
     </div>
 );
-
 
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
@@ -61,6 +59,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
+    const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
 
     const highlightedLayer = useRef<L.Layer | null>(null);
@@ -69,6 +68,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
     const [isWarningVisible, setIsWarningVisible] = useState(true);
+    
+    // New UI States
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
@@ -97,7 +100,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     }, []);
 
-
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
             const lowerSearchTerm = searchTerm.toLowerCase();
@@ -110,30 +112,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [searchTerm, searchableLocations]);
 
-    const regionalData = useMemo(() => {
-        const aggregation = new Map<string, {
-            totalGrowth: number;
-            totalPotential: number;
-            totalFact: number;
-            clientCount: number;
-            rmSet: Set<string>;
-        }>();
-        data.forEach(row => {
-            const region = row.region;
-            if (!region || region === 'Регион не определен') return;
-            if (!aggregation.has(region)) {
-                aggregation.set(region, { totalGrowth: 0, totalPotential: 0, totalFact: 0, clientCount: 0, rmSet: new Set() });
-            }
-            const current = aggregation.get(region)!;
-            current.totalGrowth += row.growthPotential;
-            current.totalPotential += row.potential;
-            current.totalFact += row.fact;
-            current.clientCount += row.clients?.length || 1;
-            current.rmSet.add(row.rm);
-        });
-        return aggregation;
-    }, [data]);
-    
+    // ... regionalData calc removed (unused in this scope) ...
+
     const invisibleStyle = {
         weight: 0,
         color: 'transparent',
@@ -183,14 +163,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [highlightRegion]);
 
+    // Handle Map Resize when data changes or fullscreen toggles
     useEffect(() => {
         const map = mapInstance.current;
         if (map) {
             const timer = setTimeout(() => map.invalidateSize(true), 200);
             return () => clearTimeout(timer);
         }
-    }, [data]);
+    }, [data, isFullscreen]);
     
+    // Initialize Map
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { 
@@ -198,9 +180,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 zoom: 3, 
                 scrollWheelZoom: true, 
                 preferCanvas: true,
-                worldCopyJump: true
+                worldCopyJump: true,
+                zoomControl: false // We'll add it manually to position it
             });
             mapInstance.current = map;
+            
+            L.control.zoom({ position: 'topleft' }).addTo(map);
 
             map.createPane('markerPane');
             const markerPane = map.getPane('markerPane');
@@ -208,27 +193,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 markerPane.style.zIndex = '650';
             }
 
-
-            const darkLayer = L.tileLayer('https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png', {
+            // Tile Layer Initialization
+            const darkUrl = 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png';
+            tileLayerRef.current = L.tileLayer(darkUrl, {
                 attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-            });
-            const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-            });
+            }).addTo(map);
 
-            darkLayer.addTo(map);
-
-            const baseMaps = {
-                "Темная карта": darkLayer,
-                "Светлая карта": lightLayer
-            };
-            
-            layerControl.current = L.control.layers(baseMaps, {}).addTo(map);
+            // Layer Control for Overlays Only
+            layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
             const legend = new (L.Control.extend({
                 onAdd: function() {
                     const div = L.DomUtil.create('div', 'info legend');
-                    // This is a simple container. React will render into it.
                     return div;
                 },
                 onRemove: function() {}
@@ -236,23 +212,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             
             legend.addTo(map);
             
-            // Render the React legend component into the container created by Leaflet
             const legendContainer = legend.getContainer();
             if(legendContainer){
                  const root = (ReactDOM as any).createRoot(legendContainer);
                  root.render(<MapLegend />);
             }
-
-            map.on('baselayerchange', function(e) {
-                if (mapContainer.current) {
-                    mapContainer.current.classList.remove('theme-dark', 'theme-light');
-                    if (e.name === 'Светлая карта') {
-                        mapContainer.current.classList.add('theme-light');
-                    } else {
-                        mapContainer.current.classList.add('theme-dark');
-                    }
-                }
-            });
 
             map.on('click', resetHighlight);
         }
@@ -263,6 +227,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         };
     }, [resetHighlight]);
+
+    // Handle Theme Change
+    useEffect(() => {
+        if (tileLayerRef.current && mapContainer.current) {
+            const darkUrl = 'https://cartodb-basemaps-{s}.global.ssl.fastly.net/dark_all/{z}/{x}/{y}{r}.png';
+            const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+            
+            tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
+            
+            if (theme === 'dark') {
+                mapContainer.current.classList.add('theme-dark');
+                mapContainer.current.classList.remove('theme-light');
+            } else {
+                mapContainer.current.classList.add('theme-light');
+                mapContainer.current.classList.remove('theme-dark');
+            }
+        }
+    }, [theme]);
     
     const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
         <b>${name}</b><br>
@@ -271,6 +253,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
     `;
     
+    // Data Layers (Active/Potential)
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -326,20 +309,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         map.addLayer(activeClientMarkersLayer.current);
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
+        // Fit bounds logic
         const allMarkers = [
             ...(potentialClientMarkersLayer.current?.getLayers() || []),
             ...(activeClientMarkersLayer.current?.getLayers() || [])
         ];
     
-        if (allMarkers.length > 0) {
+        if (allMarkers.length > 0 && !isFullscreen) { // Only auto-fit on initial load/update, not when expanding
             const featureGroup = L.featureGroup(allMarkers as L.Layer[]);
             try {
                 const bounds = featureGroup.getBounds();
                 if (bounds.isValid()) {
                     map.fitBounds(bounds.pad(0.1));
-                } else {
-                     console.warn("Could not fit bounds: bounds are invalid.");
-                     map.setView([55, 75], 3);
                 }
             } catch(e) {
                 console.error("Error calculating bounds for map:", e);
@@ -349,8 +330,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.setView([55, 75], 3);
         }
         
-    }, [potentialClients, activeClients, data]);
+    }, [potentialClients, activeClients, data, isFullscreen]);
     
+    // Fly to logic
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !flyToClientKey) return;
@@ -368,7 +350,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [flyToClientKey]);
 
-
+    // Region/Capital Layers
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -436,7 +418,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
         }
 
-
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
             style: invisibleStyle,
             onEachFeature: (feature, layer) => {
@@ -451,8 +432,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         }).addTo(map);
 
-    }, [regionalData, selectedRegions, highlightRegion]);
+    }, [selectedRegions, highlightRegion]);
 
+    // Conflict Zones
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -495,10 +477,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     };
 
     return (
-        <div id="interactive-map-container" className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
-                <h2 className="text-xl font-bold text-white whitespace-nowrap">Карта рыночного потенциала</h2>
-                <div className="relative w-full md:w-auto md:min-w-[300px]">
+        <div 
+            id="interactive-map-container" 
+            className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}
+        >
+            <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-2rem)] pointer-events-none' : ''}`}>
+                <h2 className={`text-xl font-bold text-white whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-gray-900/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
+                    Карта рыночного потенциала
+                </h2>
+                <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                         <SearchIcon />
                     </div>
@@ -507,7 +494,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         placeholder="Поиск города или региона..."
-                        className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition"
+                        className="w-full p-2 pl-10 bg-gray-900/80 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition backdrop-blur-sm"
                     />
                     {searchResults.length > 0 && (
                         <ul className="absolute z-50 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
@@ -526,19 +513,39 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             </div>
 
-            {isWarningVisible && conflictZones && (
+            {isWarningVisible && conflictZones && !isFullscreen && (
                 <div className="bg-red-900/50 border border-danger/50 text-danger text-sm rounded-lg p-3 mb-4 flex justify-between items-center">
                     <div className="flex items-center">
                         <div className="w-5 h-5 mr-2 flex-shrink-0"><ErrorIcon/></div>
                         <span>
-                            Внимание: слой "Зоны опасности" носит информационный характер и может быть неполным. Всегда сверяйтесь с официальными источниками.
+                            Внимание: слой "Зоны опасности" носит информационный характер.
                         </span>
                     </div>
                     <button onClick={() => setIsWarningVisible(false)} className="text-red-300 hover:text-white text-lg">&times;</button>
                 </div>
             )}
             
-            <div ref={mapContainer} className="h-[65vh] w-full rounded-lg theme-dark bg-gray-800 border border-gray-700" />
+            <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
+                <div ref={mapContainer} className="h-full w-full theme-dark bg-gray-800 z-0" />
+                
+                {/* Custom Controls Overlay */}
+                <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-3">
+                    <button
+                        onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                        className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
+                        title={theme === 'dark' ? "Светлая карта" : "Темная карта"}
+                    >
+                        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                    </button>
+                    <button
+                        onClick={() => setIsFullscreen(!isFullscreen)}
+                        className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
+                        title={isFullscreen ? "Свернуть" : "Развернуть"}
+                    >
+                        {isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };

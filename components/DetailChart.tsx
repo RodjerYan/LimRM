@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import Chart from 'chart.js/auto';
-import { FactIcon } from './icons';
+import { FactIcon, PotentialIcon } from './icons';
 
 interface DetailChartProps {
     fact: number;
@@ -25,16 +25,16 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
         const ctx = chartContainer.current.getContext('2d');
         if (!ctx) return;
 
-        // Create Modern Gradients
+        // Enhanced Gradients
         const gradientFact = ctx.createLinearGradient(0, 0, 0, 400);
-        gradientFact.addColorStop(0, 'rgba(52, 211, 153, 1)'); // Emerald 400
-        gradientFact.addColorStop(1, 'rgba(52, 211, 153, 0.2)');
+        gradientFact.addColorStop(0, 'rgba(16, 185, 129, 0.9)'); // Emerald 500
+        gradientFact.addColorStop(1, 'rgba(16, 185, 129, 0.2)');
 
         const gradientPotential = ctx.createLinearGradient(0, 0, 0, 400);
-        gradientPotential.addColorStop(0, 'rgba(129, 140, 248, 1)'); // Indigo 400
-        gradientPotential.addColorStop(1, 'rgba(129, 140, 248, 0.2)');
+        gradientPotential.addColorStop(0, 'rgba(99, 102, 241, 0.9)'); // Indigo 500
+        gradientPotential.addColorStop(1, 'rgba(99, 102, 241, 0.2)');
 
-        const maxValue = Math.max(fact, potential) * 1.1; // Add 10% headroom
+        const maxValue = Math.max(fact, potential) * 1.15; 
         
         // Determine Unit
         let unit = '';
@@ -47,62 +47,54 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
             factor = 1_000;
         }
 
-        const labels = ['Текущий Факт', 'Общий Потенциал'];
-        
         const chartConfig = {
             type: 'bar' as const,
             data: {
-                labels,
+                labels: ['Текущий Факт', 'Общий Потенциал'],
                 datasets: [{
                     label: 'Объем',
                     data: [fact, potential],
                     backgroundColor: [gradientFact, gradientPotential],
-                    borderColor: ['#34d399', '#818cf8'],
+                    borderColor: ['transparent', 'transparent'],
                     borderWidth: 0,
-                    borderRadius: { topLeft: 12, topRight: 12, bottomLeft: 4, bottomRight: 4 },
-                    borderSkipped: false,
-                    barPercentage: 0.5,
-                    categoryPercentage: 0.8,
+                    borderRadius: 8,
+                    barThickness: 'flex' as const,
+                    maxBarThickness: 120,
                 }],
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 animation: {
-                    duration: 1500,
+                    duration: 1200,
                     easing: 'easeOutQuart' as const,
                 },
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
                         titleColor: '#fff',
-                        bodyColor: '#cbd5e1',
-                        borderColor: 'rgba(255,255,255,0.1)',
+                        bodyColor: '#e2e8f0',
+                        borderColor: 'rgba(148, 163, 184, 0.2)',
                         borderWidth: 1,
-                        padding: 12,
-                        cornerRadius: 8,
+                        padding: 14,
+                        cornerRadius: 10,
+                        displayColors: false,
                         callbacks: {
+                            title: () => '', // No title
                             label: function(context: any) {
                                 const val = context.raw as number;
                                 const formattedVal = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(val);
                                 
-                                let label = `Объем: ${formattedVal}`;
-                                
-                                // Add context to the tooltip
                                 if (context.dataIndex === 0) { // Fact
                                     const pot = context.chart.data.datasets[0].data[1] as number;
                                     const pct = pot > 0 ? ((val / pot) * 100).toFixed(1) : 0;
-                                    label += ` (${pct}% от плана)`;
-                                } else if (context.dataIndex === 1) { // Potential
+                                    return [`Факт: ${formattedVal}`, `Выполнение: ${pct}%`];
+                                } else { // Potential
                                     const f = context.chart.data.datasets[0].data[0] as number;
-                                    const gap = val - f;
-                                    if (gap > 0) {
-                                        const gapStr = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(gap);
-                                        return [`Цель: ${formattedVal}`, `Потенциал роста: +${gapStr}`];
-                                    }
+                                    const g = val - f;
+                                    return [`Потенциал: ${formattedVal}`, g > 0 ? `Рост: +${new Intl.NumberFormat('ru-RU').format(g)}` : ''];
                                 }
-                                return label;
                             }
                         }
                     }
@@ -111,8 +103,9 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
                     x: { 
                         grid: { display: false }, 
                         ticks: { 
-                            color: '#94a3b8', 
-                            font: { size: 13, family: "'Geist', sans-serif", weight: 'bold' as const } 
+                            color: '#cbd5e1', 
+                            font: { size: 14, family: "'Geist', sans-serif", weight: 600 },
+                            padding: 10
                         },
                         border: { display: false }
                     },
@@ -120,16 +113,16 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
                         beginAtZero: true, 
                         max: maxValue,
                         grid: { 
-                            color: 'rgba(75, 85, 99, 0.2)',
+                            color: 'rgba(255, 255, 255, 0.05)',
                             tickLength: 0,
-                            borderDash: [4, 4]
                         }, 
                         ticks: { 
                             color: '#64748b',
                             font: { size: 11, family: "'Geist Mono', monospace" },
                             callback: function(value: any) {
-                                return (value / factor).toFixed(1) + (unit ? ` ${unit}` : '');
-                            }
+                                return (value / factor).toFixed(0) + (unit ? ` ${unit}` : '');
+                            },
+                            padding: 10
                         },
                         border: { display: false }
                     },
@@ -153,60 +146,25 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
     }, []);
 
     return (
-        <div className="relative w-full h-full flex items-end">
-            {/* LEFT WIDGET: FACT (Centered over left bar) */}
-            <div className="absolute top-0 left-[25%] -translate-x-1/2 flex flex-col items-center z-10 pointer-events-none whitespace-nowrap">
-                <div className="text-center mb-1">
-                    <span className="text-xs text-emerald-400 uppercase tracking-wider font-semibold">Выполнение</span>
-                </div>
-                <div className="flex items-center gap-3 bg-gray-800/80 backdrop-blur-md border border-white/10 rounded-2xl p-3 shadow-xl">
-                    <div className="p-2.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        <FactIcon small />
-                    </div>
-                    <div className="flex flex-col items-start">
-                        <span className="text-2xl font-bold text-emerald-400">
-                            {new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(fact)}
-                        </span>
-                        <span className="text-[10px] text-gray-400">Текущий Факт</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* RIGHT WIDGET: POTENTIAL & EXECUTION (Centered over right bar) */}
-            <div className="absolute top-0 right-[25%] translate-x-1/2 flex flex-col items-center z-10 pointer-events-none whitespace-nowrap">
-                <div className="text-center mb-1">
-                    <span className="text-xs text-indigo-400 uppercase tracking-wider font-semibold">Потенциал</span>
-                </div>
-                <div className="flex items-center gap-3 bg-gray-800/80 backdrop-blur-md border border-white/10 rounded-2xl p-3 shadow-xl">
-                     <div className="flex flex-col items-end">
-                        <span className="text-2xl font-bold text-indigo-400">
-                            {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(potential)}
-                        </span>
-                        <span className="text-[10px] text-yellow-400">
-                            Рост: +{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(gap)}
-                        </span>
-                    </div>
-                    {/* Potential Execution Circle moved here */}
-                    <div className="relative w-12 h-12">
-                        <svg className="w-full h-full transform -rotate-90">
-                            <circle cx="24" cy="24" r="20" stroke="currentColor" strokeWidth="4" fill="transparent" className="text-gray-700" />
-                            <circle 
-                                cx="24" cy="24" r="20" 
-                                stroke="currentColor" strokeWidth="4" fill="transparent" 
-                                strokeDasharray={125.6} 
-                                strokeDashoffset={125.6 - (125.6 * percentage) / 100} 
-                                className={`${percentage >= 80 ? 'text-emerald-400' : percentage >= 50 ? 'text-yellow-400' : 'text-indigo-400'} transition-all duration-1000 ease-out`}
-                                strokeLinecap="round"
-                            />
-                        </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-[10px] font-bold text-white">{percentage.toFixed(0)}%</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
+        <div className="relative w-full h-full">
             <canvas ref={chartContainer} />
+            
+            {/* Floating Metric Badge */}
+            <div className="absolute top-4 right-4 bg-gray-800/90 backdrop-blur-md border border-white/10 rounded-xl p-3 shadow-lg flex items-center gap-4">
+                <div className="flex flex-col items-end">
+                    <span className="text-xs text-gray-400 uppercase font-semibold tracking-wider">Потенциал Роста</span>
+                    <span className="text-lg font-bold text-amber-400 font-mono">
+                        +{new Intl.NumberFormat('ru-RU', { notation: "compact", maximumFractionDigits: 1 }).format(gap)}
+                    </span>
+                </div>
+                <div className="h-8 w-px bg-gray-700"></div>
+                <div className="flex flex-col items-end">
+                    <span className="text-xs text-gray-400 uppercase font-semibold tracking-wider">Выполнение</span>
+                    <span className={`text-lg font-bold font-mono ${percentage >= 80 ? 'text-emerald-400' : 'text-indigo-400'}`}>
+                        {percentage.toFixed(0)}%
+                    </span>
+                </div>
+            </div>
         </div>
     );
 };
