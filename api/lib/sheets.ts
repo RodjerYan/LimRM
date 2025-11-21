@@ -335,89 +335,93 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 
 /**
  * Replaces an old address with a new one in the cache by updating the existing row.
- * KEEPS HISTORY: Appends the old address to Column D (History) instead of overwriting.
- * Uses newline character to separate history entries for cleaner cell formatting.
+ * KEEPS HISTORY: Appends the old address to Column D (History).
+ * CRITICAL: Preserves existing B (lat) and C (lon) columns to prevent data loss during rename.
+ * 
  * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced (from the file).
+ * @param oldAddress The address to be replaced (from the file or current UI state).
  * @param newAddress The new, corrected address.
  */
-export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string): Promise<void> {
+export async function updateAddressInCache(
+    rmName: string,
+    oldAddress: string,
+    newAddress: string
+): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    // Fetch A:D to check both current addresses and history
+    // Fetch A:D to check current addresses, coordinates, and history
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:D`,
     });
 
     const rows = response.data.values || [];
-    // Use robust normalization for comparison
-    const oldAddressNorm = normalizeForComparison(oldAddress);
-    const newAddressNorm = normalizeForComparison(newAddress);
 
-    let rowIndexToUpdate = -1;
+    const oldNorm = normalizeForComparison(oldAddress);
+    const newNorm = normalizeForComparison(newAddress);
 
-    // 1. First, try to find if the "New Address" already exists as a main row.
-    // If so, we should probably merge/update that one instead of creating a duplicate.
-    const existingNewIndex = rows.findIndex(row => normalizeForComparison(row[0]) === newAddressNorm);
-    
-    // 2. Try to find the "Old Address" in Column A (Active)
-    const existingOldIndex = rows.findIndex(row => normalizeForComparison(row[0]) === oldAddressNorm);
+    let rowIndex = -1;
 
-    // 3. Try to find "Old Address" in Column D (History) - this handles case where row was already renamed
-    let existingHistoryIndex = -1;
-    if (existingNewIndex === -1 && existingOldIndex === -1) {
-        existingHistoryIndex = rows.findIndex(row => isAddressInHistory(String(row[3] || ''), oldAddressNorm));
-    }
+    // 1) First, find the row by looking for the Old Address in Column A (Current Address)
+    // This covers the most common case: renaming the current active entry.
+    rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === oldNorm);
 
-    if (existingOldIndex !== -1) {
-        rowIndexToUpdate = existingOldIndex + 1; // 1-based
-    } else if (existingNewIndex !== -1) {
-        rowIndexToUpdate = existingNewIndex + 1;
-    } else if (existingHistoryIndex !== -1) {
-        rowIndexToUpdate = existingHistoryIndex + 1;
+    // 2) If not found in A, search in History (Column D)
+    // This covers cases where the UI might be stale, or we are correcting an address that was already renamed once.
+    if (rowIndex === -1) {
+        rowIndex = rows.findIndex(r => isAddressInHistory(String(r[3] || ''), oldNorm));
     }
 
     const timestamp = new Date().toLocaleString('ru-RU', {
         day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
     });
-    const historyEntry = `${oldAddress} [${timestamp}]`;
 
-    if (rowIndexToUpdate !== -1) {
-        // Update existing row (whether found by old name, new name, or history)
-        const historyResponse = await sheets.spreadsheets.values.get({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!D${rowIndexToUpdate}`,
-        });
-        const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
-        
-        // Use newline '\n' as delimiter for vertical stacking in the cell
-        const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
-
-        // Update the row. 
-        // If we matched by existingNewIndex, we just append history.
-        // If we matched by Old or History, we assume we are renaming/correcting to 'newAddress'.
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!A${rowIndexToUpdate}:D${rowIndexToUpdate}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[newAddress, '', '', newHistory]],
-            },
-        });
-    } else {
-        // Case: Neither exists. Fresh addition.
+    if (rowIndex === -1) {
+        // Case: The row doesn't exist at all (neither current nor history).
+        // Treat as a new entry.
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
             valueInputOption: 'USER_ENTERED',
             insertDataOption: 'INSERT_ROWS',
             requestBody: {
-                values: [[newAddress, '', '', historyEntry]],
+                values: [[newAddress, '', '', `${oldAddress} [${timestamp}]`]],
             },
         });
+        return;
     }
+
+    // Row found. Get current data to preserve it.
+    const row = rows[rowIndex];
+    const currentAddress = String(row[0] || '');
+    // Preserve coordinates!
+    const currentLat = row[1] ?? ''; 
+    const currentLon = row[2] ?? '';
+    const currentHistory = String(row[3] || '');
+
+    // 3) If the address in Column A is already the New Address, we don't need to change A.
+    if (normalizeForComparison(currentAddress) === newNorm) {
+        return;
+    }
+
+    // 4) Construct new history
+    // Append the OLD value of the row (which is what we are replacing) to the history.
+    const historyEntry = `${oldAddress} [${timestamp}]`;
+    const newHistory = currentHistory
+        ? `${currentHistory}\n${historyEntry}`
+        : historyEntry;
+
+    // 5) Update the row. 
+    // CRITICAL: We write back currentLat and currentLon to avoid wiping them out.
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A${rowIndex + 1}:D${rowIndex + 1}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+            values: [[newAddress, currentLat, currentLon, newHistory]],
+        },
+    });
 }
 
 /**

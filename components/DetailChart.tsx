@@ -135,8 +135,6 @@ const DetailChart: React.FC<DetailChartProps> = ({ fact, potential }) => {
         };
 
         if (chartInstance.current) {
-            // If chart exists, destroy it to create a fresh one with new gradients/data
-            // This prevents animation glitches and ensures context is fresh
             chartInstance.current.destroy();
         }
         
