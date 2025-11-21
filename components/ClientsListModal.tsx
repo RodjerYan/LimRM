@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
-import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon } from './icons';
+import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon, ErrorIcon } from './icons';
 
 interface ClientsListModalProps {
     isOpen: boolean;
@@ -14,14 +14,23 @@ interface ClientsListModalProps {
 // Extracted Row Component to handle local animation state
 const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) => void }> = ({ client, onStartEdit }) => {
     const [showSuccess, setShowSuccess] = useState(false);
+    const [showError, setShowError] = useState(false);
     const prevGeocoding = useRef(client.isGeocoding);
 
     useEffect(() => {
-        // If it WAS geocoding, and NOW it's not, and we have coords -> Success!
-        if (prevGeocoding.current && !client.isGeocoding && client.lat && client.lon) {
-            setShowSuccess(true);
-            const timer = setTimeout(() => setShowSuccess(false), 3000);
-            return () => clearTimeout(timer);
+        // If it WAS geocoding, and NOW it's not
+        if (prevGeocoding.current && !client.isGeocoding) {
+            if (client.lat && client.lon) {
+                // Success!
+                setShowSuccess(true);
+                const timer = setTimeout(() => setShowSuccess(false), 3000);
+                return () => clearTimeout(timer);
+            } else {
+                // Failure!
+                setShowError(true);
+                const timer = setTimeout(() => setShowError(false), 5000);
+                return () => clearTimeout(timer);
+            }
         }
         prevGeocoding.current = client.isGeocoding;
     }, [client.isGeocoding, client.lat, client.lon]);
@@ -45,7 +54,16 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
                             <CheckIcon />
                         </div>
                     )}
-                    <span className={`${client.isGeocoding ? "text-gray-300 font-medium" : ""} ${showSuccess ? "text-green-300 transition-colors duration-500" : ""}`}>
+                    {showError && (
+                        <div className="text-red-500 flex-shrink-0 animate-pulse" title="Не удалось определить координаты">
+                            <div className="w-5 h-5"><ErrorIcon /></div>
+                        </div>
+                    )}
+                    <span className={`
+                        ${client.isGeocoding ? "text-gray-300 font-medium" : ""} 
+                        ${showSuccess ? "text-green-300 transition-colors duration-500" : ""}
+                        ${showError ? "text-red-300 transition-colors duration-500" : ""}
+                    `}>
                         {client.address}
                     </span>
                     {client.isGeocoding && <span className="text-xs text-cyan-500 italic whitespace-nowrap">(Поиск...)</span>}

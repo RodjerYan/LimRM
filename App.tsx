@@ -327,47 +327,71 @@ const App: React.FC = () => {
 
     }, []);
 
-    // Replaced passive polling with active geocoding process
-    const performGeocoding = useCallback(async (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
+    // 48 Hours in milliseconds
+    const MAX_POLL_TIME = 48 * 60 * 60 * 1000; 
+
+    const pollSheetForCoordinates = useCallback(async (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
         const processKey = `${rmName}-${address}`;
         if (processingQueue.current.has(processKey)) return;
         processingQueue.current.add(processKey);
 
-        try {
-            // 1. Actively request geocoding
-            const geoRes = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
-            
-            if (geoRes.ok) {
-                const coords = await geoRes.json();
-                
-                // 2. Save successful coords to sheet
-                await fetch('/api/update-coords', {
-                     method: 'POST',
-                     headers: { 'Content-Type': 'application/json' },
-                     body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
-                });
+        const startTime = Date.now();
 
-                // 3. Update State with SUCCESS
-                const finalPoint = { 
-                    ...basePoint, 
-                    lat: coords.lat, 
-                    lon: coords.lon, 
-                    isGeocoding: false 
-                };
+        // Also kick off a "backup" geocode request to server just in case the sheet isn't auto-updating via script
+        // This ensures something is trying to write to the sheet if the user doesn't have an App Script trigger.
+        fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(coords => {
+                if (coords) {
+                     fetch('/api/update-coords', {
+                         method: 'POST',
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
+                    }).catch(console.error);
+                }
+            }).catch(console.error);
+
+
+        const check = async () => {
+            try {
+                if (Date.now() - startTime > MAX_POLL_TIME) {
+                    throw new Error('Timeout waiting for coordinates');
+                }
+
+                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
                 
-                handleDataUpdate(tempKey, finalPoint, originalIndex);
-                addNotification(`Координаты найдены: ${address}`, 'success');
-            } else {
-                throw new Error('Geocode not found');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.lat && data.lon) {
+                        // Success!
+                        const finalPoint = { 
+                            ...basePoint, 
+                            lat: data.lat, 
+                            lon: data.lon, 
+                            isGeocoding: false 
+                        };
+                        handleDataUpdate(tempKey, finalPoint, originalIndex);
+                        addNotification(`Координаты получены из таблицы: ${address}`, 'success');
+                        processingQueue.current.delete(processKey);
+                        return;
+                    }
+                }
+                
+                // Not found yet, continue polling
+                setTimeout(check, 5000); // Check every 5 seconds
+
+            } catch (e) {
+                console.error("Polling stopped:", e);
+                const failedPoint = { ...basePoint, isGeocoding: false };
+                handleDataUpdate(tempKey, failedPoint, originalIndex);
+                addNotification(`Время ожидания координат истекло: ${address}`, 'error');
+                processingQueue.current.delete(processKey);
             }
-        } catch (e) {
-            // 4. Update State with FAILURE (stop spinner)
-            const failedPoint = { ...basePoint, isGeocoding: false };
-            handleDataUpdate(tempKey, failedPoint, originalIndex);
-            addNotification(`Не удалось определить координаты: ${address}`, 'error');
-        } finally {
-            processingQueue.current.delete(processKey);
-        }
+        };
+
+        // Start the loop
+        check();
+
     }, [handleDataUpdate, addNotification]);
 
 
@@ -523,7 +547,7 @@ const App: React.FC = () => {
                 onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
-                onStartPolling={performGeocoding}
+                onStartPolling={pollSheetForCoordinates}
                 onDelete={handleClientDelete}
             />
         </div>

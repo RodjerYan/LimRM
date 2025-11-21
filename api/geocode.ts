@@ -7,7 +7,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Address query parameter is required.' });
     }
 
-    const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=ru,by,kz,ua`;
+    // Expanded list of country codes to include all CIS regions relevant to the app
+    const countryCodes = 'ru,by,kz,ua,kg,uz,tj,tm,am,az,ge,md';
+    const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=${countryCodes}`;
     
     try {
         const nominatimRes = await fetch(nominatimUrl, {

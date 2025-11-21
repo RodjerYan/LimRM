@@ -163,8 +163,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // Immediately update the app state
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
 
-            // 3. Start Active Geocoding Process (Handled by App.tsx)
-            // This will fetch coords, save them to sheet, and update state again when done.
+            // 3. Start Passive Polling (handled in App.tsx)
             onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
 
         } catch (e) {
@@ -320,10 +319,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                              {status === 'geocoding' && (
                                 <div className="flex flex-col gap-3 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30 animate-pulse">
                                     <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
-                                        <LoaderIcon /> <span>Запрос на геокодирование...</span>
+                                        <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
                                     </div>
                                     <div className="text-center text-xs text-gray-300">
-                                        Мы ищем координаты прямо сейчас. Этот процесс продолжится даже если вы закроете окно.
+                                        Запрос отправлен. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.
                                     </div>
                                 </div>
                             )}

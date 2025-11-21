@@ -85,7 +85,9 @@ function getCityFromAddress(normalizedAddress: string): string {
     for (const city of CITIES_SORTED_BY_LENGTH) {
         // Use regex with word boundaries to ensure we're matching the whole city name.
         const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`\\b${escapedCity}\\b`);
+        // \b matches word boundary for latin, but fails for Cyrillic in some browsers/cases.
+        // We use custom boundary check: start of string OR non-word char (space, comma, etc)
+        const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedCity}([^а-яёa-z0-9]|$)`, 'i');
         if (regex.test(normalizedAddress)) {
             return capitalize(city);
         }
@@ -107,7 +109,11 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
     for (const key of sortedKeys) {
         // This regex ensures we match the key as a whole word/phrase.
         const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(^|\\s|\\W)${escapedKey}($|\\s|\\W)`, 'i');
+        // REPLACED \b with explicit character class checks for better Cyrillic support.
+        // Matches if preceded by Start-Of-Line OR non-alphanumeric char
+        // AND followed by End-Of-Line OR non-alphanumeric char.
+        // This prevents "Гори" matching inside "Григория" or "ло" inside "Панфиловское".
+        const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
 
         if (regex.test(normalizedAddress)) {
             return REGION_KEYWORD_MAP[key];
