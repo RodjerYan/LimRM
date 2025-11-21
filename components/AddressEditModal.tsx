@@ -30,7 +30,13 @@ interface AddressEditModalProps {
   onDelete: (key: string) => void;
 }
 
-const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, isSuccess: boolean }> = ({ lat, lon, address, isSuccess }) => {
+const SinglePointMap: React.FC<{ 
+    lat?: number; 
+    lon?: number; 
+    address: string; 
+    isSuccess: boolean;
+    onCoordinatesChange: (lat: number, lon: number) => void;
+}> = ({ lat, lon, address, isSuccess, onCoordinatesChange }) => {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
@@ -46,16 +52,38 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
         }
 
         const map = mapRef.current;
+        
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
             const iconToUse = isSuccess ? greenIcon : blueIcon;
 
             if (markerRef.current) {
                 markerRef.current.setLatLng(latLng).setIcon(iconToUse);
+                
+                // Update dragend listener closure
+                markerRef.current.off('dragend');
+                markerRef.current.on('dragend', (e) => {
+                    const m = e.target;
+                    const p = m.getLatLng();
+                    onCoordinatesChange(p.lat, p.lng);
+                });
             } else {
-                markerRef.current = L.marker(latLng, { icon: iconToUse }).addTo(map);
+                markerRef.current = L.marker(latLng, { 
+                    icon: iconToUse,
+                    draggable: true,
+                    autoPan: true
+                }).addTo(map);
+                
+                markerRef.current.on('dragend', (e) => {
+                    const m = e.target;
+                    const p = m.getLatLng();
+                    onCoordinatesChange(p.lat, p.lng);
+                });
             }
-             markerRef.current.bindPopup(address, { maxWidth: 350 }).openPopup();
+             
+             markerRef.current.bindPopup(`<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`, { maxWidth: 350 });
+             
+             // Only fly to view if it's a significant change or init
              map.setView(latLng, 15);
         } else {
             map.setView([55.75, 37.61], 5);
@@ -68,9 +96,9 @@ const SinglePointMap: React.FC<{ lat?: number; lon?: number, address: string, is
         const timer = setTimeout(() => map.invalidateSize(), 400);
         return () => clearTimeout(timer);
 
-    }, [lat, lon, address, isSuccess]);
+    }, [lat, lon, address, isSuccess, onCoordinatesChange]);
 
-    return <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800" />;
+    return <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move" />;
 };
 
 
@@ -84,8 +112,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     
-    // New ref to track if a save operation just completed
-    // This prevents the data-refresh effect from clearing the optimistic history update
+    // State for manually selected coordinates
+    const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
+    
     const justSaved = useRef(false);
 
     const fetchHistory = async (rmName: string, address: string) => {
@@ -96,8 +125,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
-                    // Support splitting by newlines (new format) or double pipes (old format)
-                    // Handles "||" with surrounding spaces which might happen
                     const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
@@ -112,9 +139,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-            // Always update the input field when data changes from parent
             const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
             setEditedAddress(currentAddress);
+            
+            // Reset manual coords on open
+            setManualCoords(null);
             
             if ((data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
@@ -132,13 +161,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setLastUpdatedStr(null);
             }
 
-            // Fetch history from server only if we didn't just trigger a save (optimistic UI preservation)
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
                 if (!justSaved.current) {
                     fetchHistory(rm, currentAddress);
                 } else {
-                    justSaved.current = false; // Reset flag for next updates
+                    justSaved.current = false;
                 }
             } else {
                 setHistory([]);
@@ -160,10 +188,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             oldKey = normalizeAddress(oldAddress);
         }
 
-        if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
+        // Determine what changed
+        const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
+        const isCoordsChanged = manualCoords !== null;
+
+        if (!isAddressChanged && !isCoordsChanged) {
             if (typeof originalIndex !== 'number') { 
                  setStatus('error_saving');
-                 setError('Адрес не был изменен или поле пустое.');
+                 setError('Адрес не был изменен, и маркер не был перемещен.');
                  return;
             }
         }
@@ -174,37 +206,54 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         try {
             const rm = findValueInRow(originalRow, ['рм']);
             
-            const res = await fetch('/api/update-address', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress }),
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
+            // 1. Update Address Text if changed
+            if (isAddressChanged) {
+                const res = await fetch('/api/update-address', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress }),
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
+                }
+                
+                // Optimistic history update
+                const timestamp = new Date().toLocaleString('ru-RU', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                });
+                const newHistoryEntry = `${oldAddress} [${timestamp}]`;
+                setHistory(prev => [newHistoryEntry, ...prev]);
+                justSaved.current = true;
             }
-
-            // Visual Feedback
-            setSaveSuccess(true);
-            setStatus('geocoding');
-            
-            // OPTIMISTIC UPDATE: Add the new history entry immediately to the state
-            // This prevents the "Empty history" flash while waiting for the server
-            const timestamp = new Date().toLocaleString('ru-RU', {
-                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-            });
-            const newHistoryEntry = `${oldAddress} [${timestamp}]`;
-            setHistory(prev => [newHistoryEntry, ...prev]);
-            
-            // Set flag to prevent the subsequent useEffect (caused by onDataUpdate) from clearing this history
-            justSaved.current = true;
-
-            setTimeout(() => setSaveSuccess(false), 2000);
 
             const distributor = findValueInRow(originalRow, ['дистрибьютор']);
             const parsed = parseRussianAddress(editedAddress, distributor);
-            const currentLat = (data as MapPoint).lat;
-            const currentLon = (data as MapPoint).lon;
+            
+            let currentLat = (data as MapPoint).lat;
+            let currentLon = (data as MapPoint).lon;
+            let isGeocodingState = true;
+
+            // 2. Handle Manual Coordinates Update
+            if (manualCoords) {
+                currentLat = manualCoords.lat;
+                currentLon = manualCoords.lon;
+                isGeocodingState = false; // Coordinates are known/manual, no polling needed
+
+                // Save explicit coordinates to cache
+                await fetch('/api/update-coords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        rmName: rm, 
+                        updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] 
+                    })
+                });
+            }
+
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 2000);
+
             const updateTimestamp = Date.now();
 
             const tempNewPoint: MapPoint = {
@@ -220,12 +269,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow,
                 fact: (data as MapPoint).fact,
-                isGeocoding: true,
+                isGeocoding: isGeocodingState,
                 lastUpdated: updateTimestamp
             };
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
-            onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
+            
+            // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)
+            if (!manualCoords && isAddressChanged) {
+                setStatus('geocoding');
+                onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
+            } else {
+                setStatus('idle');
+            }
 
         } catch (e) {
             setStatus('error_saving');
@@ -288,8 +344,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     
-    const displayLat = currentLat;
-    const displayLon = currentLon;
+    // Display coordinates: prefer manual selection if active, otherwise fallback to current data
+    const displayLat = manualCoords ? manualCoords.lat : currentLat;
+    const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
     const customFooter = (
         <div className="flex justify-between items-center p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
@@ -327,7 +384,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </table>
                     </div>
                     
-                    {/* History Section - Redesigned */}
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
                         <div className="flex justify-between items-center mb-3">
                             <h4 className="font-bold text-lg text-slate-300 flex items-center gap-2">
@@ -364,7 +420,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
                 <div className="space-y-4">
                     <div className="h-64">
-                         <SinglePointMap lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={false} />
+                         <SinglePointMap 
+                            lat={displayLat} 
+                            lon={displayLon} 
+                            address={editedAddress} 
+                            isSuccess={false}
+                            onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
+                         />
                     </div>
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
                         <div className="flex justify-between items-center mb-3">
