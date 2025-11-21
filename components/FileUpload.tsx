@@ -32,7 +32,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
 
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch('/api/get-full-cache');
+            // Add timestamp to prevent browser caching of the redirects/history
+            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
             if (response.ok) {
                 cacheData = await response.json();
                 setMessage('Кэш загружен, инициализация воркера...');

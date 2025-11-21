@@ -210,7 +210,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             // All subsequent logic (parsing, geocoding, display) uses the NEW address.
             if (cacheRedirectMap.has(normalizedRaw)) {
                 const newAddr = cacheRedirectMap.get(normalizedRaw)!;
-                clientAddress = newAddr; // Use the new address for all further processing
+                // Force update the address variable to the Corrected one from cache.
+                // This ensures that parsing and aggregation use the new, correct address.
+                clientAddress = newAddr; 
                 normalizedRaw = normalizeAddress(clientAddress); // Re-normalize for cache lookup using new address key
                 
                 // Check if the *target* of the redirect is deleted (edge case)
@@ -253,7 +255,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // Use the cleaned/corrected address for uniqueness to ensure visual consistency
+        // Use the cleaned/corrected address for uniqueness to ensure visual consistency.
+        // Using finalAddress (based on corrected input) ensures the UI shows the NEW address.
         const normalizedFinalAddress = normalizeAddress(finalAddress);
 
         if (!uniquePlottableClients.has(normalizedFinalAddress)) {
@@ -269,6 +272,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 isCached = true;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                // Don't add duplicates to newAddressesToCache
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }
@@ -277,7 +281,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 if (okbEntry) {
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
-                } else if (finalAddress && cacheEntry && (!cacheEntry.lat || !cacheEntry.lon)) {
+                } else if (finalAddress && !isCached) {
+                    // Only schedule for geocoding if not found in cache or OKB
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
