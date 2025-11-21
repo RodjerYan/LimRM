@@ -225,7 +225,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [resetHighlight]);
 
     // Handle Theme Change & Tile Layer Management
-    // We separate this from init to ensure it can reliably swap layers
     useEffect(() => {
         const map = mapInstance.current;
         if (mapContainer.current && map) {
@@ -233,18 +232,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
             const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
             
-            // Remove existing layer to force a clean switch
             if (tileLayerRef.current) {
-                map.removeLayer(tileLayerRef.current);
+                // Smoothly update the URL without removing the layer
+                tileLayerRef.current.setUrl(targetUrl);
+            } else {
+                // Create if doesn't exist
+                tileLayerRef.current = L.tileLayer(targetUrl, {
+                    attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+                }).addTo(map);
+                tileLayerRef.current.bringToBack();
             }
-            
-            // Create and add new layer
-            tileLayerRef.current = L.tileLayer(targetUrl, {
-                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-            }).addTo(map);
-            
-            // Ensure tiles stay at the back
-            tileLayerRef.current.bringToBack();
             
             if (theme === 'dark') {
                 mapContainer.current.classList.add('theme-dark');
