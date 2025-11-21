@@ -201,7 +201,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                 {/* CSV Hint */}
                 <div className="mt-3 flex items-center justify-center gap-2 text-xs text-gray-500">
                     <span className="w-1.5 h-1.5 rounded-full bg-yellow-500/50"></span>
-                    <span>Для больших файлов (>10МБ) используйте <b>CSV</b></span>
+                    <span>Для больших файлов (&gt;10МБ) используйте <b>CSV</b></span>
                 </div>
 
                 {/* Status & Progress Details */}

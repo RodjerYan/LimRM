@@ -83,6 +83,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    
+    // New ref to track if a save operation just completed
+    // This prevents the data-refresh effect from clearing the optimistic history update
+    const justSaved = useRef(false);
 
     const fetchHistory = async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
@@ -128,10 +132,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setLastUpdatedStr(null);
             }
 
-            // Fetch history from server
+            // Fetch history from server only if we didn't just trigger a save (optimistic UI preservation)
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
-                fetchHistory(rm, currentAddress);
+                if (!justSaved.current) {
+                    fetchHistory(rm, currentAddress);
+                } else {
+                    justSaved.current = false; // Reset flag for next updates
+                }
             } else {
                 setHistory([]);
             }
@@ -187,6 +195,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             });
             const newHistoryEntry = `${oldAddress} [${timestamp}]`;
             setHistory(prev => [newHistoryEntry, ...prev]);
+            
+            // Set flag to prevent the subsequent useEffect (caused by onDataUpdate) from clearing this history
+            justSaved.current = true;
 
             setTimeout(() => setSaveSuccess(false), 2000);
 
