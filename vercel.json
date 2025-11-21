@@ -26,15 +26,19 @@
     },
     {
       "source": "/api/get-okb",
-      "destination": "/api/get-okb"
+      "destination": "/api/data-ops?op=get-okb"
     },
     {
       "source": "/api/get-okb-status",
-      "destination": "/api/get-okb-status"
+      "destination": "/api/data-ops?op=get-okb-status"
     },
     {
       "source": "/api/get-conflict-zones",
-      "destination": "/api/get-conflict-zones"
+      "destination": "/api/data-ops?op=get-conflict-zones"
+    },
+    {
+      "source": "/api/geocode",
+      "destination": "/api/data-ops?op=geocode"
     },
     {
       "source": "/api/get-full-cache",
@@ -59,10 +63,6 @@
     {
       "source": "/api/get-cached-address",
       "destination": "/api/cache-ops?op=get-one"
-    },
-    {
-      "source": "/api/geocode",
-      "destination": "/api/geocode"
     },
     {
       "source": "/:path*",
