@@ -211,9 +211,15 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                 </div>
                 
                 {/* Bottom Section: Chart */}
-                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                    <h4 className="font-bold text-lg mb-3 text-emerald-400">Факт vs Потенциал</h4>
-                    <div className="h-64">
+                <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden">
+                    <div className="flex justify-between items-center mb-4">
+                        <h4 className="font-bold text-xl text-emerald-400 flex items-center gap-2">
+                            <FactIcon small />
+                            Факт vs Потенциал
+                        </h4>
+                    </div>
+                    {/* Increased height for better visual impact */}
+                    <div className="h-80 w-full">
                         <DetailChart fact={data.fact} potential={data.potential} />
                     </div>
                 </div>

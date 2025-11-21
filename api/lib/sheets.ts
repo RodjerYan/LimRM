@@ -131,18 +131,30 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 // --- NEW FUNCTIONS FOR COORDINATE CACHE ---
 
 /**
- * Helper function to check if a specific address exists in a history string.
- * Handles timestamp stripping and various separators.
+ * Robust string normalizer for comparison logic.
+ * Handles non-breaking spaces, multiple whitespaces, and casing.
  */
-function isAddressInHistory(historyString: string, targetAddress: string): boolean {
+function normalizeForComparison(str: string): string {
+    return String(str || '')
+        .toLowerCase()
+        .replace(/\u00A0/g, ' ') // Replace non-breaking space
+        .replace(/[.,]/g, ' ')   // Replace common punctuation to avoid mismatches on typos
+        .replace(/\s+/g, ' ')    // Collapse multiple spaces
+        .trim();
+}
+
+/**
+ * Helper function to check if a specific address exists in a history string.
+ * Handles timestamp stripping and various separators using robust normalization.
+ */
+function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
     // Split by newline (new format) or double pipe (old format)
     const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
     return entries.some(entry => {
         // Remove the timestamp part: " [DD.MM.YYYY HH:mm]"
-        // We split by '[' and take the first part to be safe against varied date formats
-        const addrPart = entry.split('[')[0].trim().toLowerCase();
-        return addrPart === targetAddress;
+        const addrPart = entry.split('[')[0];
+        return normalizeForComparison(addrPart) === targetAddressNorm;
     });
 }
 
@@ -256,11 +268,11 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
         range: `'${actualSheetTitle}'!A2:A`,
     });
 
-    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => String(a).trim().toLowerCase()) || []);
+    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => normalizeForComparison(String(a))) || []);
 
     const uniqueRowsToAppend = rowsToAppend.filter(row => {
         const address = String(row[0] || '').trim();
-        return address && !existingAddresses.has(address.toLowerCase());
+        return address && !existingAddresses.has(normalizeForComparison(address));
     });
 
     if (uniqueRowsToAppend.length === 0) {
@@ -298,11 +310,11 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     const addressesInSheet = response.data.values?.flat() || [];
     const addressIndexMap = new Map<string, number>();
     addressesInSheet.forEach((addr, i) => {
-        if(addr) addressIndexMap.set(String(addr).trim(), i + 1)
+        if(addr) addressIndexMap.set(normalizeForComparison(String(addr)), i + 1)
     });
 
     const dataForUpdate = updates.map(update => {
-        const rowIndex = addressIndexMap.get(String(update.address).trim());
+        const rowIndex = addressIndexMap.get(normalizeForComparison(update.address));
         if (!rowIndex) return null;
         return {
             range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`,
@@ -340,22 +352,23 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     });
 
     const rows = response.data.values || [];
-    const oldAddressTrimmedLower = oldAddress.trim().toLowerCase();
-    const newAddressTrimmedLower = newAddress.trim().toLowerCase();
+    // Use robust normalization for comparison
+    const oldAddressNorm = normalizeForComparison(oldAddress);
+    const newAddressNorm = normalizeForComparison(newAddress);
 
     let rowIndexToUpdate = -1;
 
     // 1. First, try to find if the "New Address" already exists as a main row.
     // If so, we should probably merge/update that one instead of creating a duplicate.
-    const existingNewIndex = rows.findIndex(row => String(row[0] || '').trim().toLowerCase() === newAddressTrimmedLower);
+    const existingNewIndex = rows.findIndex(row => normalizeForComparison(row[0]) === newAddressNorm);
     
     // 2. Try to find the "Old Address" in Column A (Active)
-    const existingOldIndex = rows.findIndex(row => String(row[0] || '').trim().toLowerCase() === oldAddressTrimmedLower);
+    const existingOldIndex = rows.findIndex(row => normalizeForComparison(row[0]) === oldAddressNorm);
 
     // 3. Try to find "Old Address" in Column D (History) - this handles case where row was already renamed
     let existingHistoryIndex = -1;
     if (existingNewIndex === -1 && existingOldIndex === -1) {
-        existingHistoryIndex = rows.findIndex(row => isAddressInHistory(String(row[3] || ''), oldAddressTrimmedLower));
+        existingHistoryIndex = rows.findIndex(row => isAddressInHistory(String(row[3] || ''), oldAddressNorm));
     }
 
     if (existingOldIndex !== -1) {
@@ -425,9 +438,10 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 
     const addressesInSheet = response.data.values?.flat() || [];
     let rowIndex = -1;
-    const addressTrimmedLower = address.trim().toLowerCase();
+    const addressNorm = normalizeForComparison(address);
+    
     for (let i = 0; i < addressesInSheet.length; i++) {
-        if (String(addressesInSheet[i]).trim().toLowerCase() === addressTrimmedLower) {
+        if (normalizeForComparison(String(addressesInSheet[i])) === addressNorm) {
             rowIndex = i + 1; // 1-based index
             break;
         }
@@ -478,14 +492,14 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
         return null;
     }
 
-    const trimmedAddress = address.trim().toLowerCase();
+    const addressNorm = normalizeForComparison(address);
     
     // 1. Try exact match in Column A (Current Address)
-    let foundRow = values.find(row => String(row[0] || '').trim().toLowerCase() === trimmedAddress);
+    let foundRow = values.find(row => normalizeForComparison(row[0]) === addressNorm);
 
     // 2. If not found, search in Column D (History) to see if this address was renamed
     if (!foundRow) {
-        foundRow = values.find(row => isAddressInHistory(String(row[3] || ''), trimmedAddress));
+        foundRow = values.find(row => isAddressInHistory(String(row[3] || ''), addressNorm));
     }
 
     if (foundRow) {
