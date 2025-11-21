@@ -93,8 +93,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 const result = await res.json();
                 if (result.history) {
                     // Support splitting by newlines (new format) or double pipes (old format)
-                    // Split and reverse so newest are at the top
-                    const historyArray = result.history.split(/\r?\n| \|\| /).filter(Boolean).reverse();
+                    // Handles "||" with surrounding spaces which might happen
+                    const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
             }
@@ -180,8 +180,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setSaveSuccess(true);
             setStatus('geocoding');
             
-            // Refresh history after save
-            fetchHistory(rm, editedAddress);
+            // OPTIMISTIC UPDATE: Add the new history entry immediately to the state
+            // This prevents the "Empty history" flash while waiting for the server
+            const timestamp = new Date().toLocaleString('ru-RU', {
+                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            const newHistoryEntry = `${oldAddress} [${timestamp}]`;
+            setHistory(prev => [newHistoryEntry, ...prev]);
 
             setTimeout(() => setSaveSuccess(false), 2000);
 
@@ -189,7 +194,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const parsed = parseRussianAddress(editedAddress, distributor);
             const currentLat = (data as MapPoint).lat;
             const currentLon = (data as MapPoint).lon;
-            const timestamp = Date.now();
+            const updateTimestamp = Date.now();
 
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
@@ -205,7 +210,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 originalRow: originalRow,
                 fact: (data as MapPoint).fact,
                 isGeocoding: true,
-                lastUpdated: timestamp 
+                lastUpdated: updateTimestamp
             };
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
@@ -332,7 +337,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                                 <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
                                                 <span>Изменение #{history.length - idx}</span>
                                             </div>
-                                            <span className="pl-4 break-words">{item}</span>
+                                            <span className="pl-4 break-words whitespace-pre-wrap">{item}</span>
                                         </li>
                                     ))}
                                 </ul>

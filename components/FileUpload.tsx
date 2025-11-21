@@ -97,7 +97,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         workerRef.current.postMessage({ file, okbData, cacheData });
     }, [onFileProcessed, onProcessingStateChange, okbData]);
     
-    // Cleanup worker on component unmount
     useEffect(() => {
         return () => {
             workerRef.current?.terminate();
@@ -109,7 +108,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         if (file) {
             processFile(file);
         }
-        // Reset input value to allow re-uploading the same file
         event.target.value = '';
     }, [processFile]);
 
@@ -138,87 +136,119 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
     }, [processFile, disabled]);
 
     const isProcessing = progress > 0 && progress < 100;
+    const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
 
     return (
-        <div className={`relative bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 transition-opacity ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
-                 <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">1</span>
-                Загрузка данных
-            </h2>
-            <div className="flex items-center justify-center w-full">
-                <label 
-                    htmlFor="dropzone-file" 
-                    onDragEnter={handleDragEnter}
-                    onDragLeave={handleDragLeave}
-                    onDragOver={handleDragEnter}
-                    onDrop={handleDrop}
-                    className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-lg transition-colors ${
-                        isProcessing ? 'cursor-wait' : 'cursor-pointer'
-                    } ${
-                        isDragging ? 'border-accent bg-indigo-900/40' : 'border-gray-600 bg-gray-900/50 hover:bg-gray-800/60'
-                    }`}
-                >
-                    <div className="flex flex-col items-center justify-center text-center h-full">
-                        {isProcessing ? (
-                             <div className="pt-5 pb-6">
-                                <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mx-auto"></div>
-                                <p className="mt-3 text-base font-semibold text-white">Обработка...</p>
-                                <p className="text-sm text-gray-300 max-w-xs truncate">{fileName}</p>
-                            </div>
-                        ) : (
-                            <div className="pt-5 pb-6">
-                                <svg className="w-8 h-8 mb-4 text-gray-500 mx-auto" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
-                                    <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
-                                </svg>
-                                <p className="mb-2 text-sm text-gray-400">
-                                    <span className="font-semibold text-accent">{isDragging ? 'Отпустите файл' : 'Нажмите для загрузки'}</span> или перетащите
-                                </p>
-                                <p className="text-xs text-gray-500">XLSX, XLS, CSV</p>
-                            </div>
-                        )}
+        <div className={`relative group transition-all duration-500 ${isBlocked ? 'opacity-50 grayscale' : ''}`}>
+             {!isBlocked && <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>}
+            
+            <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-6">
+                    <div className={`flex items-center justify-center w-10 h-10 rounded-full text-white font-bold shadow-lg ring-2 ring-white/10 ${isBlocked ? 'bg-gray-700' : 'bg-gradient-to-br from-purple-500 to-pink-600 shadow-purple-500/30'}`}>
+                        2
                     </div>
-                    <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing || disabled} />
-                </label>
-            </div>
-             <div className="mt-4 text-center text-xs text-gray-400 bg-gray-900/50 p-2 rounded-md border border-gray-700">
-                💡 **Совет:** Для файлов размером более 10МБ рекомендуется использовать формат **CSV** для значительного ускорения обработки.
-            </div>
-            {fileName && (
-                 <div className="mt-4 space-y-2">
-                    <div className="flex justify-between items-center text-sm">
-                        <p className="text-gray-300 truncate font-medium max-w-[70%]">Файл: {fileName}</p>
-                        <p className="font-mono text-accent font-semibold">{Math.round(progress)}%</p>
+                    <div>
+                        <h2 className="text-lg font-bold text-white leading-tight">Загрузка данных</h2>
+                        <p className="text-xs text-gray-400">Анализ файла продаж (XLSX, CSV)</p>
                     </div>
-                    <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden border border-gray-600/50">
-                        <div 
-                            className="bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
-                            style={{ width: `${progress}%` }}
-                        ></div>
-                    </div>
-                    <div className="flex justify-between items-center text-xs min-h-[1.25rem]">
-                        <p className="text-gray-300">{message}</p>
-                        {isProcessing && etr !== null && (
-                            <p className="text-indigo-400 font-mono">{formatETR(etr)}</p>
-                        )}
-                        {progress === 100 && message.includes("заверш") && (
-                            <p className="text-success font-semibold flex items-center gap-1">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                Завершено!
-                            </p>
-                        )}
-                    </div>
-                    {backgroundMessage && (
-                        <div className="text-xs text-cyan-400 bg-cyan-900/30 p-2 rounded-md flex items-center gap-2 animate-fade-in">
-                           <LoaderIcon /> {backgroundMessage}
+                </div>
+
+                {/* Dropzone */}
+                <div className="relative group/drop">
+                    <label 
+                        htmlFor="dropzone-file" 
+                        onDragEnter={handleDragEnter}
+                        onDragLeave={handleDragLeave}
+                        onDragOver={handleDragEnter}
+                        onDrop={handleDrop}
+                        className={`flex flex-col items-center justify-center w-full h-40 border-2 border-dashed rounded-xl transition-all duration-300 overflow-hidden ${
+                            isProcessing ? 'cursor-wait border-indigo-500/50 bg-indigo-900/10' : 
+                            isDragging ? 'border-purple-400 bg-purple-900/20 scale-[1.02] shadow-inner' : 
+                            isBlocked ? 'cursor-not-allowed border-gray-700 bg-gray-800/50' :
+                            'cursor-pointer border-gray-600 hover:border-purple-400/50 hover:bg-gray-800/80'
+                        }`}
+                    >
+                        <div className="flex flex-col items-center justify-center text-center z-10 p-4">
+                            {isProcessing ? (
+                                <div className="flex flex-col items-center animate-pulse">
+                                    <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mb-3"></div>
+                                    <p className="text-sm font-medium text-white">Обработка файла...</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <svg className={`w-10 h-10 mb-3 transition-colors duration-300 ${isDragging ? 'text-purple-400' : 'text-gray-500 group-hover/drop:text-purple-300'}`} aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                                        <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
+                                    </svg>
+                                    <p className="mb-1 text-sm text-gray-300">
+                                        <span className="font-bold text-purple-400">Нажмите</span> или перетащите файл
+                                    </p>
+                                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">XLSX, XLS, CSV</p>
+                                </>
+                            )}
                         </div>
-                    )}
+                        {/* Progress Background */}
+                        {progress > 0 && (
+                            <div 
+                                className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300 ease-out"
+                                style={{ width: `${progress}%` }}
+                            />
+                        )}
+                        <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing || isBlocked} />
+                    </label>
                 </div>
-            )}
-             {!okbStatus || okbStatus.status !== 'ready' ? (
-                <div className="absolute inset-0 bg-card-bg/80 flex items-center justify-center rounded-2xl">
-                    <p className="text-center text-warning p-4">Сначала загрузите и обновите<br />Общую Клиентскую Базу (ОКБ)</p>
+
+                {/* CSV Hint */}
+                <div className="mt-3 flex items-center justify-center gap-2 text-xs text-gray-500">
+                    <span className="w-1.5 h-1.5 rounded-full bg-yellow-500/50"></span>
+                    <span>Для больших файлов (>10МБ) используйте <b>CSV</b></span>
                 </div>
-            ) : null}
+
+                {/* Status & Progress Details */}
+                {fileName && (
+                    <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-2">
+                        <div className="flex justify-between items-center text-sm">
+                            <p className="text-gray-200 font-medium truncate max-w-[70%]" title={fileName}>{fileName}</p>
+                            <span className="text-xs font-mono text-purple-300 bg-purple-900/30 px-1.5 py-0.5 rounded">{Math.round(progress)}%</span>
+                        </div>
+                        
+                        <div className="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
+                            <div 
+                                className="bg-gradient-to-r from-indigo-400 to-purple-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
+                                style={{ width: `${progress}%` }}
+                            ></div>
+                        </div>
+
+                        <div className="flex justify-between items-center text-xs pt-1">
+                            <p className="text-gray-400 truncate max-w-[65%]">{message}</p>
+                            {isProcessing && etr !== null && (
+                                <p className="text-indigo-300 font-mono">{formatETR(etr)}</p>
+                            )}
+                            {progress === 100 && message.includes("заверш") && (
+                                <p className="text-emerald-400 font-bold flex items-center gap-1">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
+                                    Готово
+                                </p>
+                            )}
+                        </div>
+                        
+                        {backgroundMessage && (
+                            <div className="mt-2 text-[10px] text-cyan-300 bg-cyan-900/20 px-2 py-1 rounded border border-cyan-500/20 flex items-center gap-2">
+                               <div className="animate-spin w-2 h-2 border border-cyan-400 border-t-transparent rounded-full"></div> 
+                               {backgroundMessage}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {isBlocked && (
+                    <div className="absolute inset-0 z-20 bg-gray-900/60 backdrop-blur-[2px] flex items-center justify-center rounded-2xl border border-white/5">
+                        <div className="bg-gray-800/90 p-4 rounded-xl border border-yellow-500/30 shadow-xl text-center max-w-[80%]">
+                            <p className="text-yellow-400 text-sm font-medium">Сначала загрузите базу (Шаг 1)</p>
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

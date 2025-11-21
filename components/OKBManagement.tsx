@@ -13,7 +13,6 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
     const [isFetching, setIsFetching] = useState(false);
 
     useEffect(() => {
-        // On mount, if the status hasn't been set by a parent, initialize it to the default idle state.
         if (!status) {
             onStatusChange({ status: 'idle', message: 'Загрузите данные ОКБ для начала работы.' });
         }
@@ -47,63 +46,85 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
     const isLoading = isFetching || status?.status === 'loading';
     const isReady = status?.status === 'ready';
-
-    const getStatusIcon = () => {
-        if (isLoading) return <LoaderIcon />;
-        if (status?.status === 'error') return <div className="w-5 h-5 text-danger"><ErrorIcon /></div>;
-        if (isReady) return <div className="w-5 h-5 text-success"><SuccessIcon /></div>;
-        return null;
-    };
-    
-    const getStatusText = () => {
-        if (isLoading) return status?.message || 'Загрузка...';
-        if (status?.status === 'error') return status.message || 'Произошла ошибка';
-        if (isReady) return status.message || 'Данные готовы';
-        return status?.message || 'Ожидание';
-    }
+    const isError = status?.status === 'error';
 
     return (
-        <div className={`bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10`}>
-            <h2 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
-                 <span className="bg-accent text-white text-sm font-bold rounded-full h-7 w-7 flex items-center justify-center">0</span>
-                База Клиентов (ОКБ)
-            </h2>
-            <div className="space-y-3 text-sm">
-                <div className="flex justify-between items-center">
-                    <span className="text-gray-400">Статус:</span>
-                    <div className="flex items-center gap-2 text-right">
-                        {getStatusIcon()}
-                        <span className={`font-semibold ${isReady ? 'text-success' : status?.status === 'error' ? 'text-danger' : 'text-white'}`}>
-                           {getStatusText()}
-                        </span>
+        <div className="relative group">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+            <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
+                
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-6">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 ring-2 ring-white/10">
+                        1
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-bold text-white leading-tight">База Клиентов (ОКБ)</h2>
+                        <p className="text-xs text-gray-400">Источник данных для анализа</p>
                     </div>
                 </div>
-                {status?.timestamp && (
-                     <div className="flex justify-between items-center">
-                        <span className="text-gray-400">Версия от:</span>
-                        <span className="text-white font-mono text-xs">{new Date(status.timestamp).toLocaleString('ru-RU')}</span>
+
+                {/* Status Banner */}
+                <div className={`mb-5 p-3 rounded-xl border flex items-center gap-3 transition-colors duration-300 ${
+                    isError ? 'bg-red-500/10 border-red-500/20 text-red-200' : 
+                    isReady ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200' : 
+                    'bg-gray-800/50 border-gray-700 text-gray-300'
+                }`}>
+                    <div className={`p-1.5 rounded-lg ${
+                        isError ? 'bg-red-500/20' : 
+                        isReady ? 'bg-emerald-500/20' : 
+                        'bg-gray-700'
+                    }`}>
+                        {isLoading ? <LoaderIcon /> : isError ? <div className="w-4 h-4"><ErrorIcon /></div> : isReady ? <div className="w-4 h-4"><SuccessIcon /></div> : <div className="w-4 h-4 rounded-full bg-gray-500" />}
                     </div>
-                )}
-                {status?.rowCount !== undefined && (
-                     <div className="flex justify-between items-center">
-                        <span className="text-gray-400">Записей:</span>
-                        <span className="text-white font-semibold">{status.rowCount.toLocaleString('ru-RU')}</span>
+                    <span className="text-sm font-medium truncate">
+                        {status?.message || 'Ожидание действий...'}
+                    </span>
+                </div>
+
+                {/* Stats Grid */}
+                <div className="grid grid-cols-2 gap-3 mb-6">
+                    <div className="bg-gray-800/40 p-3 rounded-xl border border-white/5">
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">Всего записей</p>
+                        <p className="text-lg font-bold text-white font-mono">
+                            {status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
+                        </p>
                     </div>
-                )}
-                 {status?.coordsCount !== undefined && (
-                     <div className="flex justify-between items-center">
-                        <span className="text-gray-400">С координатами:</span>
-                        <span className="text-white font-semibold">{status.coordsCount.toLocaleString('ru-RU')}</span>
+                    <div className="bg-gray-800/40 p-3 rounded-xl border border-white/5">
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">С координатами</p>
+                        <p className="text-lg font-bold text-indigo-300 font-mono">
+                            {status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
+                        </p>
                     </div>
-                )}
+                    <div className="col-span-2 bg-gray-800/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Версия от</p>
+                        <p className="text-xs font-medium text-gray-300 font-mono">
+                            {status?.timestamp ? new Date(status.timestamp).toLocaleString('ru-RU') : 'Не загружена'}
+                        </p>
+                    </div>
+                </div>
+
+                {/* Action Button */}
+                <button
+                    onClick={handleFetchData}
+                    disabled={isLoading || disabled}
+                    className="w-full relative overflow-hidden group/btn bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg shadow-indigo-900/20 transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                    <span className="relative z-10 flex items-center justify-center gap-2">
+                        {isLoading ? (
+                            <>
+                                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                                Загрузка...
+                            </>
+                        ) : (
+                            isReady ? 'Обновить данные' : 'Загрузить базу'
+                        )}
+                    </span>
+                    {!isLoading && !disabled && (
+                        <div className="absolute inset-0 h-full w-full scale-0 rounded-xl transition-all duration-300 group-hover/btn:scale-100 group-hover/btn:bg-white/10"></div>
+                    )}
+                </button>
             </div>
-            <button
-                onClick={handleFetchData}
-                disabled={isLoading || disabled}
-                className="w-full mt-5 bg-accent hover:bg-accent-dark disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-lg transition duration-200"
-            >
-                {isLoading ? 'Загрузка...' : (isReady ? 'Обновить ОКБ' : 'Загрузить ОКБ')}
-            </button>
         </div>
     );
 };

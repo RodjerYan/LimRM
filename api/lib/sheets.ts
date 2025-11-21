@@ -363,6 +363,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
         
         // Use newline '\n' as delimiter to separate multiple entries in the cell
+        // This ensures history items appear vertically stacked in Google Sheets
         const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
 
         // Col A (Address) -> newAddress
