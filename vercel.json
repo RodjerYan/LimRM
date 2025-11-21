@@ -1,6 +1,26 @@
 {
   "rewrites": [
     {
+      "source": "/api/auth/login",
+      "destination": "/api/auth/login"
+    },
+    {
+      "source": "/api/auth/register",
+      "destination": "/api/auth/register"
+    },
+    {
+      "source": "/api/auth/verify",
+      "destination": "/api/auth/verify"
+    },
+    {
+      "source": "/api/auth/me",
+      "destination": "/api/auth/me"
+    },
+    {
+      "source": "/api/auth/logout",
+      "destination": "/api/auth/logout"
+    },
+    {
       "source": "/api/gemini-proxy",
       "destination": "/api/gemini-proxy"
     },
