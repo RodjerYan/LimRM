@@ -145,10 +145,24 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                         continue; // Don't add to other maps if deleted
                     }
 
-                    // Populate redirect map if a corrected address exists in Column D.
-                    if (item.correctedAddress) {
-                        const normalizedOld = normalizeAddress(item.correctedAddress);
-                        cacheRedirectMap.set(normalizedOld, item.address);
+                    // Populate redirect map from HISTORY (Column D)
+                    // This parses the history string to map ALL previous addresses to the current one.
+                    if (item.history) {
+                        // Split by newline (new format) or double pipe (old format), handling empty strings
+                        const historyEntries = item.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean);
+                        
+                        for (const entry of historyEntries) {
+                            // Extract address part before the timestamp " [DD.MM.YYYY HH:mm]"
+                            // Using split('[') is safe enough for now.
+                            const oldAddrRaw = entry.split('[')[0].trim();
+                            if (oldAddrRaw) {
+                                const normalizedOld = normalizeAddress(oldAddrRaw);
+                                // Only map if it's not the same as current (avoid circular/self ref)
+                                if (normalizedOld !== normalized) {
+                                    cacheRedirectMap.set(normalizedOld, item.address);
+                                }
+                            }
+                        }
                     }
 
                     if (!cacheAddressMap.has(normalized)) {
@@ -187,11 +201,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
+            
+            // 1. Check if explicit delete
             if (deletedAddresses.has(normalizedRaw)) continue;
 
+            // 2. Check Redirects (renamed addresses from history)
             if (cacheRedirectMap.has(normalizedRaw)) {
-                clientAddress = cacheRedirectMap.get(normalizedRaw)!;
-                normalizedRaw = normalizeAddress(clientAddress);
+                const newAddr = cacheRedirectMap.get(normalizedRaw)!;
+                clientAddress = newAddr; // Use the new address for all further processing
+                normalizedRaw = normalizeAddress(clientAddress); // Re-normalize for cache lookup
+                
+                // Check if the *target* of the redirect is deleted (edge case)
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
@@ -229,6 +249,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
+        // Use the possibly redirected 'clientAddress' as the base for uniqueness
         const normalizedOriginalAddress = normalizeAddress(clientAddress);
 
         if (!uniquePlottableClients.has(normalizedOriginalAddress)) {

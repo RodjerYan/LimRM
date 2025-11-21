@@ -135,6 +135,5 @@ export type WorkerMessage =
 
 
 // Type for the coordinate cache data structure from Google Sheets
-// Updated to include correctedAddress for handling edits/redirects
-// Updated to include isDeleted for soft deletes
-export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; correctedAddress?: string; isDeleted?: boolean }[]>;
+// Updated to include history string for redirect parsing in worker
+export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
