@@ -58,7 +58,13 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             switch (type) {
                 case 'progress':
                     if (payload.isBackground) {
-                        setBackgroundMessage(payload.message);
+                        // FIX: If background tasks are finished, clear the message immediately
+                        // to remove the "eternally spinning slider" and text.
+                        if (payload.message.toLowerCase().includes('завершен')) {
+                            setBackgroundMessage(null);
+                        } else {
+                            setBackgroundMessage(payload.message);
+                        }
                     } else {
                         setProgress(payload.percentage);
                         setMessage(payload.message);
