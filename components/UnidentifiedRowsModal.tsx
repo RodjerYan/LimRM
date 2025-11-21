@@ -14,6 +14,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
     
     const groupedRows = useMemo(() => {
         return rows.reduce((acc, row) => {
+            if (!row) return acc; // Safety check
             if (!acc[row.rm]) acc[row.rm] = [];
             acc[row.rm].push(row);
             return acc;
@@ -30,8 +31,11 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                 <p className="text-gray-400 text-sm">
                     Для этих строк не удалось автоматически определить город или регион. 
                     Нажмите на строку, чтобы открыть окно редактирования, внести исправления и сохранить. 
-                    После сохранения адрес будет заменен в кэше и будет корректно распознаваться при следующих загрузках.
+                    После сохранения адрес будет перемещен в основной список клиентов.
                 </p>
+                {rmOrder.length === 0 && (
+                    <div className="text-center p-8 text-gray-500">Все адреса успешно распознаны!</div>
+                )}
                 {rmOrder.map(rm => (
                     <div key={rm} className="bg-card-bg/50 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-indigo-500/10">
                         <h3 className="text-lg font-bold text-accent mb-3">РМ: {rm} ({groupedRows[rm].length} строк)</h3>
@@ -46,6 +50,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                                 </thead>
                                 <tbody className="text-gray-300">
                                     {groupedRows[rm].map((row: UnidentifiedRow) => {
+                                        if (!row) return null;
                                         const { rowData, originalIndex } = row;
                                         const originalAddress = findAddressInRow(rowData) || 'N/A';
                                         const clientName = findValueInRow(rowData, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A';

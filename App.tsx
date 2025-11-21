@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
@@ -78,6 +78,9 @@ const App: React.FC = () => {
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
+    // Polling references to keep track of active background jobs
+    const activePolls = useRef<Set<string>>(new Set());
+
     const isDataLoaded = allData.length > 0;
 
     const filteredActiveClients = useMemo(() => {
@@ -222,53 +225,53 @@ const App: React.FC = () => {
 
     // Improved data update handler that syncs all state slices
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        // 1. Update Active Clients (Flat list for map)
+        
+        // 1. Update Active Clients (Flat list for map and list view)
         setAllActiveClients(prev => {
-            // If it's already in active clients, update it. If not, add it.
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
+                // Update existing
                 return prev.map(c => c.key === oldKey ? newPoint : c);
+            } else {
+                // New client (was unidentified)
+                return [newPoint, ...prev];
             }
-            return [...prev, newPoint];
         });
     
-        // 2. Update Unidentified Rows
-        // If we have an index (reliable), remove by index. Otherwise remove by key (fallback).
+        // 2. Update Unidentified Rows (Remove if it was one)
         if (typeof originalIndex === 'number') {
             setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
-        } else {
-            setUnidentifiedRows(prev => prev.filter(row => {
-                const originalAddress = findAddressInRow(row.rowData);
-                return normalizeAddress(originalAddress) !== oldKey;
-            }));
         }
 
-        // 3. CRITICAL: Update Aggregated Data (allData) to reflect changes in Search and Tables
+        // 3. Update Aggregated Data (allData) to reflect changes in Search and Tables
         setAllData(prevData => {
             const newData = [...prevData];
             let wasUpdated = false;
 
+            // Try to find existing client in groups
             for (let i = 0; i < newData.length; i++) {
                 const group = newData[i];
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
                 
                 if (clientIndex !== -1) {
-                    const oldClient = group.clients[clientIndex];
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
                     
                     newData[i] = {
                         ...group,
                         clients: updatedClients,
-                        fact: group.fact - (oldClient.fact || 0) + (newPoint.fact || 0)
+                        // If moving from unidentified, 'oldKey' won't match, so we don't subtract. 
+                        // If editing existing, we subtract old fact and add new fact.
+                        // Simplification: Re-sum fact from clients
+                        fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0)
                     };
                     wasUpdated = true;
                     break; 
                 }
             }
 
+            // If not found in existing groups (e.g. was Unidentified), find target group or create new
             if (!wasUpdated) {
-                // Move from Unidentified (or new client) to Group
                 const targetGroupIndex = newData.findIndex(g => 
                     g.rm === newPoint.rm && 
                     g.brand === newPoint.brand && 
@@ -277,12 +280,12 @@ const App: React.FC = () => {
 
                 if (targetGroupIndex !== -1) {
                     const group = newData[targetGroupIndex];
-                    const updatedClients = [...group.clients, newPoint];
+                    const updatedClients = [newPoint, ...group.clients];
                     newData[targetGroupIndex] = {
                         ...group,
                         clients: updatedClients,
-                        fact: group.fact + (newPoint.fact || 0),
-                        potential: group.potential + ((newPoint.fact || 0) * 1.1), 
+                        fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0),
+                        potential: group.potential + ((newPoint.fact || 0) * 1.2), // Simple heuristic
                     };
                 } else {
                     const newGroup: AggregatedDataRow = {
@@ -304,8 +307,55 @@ const App: React.FC = () => {
             }
             return newData;
         });
-        
     }, []);
+
+    // Background Polling Logic
+    const startCoordinatePolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
+        const pollKey = `${rmName}-${address}`;
+        if (activePolls.current.has(pollKey)) return; // Already polling
+        activePolls.current.add(pollKey);
+
+        const POLLING_INTERVAL = 3000;
+        const MAX_ATTEMPTS = 120; // ~6 minutes
+        let attempts = 0;
+
+        const interval = setInterval(async () => {
+            attempts++;
+            try {
+                const pollRes = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+                if (pollRes.ok) {
+                    const result = await pollRes.json();
+                    if (result && typeof result.lat === 'number' && typeof result.lon === 'number') {
+                        clearInterval(interval);
+                        activePolls.current.delete(pollKey);
+                        
+                        const finalPoint = { 
+                            ...basePoint, 
+                            lat: result.lat, 
+                            lon: result.lon, 
+                            isGeocoding: false 
+                        };
+                        
+                        handleDataUpdate(tempKey, finalPoint, originalIndex);
+                        addNotification(`Координаты для "${address}" успешно найдены.`, 'success');
+                        return;
+                    }
+                }
+            } catch (e) {
+                // console.error("Poll error", e);
+            }
+
+            if (attempts >= MAX_ATTEMPTS) {
+                clearInterval(interval);
+                activePolls.current.delete(pollKey);
+                // Update to stop spinner, but keep old coords (or lack thereof)
+                const failedPoint = { ...basePoint, isGeocoding: false };
+                handleDataUpdate(tempKey, failedPoint, originalIndex);
+                addNotification(`Не удалось найти координаты для "${address}" (таймаут).`, 'error');
+            }
+        }, POLLING_INTERVAL);
+    }, [handleDataUpdate, addNotification]);
+
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
         // 1. Remove from active clients
@@ -459,6 +509,7 @@ const App: React.FC = () => {
                 onBack={handleGoBackFromEdit}
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
+                onStartPolling={startCoordinatePolling}
                 onDelete={handleClientDelete}
             />
         </div>

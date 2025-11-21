@@ -134,7 +134,8 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                                     <LoaderIcon />
                                                 </div>
                                             )}
-                                            <span>{row.address}</span>
+                                            <span className={row.isGeocoding ? "text-gray-300" : ""}>{row.address}</span>
+                                            {row.isGeocoding && <span className="text-xs text-cyan-500 italic">(Поиск координат...)</span>}
                                         </div>
                                     </td>
                                     <td className="px-4 py-3">{row.city}</td>
