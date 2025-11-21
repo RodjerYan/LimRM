@@ -214,7 +214,7 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
         range: `'${rmName}'!A1`,
         valueInputOption: 'RAW',
         requestBody: {
-            values: [['Адрес ТТ', 'lat', 'lon', 'Переадресация']],
+            values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений']],
         },
     });
     return rmName; // The new sheet has this title
@@ -304,15 +304,8 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 }
 
 /**
- * Replaces an old address with a new one in the cache (case-insensitively) by updating the existing row.
- * REVISED LOGIC v4 (Robust Handling):
- * 1. Finds the row with the old address (Col A).
- * 2. If found: Overwrites Col A with NEW address, Clears B/C, Writes OLD to Col D.
- * 3. If NOT found:
- *    a. Checks if the NEW address already exists in the sheet.
- *    b. If NEW exists (e.g. merging aliases): Updates THAT row's Col D (Redirect) to include the OLD address.
- *    c. If NEW does NOT exist: Appends a new row [NewAddress, '', '', OldAddress].
- * This ensures that even if we are "fixing" an address to one that is already known, the mapping is preserved.
+ * Replaces an old address with a new one in the cache by updating the existing row.
+ * KEEPS HISTORY: Appends the old address to Column D (History) instead of overwriting.
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param oldAddress The address to be replaced (from the file).
  * @param newAddress The new, corrected address.
@@ -339,44 +332,62 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         if (currentVal === newAddressTrimmedLower) newRowIndex = i + 1;
     }
     
+    const timestamp = new Date().toLocaleString('ru-RU', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+    const historyEntry = `${oldAddress} [${timestamp}]`;
+
     if (oldRowIndex !== -1) {
-        // Case 1: Old address exists. Overwrite it.
+        // Case 1: Old address exists.
+        // Need to fetch current history to append to it.
+        const historyResponse = await sheets.spreadsheets.values.get({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!D${oldRowIndex}`,
+        });
+        const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
+        
+        // Use ' || ' as delimiter for robust splitting later
+        const newHistory = currentHistory ? `${currentHistory} || ${historyEntry}` : historyEntry;
+
         // Col A (Address) -> newAddress
-        // Col B (Lat) -> empty
+        // Col B (Lat) -> empty (re-geocode needed)
         // Col C (Lon) -> empty
-        // Col D (Redirect) -> oldAddress
+        // Col D (History) -> newHistory
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A${oldRowIndex}:D${oldRowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[newAddress, '', '', oldAddress]],
+                values: [[newAddress, '', '', newHistory]],
             },
         });
     } else if (newRowIndex !== -1) {
         // Case 2: Old address NOT found, but New Address EXISTS.
-        // We must update the existing "correct" row to acknowledge the "old/bad" address as a redirect.
-        // We write to Column D (Redirect) of the *existing* newRowIndex.
-        // NOTE: This overwrites any previous redirect in that row.
+        // Update the existing row's history to log this merge/redirect.
+        const historyResponse = await sheets.spreadsheets.values.get({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!D${newRowIndex}`,
+        });
+        const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
+        const newHistory = currentHistory ? `${currentHistory} || ${historyEntry}` : historyEntry;
+
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!D${newRowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[oldAddress]],
+                values: [[newHistory]],
             },
         });
     } else {
-        // Case 3: Neither exists. This is a fresh addition from an unidentified row.
-        // Append the new row WITH the old address in Col D.
-        // We bypass appendToCache's check because we already manually checked existence above.
+        // Case 3: Neither exists. Fresh addition.
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
             valueInputOption: 'USER_ENTERED',
             insertDataOption: 'INSERT_ROWS',
             requestBody: {
-                values: [[newAddress, '', '', oldAddress]],
+                values: [[newAddress, '', '', historyEntry]],
             },
         });
     }
@@ -424,11 +435,12 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 
 /**
  * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
+ * Returns the full object including history from Column D.
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param address The address to search for.
- * @returns An object with address, lat, and lon, or null if not found.
+ * @returns An object with address, lat, lon, and history, or null if not found.
  */
-export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number } | null> {
+export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string } | null> {
     const sheets = await getGoogleSheetsClient();
     
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
@@ -436,11 +448,11 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
     
     if (!existingSheet || !existingSheet.properties?.title) {
-        return null; // Sheet doesn't exist, so the address can't be there.
+        return null; // Sheet doesn't exist
     }
     const actualSheetTitle = existingSheet.properties.title;
 
-    // Fetch A:D to include redirects and check for deletion
+    // Fetch A:D to include history (Column D)
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:D`,
@@ -457,10 +469,11 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     if (foundRow) {
         const latStr = String(foundRow[1] || '').trim();
         const lonStr = String(foundRow[2] || '').trim();
+        const history = foundRow[3] ? String(foundRow[3]).trim() : undefined;
         
         // Check if marked as deleted
         if (latStr === 'DELETED' || lonStr === 'DELETED') {
-             return null; // Treat as not found
+             return null; 
         }
 
         const lat = latStr ? parseFloat(latStr.replace(',', '.')) : undefined;
@@ -470,6 +483,7 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
             address: String(foundRow[0]),
             lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
             lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
+            history: history
         };
     }
 

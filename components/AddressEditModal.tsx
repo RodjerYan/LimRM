@@ -5,7 +5,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
@@ -81,11 +81,33 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [lastUpdatedStr, setLastUpdatedStr] = useState<string | null>(null);
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [history, setHistory] = useState<string[]>([]);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+    const fetchHistory = async (rmName: string, address: string) => {
+        setIsLoadingHistory(true);
+        setHistory([]);
+        try {
+            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+            if (res.ok) {
+                const result = await res.json();
+                if (result.history) {
+                    const historyArray = result.history.split(' || ').reverse(); // Newest first
+                    setHistory(historyArray);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch history", e);
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    };
 
     useEffect(() => {
         if (isOpen && data) {
+            const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
             // Always update the input field when data changes from parent
-            const currentAddress = (data as MapPoint).address || findAddressInRow((data as UnidentifiedRow).rowData) || '';
+            const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
             setEditedAddress(currentAddress);
             
             if ((data as MapPoint).isGeocoding) {
@@ -102,6 +124,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setLastUpdatedStr(new Date((data as MapPoint).lastUpdated!).toLocaleString('ru-RU'));
             } else {
                 setLastUpdatedStr(null);
+            }
+
+            // Fetch history from server
+            const rm = findValueInRow(originalRow, ['рм']);
+            if (rm && currentAddress) {
+                fetchHistory(rm, currentAddress);
+            } else {
+                setHistory([]);
             }
         }
     }, [isOpen, data]);
@@ -147,6 +177,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // Visual Feedback
             setSaveSuccess(true);
             setStatus('geocoding');
+            
+            // Refresh history after save
+            fetchHistory(rm, editedAddress);
+
             setTimeout(() => setSaveSuccess(false), 2000);
 
             const distributor = findValueInRow(originalRow, ['дистрибьютор']);
@@ -260,18 +294,42 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 max-h-[60vh] overflow-y-auto custom-scrollbar">
-                    <h4 className="font-bold text-lg mb-3 text-indigo-400">Исходные данные строки</h4>
-                    <table className="w-full text-sm">
-                        <tbody>
-                            {detailsToShow.map(({ key, value }, index) => (
-                                <tr key={index} className="border-b border-gray-700/50">
-                                    <td className="py-2 pr-2 text-gray-400 font-medium align-top w-1/3">{key}</td>
-                                    <td className="py-2 text-white break-words">{value}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div className="flex flex-col gap-4">
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar">
+                        <h4 className="font-bold text-lg mb-3 text-indigo-400">Исходные данные строки</h4>
+                        <table className="w-full text-sm">
+                            <tbody>
+                                {detailsToShow.map(({ key, value }, index) => (
+                                    <tr key={index} className="border-b border-gray-700/50">
+                                        <td className="py-2 pr-2 text-gray-400 font-medium align-top w-1/3">{key}</td>
+                                        <td className="py-2 text-white break-words">{value}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {/* History Section */}
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex-grow">
+                        <div className="flex items-center gap-2 mb-3">
+                            <h4 className="font-bold text-lg text-slate-300">История изменений ({history.length})</h4>
+                            {isLoadingHistory && <div className="w-4 h-4"><LoaderIcon/></div>}
+                        </div>
+                        <div className="max-h-[150px] overflow-y-auto custom-scrollbar">
+                            {history.length > 0 ? (
+                                <ul className="space-y-2 text-xs text-slate-400">
+                                    {history.map((item, idx) => (
+                                        <li key={idx} className="flex items-start gap-2 p-2 bg-gray-800/50 rounded border border-gray-700">
+                                            <span className="mt-0.5 text-accent flex-shrink-0"><InfoIcon/></span>
+                                            <span>{item}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xs text-gray-500 italic">История изменений отсутствует</p>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
                 <div className="space-y-4">
