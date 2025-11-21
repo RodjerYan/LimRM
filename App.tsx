@@ -465,14 +465,7 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-bold text-text-main tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-text-muted mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
-                    <button 
-                        onClick={toggleTheme}
-                        className="p-2 rounded-lg bg-card-bg hover:bg-gray-700/20 border border-gray-600/50 text-text-main transition-colors flex items-center gap-2"
-                        title="Переключить тему"
-                    >
-                        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-                        <span className="text-sm font-medium">{theme === 'dark' ? 'Светлая тема' : 'Темная тема'}</span>
-                    </button>
+                    {/* Theme toggle button removed as requested */}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">

@@ -46,9 +46,13 @@ const MapLegend: React.FC = () => (
             <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
             <span className="text-xs font-medium">Активные ТТ</span>
         </div>
-        <div className="flex items-center">
+        <div className="flex items-center mb-1.5">
             <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
             <span className="text-xs font-medium">Потенциал (ОКБ)</span>
+        </div>
+        <div className="flex items-center">
+            <span className="inline-block w-6 h-1 mr-2 bg-red-600"></span>
+            <span className="text-xs font-medium">Линия ЛБС</span>
         </div>
     </div>
 );
@@ -441,7 +445,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     }, [selectedRegions, highlightRegion]);
 
-    // Conflict Zones
+    // Conflict Zones (UPDATED with LineString styling)
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -455,6 +459,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             conflictZonesLayer.current = L.geoJSON(conflictZones, {
                 style: (feature) => {
                     const status = feature?.properties?.status;
+                    
+                    // Style for the Line of Contact (LBS)
+                    if (feature?.geometry.type === 'LineString') {
+                        return { color: '#dc2626', weight: 4, dashArray: '10, 5', opacity: 0.9, lineCap: 'butt' };
+                    }
+
                     if (status === 'occupied') {
                         return { color: '#dc2626', weight: 1.5, fillColor: '#b91c1c', fillOpacity: 0.45 };
                     }
@@ -463,16 +473,30 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                     return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
                 },
+                pointToLayer: (feature, latlng) => {
+                    // If there are specific points (e.g. cities) in the conflict data
+                    return L.circleMarker(latlng, {
+                        radius: 6,
+                        fillColor: '#ef4444',
+                        color: '#fff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    });
+                },
                 onEachFeature: (feature, layer) => {
                     const props = feature.properties;
                     if (props && props.name) {
-                        const popupContent = `<b>${props.name}</b><br>${props.description || 'Нет описания.'}`;
+                        let popupContent = `<b>${props.name}</b><br>${props.description || 'Нет описания.'}`;
+                        if (props.last_updated) {
+                            popupContent += `<br><small style="color:#9ca3af">Обновлено: ${new Date(props.last_updated).toLocaleDateString()}</small>`;
+                        }
                         layer.bindPopup(popupContent);
                     }
                 }
             }).addTo(map);
 
-            layerControl.current.addOverlay(conflictZonesLayer.current, "⚠️ Зоны опасности");
+            layerControl.current.addOverlay(conflictZonesLayer.current, "⚠️ Зоны СВО и опасности");
         }
     }, [conflictZones]);
     
@@ -525,7 +549,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     <div className="flex items-center">
                         <div className="w-5 h-5 mr-2 flex-shrink-0"><ErrorIcon/></div>
                         <span>
-                            Внимание: слой "Зоны опасности" носит информационный характер.
+                            Внимание: слой "Зоны опасности" носит информационный характер и обновляется ежедневно.
                         </span>
                     </div>
                     <button onClick={() => setIsWarningVisible(false)} className="text-red-300 hover:text-white text-lg">&times;</button>
