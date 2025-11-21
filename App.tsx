@@ -28,8 +28,6 @@ import {
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
 
-// FIX: Manually set the paths for Leaflet's default icons to point to the correct CDN URL.
-// This resolves the "broken image" issue for markers across the application.
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
 const LEAFLET_CDN_URL = 'https://aistudiocdn.com/leaflet@1.9.4/dist/images/';
@@ -78,7 +76,6 @@ const App: React.FC = () => {
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
-    // Processing references
     const processingQueue = useRef<Set<string>>(new Set());
 
     const isDataLoaded = allData.length > 0;
@@ -223,17 +220,21 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
-    // Improved data update handler that syncs all state slices
+    // Improved data update handler that syncs all state slices including lastUpdated
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         
         // 1. Update Active Clients (Flat list for map and list view)
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
-                // Update existing. Preserve isGeocoding if it's not explicitly passed as false in newPoint
+                // Update existing
                 return prev.map(c => {
                     if (c.key === oldKey) {
-                        return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
+                        // Merge all new props including lastUpdated
+                        return { 
+                            ...newPoint, 
+                            isGeocoding: newPoint.isGeocoding ?? c.isGeocoding 
+                        };
                     }
                     return c;
                 });
@@ -260,6 +261,7 @@ const App: React.FC = () => {
                 
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
+                    // Update client preserving all properties from newPoint including lastUpdated
                     updatedClients[clientIndex] = { ...newPoint, isGeocoding: newPoint.isGeocoding };
                     
                     newData[i] = {
@@ -287,7 +289,7 @@ const App: React.FC = () => {
                         ...group,
                         clients: updatedClients,
                         fact: updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0),
-                        potential: group.potential + ((newPoint.fact || 0) * 1.2), // Simple heuristic
+                        potential: group.potential + ((newPoint.fact || 0) * 1.2),
                     };
                 } else {
                     const newGroup: AggregatedDataRow = {
@@ -310,16 +312,13 @@ const App: React.FC = () => {
             return newData;
         });
 
-        // 4. CRITICAL: Sync editingClient state so Modal receives updates even if closed/reopened
+        // 4. Sync editingClient state so Modal receives updates even if closed/reopened
         setEditingClient(prev => {
             if (!prev) return prev;
-            // If we are editing a known MapPoint
             if ((prev as MapPoint).key === oldKey) {
                  return { ...newPoint, isGeocoding: newPoint.isGeocoding };
             }
-            // If we are editing an UnidentifiedRow that just got an ID/Coordinates
             if ((prev as UnidentifiedRow).originalIndex === originalIndex) {
-                 // Morph it into the MapPoint
                  return { ...newPoint, isGeocoding: newPoint.isGeocoding };
             }
             return prev;
@@ -327,7 +326,6 @@ const App: React.FC = () => {
 
     }, []);
 
-    // 48 Hours in milliseconds
     const MAX_POLL_TIME = 48 * 60 * 60 * 1000; 
 
     const pollSheetForCoordinates = useCallback(async (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => {
@@ -337,8 +335,6 @@ const App: React.FC = () => {
 
         const startTime = Date.now();
 
-        // Also kick off a "backup" geocode request to server just in case the sheet isn't auto-updating via script
-        // This ensures something is trying to write to the sheet if the user doesn't have an App Script trigger.
         fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
             .then(res => res.ok ? res.json() : null)
             .then(coords => {
@@ -365,7 +361,7 @@ const App: React.FC = () => {
                     if (data.lat && data.lon) {
                         // Success!
                         const finalPoint = { 
-                            ...basePoint, 
+                            ...basePoint, // Includes lastUpdated from initial save
                             lat: data.lat, 
                             lon: data.lon, 
                             isGeocoding: false 
@@ -389,23 +385,19 @@ const App: React.FC = () => {
             }
         };
 
-        // Start the loop
         check();
 
     }, [handleDataUpdate, addNotification]);
 
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
-        // 1. Remove from active clients
         setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
         
-        // 2. Remove from unidentified rows
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== keyToDelete;
         }));
 
-        // 3. Remove from aggregated data
         setAllData(prevData => {
             return prevData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
@@ -418,7 +410,7 @@ const App: React.FC = () => {
                     };
                 }
                 return group;
-            }).filter(group => group.clients.length > 0); // Remove empty groups
+            }).filter(group => group.clients.length > 0);
         });
         
         setIsEditModalOpen(false);

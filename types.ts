@@ -33,6 +33,7 @@ export interface MapPoint {
     originalRow: any; // To hold the full original data row for detailed viewing
     fact?: number; // Sales volume for this specific point
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
+    lastUpdated?: number; // Timestamp of the last edit
 }
 
 export interface EnrichedParsedAddress {

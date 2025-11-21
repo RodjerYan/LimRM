@@ -2,10 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Modal from './Modal';
-import { MapPoint, UnidentifiedRow, EnrichedParsedAddress } from '../types';
+import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, CheckIcon, ArrowLeftIcon, TrashIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
@@ -79,14 +79,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [lastUpdatedStr, setLastUpdatedStr] = useState<string | null>(null);
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
     useEffect(() => {
         if (isOpen && data) {
+            // Always update the input field when data changes from parent
             const currentAddress = (data as MapPoint).address || findAddressInRow((data as UnidentifiedRow).rowData) || '';
             setEditedAddress(currentAddress);
             
-            // FIX: Check if the object is already in geocoding state.
-            // This ensures that if the modal is closed and reopened during the process, the UI reflects the ongoing status.
             if ((data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
             } else {
@@ -95,6 +96,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             setError(null);
             setShowDeleteConfirm(false);
+            setSaveSuccess(false);
+
+            if ((data as MapPoint).lastUpdated) {
+                setLastUpdatedStr(new Date((data as MapPoint).lastUpdated!).toLocaleString('ru-RU'));
+            } else {
+                setLastUpdatedStr(null);
+            }
         }
     }, [isOpen, data]);
 
@@ -105,7 +113,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         
-        // CRITICAL: Use exact existing key if available to prevent duplicates
         let oldKey = '';
         if ((data as MapPoint).key) {
             oldKey = (data as MapPoint).key;
@@ -114,7 +121,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
 
         if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
-            if (typeof originalIndex !== 'number') { // Is Identified (Active Client)
+            if (typeof originalIndex !== 'number') { 
                  setStatus('error_saving');
                  setError('Адрес не был изменен или поле пустое.');
                  return;
@@ -126,7 +133,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         try {
             const rm = findValueInRow(originalRow, ['рм']);
-            // 1. Save text to Cache Sheet
+            
             const res = await fetch('/api/update-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -137,15 +144,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
             }
 
-            // 2. Optimistic Update: Update text immediately so UI reflects changes
+            // Visual Feedback
+            setSaveSuccess(true);
             setStatus('geocoding');
+            setTimeout(() => setSaveSuccess(false), 2000);
+
             const distributor = findValueInRow(originalRow, ['дистрибьютор']);
             const parsed = parseRussianAddress(editedAddress, distributor);
             const currentLat = (data as MapPoint).lat;
             const currentLon = (data as MapPoint).lon;
+            const timestamp = Date.now();
 
             const tempNewPoint: MapPoint = {
-                key: normalizeAddress(editedAddress), // This becomes the new key
+                key: normalizeAddress(editedAddress),
                 lat: currentLat, lon: currentLon, status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress,
@@ -157,13 +168,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow,
                 fact: (data as MapPoint).fact,
-                isGeocoding: true // Flag to show spinner in list
+                isGeocoding: true,
+                lastUpdated: timestamp 
             };
             
-            // Immediately update the app state
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
-
-            // 3. Start Passive Polling (handled in App.tsx)
             onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
 
         } catch (e) {
@@ -193,7 +202,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при удалении строки.');
             }
             
-            // If we have a specific key, use it. Otherwise normalize address.
             let keyToDelete = '';
             if ((data as MapPoint).key) {
                 keyToDelete = (data as MapPoint).key;
@@ -290,7 +298,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             )}
                         </div>
                         <div className="space-y-3">
-                            <div>
+                            <div className="relative">
                                 <label htmlFor="address-input" className="block text-sm font-medium text-gray-300 mb-1">Адрес ТТ LimKorm</label>
                                 <textarea
                                     id="address-input"
@@ -298,9 +306,20 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     value={editedAddress}
                                     onChange={e => setEditedAddress(e.target.value)}
                                     disabled={isProcessing || status === 'geocoding'}
-                                    className="w-full p-2 bg-gray-900 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50"
+                                    className={`w-full p-2 bg-gray-900 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`}
                                 />
+                                {saveSuccess && (
+                                    <div className="absolute right-2 top-8 text-green-400 animate-pulse">
+                                        <CheckIcon />
+                                    </div>
+                                )}
                             </div>
+                            
+                            {lastUpdatedStr && (
+                                <div className="text-xs text-gray-500 text-right italic">
+                                    Последнее изменение: {lastUpdatedStr}
+                                </div>
+                            )}
                             
                             {status === 'idle' && (
                                 <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
