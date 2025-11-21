@@ -52,79 +52,92 @@ const SinglePointMap: React.FC<{
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
-    // Fix: Use ReturnType<typeof setTimeout> instead of NodeJS.Timeout to support environments without @types/node
     const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
+    // 1. Initialize Map (Once)
     useEffect(() => {
         if (!mapContainerRef.current) return;
 
-        if (!mapRef.current) {
-            mapRef.current = L.map(mapContainerRef.current, { 
-                scrollWheelZoom: true,
-                zoomControl: false // Disable default zoom to position it manually
-            });
-            // Add zoom control to top-left
-            L.control.zoom({ position: 'topleft' }).addTo(mapRef.current);
-        }
-
-        const map = mapRef.current;
-        const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
-
-        if (!tileLayerRef.current) {
-            tileLayerRef.current = L.tileLayer(targetUrl, {
-                attribution: '&copy; OpenStreetMap &copy; CARTO',
-            }).addTo(map);
-        } else {
-            tileLayerRef.current.setUrl(targetUrl);
-        }
+        // Create map instance
+        const map = L.map(mapContainerRef.current, { 
+            scrollWheelZoom: true,
+            zoomControl: false, // Disable default to add manual control
+            center: [55.75, 37.61],
+            zoom: 5
+        });
         
+        mapRef.current = map;
+
+        // Add zoom control to top-left explicitly
+        L.control.zoom({ position: 'topleft' }).addTo(map);
+
+        // Create tile layer (placeholder, URL set in next effect)
+        tileLayerRef.current = L.tileLayer(darkUrl, {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+        }).addTo(map);
+
+        // Cleanup on unmount
+        return () => {
+            map.remove();
+            mapRef.current = null;
+            markerRef.current = null;
+            tileLayerRef.current = null;
+        };
+    }, []);
+
+    // 2. Handle Theme Updates
+    useEffect(() => {
+        if (!tileLayerRef.current) return;
+        const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
+        tileLayerRef.current.setUrl(targetUrl);
+    }, [theme]);
+
+    // 3. Handle Data/Marker Updates
+    useEffect(() => {
+        const map = mapRef.current;
+        if (!map) return;
+
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
             const iconToUse = isSuccess ? greenIcon : blueIcon;
 
-            if (markerRef.current) {
-                markerRef.current.setLatLng(latLng).setIcon(iconToUse);
-                
-                // Update dragend listener closure
-                markerRef.current.off('dragend');
-                markerRef.current.on('dragend', (e) => {
-                    const m = e.target;
-                    const p = m.getLatLng();
-                    onCoordinatesChange(p.lat, p.lng);
-                });
-            } else {
-                markerRef.current = L.marker(latLng, { 
+            if (!markerRef.current) {
+                const marker = L.marker(latLng, { 
                     icon: iconToUse,
                     draggable: true,
                     autoPan: true
                 }).addTo(map);
                 
-                markerRef.current.on('dragend', (e) => {
+                marker.on('dragend', (e) => {
                     const m = e.target;
                     const p = m.getLatLng();
                     onCoordinatesChange(p.lat, p.lng);
                 });
+                markerRef.current = marker;
+            } else {
+                markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             }
              
-             markerRef.current.bindPopup(`<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`, { maxWidth: 350 });
+            const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
+            markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
              
-             // Only fly to view if needed
-             map.setView(latLng, isExpanded ? 16 : 15);
+            map.setView(latLng, isExpanded ? 16 : 15);
         } else {
-            map.setView([55.75, 37.61], 5);
+            // No coords
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
         }
         
-        const timer = setTimeout(() => map.invalidateSize(), 400);
+        // Fix gray tiles
+        const timer = setTimeout(() => map.invalidateSize(), 200);
         return () => clearTimeout(timer);
 
-    }, [lat, lon, address, isSuccess, onCoordinatesChange, theme, isExpanded]);
+    }, [lat, lon, isSuccess, isExpanded, address]); // Intentionally excluded functions from deps
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
@@ -157,11 +170,8 @@ const SinglePointMap: React.FC<{
         const newLat = parseFloat(result.lat);
         const newLon = parseFloat(result.lon);
         if (!isNaN(newLat) && !isNaN(newLon)) {
-            // Update the coordinates in the parent state
             onCoordinatesChange(newLat, newLon);
             setSearchResults([]);
-            
-            // Force map view update immediately
             mapRef.current?.setView([newLat, newLon], 16);
         }
     };
@@ -170,8 +180,8 @@ const SinglePointMap: React.FC<{
         <div className="relative h-full w-full group">
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
-            {/* Map Search Bar - Positioned carefully to avoid Zoom controls */}
-            <div className="absolute top-3 left-12 z-[800] w-[calc(100%-7rem)] md:w-80 pointer-events-none">
+            {/* Map Search Bar - Shifted right to avoid zoom controls */}
+            <div className="absolute top-3 left-14 z-[800] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
                         {isSearching ? <div className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full"/> : <SearchIcon />}
@@ -180,7 +190,7 @@ const SinglePointMap: React.FC<{
                         type="text" 
                         value={searchQuery}
                         onChange={handleSearch}
-                        placeholder="Поиск по карте..."
+                        placeholder="Поиск места на карте..."
                         className="w-full py-2 pl-10 pr-4 bg-gray-900/90 backdrop-blur text-sm text-white border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent shadow-sm transition-all"
                     />
                     {searchResults.length > 0 && (
