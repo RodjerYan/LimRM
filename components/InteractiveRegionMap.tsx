@@ -251,14 +251,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current.bringToBack();
             }
             
-            // Update container classes for popup styling
-            if (localTheme === 'dark') {
-                mapContainer.current.classList.add('theme-dark');
-                mapContainer.current.classList.remove('theme-light');
-            } else {
-                mapContainer.current.classList.add('theme-light');
-                mapContainer.current.classList.remove('theme-dark');
+            // Update container classes for popup styling manually via DOM API
+            // This avoids React reconciliation issues which cause map crashes
+            if (mapContainer.current) {
+                mapContainer.current.classList.remove('theme-dark', 'theme-light');
+                mapContainer.current.classList.add(`theme-${localTheme}`);
             }
+            
+            // Force redraw to prevent gray tiles
+            setTimeout(() => map.invalidateSize(), 100);
         }
     }, [localTheme]);
     
@@ -562,8 +563,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             )}
             
             <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
-                {/* Add localTheme-based class for styling popups */}
-                <div ref={mapContainer} className={`h-full w-full theme-${localTheme} bg-gray-800 z-0`} />
+                {/* Removed dynamic theme class from React rendering to prevent node destruction. Handled manually in useEffect. */}
+                <div ref={mapContainer} className="h-full w-full bg-gray-800 z-0" />
                 
                 {/* Custom Controls Overlay - Top Right - Increased Z-Index to sit above all layers */}
                 <div className="absolute top-4 right-4 z-[2000] flex flex-col gap-3 pointer-events-auto">
