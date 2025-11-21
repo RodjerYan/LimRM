@@ -2,23 +2,23 @@
   "rewrites": [
     {
       "source": "/api/auth/login",
-      "destination": "/api/auth/login"
+      "destination": "/api/auth-ops?op=login"
     },
     {
       "source": "/api/auth/register",
-      "destination": "/api/auth/register"
+      "destination": "/api/auth-ops?op=register"
     },
     {
       "source": "/api/auth/verify",
-      "destination": "/api/auth/verify"
+      "destination": "/api/auth-ops?op=verify"
     },
     {
       "source": "/api/auth/me",
-      "destination": "/api/auth/me"
+      "destination": "/api/auth-ops?op=me"
     },
     {
       "source": "/api/auth/logout",
-      "destination": "/api/auth/logout"
+      "destination": "/api/auth-ops?op=logout"
     },
     {
       "source": "/api/gemini-proxy",

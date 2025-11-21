@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
-import Filters from '../components/Filters';
-import MetricsSummary from '../components/MetricsSummary';
-import ResultsTable from '../components/ResultsTable';
-import PotentialChart from '../components/PotentialChart';
-import DetailsModal from '../components/DetailsModal';
-import ClientsListModal from '../components/ClientsListModal';
-import UnidentifiedRowsModal from '../components/UnidentifiedRowsModal';
-import AddressEditModal from '../components/AddressEditModal';
-import Notification from '../components/Notification';
-import ApiKeyErrorDisplay from '../components/ApiKeyErrorDisplay';
-import OKBManagement from '../components/OKBManagement';
-import FileUpload from '../components/FileUpload';
-import InteractiveRegionMap from '../components/InteractiveRegionMap'; 
+import Filters from './components/Filters';
+import MetricsSummary from './components/MetricsSummary';
+import ResultsTable from './components/ResultsTable';
+import PotentialChart from './components/PotentialChart';
+import DetailsModal from './components/DetailsModal';
+import ClientsListModal from './components/ClientsListModal';
+import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
+import AddressEditModal from './components/AddressEditModal';
+import Notification from './components/Notification';
+import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import OKBManagement from './components/OKBManagement';
+import FileUpload from './components/FileUpload';
+import InteractiveRegionMap from './components/InteractiveRegionMap'; 
 import AuthPage from './components/Auth/AuthPage';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { 
@@ -26,10 +26,10 @@ import {
     WorkerResultPayload,
     MapPoint,
     UnidentifiedRow,
-} from '../types';
+} from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
-import { SunIcon, MoonIcon, ArrowLeftIcon } from '../components/icons';
+import { SunIcon, MoonIcon, ArrowLeftIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 

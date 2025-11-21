@@ -9,7 +9,6 @@ function getDriveClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is missing');
     
-    // Handle potential parsing errors if the env var is malformed
     let credentials;
     try {
         credentials = JSON.parse(serviceAccountKey);
