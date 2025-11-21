@@ -13,7 +13,6 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
 import InteractiveRegionMap from './components/InteractiveRegionMap'; 
-import RMDashboard from './components/RMDashboard';
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -27,7 +26,6 @@ import {
     UnidentifiedRow,
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { WarningIcon, ChartBarIcon } from './components/icons';
 import type { FeatureCollection } from 'geojson';
 
 // FIX: Manually set the paths for Leaflet's default icons to point to the correct CDN URL.
@@ -45,7 +43,7 @@ L.Icon.Default.mergeOptions({
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-type ModalType = 'details' | 'clients' | 'unidentified' | 'rm_dashboard';
+type ModalType = 'details' | 'clients' | 'unidentified';
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -64,7 +62,6 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false);
     const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
@@ -208,7 +205,6 @@ const App: React.FC = () => {
         if (source === 'details') setIsDetailsModalOpen(false);
         if (source === 'clients') setIsClientsModalOpen(false);
         if (source === 'unidentified') setIsUnidentifiedModalOpen(false);
-        if (source === 'rm_dashboard') setIsRMDashboardOpen(false);
         
         setEditingClient(data);
         setIsEditModalOpen(true);
@@ -222,7 +218,6 @@ const App: React.FC = () => {
         if (lastModal === 'details') setIsDetailsModalOpen(true);
         if (lastModal === 'clients') setIsClientsModalOpen(true);
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
-        if (lastModal === 'rm_dashboard') setIsRMDashboardOpen(true);
     }, [modalHistory]);
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
@@ -280,7 +275,7 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isControlPanelLocked = isLoading;
-    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
+    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
 
     return (
         <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
@@ -290,15 +285,6 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
-                    {isDataLoaded && (
-                        <button
-                            onClick={() => setIsRMDashboardOpen(true)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 shadow-lg border border-indigo-500/30"
-                        >
-                            <ChartBarIcon />
-                            Рейтинг РМ
-                        </button>
-                    )}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -389,11 +375,6 @@ const App: React.FC = () => {
                 data={editingClient}
                 onDataUpdate={handleDataUpdate}
                 onDelete={handleClientDelete}
-            />
-            <RMDashboard 
-                isOpen={isRMDashboardOpen}
-                onClose={() => setIsRMDashboardOpen(false)}
-                data={filteredData}
             />
         </div>
     );

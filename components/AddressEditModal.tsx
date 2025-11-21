@@ -81,8 +81,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    const pollingRef = useRef<NodeJS.Timeout | null>(null);
-    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // Fix: Use ReturnType<typeof ...> to handle both browser (number) and Node (Timeout) environments seamlessly
+    const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const cleanupTimers = () => {
         if (pollingRef.current) clearInterval(pollingRef.current);
