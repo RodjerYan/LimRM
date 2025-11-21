@@ -206,16 +206,19 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (deletedAddresses.has(normalizedRaw)) continue;
 
             // 2. Check Redirects (renamed addresses from history)
+            // Critical Logic: If an old address is found in history, we SWAP `clientAddress` with the New Address.
+            // All subsequent logic (parsing, geocoding, display) uses the NEW address.
             if (cacheRedirectMap.has(normalizedRaw)) {
                 const newAddr = cacheRedirectMap.get(normalizedRaw)!;
                 clientAddress = newAddr; // Use the new address for all further processing
-                normalizedRaw = normalizeAddress(clientAddress); // Re-normalize for cache lookup
+                normalizedRaw = normalizeAddress(clientAddress); // Re-normalize for cache lookup using new address key
                 
                 // Check if the *target* of the redirect is deleted (edge case)
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 
+        // `parseRussianAddress` will now run on the *New/Corrected* address if a redirect happened.
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
         if (parsedAddress.city === 'Город не определен') {
@@ -224,6 +227,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Aggregation logic ---
+        // Use the possibly updated clientAddress as the basis for finalAddress if needed
         const finalAddress = parsedAddress.finalAddress;
         const regionForAggregation = parsedAddress.region;
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
@@ -249,16 +253,15 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // Use the possibly redirected 'clientAddress' as the base for uniqueness
-        const normalizedOriginalAddress = normalizeAddress(clientAddress);
+        // Use the cleaned/corrected address for uniqueness to ensure visual consistency
+        const normalizedFinalAddress = normalizeAddress(finalAddress);
 
-        if (!uniquePlottableClients.has(normalizedOriginalAddress)) {
+        if (!uniquePlottableClients.has(normalizedFinalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
             
-            const normalizedFinalAddress = normalizeAddress(finalAddress);
-            const cacheEntry = cacheAddressMap.get(normalizedFinalAddress) || cacheAddressMap.get(normalizedOriginalAddress);
+            const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 lat = cacheEntry.lat;
@@ -270,7 +273,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }
 
-                const okbEntry = okbCoordIndex.get(normalizedFinalAddress) || okbCoordIndex.get(normalizedOriginalAddress);
+                const okbEntry = okbCoordIndex.get(normalizedFinalAddress);
                 if (okbEntry) {
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
@@ -282,12 +285,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             }
             
-            uniquePlottableClients.set(normalizedOriginalAddress, {
-                key: normalizedOriginalAddress,
+            uniquePlottableClients.set(normalizedFinalAddress, {
+                key: normalizedFinalAddress,
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: finalAddress,
+                address: finalAddress, // This displays the NEW/CORRECTED address in the UI
                 city: parsedAddress.city,
                 region: parsedAddress.region, 
                 rm, brand,
@@ -298,14 +301,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             });
         } else {
              // Accumulate weight for existing client (ABC Analysis)
-             const existing = uniquePlottableClients.get(normalizedOriginalAddress);
+             const existing = uniquePlottableClients.get(normalizedFinalAddress);
              if (existing) {
                  existing.fact = (existing.fact || 0) + weight;
              }
         }
         
         // Add the full MapPoint to the aggregation group
-        const mapPointForGroup = uniquePlottableClients.get(normalizedOriginalAddress);
+        const mapPointForGroup = uniquePlottableClients.get(normalizedFinalAddress);
         if (mapPointForGroup) {
             aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
         }

@@ -9,8 +9,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const cacheData = await getFullCoordsCache();
-        // Short cache time, as it can be updated frequently by new uploads.
-        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=300');
+        // FIX: Disable caching completely to ensure immediate synchronization.
+        // When a user updates an address in the UI, the next file upload MUST see that change immediately.
+        res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
         res.status(200).json(cacheData);
     } catch (error) {
         console.error('--- Full Error Object from getFullCoordsCache ---');
