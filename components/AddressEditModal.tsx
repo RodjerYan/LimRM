@@ -92,7 +92,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
-                    const historyArray = result.history.split(' || ').reverse(); // Newest first
+                    // Support splitting by newlines (new format) or double pipes (old format)
+                    // Split and reverse so newest are at the top
+                    const historyArray = result.history.split(/\r?\n| \|\| /).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
             }
@@ -309,24 +311,36 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </table>
                     </div>
                     
-                    {/* History Section */}
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex-grow">
-                        <div className="flex items-center gap-2 mb-3">
-                            <h4 className="font-bold text-lg text-slate-300">История изменений ({history.length})</h4>
-                            {isLoadingHistory && <div className="w-4 h-4"><LoaderIcon/></div>}
+                    {/* History Section - Redesigned */}
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
+                        <div className="flex justify-between items-center mb-3">
+                            <h4 className="font-bold text-lg text-slate-300 flex items-center gap-2">
+                                История изменений
+                                {isLoadingHistory && <LoaderIcon />}
+                            </h4>
+                            <span className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded-full border border-gray-700">
+                                Всего: {history.length}
+                            </span>
                         </div>
-                        <div className="max-h-[150px] overflow-y-auto custom-scrollbar">
+                        
+                        <div className="flex-grow overflow-y-auto custom-scrollbar bg-gray-800/30 rounded-lg p-2 border border-gray-700/50 min-h-[120px]">
                             {history.length > 0 ? (
-                                <ul className="space-y-2 text-xs text-slate-400">
+                                <ul className="space-y-2">
                                     {history.map((item, idx) => (
-                                        <li key={idx} className="flex items-start gap-2 p-2 bg-gray-800/50 rounded border border-gray-700">
-                                            <span className="mt-0.5 text-accent flex-shrink-0"><InfoIcon/></span>
-                                            <span>{item}</span>
+                                        <li key={idx} className="p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex flex-col gap-1 hover:bg-gray-700/80 transition-colors">
+                                            <div className="flex items-center gap-2 text-accent text-xs font-bold">
+                                                <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                                                <span>Изменение #{history.length - idx}</span>
+                                            </div>
+                                            <span className="pl-4 break-words">{item}</span>
                                         </li>
                                     ))}
                                 </ul>
                             ) : (
-                                <p className="text-xs text-gray-500 italic">История изменений отсутствует</p>
+                                <div className="h-full flex flex-col items-center justify-center text-gray-500 text-sm p-4">
+                                    <div className="w-8 h-8 mb-2 opacity-50"><InfoIcon /></div>
+                                    <span>История изменений пуста</span>
+                                </div>
                             )}
                         </div>
                     </div>

@@ -143,8 +143,8 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
 
-    // Updated range to fetch Column D (Redirect/CorrectedAddress)
-    const ranges = sheetTitles.map(title => `'${title}'!A:D`); // Address, lat, lon, correctedAddress
+    // Updated range to fetch Column D (Redirect/CorrectedAddress/History)
+    const ranges = sheetTitles.map(title => `'${title}'!A:D`); // Address, lat, lon, history/redirect
     const response = await sheets.spreadsheets.values.batchGet({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         ranges,
@@ -167,13 +167,28 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 
                 const lat = (!isDeleted && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
                 const lon = (!isDeleted && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
-                const correctedAddress = row[3] ? String(row[3]).trim() : undefined;
+                
+                const history = row[3] ? String(row[3]).trim() : undefined;
+                
+                // Extract the most recent old address from history if available for redirect logic?
+                // Supports both "Old || Old" and "Old\nOld"
+                let correctedAddress = undefined;
+                if (history) {
+                    const parts = history.split(/\r?\n| \|\| /);
+                    if (parts.length > 0) {
+                        const lastEntry = parts[parts.length - 1]; // "OldAddress [Date]"
+                        const match = lastEntry.match(/^(.*) \[\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\]$/);
+                        if (match && match[1]) {
+                            correctedAddress = match[1].trim();
+                        }
+                    }
+                }
 
                 return {
                     address: String(row[0] || '').trim(),
                     lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
                     lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
-                    correctedAddress: correctedAddress,
+                    correctedAddress: correctedAddress, 
                     isDeleted: isDeleted
                 };
             }).filter(item => item.address); // Only include items with an address
@@ -208,7 +223,7 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
         },
     });
     // Add headers to the new sheet
-    // Updated headers to include 'Redirect' column
+    // Updated headers to include 'History' column
     await sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${rmName}'!A1`,
@@ -306,6 +321,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 /**
  * Replaces an old address with a new one in the cache by updating the existing row.
  * KEEPS HISTORY: Appends the old address to Column D (History) instead of overwriting.
+ * Uses newline character to separate history entries for cleaner cell formatting.
  * @param rmName The name of the Regional Manager (and the sheet).
  * @param oldAddress The address to be replaced (from the file).
  * @param newAddress The new, corrected address.
@@ -339,15 +355,15 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
 
     if (oldRowIndex !== -1) {
         // Case 1: Old address exists.
-        // Need to fetch current history to append to it.
+        // Fetch current history to append.
         const historyResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!D${oldRowIndex}`,
         });
         const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
         
-        // Use ' || ' as delimiter for robust splitting later
-        const newHistory = currentHistory ? `${currentHistory} || ${historyEntry}` : historyEntry;
+        // Use newline '\n' as delimiter to separate multiple entries in the cell
+        const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
 
         // Col A (Address) -> newAddress
         // Col B (Lat) -> empty (re-geocode needed)
@@ -363,13 +379,13 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         });
     } else if (newRowIndex !== -1) {
         // Case 2: Old address NOT found, but New Address EXISTS.
-        // Update the existing row's history to log this merge/redirect.
+        // Update the existing row's history to log this.
         const historyResponse = await sheets.spreadsheets.values.get({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!D${newRowIndex}`,
         });
         const currentHistory = historyResponse.data.values?.[0]?.[0] || '';
-        const newHistory = currentHistory ? `${currentHistory} || ${historyEntry}` : historyEntry;
+        const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
 
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
