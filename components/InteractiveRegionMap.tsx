@@ -173,7 +173,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [data, isFullscreen]);
     
-    // Initialize Map
+    // Initialize Map (Structure Only)
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { 
@@ -193,13 +193,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             if (markerPane) {
                 markerPane.style.zIndex = '650';
             }
-
-            // Tile Layer Initialization (Default to Dark)
-            // Use unified cartocdn URLs for better switching reliability
-            const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-            tileLayerRef.current = L.tileLayer(darkUrl, {
-                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
-            }).addTo(map);
 
             // Layer Control for Overlays Only
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -226,18 +219,32 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             if (mapInstance.current) {
                 mapInstance.current.remove();
                 mapInstance.current = null;
+                tileLayerRef.current = null;
             }
         };
     }, [resetHighlight]);
 
-    // Handle Theme Change
+    // Handle Theme Change & Tile Layer Management
+    // We separate this from init to ensure it can reliably swap layers
     useEffect(() => {
-        if (tileLayerRef.current && mapContainer.current) {
-            // Use consistent domains for both styles to ensure smooth switching
+        const map = mapInstance.current;
+        if (mapContainer.current && map) {
             const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
             const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+            const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
             
-            tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
+            // Remove existing layer to force a clean switch
+            if (tileLayerRef.current) {
+                map.removeLayer(tileLayerRef.current);
+            }
+            
+            // Create and add new layer
+            tileLayerRef.current = L.tileLayer(targetUrl, {
+                attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
+            }).addTo(map);
+            
+            // Ensure tiles stay at the back
+            tileLayerRef.current.bringToBack();
             
             if (theme === 'dark') {
                 mapContainer.current.classList.add('theme-dark');
@@ -484,7 +491,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             id="interactive-map-container" 
             className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}
         >
-            <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-2rem)] pointer-events-none' : ''}`}>
+            <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-5rem)] pointer-events-none' : ''}`}>
                 <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                     Карта рыночного потенциала
                 </h2>
