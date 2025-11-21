@@ -17,8 +17,8 @@ interface InteractiveRegionMapProps {
     activeClients: MapPoint[];
     conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
-    theme?: Theme;
-    onToggleTheme?: () => void;
+    theme?: Theme; // Global theme (initial state)
+    onToggleTheme?: () => void; // Legacy prop, keeping for interface compatibility but not using for map toggle
 }
 
 interface SearchableLocation {
@@ -57,7 +57,7 @@ const MapLegend: React.FC = () => (
     </div>
 );
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark', onToggleTheme }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark' }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -76,6 +76,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
     const [isWarningVisible, setIsWarningVisible] = useState(true);
+    
+    // Local Map Theme State (independent of App theme)
+    const [localTheme, setLocalTheme] = useState<Theme>(theme);
     
     // New UI States
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -229,12 +232,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [resetHighlight]);
 
     // Handle Theme Change & Tile Layer Management
+    // Independent of the global app theme to allow user preference for map visibility
     useEffect(() => {
         const map = mapInstance.current;
         if (mapContainer.current && map) {
             const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
             const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-            const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
+            const targetUrl = localTheme === 'dark' ? darkUrl : lightUrl;
             
             if (tileLayerRef.current) {
                 // Smoothly update the URL without removing the layer
@@ -247,7 +251,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current.bringToBack();
             }
             
-            if (theme === 'dark') {
+            // Update container classes for popup styling
+            if (localTheme === 'dark') {
                 mapContainer.current.classList.add('theme-dark');
                 mapContainer.current.classList.remove('theme-light');
             } else {
@@ -255,7 +260,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 mapContainer.current.classList.remove('theme-dark');
             }
         }
-    }, [theme]);
+    }, [localTheme]);
     
     const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
         <b>${name}</b><br>
@@ -557,19 +562,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             )}
             
             <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
-                <div ref={mapContainer} className={`h-full w-full theme-${theme} bg-gray-800 z-0`} />
+                {/* Add localTheme-based class for styling popups */}
+                <div ref={mapContainer} className={`h-full w-full theme-${localTheme} bg-gray-800 z-0`} />
                 
                 {/* Custom Controls Overlay - Top Right - Increased Z-Index to sit above all layers */}
                 <div className="absolute top-4 right-4 z-[2000] flex flex-col gap-3 pointer-events-auto">
-                    {onToggleTheme && (
-                        <button
-                            onClick={onToggleTheme}
-                            className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center"
-                            title={theme === 'dark' ? "Переключить на светлую тему" : "Переключить на темную тему"}
-                        >
-                            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-                        </button>
-                    )}
+                    <button
+                        onClick={() => setLocalTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                        className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center"
+                        title={localTheme === 'dark' ? "Переключить на светлую карту" : "Переключить на темную карту"}
+                    >
+                        {localTheme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                    </button>
                     
                     <button
                         onClick={() => setIsFullscreen(!isFullscreen)}
