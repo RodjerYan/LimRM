@@ -81,7 +81,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [geocodedCoords, setGeocodedCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    // Fix: Use ReturnType<typeof ...> to handle both browser (number) and Node (Timeout) environments seamlessly
     const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -105,7 +104,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     }, [isOpen, data]);
 
 
-    const startCoordPolling = useCallback((rmName: string, newAddress: string, parsedInfo: EnrichedParsedAddress, baseData: EditableData) => {
+    const startCoordPolling = useCallback((rmName: string, newAddress: string, parsedInfo: EnrichedParsedAddress, baseData: EditableData, tempKey: string) => {
         cleanupTimers();
 
         const POLLING_INTERVAL = 3000;
@@ -124,8 +123,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         setStatus('success_geocoding');
 
                         const originalRow = (baseData as MapPoint).originalRow || (baseData as UnidentifiedRow).rowData;
-                        const oldAddress = (baseData as MapPoint).address || findAddressInRow(originalRow) || '';
-                        const oldKey = normalizeAddress(oldAddress);
                         
                         const newPoint: MapPoint = {
                             key: normalizeAddress(newAddress),
@@ -139,8 +136,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             type: findValueInRow(originalRow, ['канал продаж']),
                             contacts: findValueInRow(originalRow, ['контакты']),
                             originalRow: originalRow,
+                            fact: (baseData as MapPoint).fact // Preserve existing stats
                         };
-                        onDataUpdate(oldKey, newPoint);
+                        // Update data AGAIN with coordinates
+                        onDataUpdate(tempKey, newPoint);
                     }
                 }
             } catch (e) {
@@ -162,11 +161,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const oldKey = normalizeAddress(oldAddress);
 
         if (editedAddress.trim() === '' || editedAddress.trim().toLowerCase() === oldAddress.trim().toLowerCase()) {
-            setStatus('error_saving');
-            setError('Адрес не был изменен или поле пустое.');
-            return;
+            if (!(data as any).originalIndex) { // Is Identified
+                 setStatus('error_saving');
+                 setError('Адрес не был изменен или поле пустое.');
+                 return;
+            }
         }
 
         setStatus('saving');
@@ -184,10 +186,34 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
             }
 
+            // 1. Optimistic Update: Update text immediately so UI reflects changes
             setStatus('geocoding');
             const distributor = findValueInRow(originalRow, ['дистрибьютор']);
             const parsed = parseRussianAddress(editedAddress, distributor);
-            startCoordPolling(rm, editedAddress, parsed, data);
+            const currentLat = (data as MapPoint).lat;
+            const currentLon = (data as MapPoint).lon;
+
+            // Create a temporary point with new address text but old coordinates (or undefined)
+            const tempNewPoint: MapPoint = {
+                key: normalizeAddress(editedAddress),
+                lat: currentLat, lon: currentLon, status: 'match',
+                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                address: editedAddress,
+                city: parsed.city,
+                region: parsed.region,
+                rm: rm,
+                brand: findValueInRow(originalRow, ['торговая марка']),
+                type: findValueInRow(originalRow, ['канал продаж']),
+                contacts: findValueInRow(originalRow, ['контакты']),
+                originalRow: originalRow,
+                fact: (data as MapPoint).fact
+            };
+            
+            // Immediately update the app state so search/tables work
+            onDataUpdate(oldKey, tempNewPoint);
+
+            // 2. Start polling for coordinates
+            startCoordPolling(rm, editedAddress, parsed, data, tempNewPoint.key);
 
         } catch (e) {
             setStatus('error_saving');
@@ -231,10 +257,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const rm = findValueInRow(originalRow, ['рм']);
         const distributor = findValueInRow(originalRow, ['дистрибьютор']);
         const parsed = parseRussianAddress(editedAddress, distributor);
+        const tempKey = normalizeAddress(editedAddress);
 
         setStatus('geocoding');
         setError(null);
-        startCoordPolling(rm, editedAddress, parsed, data);
+        startCoordPolling(rm, editedAddress, parsed, data, tempKey);
     };
 
     if (!data) return null;
@@ -332,7 +359,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             )}
                             
                             {status === 'success_geocoding' && (
-                                <div className="text-center text-success flex items-center justify-center gap-2 font-semibold p-2 bg-green-500/10 rounded-md">
+                                <div className="text-center text-success flex items-center justify-center gap-2 font-semibold p-2 bg-green-500/10 rounded-md animate-fade-in">
                                     <CheckIcon /> Координаты успешно получены!
                                 </div>
                             )}
@@ -346,8 +373,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             )}
 
                              {status === 'geocoding' && (
-                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2 p-2 bg-cyan-900/20 rounded-md">
-                                    <LoaderIcon /> <span>Спасибо, новые координаты появятся в системе в течении 15 минут</span>
+                                <div className="flex flex-col gap-3 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30 animate-pulse">
+                                    <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
+                                        <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
+                                    </div>
+                                    <div className="text-center text-xs text-gray-300">
+                                        Адрес сохранен. Идет поиск координат. Не закрывайте окно.
+                                    </div>
                                 </div>
                             )}
 

@@ -220,33 +220,129 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
+    // Improved data update handler that syncs all state slices
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
+        // 1. Update Active Clients (Flat list for map)
         setAllActiveClients(prev => {
-            const existingIndex = prev.findIndex(c => c.key === oldKey);
-            if (existingIndex > -1) {
-                const newClients = [...prev];
-                newClients[existingIndex] = newPoint;
-                return newClients;
-            } else {
-                return [...prev, newPoint];
-            }
+            // Remove old entry by key if it exists, then add/update new
+            const withoutOld = prev.filter(c => c.key !== oldKey);
+            return [...withoutOld, newPoint];
         });
     
+        // 2. Update Unidentified Rows (remove if fixed)
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
+            // We compare normalized addresses to ensure we target the correct row
             return normalizeAddress(originalAddress) !== oldKey;
         }));
+
+        // 3. CRITICAL: Update Aggregated Data (allData) to reflect changes in Search and Tables
+        setAllData(prevData => {
+            // First, create a deep copy to avoid mutation issues
+            const newData = [...prevData];
+            
+            // Try to find if this client already exists in a group and update it
+            let wasUpdated = false;
+
+            for (let i = 0; i < newData.length; i++) {
+                const group = newData[i];
+                const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
+                
+                if (clientIndex !== -1) {
+                    // Client found in this group.
+                    const oldClient = group.clients[clientIndex];
+                    
+                    // Update the client in the list
+                    const updatedClients = [...group.clients];
+                    updatedClients[clientIndex] = newPoint;
+                    
+                    // If the Region or Brand changed, this client might need to move to a DIFFERENT group.
+                    // Ideally we should remove it from here and let the "add" logic handle it below,
+                    // but for simple address edits (same region), in-place update is fine.
+                    
+                    // Simple In-Place Update logic:
+                    newData[i] = {
+                        ...group,
+                        clients: updatedClients,
+                        // Fact might technically change if we merged duplicates, but usually stays same for edit
+                        fact: group.fact - (oldClient.fact || 0) + (newPoint.fact || 0)
+                    };
+                    wasUpdated = true;
+                    break; 
+                }
+            }
+
+            if (!wasUpdated) {
+                // It wasn't in any existing group (was Unidentified), OR needs to be moved.
+                // Find target group matching the NEW point's metadata.
+                const targetGroupIndex = newData.findIndex(g => 
+                    g.rm === newPoint.rm && 
+                    g.brand === newPoint.brand && 
+                    g.region === newPoint.region
+                );
+
+                if (targetGroupIndex !== -1) {
+                    // Add to existing group
+                    const group = newData[targetGroupIndex];
+                    const updatedClients = [...group.clients, newPoint];
+                    newData[targetGroupIndex] = {
+                        ...group,
+                        clients: updatedClients,
+                        fact: group.fact + (newPoint.fact || 0),
+                        potential: group.potential + ((newPoint.fact || 0) * 1.1), 
+                    };
+                } else {
+                    // Create a new group
+                    const newGroup: AggregatedDataRow = {
+                        key: `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase(),
+                        rm: newPoint.rm,
+                        brand: newPoint.brand,
+                        region: newPoint.region,
+                        city: newPoint.city,
+                        clientName: `${newPoint.region} (${newPoint.brand})`,
+                        fact: newPoint.fact || 0,
+                        potential: (newPoint.fact || 0) * 1.2,
+                        growthPotential: 0,
+                        growthPercentage: 0,
+                        clients: [newPoint],
+                        potentialClients: []
+                    };
+                    // Prepend to make it visible
+                    newData.unshift(newGroup);
+                }
+            }
+            return newData;
+        });
         
-        addNotification('Данные успешно обновлены в фоновом режиме!', 'success');
-    }, [addNotification]);
+        // Don't spam notifications for coordinate updates (polling), only for significant actions if needed.
+        // But here we'll keep it simple.
+    }, []);
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
+        // 1. Remove from active clients
         setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
         
+        // 2. Remove from unidentified rows
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== keyToDelete;
         }));
+
+        // 3. Remove from aggregated data
+        setAllData(prevData => {
+            return prevData.map(group => {
+                const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
+                if (clientIndex !== -1) {
+                    const clientFact = group.clients[clientIndex].fact || 0;
+                    return {
+                        ...group,
+                        clients: group.clients.filter(c => c.key !== keyToDelete),
+                        fact: Math.max(0, group.fact - clientFact)
+                    };
+                }
+                return group;
+            }).filter(group => group.clients.length > 0); // Remove empty groups
+        });
         
         setIsEditModalOpen(false);
         setModalHistory([]);
