@@ -18,6 +18,7 @@ interface InteractiveRegionMapProps {
     conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
     theme?: Theme;
+    onToggleTheme?: () => void;
 }
 
 interface SearchableLocation {
@@ -52,7 +53,7 @@ const MapLegend: React.FC = () => (
     </div>
 );
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark' }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark', onToggleTheme }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -528,11 +529,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
                 <div ref={mapContainer} className={`h-full w-full theme-${theme} bg-gray-800 z-0`} />
                 
-                {/* Custom Controls Overlay */}
-                <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-3">
+                {/* Custom Controls Overlay - Top Right */}
+                <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-3 pointer-events-auto">
+                    {onToggleTheme && (
+                        <button
+                            onClick={onToggleTheme}
+                            className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center"
+                            title={theme === 'dark' ? "Переключить на светлую тему" : "Переключить на темную тему"}
+                        >
+                            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                        </button>
+                    )}
+                    
                     <button
                         onClick={() => setIsFullscreen(!isFullscreen)}
-                        className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
+                        className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center"
                         title={isFullscreen ? "Свернуть" : "Развернуть"}
                     >
                         {isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}

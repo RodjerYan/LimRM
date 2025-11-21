@@ -515,6 +515,7 @@ const App: React.FC = () => {
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
                             theme={theme}
+                            onToggleTheme={toggleTheme}
                         />
 
                         <ResultsTable 
