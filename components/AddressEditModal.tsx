@@ -64,8 +64,9 @@ const SinglePointMap: React.FC<{
         if (!mapRef.current) {
             mapRef.current = L.map(mapContainerRef.current, { 
                 scrollWheelZoom: true,
-                zoomControl: false // Disable default zoom to position it manually if needed, but here we keep standard and position search around it
+                zoomControl: false // Disable default zoom to position it manually
             });
+            // Add zoom control to top-left
             L.control.zoom({ position: 'topleft' }).addTo(mapRef.current);
         }
 
@@ -156,10 +157,12 @@ const SinglePointMap: React.FC<{
         const newLat = parseFloat(result.lat);
         const newLon = parseFloat(result.lon);
         if (!isNaN(newLat) && !isNaN(newLon)) {
+            // Update the coordinates in the parent state
             onCoordinatesChange(newLat, newLon);
             setSearchResults([]);
-            // Keep the query to show what was selected, or clear it.
-            // setSearchQuery(''); 
+            
+            // Force map view update immediately
+            mapRef.current?.setView([newLat, newLon], 16);
         }
     };
 
@@ -167,8 +170,8 @@ const SinglePointMap: React.FC<{
         <div className="relative h-full w-full group">
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
-            {/* Map Search Bar */}
-            <div className="absolute top-3 left-14 right-14 md:left-auto md:right-auto md:left-16 md:w-80 z-[800] pointer-events-none">
+            {/* Map Search Bar - Positioned carefully to avoid Zoom controls */}
+            <div className="absolute top-3 left-12 z-[800] w-[calc(100%-7rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
                         {isSearching ? <div className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full"/> : <SearchIcon />}
@@ -177,7 +180,7 @@ const SinglePointMap: React.FC<{
                         type="text" 
                         value={searchQuery}
                         onChange={handleSearch}
-                        placeholder="Поиск места на карте..."
+                        placeholder="Поиск по карте..."
                         className="w-full py-2 pl-10 pr-4 bg-gray-900/90 backdrop-blur text-sm text-white border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent shadow-sm transition-all"
                     />
                     {searchResults.length > 0 && (
@@ -196,11 +199,11 @@ const SinglePointMap: React.FC<{
                 </div>
             </div>
 
-            {/* Map Controls Overlay */}
+            {/* Map Controls Overlay - Positioned Top Right */}
             <div className="absolute top-3 right-3 z-[800] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
-                    className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
+                    className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
                     title={theme === 'dark' ? "Светлая тема" : "Темная тема"}
                 >
                     {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
@@ -209,7 +212,7 @@ const SinglePointMap: React.FC<{
                 {isExpanded ? (
                     <button 
                         onClick={onCollapse}
-                        className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
+                        className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
                         title="Свернуть карту"
                     >
                         <MinimizeIcon />
@@ -217,7 +220,7 @@ const SinglePointMap: React.FC<{
                 ) : (
                     <button 
                         onClick={onExpand}
-                        className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
+                        className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
                         title="Развернуть карту"
                     >
                         <MaximizeIcon />
