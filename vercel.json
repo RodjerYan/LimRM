@@ -38,27 +38,27 @@
     },
     {
       "source": "/api/get-full-cache",
-      "destination": "/api/get-full-cache"
+      "destination": "/api/cache-ops?op=get-full"
     },
     {
       "source": "/api/add-to-cache",
-      "destination": "/api/add-to-cache"
+      "destination": "/api/cache-ops?op=add"
     },
     {
       "source": "/api/update-coords",
-      "destination": "/api/update-coords"
+      "destination": "/api/cache-ops?op=update-coords"
     },
     {
       "source": "/api/update-address",
-      "destination": "/api/update-address"
+      "destination": "/api/cache-ops?op=update-address"
     },
     {
       "source": "/api/delete-address",
-      "destination": "/api/delete-address"
+      "destination": "/api/cache-ops?op=delete"
     },
     {
       "source": "/api/get-cached-address",
-      "destination": "/api/get-cached-address"
+      "destination": "/api/cache-ops?op=get-one"
     },
     {
       "source": "/api/geocode",
