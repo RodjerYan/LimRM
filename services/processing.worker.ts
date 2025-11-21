@@ -129,49 +129,52 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    const cacheAddressMap = new Map<string, { lat?: number; lon?: number }>();
-    const cacheRedirectMap = new Map<string, string>(); // normalized old address -> final correct address
-    const deletedAddresses = new Set<string>(); // Set of normalized addresses marked as deleted
+    // --- CACHE INITIALIZATION with Redirects ---
+    const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
+    const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
+    const deletedAddresses = new Set<string>();
 
     if (cacheData) {
         for (const rm of Object.keys(cacheData)) {
             for (const item of cacheData[rm]) {
-                if (item.address) {
-                    const normalized = normalizeAddress(item.address);
-                    
-                    // Handle Soft Delete logic
-                    if (item.isDeleted) {
-                        deletedAddresses.add(normalized);
-                        continue; // Don't add to other maps if deleted
-                    }
+                if (!item.address) continue;
 
-                    // Populate redirect map from HISTORY (Column D)
-                    // This parses the history string to map ALL previous addresses to the current one.
-                    if (item.history) {
-                        // Split by newline (new format) or double pipe (old format), handling empty strings
-                        const historyEntries = item.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean);
+                const normalizedTarget = normalizeAddress(item.address);
+
+                if (item.isDeleted) {
+                    deletedAddresses.add(normalizedTarget);
+                    continue;
+                }
+
+                // Store canonical entry
+                if (!cacheAddressMap.has(normalizedTarget)) {
+                    cacheAddressMap.set(normalizedTarget, { lat: item.lat, lon: item.lon, originalAddress: item.address });
+                }
+
+                // Parse history for redirects
+                if (item.history) {
+                    const historyEntries = String(item.history)
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/&nbsp;/g, ' ')
+                        .split(/\r?\n|\s*\|\|\s*|<br\s*\/?>/i)
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
+                    for (const entry of historyEntries) {
+                        const oldAddrRaw = entry.split('[')[0].trim();
+                        if (!oldAddrRaw) continue;
                         
-                        for (const entry of historyEntries) {
-                            // Extract address part before the timestamp " [DD.MM.YYYY HH:mm]"
-                            // Using split('[') is safe enough for now.
-                            const oldAddrRaw = entry.split('[')[0].trim();
-                            if (oldAddrRaw) {
-                                const normalizedOld = normalizeAddress(oldAddrRaw);
-                                // Only map if it's not the same as current (avoid circular/self ref)
-                                if (normalizedOld !== normalized) {
-                                    cacheRedirectMap.set(normalizedOld, item.address);
-                                }
-                            }
+                        const normalizedOld = normalizeAddress(oldAddrRaw);
+                        // If the old address matches the current canonical one, it's not a redirect, just a variant/duplicate
+                        if (normalizedOld && normalizedOld !== normalizedTarget) {
+                            cacheRedirectMap.set(normalizedOld, normalizedTarget);
                         }
-                    }
-
-                    if (!cacheAddressMap.has(normalized)) {
-                        cacheAddressMap.set(normalized, { lat: item.lat, lon: item.lon });
                     }
                 }
             }
         }
     }
+    console.log('[CACHE LOAD] addresses=', cacheAddressMap.size, 'redirects=', cacheRedirectMap.size, 'deleted=', deletedAddresses.size);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Кэш обработан: ${cacheAddressMap.size} записей.` } });
 
     const aggregatedData: AggregationMap = {};
@@ -189,7 +192,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
         }
         
-        // Basic validation
         let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
@@ -201,26 +203,31 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
-            
-            // 1. Check if explicit delete
+
+            // 1. Check if explicitly deleted
             if (deletedAddresses.has(normalizedRaw)) continue;
 
-            // 2. Check Redirects (renamed addresses from history)
-            // Critical Logic: If an old address is found in history, we SWAP `clientAddress` with the New Address.
-            // All subsequent logic (parsing, geocoding, display) uses the NEW address.
+            // 2. Check for Redirect (History)
             if (cacheRedirectMap.has(normalizedRaw)) {
-                const newAddr = cacheRedirectMap.get(normalizedRaw)!;
-                // Force update the address variable to the Corrected one from cache.
-                // This ensures that parsing and aggregation use the new, correct address.
-                clientAddress = newAddr; 
-                normalizedRaw = normalizeAddress(clientAddress); // Re-normalize for cache lookup using new address key
+                const newNormalizedTarget = cacheRedirectMap.get(normalizedRaw)!;
+                const targetEntry = cacheAddressMap.get(newNormalizedTarget);
                 
-                // Check if the *target* of the redirect is deleted (edge case)
+                if (targetEntry) {
+                    // Redirect found! Swap to the NEW canonical address immediately.
+                    // This ensures that even if the file has the Old Address, we process it as the New Address.
+                    clientAddress = targetEntry.originalAddress || clientAddress;
+                    normalizedRaw = newNormalizedTarget;
+                } else {
+                    // Fallback: we have a redirect target key but missing full entry (rare).
+                    // We proceed with the key to ensure grouping matches the new entity.
+                    normalizedRaw = newNormalizedTarget;
+                }
+
+                // Re-check delete status on the *new* address
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 
-        // `parseRussianAddress` will now run on the *New/Corrected* address if a redirect happened.
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
         if (parsedAddress.city === 'Город не определен') {
@@ -228,8 +235,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             continue;
         }
 
-        // --- Aggregation logic ---
-        // Use the possibly updated clientAddress as the basis for finalAddress if needed
         const finalAddress = parsedAddress.finalAddress;
         const regionForAggregation = parsedAddress.region;
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
@@ -255,8 +260,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // Use the cleaned/corrected address for uniqueness to ensure visual consistency.
-        // Using finalAddress (based on corrected input) ensures the UI shows the NEW address.
         const normalizedFinalAddress = normalizeAddress(finalAddress);
 
         if (!uniquePlottableClients.has(normalizedFinalAddress)) {
@@ -264,15 +267,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             let lon: number | undefined;
             let isCached = false;
             
+            // UI DISPLAY LOGIC:
+            // Even if we didn't trigger a redirect above, we might match an existing cache entry by normalization (typos, case).
+            // If so, we want to use the cache's "Clean" address string for display to ensure synchronization.
+            let displayAddress = finalAddress;
+
             const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
 
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
+                // CRITICAL: Use the canonical address from cache if available.
+                if (cacheEntry.originalAddress) {
+                    displayAddress = cacheEntry.originalAddress;
+                }
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                // Don't add duplicates to newAddressesToCache
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }
@@ -282,7 +293,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
                 } else if (finalAddress && !isCached) {
-                    // Only schedule for geocoding if not found in cache or OKB
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
@@ -295,24 +305,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: finalAddress, // This displays the NEW/CORRECTED address in the UI
+                address: displayAddress, // Use the corrected/canonical address for display
                 city: parsedAddress.city,
                 region: parsedAddress.region, 
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
                 originalRow: row,
-                fact: weight, // Initialize fact for ABC analysis
+                fact: weight, 
             });
         } else {
-             // Accumulate weight for existing client (ABC Analysis)
              const existing = uniquePlottableClients.get(normalizedFinalAddress);
              if (existing) {
                  existing.fact = (existing.fact || 0) + weight;
              }
         }
         
-        // Add the full MapPoint to the aggregation group
         const mapPointForGroup = uniquePlottableClients.get(normalizedFinalAddress);
         if (mapPointForGroup) {
             aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
@@ -323,10 +331,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
     
-    // --- ABC Analysis Logic ---
     const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
     if (totalFact > 0) {
-        // Sort clients by fact descending
         plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
         
         let runningTotal = 0;

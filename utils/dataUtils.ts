@@ -173,8 +173,7 @@ const createStopwords = (): Set<string> => {
         'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское',
         // Типы административных делений
         'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        // Страны (Added to fix synchronization mismatches e.g. "Кыргызстан, Бишкек" vs "Бишкек")
-        // FIX: Explicitly include country names as stopwords to allow "Kyrgyzstan, Bishkek" to match "Bishkek".
+        // Страны (Explicitly added to ensure cross-matching between cache and file versions)
         'кыргызстан', 'киргизия', 'кыргызская', 'казахстан', 'россия', 'рф', 'беларусь', 'белоруссия',
         'таджикистан', 'узбекистан', 'туркменистан', 'армения', 'азербайджан', 'молдова', 'грузия',
         // Обозначения зданий - Handled by regex, removing from generic stopwords to avoid side-effects
