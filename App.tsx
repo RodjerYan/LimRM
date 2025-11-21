@@ -27,6 +27,7 @@ import {
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
+import { SunIcon, MoonIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -42,6 +43,7 @@ L.Icon.Default.mergeOptions({
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
 type ModalType = 'details' | 'clients' | 'unidentified';
+type Theme = 'dark' | 'light';
 
 const App: React.FC = () => {
     if (!isApiKeySet) {
@@ -77,6 +79,19 @@ const App: React.FC = () => {
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
     const processingQueue = useRef<Set<string>>(new Set());
+
+    // Theme State
+    const [theme, setTheme] = useState<Theme>('dark');
+
+    useEffect(() => {
+        if (theme === 'light') {
+            document.documentElement.classList.add('light-mode');
+        } else {
+            document.documentElement.classList.remove('light-mode');
+        }
+    }, [theme]);
+
+    const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
     const isDataLoaded = allData.length > 0;
 
@@ -443,13 +458,21 @@ const App: React.FC = () => {
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
 
     return (
-        <div className="bg-primary-dark min-h-screen text-slate-200 font-sans">
+        <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300">
             <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
                 <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <div>
-                        <h1 className="text-3xl font-bold text-white tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
-                        <p className="text-slate-400 mt-1">Инструмент для анализа и визуализации данных по продажам</p>
+                        <h1 className="text-3xl font-bold text-text-main tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
+                        <p className="text-text-muted mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
+                    <button 
+                        onClick={toggleTheme}
+                        className="p-2 rounded-lg bg-card-bg hover:bg-gray-700/20 border border-gray-600/50 text-text-main transition-colors flex items-center gap-2"
+                        title="Переключить тему"
+                    >
+                        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+                        <span className="text-sm font-medium">{theme === 'dark' ? 'Светлая тема' : 'Темная тема'}</span>
+                    </button>
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -491,6 +514,7 @@ const App: React.FC = () => {
                             activeClients={filteredActiveClients}
                             conflictZones={conflictZones}
                             flyToClientKey={flyToClientKey}
+                            theme={theme}
                         />
 
                         <ResultsTable 
@@ -541,6 +565,7 @@ const App: React.FC = () => {
                 onDataUpdate={handleDataUpdate}
                 onStartPolling={pollSheetForCoordinates}
                 onDelete={handleClientDelete}
+                globalTheme={theme}
             />
         </div>
     );

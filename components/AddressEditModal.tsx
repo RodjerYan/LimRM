@@ -29,6 +29,7 @@ interface AddressEditModalProps {
   onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
   onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
   onDelete: (key: string) => void;
+  globalTheme: Theme;
 }
 
 const SinglePointMap: React.FC<{ 
@@ -60,6 +61,9 @@ const SinglePointMap: React.FC<{
     // 1. Initialize Map (Once)
     useEffect(() => {
         if (!mapContainerRef.current) return;
+
+        // FIX: Strict Mode Safety - Prevent double initialization
+        if (mapRef.current) return;
 
         // Create map instance
         const map = L.map(mapContainerRef.current, { 
@@ -137,7 +141,7 @@ const SinglePointMap: React.FC<{
         const timer = setTimeout(() => map.invalidateSize(), 200);
         return () => clearTimeout(timer);
 
-    }, [lat, lon, isSuccess, isExpanded, address]); // Intentionally excluded functions from deps
+    }, [lat, lon, isSuccess, isExpanded, address]); 
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
@@ -177,11 +181,11 @@ const SinglePointMap: React.FC<{
     };
 
     return (
-        <div className="relative h-full w-full group">
+        <div className="relative h-full w-full group isolate">
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
-            {/* Map Search Bar - Shifted right to avoid zoom controls */}
-            <div className="absolute top-3 left-14 z-[800] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
+            {/* Map Search Bar - Shifted right (left-14) to avoid zoom controls, High Z-Index */}
+            <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
                         {isSearching ? <div className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full"/> : <SearchIcon />}
@@ -191,15 +195,15 @@ const SinglePointMap: React.FC<{
                         value={searchQuery}
                         onChange={handleSearch}
                         placeholder="Поиск места на карте..."
-                        className="w-full py-2 pl-10 pr-4 bg-gray-900/90 backdrop-blur text-sm text-white border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent shadow-sm transition-all"
+                        className="w-full py-2 pl-10 pr-4 bg-card-bg/90 backdrop-blur text-sm text-text-main border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent shadow-sm transition-all"
                     />
                     {searchResults.length > 0 && (
-                        <ul className="absolute mt-1 w-full bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-50">
+                        <ul className="absolute mt-1 w-full bg-card-bg/95 backdrop-blur border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-[1050]">
                             {searchResults.map((res, idx) => (
                                 <li 
                                     key={idx}
                                     onClick={() => selectResult(res)}
-                                    className="px-4 py-2 text-sm text-gray-200 hover:bg-indigo-600/30 hover:text-white cursor-pointer border-b border-gray-700/50 last:border-0 transition-colors"
+                                    className="px-4 py-2 text-sm text-text-main hover:bg-indigo-600/30 hover:text-white cursor-pointer border-b border-gray-700/50 last:border-0 transition-colors"
                                 >
                                     {res.display_name}
                                 </li>
@@ -209,12 +213,12 @@ const SinglePointMap: React.FC<{
                 </div>
             </div>
 
-            {/* Map Controls Overlay - Positioned Top Right */}
-            <div className="absolute top-3 right-3 z-[800] flex flex-col gap-2 pointer-events-auto">
+            {/* Map Controls Overlay - Positioned Top Right - Explicit Z-Index */}
+            <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
-                    className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
-                    title={theme === 'dark' ? "Светлая тема" : "Темная тема"}
+                    className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
+                    title={theme === 'dark' ? "Светлая карта" : "Темная карта"}
                 >
                     {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
                 </button>
@@ -222,7 +226,7 @@ const SinglePointMap: React.FC<{
                 {isExpanded ? (
                     <button 
                         onClick={onCollapse}
-                        className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
+                        className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
                         title="Свернуть карту"
                     >
                         <MinimizeIcon />
@@ -230,7 +234,7 @@ const SinglePointMap: React.FC<{
                 ) : (
                     <button 
                         onClick={onExpand}
-                        className="flex items-center justify-center w-10 h-10 bg-gray-800/90 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
+                        className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
                         title="Развернуть карту"
                     >
                         <MaximizeIcon />
@@ -242,7 +246,7 @@ const SinglePointMap: React.FC<{
 };
 
 
-const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete }) => {
+const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme }) => {
     const [editedAddress, setEditedAddress] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
@@ -256,10 +260,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     
     // UI States for map
-    const [mapTheme, setMapTheme] = useState<Theme>('dark');
+    const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
 
     const justSaved = useRef(false);
+
+    // Sync local map theme with global theme when opened
+    useEffect(() => {
+        if (isOpen) {
+            setMapTheme(globalTheme);
+        }
+    }, [isOpen, globalTheme]);
 
     const fetchHistory = async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
@@ -508,7 +519,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     }
 
     const customFooter = (
-        <div className="flex justify-between items-center p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
+        <div className="flex justify-between items-center p-4 bg-card-bg/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
             <button
                 onClick={onBack}
                 className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
@@ -529,27 +540,27 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="flex flex-col gap-4">
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar">
+                    <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar">
                         <h4 className="font-bold text-lg mb-3 text-indigo-400">Исходные данные строки</h4>
                         <table className="w-full text-sm">
                             <tbody>
                                 {detailsToShow.map(({ key, value }, index) => (
                                     <tr key={index} className="border-b border-gray-700/50">
-                                        <td className="py-2 pr-2 text-gray-400 font-medium align-top w-1/3">{key}</td>
-                                        <td className="py-2 text-white break-words">{value}</td>
+                                        <td className="py-2 pr-2 text-text-muted font-medium align-top w-1/3">{key}</td>
+                                        <td className="py-2 text-text-main break-words">{value}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
                     
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
+                    <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
                         <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-bold text-lg text-slate-300 flex items-center gap-2">
+                            <h4 className="font-bold text-lg text-text-main flex items-center gap-2">
                                 История изменений
                                 {isLoadingHistory && <LoaderIcon />}
                             </h4>
-                            <span className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded-full border border-gray-700">
+                            <span className="text-xs text-text-muted bg-gray-800 px-2 py-1 rounded-full border border-gray-700">
                                 Всего: {history.length}
                             </span>
                         </div>
@@ -591,7 +602,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             isExpanded={false}
                          />
                     </div>
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                    <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700">
                         <div className="flex justify-between items-center mb-3">
                             <h4 className="font-bold text-lg text-accent">Адрес для геокодирования</h4>
                             {!showDeleteConfirm ? (
@@ -612,14 +623,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </div>
                         <div className="space-y-3">
                             <div className="relative">
-                                <label htmlFor="address-input" className="block text-sm font-medium text-gray-300 mb-1">Адрес ТТ LimKorm</label>
+                                <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
                                 <textarea
                                     id="address-input"
                                     rows={3}
                                     value={editedAddress}
                                     onChange={e => setEditedAddress(e.target.value)}
                                     disabled={isProcessing || status === 'geocoding'}
-                                    className={`w-full p-2 bg-gray-900 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`}
+                                    className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`}
                                 />
                                 {saveSuccess && (
                                     <div className="absolute right-2 top-8 text-green-400 animate-pulse">
@@ -677,7 +688,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             {/* Full Screen Map Modal */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
-                    <div className="flex justify-between items-center p-4 bg-gray-900/80 backdrop-blur-sm border-b border-gray-700">
+                    <div className="flex justify-between items-center p-4 bg-card-bg/80 backdrop-blur-sm border-b border-gray-700">
                         <h3 className="text-lg font-bold text-white">Уточнение координат: {editedAddress}</h3>
                         <button 
                             onClick={() => setIsMapExpanded(false)}
@@ -699,8 +710,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             isExpanded={true}
                         />
                     </div>
-                    <div className="p-4 bg-gray-900/80 backdrop-blur-sm border-t border-gray-700 flex justify-end gap-3">
-                         <div className="text-sm text-gray-400 flex items-center mr-4">
+                    <div className="p-4 bg-card-bg/80 backdrop-blur-sm border-t border-gray-700 flex justify-end gap-3">
+                         <div className="text-sm text-text-muted flex items-center mr-4">
                             Перетащите маркер в нужное место. Координаты обновятся автоматически.
                          </div>
                          <button onClick={() => setIsMapExpanded(false)} className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg">

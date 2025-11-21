@@ -8,6 +8,8 @@ import { capitals } from '../utils/capitals';
 import { SearchIcon, ErrorIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 
+type Theme = 'dark' | 'light';
+
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
     selectedRegions: string[];
@@ -15,6 +17,7 @@ interface InteractiveRegionMapProps {
     activeClients: MapPoint[];
     conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
+    theme?: Theme;
 }
 
 interface SearchableLocation {
@@ -36,8 +39,8 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 };
 
 const MapLegend: React.FC = () => (
-     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700 text-white max-w-[200px]">
-        <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-400">Легенда</h4>
+     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px]">
+        <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
         <div className="flex items-center mb-1.5">
             <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
             <span className="text-xs font-medium">Активные ТТ</span>
@@ -49,7 +52,7 @@ const MapLegend: React.FC = () => (
     </div>
 );
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark' }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -71,7 +74,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     // New UI States
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [theme, setTheme] = useState<'dark' | 'light'>('dark');
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
@@ -111,8 +113,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             setSearchResults([]);
         }
     }, [searchTerm, searchableLocations]);
-
-    // ... regionalData calc removed (unused in this scope) ...
 
     const invisibleStyle = {
         weight: 0,
@@ -482,7 +482,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}
         >
             <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-2rem)] pointer-events-none' : ''}`}>
-                <h2 className={`text-xl font-bold text-white whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-gray-900/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
+                <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                     Карта рыночного потенциала
                 </h2>
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
@@ -494,7 +494,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         placeholder="Поиск города или региона..."
-                        className="w-full p-2 pl-10 bg-gray-900/80 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition backdrop-blur-sm"
+                        className="w-full p-2 pl-10 bg-card-bg/80 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-text-main placeholder-gray-500 transition backdrop-blur-sm"
                     />
                     {searchResults.length > 0 && (
                         <ul className="absolute z-50 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">
@@ -502,10 +502,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 <li
                                     key={`${loc.name}-${loc.type}`}
                                     onClick={() => handleLocationSelect(loc)}
-                                    className="px-4 py-2 text-white cursor-pointer hover:bg-indigo-500/20 flex justify-between items-center"
+                                    className="px-4 py-2 text-text-main cursor-pointer hover:bg-indigo-500/20 flex justify-between items-center"
                                 >
                                     <span>{loc.name}</span>
-                                    <span className="text-xs text-gray-400 bg-gray-700 px-1.5 py-0.5 rounded-md">{typeToLabel[loc.type]}</span>
+                                    <span className="text-xs text-text-muted bg-gray-700 px-1.5 py-0.5 rounded-md">{typeToLabel[loc.type]}</span>
                                 </li>
                             ))}
                         </ul>
@@ -526,20 +526,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             )}
             
             <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
-                <div ref={mapContainer} className="h-full w-full theme-dark bg-gray-800 z-0" />
+                <div ref={mapContainer} className={`h-full w-full theme-${theme} bg-gray-800 z-0`} />
                 
                 {/* Custom Controls Overlay */}
                 <div className="absolute top-4 right-4 z-[1000] flex flex-col gap-3">
                     <button
-                        onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                        className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
-                        title={theme === 'dark' ? "Светлая карта" : "Темная карта"}
-                    >
-                        {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-                    </button>
-                    <button
                         onClick={() => setIsFullscreen(!isFullscreen)}
-                        className="bg-gray-800/90 hover:bg-gray-700 text-white p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
+                        className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md"
                         title={isFullscreen ? "Свернуть" : "Развернуть"}
                     >
                         {isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}

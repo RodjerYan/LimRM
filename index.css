@@ -5,6 +5,28 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Dark Mode (Default) */
+  --primary-dark: 17 24 39; /* #111827 */
+  --card-bg: 31 41 55;      /* #1F2937 */
+  --text-main: 229 231 235; /* #e5e7eb (gray-200) */
+  --text-muted: 156 163 175; /* #9ca3af (gray-400) */
+}
+
+.light-mode {
+  /* Light Mode */
+  --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) */
+  --card-bg: 255 255 255;      /* #ffffff */
+  --text-main: 17 24 39;       /* #111827 (gray-900) */
+  --text-muted: 75 85 99;      /* #4b5563 (gray-600) */
+}
+
+@layer base {
+  body {
+    @apply text-text-main;
+  }
+}
+
 @layer utilities {
   .shimmer-effect::after {
     content: '';
