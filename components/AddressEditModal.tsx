@@ -5,7 +5,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
@@ -48,6 +48,13 @@ const SinglePointMap: React.FC<{
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
 
+    // Search State
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    // Fix: Use ReturnType<typeof setTimeout> instead of NodeJS.Timeout to support environments without @types/node
+    const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
@@ -55,7 +62,11 @@ const SinglePointMap: React.FC<{
         if (!mapContainerRef.current) return;
 
         if (!mapRef.current) {
-            mapRef.current = L.map(mapContainerRef.current, { scrollWheelZoom: true });
+            mapRef.current = L.map(mapContainerRef.current, { 
+                scrollWheelZoom: true,
+                zoomControl: false // Disable default zoom to position it manually if needed, but here we keep standard and position search around it
+            });
+            L.control.zoom({ position: 'topleft' }).addTo(mapRef.current);
         }
 
         const map = mapRef.current;
@@ -114,15 +125,82 @@ const SinglePointMap: React.FC<{
 
     }, [lat, lon, address, isSuccess, onCoordinatesChange, theme, isExpanded]);
 
+    const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const q = e.target.value;
+        setSearchQuery(q);
+        
+        if (searchTimeout.current) clearTimeout(searchTimeout.current);
+        
+        if (q.length < 3) {
+            setSearchResults([]);
+            return;
+        }
+
+        setIsSearching(true);
+        searchTimeout.current = setTimeout(async () => {
+            try {
+                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&accept-language=ru`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setSearchResults(data);
+                }
+            } catch (err) {
+                console.error(err);
+            } finally {
+                setIsSearching(false);
+            }
+        }, 600);
+    };
+
+    const selectResult = (result: any) => {
+        const newLat = parseFloat(result.lat);
+        const newLon = parseFloat(result.lon);
+        if (!isNaN(newLat) && !isNaN(newLon)) {
+            onCoordinatesChange(newLat, newLon);
+            setSearchResults([]);
+            // Keep the query to show what was selected, or clear it.
+            // setSearchQuery(''); 
+        }
+    };
+
     return (
-        <div className="relative h-full w-full">
+        <div className="relative h-full w-full group">
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
+            {/* Map Search Bar */}
+            <div className="absolute top-3 left-14 right-14 md:left-auto md:right-auto md:left-16 md:w-80 z-[800] pointer-events-none">
+                <div className="relative pointer-events-auto shadow-lg rounded-lg">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
+                        {isSearching ? <div className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full"/> : <SearchIcon />}
+                    </div>
+                    <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={handleSearch}
+                        placeholder="Поиск места на карте..."
+                        className="w-full py-2 pl-10 pr-4 bg-gray-900/90 backdrop-blur text-sm text-white border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent shadow-sm transition-all"
+                    />
+                    {searchResults.length > 0 && (
+                        <ul className="absolute mt-1 w-full bg-gray-900/95 backdrop-blur border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-50">
+                            {searchResults.map((res, idx) => (
+                                <li 
+                                    key={idx}
+                                    onClick={() => selectResult(res)}
+                                    className="px-4 py-2 text-sm text-gray-200 hover:bg-indigo-600/30 hover:text-white cursor-pointer border-b border-gray-700/50 last:border-0 transition-colors"
+                                >
+                                    {res.display_name}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            </div>
+
             {/* Map Controls Overlay */}
-            <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+            <div className="absolute top-3 right-3 z-[800] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
-                    className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                    className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
                     title={theme === 'dark' ? "Светлая тема" : "Темная тема"}
                 >
                     {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
@@ -131,7 +209,7 @@ const SinglePointMap: React.FC<{
                 {isExpanded ? (
                     <button 
                         onClick={onCollapse}
-                        className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                        className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
                         title="Свернуть карту"
                     >
                         <MinimizeIcon />
@@ -139,7 +217,7 @@ const SinglePointMap: React.FC<{
                 ) : (
                     <button 
                         onClick={onExpand}
-                        className="bg-gray-800/80 hover:bg-gray-700 backdrop-blur text-white p-2 rounded-md shadow-lg border border-white/10 transition-colors"
+                        className="flex items-center justify-center w-10 h-10 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95"
                         title="Развернуть карту"
                     >
                         <MaximizeIcon />
