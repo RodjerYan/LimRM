@@ -12,7 +12,8 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
-import InteractiveRegionMap from './components/InteractiveRegionMap'; 
+import InteractiveRegionMap from './components/InteractiveRegionMap';
+import RMDashboard from './components/RMDashboard'; 
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -27,7 +28,7 @@ import {
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
-import { SunIcon, MoonIcon } from './components/icons';
+import { SunIcon, MoonIcon, TargetIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -62,6 +63,7 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false); // New State for RM Dashboard
     const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
@@ -455,7 +457,7 @@ const App: React.FC = () => {
     }, [allData, filters]);
 
     const isControlPanelLocked = isLoading;
-    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen;
+    const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
 
     return (
         <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300">
@@ -465,7 +467,14 @@ const App: React.FC = () => {
                         <h1 className="text-3xl font-bold text-text-main tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-text-muted mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
-                    {/* Theme toggle button removed as requested */}
+                    <button
+                        onClick={() => setIsRMDashboardOpen(true)}
+                        disabled={!isDataLoaded || isLoading}
+                        className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-6 rounded-lg shadow-lg flex items-center gap-2 transition-all"
+                    >
+                        <TargetIcon />
+                        План-Факт Панель РМ
+                    </button>
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -561,6 +570,12 @@ const App: React.FC = () => {
                 onStartPolling={pollSheetForCoordinates}
                 onDelete={handleClientDelete}
                 globalTheme={theme}
+            />
+            <RMDashboard 
+                isOpen={isRMDashboardOpen} 
+                onClose={() => setIsRMDashboardOpen(false)} 
+                data={filteredData}
+                okbData={okbData}
             />
         </div>
     );

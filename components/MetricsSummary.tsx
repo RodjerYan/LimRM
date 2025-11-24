@@ -63,8 +63,10 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     }
     
     const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && metrics.totalClients > 0) 
-        ? (metrics.totalClients / okbStatus.rowCount) * 100 
+    
+    // Fix: Calculate coverage based on actual active clients (shops), not aggregated groups
+    const okbCoverage = (okbStatus?.rowCount && metrics.totalActiveClients > 0) 
+        ? (metrics.totalActiveClients / okbStatus.rowCount) * 100 
         : 0;
 
     return (
