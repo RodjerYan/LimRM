@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
@@ -83,6 +84,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             }
 
             if (!rmBucket.regions.has(regionKey)) {
+                // FIX: The region bucket was being added to the main `rmBuckets` map instead of the nested `regions` map for the current RM. This caused a type mismatch and incorrect data aggregation.
                 rmBucket.regions.set(regionKey, {
                     fact: 0,
                     potential: 0,
@@ -156,7 +158,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                             }
                         });
 
-                        matchedKey = best || null;
+                        matchedKey = best ?? undefined;
                     }
 
                     if (matchedKey) {
