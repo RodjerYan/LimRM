@@ -20,6 +20,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selected
         if (mapInstance.current === null) {
             mapInstance.current = L.map(mapContainer.current, {
                 scrollWheelZoom: true,
+                attributionControl: false // Disable attribution
             });
 
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

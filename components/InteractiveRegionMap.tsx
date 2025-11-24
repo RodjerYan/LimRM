@@ -204,7 +204,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 scrollWheelZoom: true, 
                 preferCanvas: true,
                 worldCopyJump: true,
-                zoomControl: false // We'll add it manually to position it
+                zoomControl: false, // We'll add it manually to position it
+                attributionControl: false // Disable attribution
             });
             mapInstance.current = map;
             

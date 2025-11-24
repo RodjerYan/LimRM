@@ -70,7 +70,8 @@ const SinglePointMap: React.FC<{
             scrollWheelZoom: true,
             zoomControl: false, // Disable default to add manual control
             center: [55.75, 37.61],
-            zoom: 5
+            zoom: 5,
+            attributionControl: false // Disable attribution
         });
         
         mapRef.current = map;
