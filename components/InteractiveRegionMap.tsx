@@ -71,8 +71,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     
-    // Ref to hold latest activeClients to avoid stale closures in event listeners
+    // Refs to hold latest props to avoid stale closures in event listeners without triggering re-init
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
+    const onEditClientRef = useRef(onEditClient);
 
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
@@ -87,10 +88,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // New UI States
     const [isFullscreen, setIsFullscreen] = useState(false);
 
-    // Sync ref with props
+    // Sync refs with props
     useEffect(() => {
         activeClientsDataRef.current = activeClients;
     }, [activeClients]);
+
+    useEffect(() => {
+        onEditClientRef.current = onEditClient;
+    }, [onEditClient]);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
@@ -245,7 +250,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             if (key) {
                                 const client = activeClientsDataRef.current.find(c => c.key === key);
                                 if (client) {
-                                    onEditClient(client);
+                                    // Access the latest onEditClient callback via ref to avoid stale closure
+                                    // or need for re-initialization of the map.
+                                    onEditClientRef.current(client);
                                 }
                             }
                         });
@@ -260,7 +267,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current = null;
             }
         };
-    }, [resetHighlight, onEditClient]);
+        // Crucial: Removed 'onEditClient' from dependency array to prevent map re-initialization on every render.
+    }, [resetHighlight]); 
 
     // Handle Theme Change & Tile Layer Management
     // Independent of the global app theme to allow user preference for map visibility
