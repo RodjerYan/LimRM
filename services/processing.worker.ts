@@ -31,7 +31,20 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. Try to parse the address structure first
+    // 1. Priority: Look for explicit "Region" column data.
+    // This fixes issues where an address parser might misinterpret a city name (e.g. "Kirov")
+    // as belonging to the wrong region if the region isn't explicitly stated in the address string,
+    // but IS stated in a separate column (e.g. OKB table).
+    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
+    const cityCol = findValueInRow(row, ['город']);
+    
+    // Attempt recovery from explicit columns first
+    const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
+    if (recoveredFromCols !== 'Регион не определен') {
+        return standardizeRegion(recoveredFromCols);
+    }
+
+    // 2. Fallback: Parse the address string structure
     const address = findAddressInRow(row);
     const distributor = findValueInRow(row, ['дистрибьютор']);
     let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
@@ -42,22 +55,7 @@ const getCanonicalRegion = (row: any): string => {
 
     let region = parsed.region;
 
-    // 2. If parser failed to find region, look at specific columns
-    if (region === 'Регион не определен') {
-        const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
-        const cityCol = findValueInRow(row, ['город']);
-        
-        // Recover from column values
-        const recovered = recoverRegion(rawRegionCol, cityCol);
-        if (recovered !== 'Регион не определен') {
-            region = recovered;
-        }
-    }
-
-    // 3. STRONG FALLBACK: If we have a city (from parser or column), FORCE the region from the city map.
-    // CRITICAL FIX: Only apply fallback if region is STILL undefined. 
-    // Do NOT override an existing region (e.g. "Kaluga obl") just because we found a city name ("Kirov") 
-    // that might map to a different region capital ("Kirov region") in the lookup table.
+    // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
     if (region === 'Регион не определен') {
         const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город'])).toLowerCase().trim();
         if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
