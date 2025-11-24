@@ -3,7 +3,6 @@ import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import { AggregatedDataRow, RMMetrics, OkbDataRow, PlanMetric } from '../types';
 import { findValueInRow, findAddressInRow } from '../utils/dataUtils';
-import { standardizeRegion, REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from '../utils/addressMappings';
 import { parseRussianAddress } from '../services/addressParser';
 
 interface RMDashboardProps {
@@ -15,40 +14,11 @@ interface RMDashboardProps {
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
 
-// Create a Set of valid, standardized region names for O(1) lookup
-const VALID_REGIONS = new Set(Object.values(REGION_KEYWORD_MAP));
-
-const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
-
 const normalizeRmNameForMatching = (str: string) => {
     if (!str) return '';
     let clean = str.toLowerCase().trim();
     const surname = clean.split(/[\s.]+/)[0];
     return surname.replace(/[^a-zа-я0-9]/g, '');
-};
-
-const recoverRegion = (dirtyString: string, cityHint: string): string => {
-    const lowerDirty = dirtyString ? dirtyString.toLowerCase() : '';
-    if (!lowerDirty && !cityHint) return 'Регион не определен';
-
-    if (lowerDirty) {
-        for (const keyword of sortedRegionKeywords) {
-            const validRegion = REGION_KEYWORD_MAP[keyword];
-            const escapedKey = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-            const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
-
-            if (regex.test(lowerDirty)) {
-                return validRegion;
-            }
-        }
-    }
-
-    const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
-    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
-        return REGION_BY_CITY_MAP[lowerCity];
-    }
-
-    return 'Регион не определен';
 };
 
 const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbData }) => {
@@ -60,7 +30,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
     const nextYear = currentYear + 1;
 
     const metrics = useMemo<RMMetrics[]>(() => {
-        // Index OKB Data BY REGION — improved normalization
+        // Index OKB Data BY REGION — using the same core logic as the worker
         const globalOkbRegionCounts = new Map<string, number>();
 
         okbData.forEach(row => {
@@ -71,17 +41,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             try {
                 parsed = parseRussianAddress(address || '', distributor) || parsed;
             } catch (e) {
-                // parser may fail on dirty input — we'll fallback below
+                // parser may fail on dirty input, ignore
             }
 
-            let region = parsed.region || 'Регион не определен';
-
-            if (region === 'Регион не определен') {
-                const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
-                const cityCol = findValueInRow(row, ['город']);
-                const recovered = recoverRegion(rawRegionCol, cityCol);
-                if (recovered !== 'Регион не определен') region = recovered;
-            }
+            const region = parsed.region || 'Регион не определен';
 
             if (region !== 'Регион не определен') {
                 const norm = region.trim();
@@ -111,18 +74,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             const rmName = row.rm || 'Не указан';
             const normRm = normalizeRmNameForMatching(rmName);
 
-            let regionKey = row.region || 'Регион не определен';
-
-            if (!VALID_REGIONS.has(regionKey) && regionKey !== 'Регион не определен') {
-                const recovered = recoverRegion(regionKey, row.city);
-                if (recovered !== 'Регион не определен') {
-                    regionKey = recovered;
-                } else {
-                    const std = standardizeRegion(regionKey);
-                    if (VALID_REGIONS.has(std)) regionKey = std;
-                    else regionKey = 'Регион не определен';
-                }
-            }
+            // Trust the region from the worker. Do not re-process it.
+            const regionKey = row.region || 'Регион не определен';
 
             if (!rmBuckets.has(normRm)) {
                 rmBuckets.set(normRm, {
@@ -182,39 +135,30 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
-                // Lookup in global OKB map with case-insensitive fallback
                 let totalRegionOkb = 0;
                 const exact = globalOkbRegionCounts.get(regionKey);
-                if (exact) totalRegionOkb = exact;
-                else {
+                if (exact) {
+                    totalRegionOkb = exact;
+                } else {
                     const fuzzyKey = Array.from(globalOkbRegionCounts.keys()).find(k => k.toLowerCase() === regionKey.toLowerCase());
                     if (fuzzyKey) totalRegionOkb = globalOkbRegionCounts.get(fuzzyKey)!;
                 }
 
-                // **CRITICAL CHANGE** — DO NOT force OKB to equal activeCount.
-                // If OKB is missing (0), we will mark it as unknown and NOT inflate it.
-                if (totalRegionOkb === 0) {
-                    // collect for diagnostics
-                    if (regionKey !== 'Регион не определен') missingRegionNames.add(regionKey);
+                if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') {
+                    missingRegionNames.add(regionKey);
                 }
 
-                rmTotalOkb += totalRegionOkb; // zero is allowed
+                rmTotalOkb += totalRegionOkb;
 
-                // Market share and plan calculation — handle zero OKB gracefully
+                // **CRITICAL CHANGE**: Do not cap market share at 100%.
                 let marketShare = 0;
-                let effectiveShare = 0;
                 if (totalRegionOkb > 0) {
                     marketShare = activeCount / totalRegionOkb;
-                    effectiveShare = Math.min(1, marketShare);
-                } else {
-                    // totalRegionOkb === 0 -> unknown; we keep marketShare=0 and will show '?' in UI
-                    marketShare = 0;
-                    effectiveShare = 0;
                 }
-
-                // sensitivity-based growth calculation (same as before)
+                
+                // The plan calculation logic is robust to marketShare > 1
                 const sensitivity = 20;
-                let adjustment = (0.4 - effectiveShare) * sensitivity;
+                let adjustment = (0.4 - marketShare) * sensitivity;
                 const minRate = 5;
                 const maxRate = 25;
 
@@ -229,7 +173,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                     fact: regData.fact,
                     plan: regionPlan,
                     growthPct: calculatedRate,
-                    marketShare: totalRegionOkb > 0 ? effectiveShare * 100 : NaN, // NaN used to indicate unknown
+                    marketShare: totalRegionOkb > 0 ? marketShare * 100 : NaN,
                     activeCount: activeCount,
                     totalCount: totalRegionOkb
                 });
@@ -254,7 +198,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : BASE_GROWTH_RATE;
 
-            // If rmTotalOkb === 0 we will keep marketShare = NaN and display '?' on UI
             const weightedShare = rmTotalOkb > 0 ? (rmTotalClients / rmTotalOkb) * 100 : NaN;
 
             resultMetrics.push({
@@ -275,15 +218,12 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             });
         });
 
-        // Attach diagnostics globally so UI can show a warning if needed
-        // We'll reuse closure to pass the missingRegionNames via a symbol on the array (safe internal use)
         (resultMetrics as any).__missingOkbRegions = Array.from(missingRegionNames.values());
 
         return resultMetrics.sort((a, b) => b.totalFact - a.totalFact);
 
     }, [data, okbData]);
 
-    // read diagnostics
     const missingOkbRegions: string[] = (metrics as any).__missingOkbRegions || [];
 
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
@@ -321,7 +261,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                             </div>
                         )}
 
-                        {/* Show diagnostics if any RM regions had no OKB entries */}
                         {missingOkbRegions.length > 0 && (
                             <div className="ml-auto text-xs text-yellow-300 border border-yellow-500/20 px-2 py-1 rounded">
                                 ⚠️ Найдены регионы без записей в ОКБ: {missingOkbRegions.slice(0,5).join(', ')}{missingOkbRegions.length > 5 ? ` и ещё ${missingOkbRegions.length - 5}` : ''}.
@@ -350,7 +289,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                 {metrics.map(rm => {
                                     const isExpanded = expandedRM === rm.rmName;
                                     const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
-                                    const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue < 10 ? 'text-red-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-emerald-400'));
+                                    
+                                    let shareColor = 'text-emerald-400'; // default for good share
+                                    if (shareValue === null) {
+                                        shareColor = 'text-yellow-300'; // unknown
+                                    } else if (shareValue > 100) {
+                                        shareColor = 'text-red-400 font-bold'; // ERROR
+                                    } else if (shareValue < 10) {
+                                        shareColor = 'text-red-400'; // Very low
+                                    } else if (shareValue < 40) {
+                                        shareColor = 'text-yellow-400'; // Low
+                                    }
+
                                     const growthColor = rm.recommendedGrowthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : (rm.recommendedGrowthPct < BASE_GROWTH_RATE ? 'text-amber-400' : 'text-indigo-300');
 
                                     return (
@@ -412,9 +362,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
                                                                         {rm.regions.map(reg => {
-                                                                            const regShareKnown = !Number.isNaN(reg.marketShare);
-                                                                            const regShareColor = (!regShareKnown) ? 'text-yellow-300' : ((reg.marketShare || 0) < 40 ? 'text-indigo-300' : 'text-gray-400');
+                                                                            const regShare = reg.marketShare ?? NaN;
+                                                                            const regShareKnown = !Number.isNaN(regShare);
                                                                             const regGrowthColor = reg.growthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : 'text-amber-400';
+                                                                            
+                                                                            let regShareColor = 'text-gray-400';
+                                                                            if (!regShareKnown) {
+                                                                                regShareColor = 'text-yellow-300';
+                                                                            } else if (regShare > 100) {
+                                                                                regShareColor = 'text-red-400 font-bold';
+                                                                            } else if (regShare < 40) {
+                                                                                regShareColor = 'text-indigo-300';
+                                                                            }
+
                                                                             return (
                                                                                 <tr key={reg.name} className="hover:bg-gray-700/20">
                                                                                     <td className="px-3 py-2">{reg.name}</td>
