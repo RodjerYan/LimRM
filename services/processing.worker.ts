@@ -32,11 +32,9 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 const getCanonicalRegion = (row: any): string => {
     // 1. Priority: Look for explicit "Region" column data.
-    // This fixes issues where an address parser might misinterpret a city name (e.g. "Kirov")
-    // as belonging to the wrong region if the region isn't explicitly stated in the address string,
-    // but IS stated in a separate column (e.g. OKB table).
-    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
-    const cityCol = findValueInRow(row, ['город']);
+    // Added 'субъект' to explicitly support columns named "Субъект" or "Субъект РФ" as requested.
+    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика', 'субъект', 'subject']);
+    const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town']);
     
     // Attempt recovery from explicit columns first
     const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
@@ -57,7 +55,7 @@ const getCanonicalRegion = (row: any): string => {
 
     // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
     if (region === 'Регион не определен') {
-        const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город'])).toLowerCase().trim();
+        const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
         if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
             region = REGION_BY_CITY_MAP[cityKey];
         }

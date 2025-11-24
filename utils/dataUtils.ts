@@ -150,7 +150,11 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
     // Last resort fallback
-    const fallbackKey = rowKeys.find(key => key.toLowerCase().includes('город') || key.toLowerCase().includes('регион'));
+    // Explicitly EXCLUDE "субъект" to avoid using the region name as the address string.
+    const fallbackKey = rowKeys.find(key => 
+        (key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')) && 
+        !key.toLowerCase().includes('субъект')
+    );
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
@@ -169,10 +173,11 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         ? dirtyString.toLowerCase().replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
         
+    // If neither exists, give up early
     if (!lowerDirty && !cityHint) return 'Регион не определен';
 
+    // 1. Try matching against known keywords in the dirty string (Region Column)
     if (lowerDirty) {
-        // 1. Try matching against known keywords
         for (const keyword of sortedRegionKeywords) {
             // Normalize the keyword too just in case
             const normalizedKeyword = keyword.toLowerCase().replace(/\s+/g, ' ').trim();
