@@ -2,8 +2,9 @@
 import React, { useMemo, useState } from 'react';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
-import { AggregatedDataRow, MapPoint, RMMetrics, OkbDataRow, PlanMetric } from '../types';
+import { AggregatedDataRow, RMMetrics, OkbDataRow, PlanMetric } from '../types';
 import { findValueInRow } from '../utils/dataUtils';
+import { standardizeRegion } from '../utils/addressMappings';
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -25,8 +26,20 @@ const ChevronUpIcon = () => (
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
 
-// Normalizer for RM name matching (remove spaces, dots, lowercase)
-const normalizeKey = (str: string) => str.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+/**
+ * Normalizes RM name for fuzzy matching.
+ * Extracts the SURNAME (first word) and lowercases it.
+ * This handles "Иванов И.И." vs "Иванов Иван" vs "Иванов".
+ */
+const normalizeRmNameForMatching = (str: string) => {
+    if (!str) return '';
+    // 1. Trim and lower case
+    let clean = str.toLowerCase().trim();
+    // 2. Extract the first word (Surname)
+    const surname = clean.split(/[\s.]+/)[0]; 
+    // 3. Remove any non-alphanumeric chars just in case
+    return surname.replace(/[^a-zа-я0-9]/g, '');
+};
 
 const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbData }) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
@@ -37,30 +50,29 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
     const nextYear = currentYear + 1;
 
     const metrics = useMemo<RMMetrics[]>(() => {
-        // 1. Index OKB Data: Map<NormalizedRM, Map<NormalizedRegion, Count>>
+        // 1. Index OKB Data using GLOBAL Standardized Region Logic
+        // Map<NormalizedRM_Surname, Map<StandardizedRegion, Count>>
         const okbRegionCounts = new Map<string, Map<string, number>>();
         
         okbData.forEach(row => {
             const rawRm = findValueInRow(row, ['рм', 'менеджер', 'ответственный', 'ка']);
             if (!rawRm) return;
             
-            const normRm = normalizeKey(rawRm);
+            const normRm = normalizeRmNameForMatching(rawRm);
             
-            // Try to find region in OKB row
+            // Use the exact same logic as the main parser
             const rawRegion = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
-            // If no region column, we count it towards 'unknown' region for that RM, or skip?
-            // Let's use 'unknown' if missing to account for it in total load.
-            const normRegion = rawRegion ? normalizeKey(rawRegion) : 'unknown';
+            const stdRegion = standardizeRegion(rawRegion);
 
             if (!okbRegionCounts.has(normRm)) {
                 okbRegionCounts.set(normRm, new Map());
             }
             const regionMap = okbRegionCounts.get(normRm)!;
-            regionMap.set(normRegion, (regionMap.get(normRegion) || 0) + 1);
+            regionMap.set(stdRegion, (regionMap.get(stdRegion) || 0) + 1);
         });
 
         // 2. Aggregate Data from Sales File
-        // Structure: RM -> Region -> { fact, clientsSet, brandStats }
+        // We use the pre-calculated 'region' from AggregatedDataRow which matches ResultsTable
         type RegionBucket = {
             fact: number;
             potential: number; // from file
@@ -79,13 +91,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
 
         data.forEach(row => {
             const rmName = row.rm || 'Не указан';
-            const normRm = normalizeKey(rmName);
-            const regionName = row.region || 'Регион не определен';
-            // Normalize region to match with OKB index
-            // Note: Region names in file might slightly differ from OKB (e.g. "обл." vs "область"). 
-            // Our `normalizeKey` strips all non-alphanumeric, so "московскаяобл" matches "московскаяобласть" mostly if truncated, 
-            // but better to rely on the root name. Ideally `standardizeRegion` in parser handled this.
-            const normRegion = normalizeKey(regionName); 
+            const normRm = normalizeRmNameForMatching(rmName);
+            
+            // CRITICAL FIX: Use the already standardized region from the row.
+            // This ensures 100% match with the Results Analysis table.
+            const regionKey = row.region || 'Регион не определен'; 
 
             if (!rmBuckets.has(normRm)) {
                 rmBuckets.set(normRm, { 
@@ -108,15 +118,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             }
 
             // Region Bucket
-            if (!rmBucket.regions.has(normRegion)) {
-                rmBucket.regions.set(normRegion, { 
+            if (!rmBucket.regions.has(regionKey)) {
+                rmBucket.regions.set(regionKey, { 
                     fact: 0, 
                     potential: 0, 
                     activeClients: new Set(),
                     brandFacts: new Map()
                 });
             }
-            const regBucket = rmBucket.regions.get(normRegion)!;
+            const regBucket = rmBucket.regions.get(regionKey)!;
             
             regBucket.fact += row.fact;
             regBucket.potential += row.potential;
@@ -145,18 +155,29 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             // Get OKB map for this RM
             const okbMap = okbRegionCounts.get(normRmKey);
 
-            rmData.regions.forEach((regData, normRegionKey) => {
+            rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size;
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
                 // Find Total OKB count for this region
-                // We try exact match first. 
-                let totalRegionOkb = okbMap?.get(normRegionKey) || 0;
+                // Since both are standardized via standardizeRegion, this match should be robust.
+                let totalRegionOkb = okbMap?.get(regionKey) || 0;
                 
-                // Fallback: if OKB keys are slightly different (e.g. missing "oblast"), try fuzzy find? 
-                // For now rely on normalizeKey. If 0, we assume Blue Ocean.
+                // Fallback: check for capitalization mismatches just in case
+                if (totalRegionOkb === 0 && okbMap) {
+                    // Try to find a key that roughly matches
+                    const fuzzyKey = Array.from(okbMap.keys()).find(k => k.toLowerCase() === regionKey.toLowerCase());
+                    if (fuzzyKey) {
+                        totalRegionOkb = okbMap.get(fuzzyKey)!;
+                    }
+                }
                 
+                // If OKB exists but region not found, check if 'unknown' bucket has items (fallback)
+                if (totalRegionOkb === 0 && regionKey === 'Регион не определен') {
+                     totalRegionOkb = okbMap?.get('Регион не определен') || 0;
+                }
+
                 rmTotalOkb += totalRegionOkb;
 
                 // --- SMART PLAN LOGIC PER REGION ---
@@ -167,8 +188,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                     // Fallback if no OKB loaded
                     marketShare = regData.potential > 0 ? (regData.fact / regData.potential) : 0.5;
                 }
-                // If OKB loaded but region not found in OKB for this RM -> Assume 0 share (Blue Ocean)
-
+                
                 const sensitivity = 20; 
                 // Pivot at 40%. Share < 40% -> High Growth. Share > 40% -> Lower Growth.
                 let adjustment = (0.4 - marketShare) * sensitivity;
@@ -181,14 +201,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);
                 rmTotalCalculatedPlan += regionPlan;
 
-                // Store Region Metric
-                // Find original region name from data (we only have normalized key in loop)
-                // In a real app, we'd store the display name in the bucket.
-                // Optimization: We assume at least one match exists to grab name, or capitalize key.
-                const displayRegionName = [...regData.activeClients][0]?.split(',')[0] || normRegionKey; 
-
                 regionMetrics.push({
-                    name: displayRegionName, // Simplified, ideally pass name through bucket
+                    name: regionKey, // Exactly matches ResultsTable
                     fact: regData.fact,
                     plan: regionPlan,
                     growthPct: calculatedRate,
