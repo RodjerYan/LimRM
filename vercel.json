@@ -1,68 +1,48 @@
 {
   "rewrites": [
     {
-      "source": "/api/auth/login",
-      "destination": "/api/auth-ops?op=login"
-    },
-    {
-      "source": "/api/auth/register",
-      "destination": "/api/auth-ops?op=register"
-    },
-    {
-      "source": "/api/auth/verify",
-      "destination": "/api/auth-ops?op=verify"
-    },
-    {
-      "source": "/api/auth/me",
-      "destination": "/api/auth-ops?op=me"
-    },
-    {
-      "source": "/api/auth/logout",
-      "destination": "/api/auth-ops?op=logout"
-    },
-    {
       "source": "/api/gemini-proxy",
       "destination": "/api/gemini-proxy"
     },
     {
       "source": "/api/get-okb",
-      "destination": "/api/data-ops?op=get-okb"
+      "destination": "/api/get-okb"
     },
     {
       "source": "/api/get-okb-status",
-      "destination": "/api/data-ops?op=get-okb-status"
+      "destination": "/api/get-okb-status"
     },
     {
       "source": "/api/get-conflict-zones",
-      "destination": "/api/data-ops?op=get-conflict-zones"
-    },
-    {
-      "source": "/api/geocode",
-      "destination": "/api/data-ops?op=geocode"
+      "destination": "/api/get-conflict-zones"
     },
     {
       "source": "/api/get-full-cache",
-      "destination": "/api/cache-ops?op=get-full"
+      "destination": "/api/get-full-cache"
     },
     {
       "source": "/api/add-to-cache",
-      "destination": "/api/cache-ops?op=add"
+      "destination": "/api/add-to-cache"
     },
     {
       "source": "/api/update-coords",
-      "destination": "/api/cache-ops?op=update-coords"
+      "destination": "/api/update-coords"
     },
     {
       "source": "/api/update-address",
-      "destination": "/api/cache-ops?op=update-address"
+      "destination": "/api/update-address"
     },
     {
       "source": "/api/delete-address",
-      "destination": "/api/cache-ops?op=delete"
+      "destination": "/api/delete-address"
     },
     {
       "source": "/api/get-cached-address",
-      "destination": "/api/cache-ops?op=get-one"
+      "destination": "/api/get-cached-address"
+    },
+    {
+      "source": "/api/geocode",
+      "destination": "/api/geocode"
     },
     {
       "source": "/:path*",

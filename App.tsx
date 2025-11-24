@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import Filters from './components/Filters';
@@ -14,8 +13,6 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import OKBManagement from './components/OKBManagement';
 import FileUpload from './components/FileUpload';
 import InteractiveRegionMap from './components/InteractiveRegionMap'; 
-import AuthPage from './components/Auth/AuthPage';
-import { AuthProvider, useAuth } from './context/AuthContext';
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -30,6 +27,7 @@ import {
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
+import { SunIcon, MoonIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -47,9 +45,7 @@ const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 type ModalType = 'details' | 'clients' | 'unidentified';
 type Theme = 'dark' | 'light';
 
-const DashboardContent: React.FC = () => {
-    const { user, logout } = useAuth();
-    
+const App: React.FC = () => {
     if (!isApiKeySet) {
         return <ApiKeyErrorDisplay />;
     }
@@ -135,7 +131,7 @@ const DashboardContent: React.FC = () => {
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
-        const activeAddressesSet = new Set(allActiveClients.map((c: MapPoint) => normalizeAddress(c.address)));
+        const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
         return okbData.filter(okb => {
             const address = findAddressInRow(okb);
             const normalizedAddress = normalizeAddress(address);
@@ -147,7 +143,7 @@ const DashboardContent: React.FC = () => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => {
-            setNotifications(prev => prev.filter((n: NotificationMessage) => n.id !== newNotification.id));
+            setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 5000);
     }, []);
 
@@ -239,35 +235,48 @@ const DashboardContent: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
+    // Improved data update handler that syncs all state slices including lastUpdated
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
+        
+        // 1. Update Active Clients (Flat list for map and list view)
         setAllActiveClients(prev => {
-            const exists = prev.some((c: MapPoint) => c.key === oldKey);
+            const exists = prev.some(c => c.key === oldKey);
             if (exists) {
-                return prev.map((c: MapPoint) => {
+                // Update existing
+                return prev.map(c => {
                     if (c.key === oldKey) {
-                        return { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding };
+                        // Merge all new props including lastUpdated
+                        return { 
+                            ...newPoint, 
+                            isGeocoding: newPoint.isGeocoding ?? c.isGeocoding 
+                        };
                     }
                     return c;
                 });
             } else {
+                // New client (was unidentified)
                 return [newPoint, ...prev];
             }
         });
     
+        // 2. Update Unidentified Rows (Remove if it was one)
         if (typeof originalIndex === 'number') {
             setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
         }
 
+        // 3. Update Aggregated Data (allData) to reflect changes in Search and Tables
         setAllData(prevData => {
             const newData = [...prevData];
             let wasUpdated = false;
 
+            // Try to find existing client in groups
             for (let i = 0; i < newData.length; i++) {
                 const group = newData[i];
-                const clientIndex = group.clients.findIndex((c: MapPoint) => c.key === oldKey || c.key === newPoint.key);
+                const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
                 
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
+                    // Update client preserving all properties from newPoint including lastUpdated
                     updatedClients[clientIndex] = { ...newPoint, isGeocoding: newPoint.isGeocoding };
                     
                     newData[i] = {
@@ -280,6 +289,7 @@ const DashboardContent: React.FC = () => {
                 }
             }
 
+            // If not found in existing groups (e.g. was Unidentified), find target group or create new
             if (!wasUpdated) {
                 const targetGroupIndex = newData.findIndex(g => 
                     g.rm === newPoint.rm && 
@@ -317,6 +327,7 @@ const DashboardContent: React.FC = () => {
             return newData;
         });
 
+        // 4. Sync editingClient state so Modal receives updates even if closed/reopened
         setEditingClient(prev => {
             if (!prev) return prev;
             if ((prev as MapPoint).key === oldKey) {
@@ -363,8 +374,9 @@ const DashboardContent: React.FC = () => {
                 if (res.ok) {
                     const data = await res.json();
                     if (data.lat && data.lon) {
+                        // Success!
                         const finalPoint = { 
-                            ...basePoint, 
+                            ...basePoint, // Includes lastUpdated from initial save
                             lat: data.lat, 
                             lon: data.lon, 
                             isGeocoding: false 
@@ -376,7 +388,8 @@ const DashboardContent: React.FC = () => {
                     }
                 }
                 
-                setTimeout(check, 5000);
+                // Not found yet, continue polling
+                setTimeout(check, 5000); // Check every 5 seconds
 
             } catch (e) {
                 console.error("Polling stopped:", e);
@@ -393,19 +406,21 @@ const DashboardContent: React.FC = () => {
 
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
-        setAllActiveClients(prev => prev.filter((c: MapPoint) => c.key !== keyToDelete));
+        setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
+        
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== keyToDelete;
         }));
+
         setAllData(prevData => {
             return prevData.map(group => {
-                const clientIndex = group.clients.findIndex((c: MapPoint) => c.key === keyToDelete);
+                const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
                 if (clientIndex !== -1) {
                     const clientFact = group.clients[clientIndex].fact || 0;
                     return {
                         ...group,
-                        clients: group.clients.filter((c: MapPoint) => c.key !== keyToDelete),
+                        clients: group.clients.filter(c => c.key !== keyToDelete),
                         fact: Math.max(0, group.fact - clientFact)
                     };
                 }
@@ -450,18 +465,7 @@ const DashboardContent: React.FC = () => {
                         <h1 className="text-3xl font-bold text-text-main tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
                         <p className="text-text-muted mt-1">Инструмент для анализа и визуализации данных по продажам</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                        <div className="text-right hidden sm:block">
-                            <p className="text-sm font-bold text-white">{user?.name}</p>
-                            <p className="text-xs text-text-muted">{user?.email}</p>
-                        </div>
-                        <button 
-                            onClick={logout}
-                            className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm transition-colors border border-gray-700"
-                        >
-                            Выйти
-                        </button>
-                    </div>
+                    {/* Theme toggle button removed as requested */}
                 </header>
                 
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -519,7 +523,7 @@ const DashboardContent: React.FC = () => {
                 </div>
             </main>
             <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
-                {notifications.map((n: NotificationMessage) => (
+                {notifications.map(n => (
                     <Notification key={n.id} message={n.message} type={n.type} />
                 ))}
             </div>
@@ -529,20 +533,20 @@ const DashboardContent: React.FC = () => {
                 onClose={() => setIsDetailsModalOpen(false)}
                 data={selectedDetailsRow}
                 okbStatus={okbStatus}
-                onStartEdit={(client: MapPoint) => handleStartEdit(client, 'details')}
+                onStartEdit={(client) => handleStartEdit(client, 'details')}
             />
             <ClientsListModal 
                 isOpen={isClientsModalOpen} 
                 onClose={() => setIsClientsModalOpen(false)}
                 clients={filteredActiveClients}
                 onClientSelect={handleClientSelectFromModal}
-                onStartEdit={(client: MapPoint) => handleStartEdit(client, 'clients')}
+                onStartEdit={(client) => handleStartEdit(client, 'clients')}
             />
             <UnidentifiedRowsModal
                 isOpen={isUnidentifiedModalOpen}
                 onClose={() => setIsUnidentifiedModalOpen(false)}
                 rows={unidentifiedRows}
-                onStartEdit={(row: UnidentifiedRow) => handleStartEdit(row, 'unidentified')}
+                onStartEdit={(row) => handleStartEdit(row, 'unidentified')}
             />
              <AddressEditModal
                 isOpen={isEditModalOpen}
@@ -559,32 +563,6 @@ const DashboardContent: React.FC = () => {
             />
         </div>
     );
-};
-
-const App: React.FC = () => {
-    return (
-        <AuthProvider>
-            <AppContainer />
-        </AuthProvider>
-    );
-}
-
-const AppContainer: React.FC = () => {
-    const { user, loading } = useAuth();
-
-    if (loading) {
-        return (
-            <div className="min-h-screen bg-primary-dark flex items-center justify-center">
-                <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-accent"></div>
-            </div>
-        );
-    }
-
-    if (!user) {
-        return <AuthPage />;
-    }
-
-    return <DashboardContent />;
 };
 
 export default App;
