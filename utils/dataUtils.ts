@@ -158,22 +158,47 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
 
 const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
 
+/**
+ * Recovers a standardized region name from a potentially "dirty" string (e.g. from an Excel cell)
+ * or a city hint.
+ * Includes robust normalization (removing non-breaking spaces, double spaces) to ensure matching.
+ */
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
-    const lowerDirty = dirtyString ? dirtyString.toLowerCase() : '';
+    // Normalize: lowercase, remove non-breaking spaces, collapse multiple spaces
+    const lowerDirty = dirtyString 
+        ? dirtyString.toLowerCase().replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim() 
+        : '';
+        
     if (!lowerDirty && !cityHint) return 'Регион не определен';
 
     if (lowerDirty) {
+        // 1. Try matching against known keywords
         for (const keyword of sortedRegionKeywords) {
-            const validRegion = REGION_KEYWORD_MAP[keyword];
-            const escapedKey = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            // Normalize the keyword too just in case
+            const normalizedKeyword = keyword.toLowerCase().replace(/\s+/g, ' ').trim();
+            
+            const escapedKey = normalizedKeyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            // Regex: Start of line OR non-alphanumeric, Key, End of line OR non-alphanumeric
             const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
 
             if (regex.test(lowerDirty)) {
-                return validRegion;
+                return REGION_KEYWORD_MAP[keyword];
             }
         }
+        
+        // 2. FAILSAFE for common shortened forms that might fail regex due to dirty input
+        // Specifically handles cases like "Калужская область" vs "Киров" conflict.
+        // If the explicit region column says "kaluzh...", we MUST trust it over the city "Kirov".
+        if (lowerDirty.includes('калуж')) return 'Калужская область';
+        if (lowerDirty.includes('орлов')) return 'Орловская область';
+        if (lowerDirty.includes('брянск')) return 'Брянская область';
+        if (lowerDirty.includes('смолен')) return 'Смоленская область';
+        if (lowerDirty.includes('киров')) return 'Кировская область';
+        if (lowerDirty.includes('тульск')) return 'Тульская область';
+        if (lowerDirty.includes('москов')) return 'Московская область';
     }
 
+    // 3. Fallback to City Hint only if Region String didn't match
     const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
     if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
         return REGION_BY_CITY_MAP[lowerCity];
@@ -297,4 +322,3 @@ export function normalizeAddress(address: string | null | undefined, options: { 
     
     return parts.join(' ').trim();
 }
-// --- END OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
