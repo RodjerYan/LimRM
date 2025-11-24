@@ -51,6 +51,12 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
  * Generates a prompt to justify the calculated sales plan for an RM.
  */
 const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => {
+    // Determine current time context dynamically
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const nextYear = currentYear + 1;
+    const todayStr = now.toLocaleDateString('ru-RU');
+
     const share = metrics.marketShare.toFixed(1);
     const plan = metrics.recommendedGrowthPct.toFixed(1);
     const fact = new Intl.NumberFormat('ru-RU').format(metrics.totalFact);
@@ -58,17 +64,18 @@ const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => 
     const nextPlan = new Intl.NumberFormat('ru-RU').format(metrics.nextYearPlan);
 
     return `
-        Ты — Коммерческий Директор. Твоя задача — обосновать индивидуальный план продаж на 2025 год для Регионального Менеджера (РМ).
+        Ты — Коммерческий Директор. Сегодня ${todayStr}.
+        Твоя задача — обосновать индивидуальный план продаж на ${nextYear} год для Регионального Менеджера (РМ).
         РМ может быть недоволен цифрой, поэтому нужно четко и аргументированно объяснить, почему выставлен именно такой процент.
 
         **Вводные данные:**
         - **РМ:** ${metrics.rmName}
-        - **Факт 2024:** ${fact}
+        - **Факт ${currentYear}:** ${fact}
         - **Общий Потенциал территории:** ${potential}
         - **Текущая Доля Рынка (Насыщенность):** ${share}%
         - **Базовая ставка повышения для всех:** ${baseRate}%
         - **Индивидуальный план (рассчитанный):** ${plan}%
-        - **План в цифрах на 2025:** ${nextPlan}
+        - **План в цифрах на ${nextYear}:** ${nextPlan}
 
         **Логика расчета ("Умное планирование"):**
         1. Если Доля Рынка низкая (< 35-40%), значит территория пустая. Мы требуем рост ВЫШЕ базового (${baseRate}%), так как расти с нуля легко.
@@ -84,6 +91,7 @@ const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => 
         3.  **Резюме:** Мотивирующая фраза. Например: "План амбициозный, но с твоим потенциалом реальный" или "План консервативный, задача — удержать позиции".
 
         Будь убедителен, краток и профессионален. Не используй сложные формулы, объясняй суть.
+        Обязательно используй актуальные годы (${currentYear} -> ${nextYear}) в ответе.
     `;
 };
 

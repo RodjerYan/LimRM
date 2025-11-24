@@ -139,17 +139,32 @@ export type WorkerMessage =
 // Updated to include history string for redirect parsing in worker
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
 
+// Sub-metric for detailed Region/Brand planning
+export interface PlanMetric {
+    name: string; // Region name or Brand name
+    fact: number;
+    plan: number;
+    growthPct: number; // The specific or effective growth rate
+    marketShare?: number; // Only applicable for regions
+    activeCount?: number; // Active clients
+    totalCount?: number; // Total potential clients (OKB) - only for regions
+}
+
 // Shared interface for RM Metrics used in Dashboard and Analysis
 export interface RMMetrics {
     rmName: string;
     totalClients: number;
+    totalOkbCount: number; // Stored matched OKB count
     totalFact: number;
     totalPotential: number;
     avgFactPerClient: number;
-    marketShare: number; // Percentage (0-100)
+    marketShare: number; // Percentage (0-100) - Weighted Average
     countA: number;
     countB: number;
     countC: number;
-    recommendedGrowthPct: number;
+    recommendedGrowthPct: number; // Effective weighted growth
     nextYearPlan: number;
+    // Detailed breakdowns
+    regions: PlanMetric[];
+    brands: PlanMetric[];
 }
