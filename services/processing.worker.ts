@@ -49,6 +49,7 @@ const getCanonicalRegion = (row: any): string => {
     }
 
     // Attempt recovery from explicit columns first
+    // recoverRegion is now robust enough to handle 'орел' or 'орловская' directly.
     const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
     if (recoveredFromCols !== 'Регион не определен') {
         const std = standardizeRegion(recoveredFromCols);
@@ -83,8 +84,6 @@ const getCanonicalRegion = (row: any): string => {
             cityKey = cityKey.replace(/ё/g, 'е');
         }
 
-        // Note: Specific hardcoded checks like 'орел' are now handled via the recoverRegion 
-        // or REGION_BY_CITY_MAP mechanism which has been updated with keyword mapping.
         if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
             region = REGION_BY_CITY_MAP[cityKey];
         }
