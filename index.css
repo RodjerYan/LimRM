@@ -24,6 +24,7 @@
 @layer base {
   body {
     @apply text-text-main;
+    zoom: 75%;
   }
 }
 

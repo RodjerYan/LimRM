@@ -229,7 +229,15 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     }
 
     // 2. Fallback to City Hint only if Region String didn't match
-    const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    // FIX: Normalize the city hint by removing common prefixes ("г.", "пос.", etc.)
+    // This ensures that "г. Орёл" is treated as "орел" and correctly matched in REGION_BY_CITY_MAP.
+    let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    if (lowerCity) {
+        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+        // Also handle "Орёл" -> "орел" normalization for map lookup
+        lowerCity = lowerCity.replace(/ё/g, 'е');
+    }
+
     if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
         return REGION_BY_CITY_MAP[lowerCity];
     }

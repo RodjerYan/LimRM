@@ -1,3 +1,4 @@
+
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -55,7 +56,14 @@ const getCanonicalRegion = (row: any): string => {
 
     // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
     if (region === 'Регион не определен') {
-        const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
+        let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
+        
+        // FIX: Clean the city key from prefixes (e.g. "г. орел" -> "орел") to match map keys
+        if (cityKey) {
+            cityKey = cityKey.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+            cityKey = cityKey.replace(/ё/g, 'е');
+        }
+
         if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
             region = REGION_BY_CITY_MAP[cityKey];
         }
