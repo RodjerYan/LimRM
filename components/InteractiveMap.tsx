@@ -78,7 +78,12 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ city, clients, selected
         };
     }, []);
 
-    return <div ref={mapContainer} className="h-full w-full" />;
+    return (
+        <div className="h-full w-full relative">
+            <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
+            <div ref={mapContainer} className="h-full w-full" />
+        </div>
+    );
 };
 
 export default InteractiveMap;

@@ -568,6 +568,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             id="interactive-map-container" 
             className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}
         >
+            <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-5rem)] pointer-events-none' : ''}`}>
                 <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                     Карта рыночного потенциала
@@ -612,7 +613,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
             )}
             
-            <div className={`relative w-full ${isFullscreen ? 'h-screen' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
+            <div className={`relative w-full ${isFullscreen ? 'h-full' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
                 {/* Removed dynamic theme class from React rendering to prevent node destruction. Handled manually in useEffect. */}
                 <div ref={mapContainer} className="h-full w-full bg-gray-800 z-0" />
                 

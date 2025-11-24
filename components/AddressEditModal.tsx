@@ -183,6 +183,7 @@ const SinglePointMap: React.FC<{
 
     return (
         <div className="relative h-full w-full group isolate">
+            <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
             {/* Map Search Bar - Shifted right (left-14) to avoid zoom controls, High Z-Index */}

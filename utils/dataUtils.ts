@@ -208,6 +208,14 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     const lowerDirty = dirtyString 
         ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
+    const lowerCityHint = cityHint ? cityHint.toLowerCase().replace(/ё/g, 'е').trim() : '';
+
+    // --- HARD FIX FOR ORYOL REGION ---
+    // This block ensures Oryol region is prioritized and correctly identified
+    // regardless of minor spelling variations or missing region data.
+    if (lowerDirty.includes('орловская') || lowerCityHint === 'орел' || lowerCityHint === 'г орел' || lowerCityHint === 'г. орел' || lowerCityHint.includes('орел')) {
+        return 'Орловская область';
+    }
         
     // If neither exists, give up early
     if (!lowerDirty && !cityHint) return 'Регион не определен';
@@ -231,7 +239,6 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     // 2. Check City Hint for Region Names as well.
     // Sometimes the region is written in the City column (e.g. "Орловская область" inside the City cell)
     if (cityHint) {
-        const lowerCityHint = cityHint.toLowerCase().replace(/ё/g, 'е');
         // Check if City column actually contains a region name
         for (const { root, regionName } of REGION_MATCHER_LIST) {
             if (lowerCityHint.includes(root)) {
@@ -243,14 +250,11 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     // 3. Fallback to City -> Region Lookup
     // FIX: Robust normalization of city hint.
     // Removes prefixes like "г.", "г ", "пос.", "ст.", etc. to handle "г Орел" vs "Орел".
-    let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    let lowerCity = lowerCityHint;
     if (lowerCity) {
         // Regex matches:
         // Start of string -> (prefixes like г, город, п, пос, с, д, ст, х) -> followed by dot OR whitespace(s)
         lowerCity = lowerCity.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
-        
-        // Also handle "Орёл" -> "орел" normalization for map lookup
-        lowerCity = lowerCity.replace(/ё/g, 'е');
     }
 
     if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {

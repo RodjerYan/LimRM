@@ -195,7 +195,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
                                     <p className="mb-1 text-sm text-gray-300">
                                         <span className="font-bold text-purple-400">Нажмите</span> или перетащите файл
                                     </p>
-                                    <p className="text-[10px] text-gray-500 uppercase tracking-wide">XLSX, XLS, CSV</p>
                                 </>
                             )}
                         </div>

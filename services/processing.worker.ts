@@ -78,11 +78,15 @@ const getCanonicalRegion = (row: any): string => {
         let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
         
         if (cityKey) {
+            // Improved regex to handle "г Орел" (space without dot)
             cityKey = cityKey.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
             cityKey = cityKey.replace(/ё/g, 'е');
         }
 
-        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
+        // HARD FIX: Explicit check for Orel if it slipped through everything else
+        if (cityKey === 'орел' || cityKey === 'орёл') {
+            region = 'Орловская область';
+        } else if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
             region = REGION_BY_CITY_MAP[cityKey];
         }
     }
