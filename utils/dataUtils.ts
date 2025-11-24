@@ -160,50 +160,75 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     return null;
 };
 
-const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+// --- UNIVERSAL REGION MATCHER GENERATOR ---
+// This generates a list of "root" words for regions to allow flexible matching.
+// Example: "Владимирская область" -> root "владимирская".
+// Input "г. Владимирская обл." will match root "владимирская" -> return "Владимирская область".
+const REGION_MATCHER_LIST = Object.values(REGION_KEYWORD_MAP).reduce((acc, regionName) => {
+    const lowerName = regionName.toLowerCase();
+    
+    // Create a "root" by stripping common administrative terms
+    let root = lowerName
+        .replace(/\bобласть\b/g, '')
+        .replace(/\bкрай\b/g, '')
+        .replace(/\bреспублика\b/g, '')
+        .replace(/\bавтономный округ\b/g, '')
+        .replace(/\bао\b/g, '')
+        .replace(/\bг\.\s*/g, '') // Remove "г." prefix if present in region name (rare but possible in dirty data)
+        .replace(/[()]/g, '')     // Remove brackets
+        .trim();
+    
+    // Skip if root became empty or too short (noise protection)
+    if (root.length > 2) {
+         // Check uniqueness to avoid adding duplicates
+         if (!acc.some(item => item.root === root)) {
+             acc.push({ root, regionName });
+         }
+    }
+    return acc;
+}, [] as { root: string, regionName: string }[]);
+
+// Sort by length descending. This ensures that "Северная Осетия" is matched before "Осетия" (if such partials existed),
+// and generally matches more specific names first.
+REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
+
 
 /**
  * Recovers a standardized region name from a potentially "dirty" string (e.g. from an Excel cell)
  * or a city hint.
- * Includes robust normalization (removing non-breaking spaces, double spaces) to ensure matching.
+ * 
+ * UNIVERSAL ALGORITHM:
+ * 1. Priority: Search the 'dirtyString' (Region Column) for any known region name or its "root".
+ *    If found, this is the source of truth. This fixes issues where a city name (e.g. Kirov)
+ *    conflicts with a region name (e.g. Kaluzhskaya oblast).
+ * 2. Fallback: If no region found in string, use the 'cityHint' to lookup the region.
  */
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
-    // Normalize: lowercase, remove non-breaking spaces, collapse multiple spaces
+    // Normalize: lowercase, remove non-breaking spaces, replace special chars with space
     const lowerDirty = dirtyString 
-        ? dirtyString.toLowerCase().replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim() 
+        ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
         
     // If neither exists, give up early
     if (!lowerDirty && !cityHint) return 'Регион не определен';
 
-    // 1. Try matching against known keywords in the dirty string (Region Column)
+    // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
     if (lowerDirty) {
-        for (const keyword of sortedRegionKeywords) {
-            // Normalize the keyword too just in case
-            const normalizedKeyword = keyword.toLowerCase().replace(/\s+/g, ' ').trim();
-            
-            const escapedKey = normalizedKeyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-            // Regex: Start of line OR non-alphanumeric, Key, End of line OR non-alphanumeric
-            const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
+        // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
+        for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
+             // Check if the full keyword exists in the string
+             if (lowerDirty.includes(key)) return value;
+        }
 
-            if (regex.test(lowerDirty)) {
-                return REGION_KEYWORD_MAP[keyword];
+        // Second pass: Root matching (handles "Калужская" in "Калужская область")
+        for (const { root, regionName } of REGION_MATCHER_LIST) {
+            if (lowerDirty.includes(root)) {
+                return regionName;
             }
         }
-        
-        // 2. FAILSAFE for common shortened forms that might fail regex due to dirty input
-        // Specifically handles cases like "Калужская область" vs "Киров" conflict.
-        // If the explicit region column says "kaluzh...", we MUST trust it over the city "Kirov".
-        if (lowerDirty.includes('калуж')) return 'Калужская область';
-        if (lowerDirty.includes('орлов')) return 'Орловская область';
-        if (lowerDirty.includes('брянск')) return 'Брянская область';
-        if (lowerDirty.includes('смолен')) return 'Смоленская область';
-        if (lowerDirty.includes('киров')) return 'Кировская область';
-        if (lowerDirty.includes('тульск')) return 'Тульская область';
-        if (lowerDirty.includes('москов')) return 'Московская область';
     }
 
-    // 3. Fallback to City Hint only if Region String didn't match
+    // 2. Fallback to City Hint only if Region String didn't match
     const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
     if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
         return REGION_BY_CITY_MAP[lowerCity];
