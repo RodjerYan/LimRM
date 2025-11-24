@@ -6,7 +6,7 @@ import {
     updateAddressInCache, 
     deleteAddressFromCache, 
     getAddressFromCache 
-} from './lib/sheets.js';
+} from '../lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { op } = req.query;

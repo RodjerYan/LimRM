@@ -1,4 +1,3 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -9,7 +8,7 @@ import {
     getUserIndex, 
     getUserCredentials, 
     markUserVerified 
-} from './lib/drive-auth.js';
+} from '../lib/drive-auth.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-prod';
 

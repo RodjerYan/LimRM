@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
-import { getOKBData, getOKBAddresses, batchUpdateOKBStatus } from './lib/sheets.js';
+import { getOKBData, getOKBAddresses, batchUpdateOKBStatus } from '../lib/sheets.js';
 import type { FeatureCollection } from 'geojson';
 
 // --- MOCK DATA FOR CONFLICT ZONES ---
