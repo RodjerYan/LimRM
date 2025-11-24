@@ -4,7 +4,7 @@ import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import { AggregatedDataRow, RMMetrics, OkbDataRow, PlanMetric } from '../types';
 import { findValueInRow } from '../utils/dataUtils';
-import { standardizeRegion } from '../utils/addressMappings';
+import { standardizeRegion, REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from '../utils/addressMappings';
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -26,6 +26,9 @@ const ChevronUpIcon = () => (
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
 
+// Create a Set of valid, standardized region names for O(1) lookup
+const VALID_REGIONS = new Set(Object.values(REGION_KEYWORD_MAP));
+
 /**
  * Normalizes RM name for fuzzy matching.
  * Extracts the SURNAME (first word) and lowercases it.
@@ -33,12 +36,31 @@ const BASE_GROWTH_RATE = 13.0; // Base 13%
  */
 const normalizeRmNameForMatching = (str: string) => {
     if (!str) return '';
-    // 1. Trim and lower case
     let clean = str.toLowerCase().trim();
-    // 2. Extract the first word (Surname)
     const surname = clean.split(/[\s.]+/)[0]; 
-    // 3. Remove any non-alphanumeric chars just in case
     return surname.replace(/[^a-zа-я0-9]/g, '');
+};
+
+/**
+ * Helper to attempt to recover a valid region from a dirty string (e.g., an address).
+ */
+const recoverRegion = (dirtyString: string, cityHint: string): string => {
+    const lowerDirty = dirtyString.toLowerCase();
+    
+    // 1. Try to find a known region keyword inside the dirty string
+    for (const [keyword, validRegion] of Object.entries(REGION_KEYWORD_MAP)) {
+        if (lowerDirty.includes(keyword)) {
+            return validRegion;
+        }
+    }
+
+    // 2. Try to use the city hint to lookup the region
+    const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
+        return REGION_BY_CITY_MAP[lowerCity];
+    }
+
+    return 'Регион не определен';
 };
 
 const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbData }) => {
@@ -50,34 +72,24 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
     const nextYear = currentYear + 1;
 
     const metrics = useMemo<RMMetrics[]>(() => {
-        // 1. Index OKB Data using GLOBAL Standardized Region Logic
-        // Map<NormalizedRM_Surname, Map<StandardizedRegion, Count>>
-        const okbRegionCounts = new Map<string, Map<string, number>>();
+        // 1. Index OKB Data BY REGION ONLY (Global Potential)
+        // Logic: An RM's potential in a region is the TOTAL number of clients in that region from the OKB.
+        // We ignore the RM column in OKB because it is often empty or outdated.
+        // Map<StandardizedRegion, Count>
+        const globalOkbRegionCounts = new Map<string, number>();
         
         okbData.forEach(row => {
-            const rawRm = findValueInRow(row, ['рм', 'менеджер', 'ответственный', 'ка']);
-            if (!rawRm) return;
-            
-            const normRm = normalizeRmNameForMatching(rawRm);
-            
-            // Use the exact same logic as the main parser
             const rawRegion = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
             const stdRegion = standardizeRegion(rawRegion);
-
-            if (!okbRegionCounts.has(normRm)) {
-                okbRegionCounts.set(normRm, new Map());
-            }
-            const regionMap = okbRegionCounts.get(normRm)!;
-            regionMap.set(stdRegion, (regionMap.get(stdRegion) || 0) + 1);
+            globalOkbRegionCounts.set(stdRegion, (globalOkbRegionCounts.get(stdRegion) || 0) + 1);
         });
 
         // 2. Aggregate Data from Sales File
-        // We use the pre-calculated 'region' from AggregatedDataRow which matches ResultsTable
         type RegionBucket = {
             fact: number;
-            potential: number; // from file
-            activeClients: Set<string>; // for counting unique
-            brandFacts: Map<string, number>; // BrandName -> Fact
+            potential: number;
+            activeClients: Set<string>;
+            brandFacts: Map<string, number>; 
         };
         
         const rmBuckets = new Map<string, { 
@@ -93,9 +105,25 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             const rmName = row.rm || 'Не указан';
             const normRm = normalizeRmNameForMatching(rmName);
             
-            // CRITICAL FIX: Use the already standardized region from the row.
-            // This ensures 100% match with the Results Analysis table.
-            const regionKey = row.region || 'Регион не определен'; 
+            // --- DEFENSIVE REGION CLEANING ---
+            // Ensures that if 'row.region' contains an address or garbage, we try to fix it
+            // so it matches the standardized keys in globalOkbRegionCounts.
+            let regionKey = row.region || 'Регион не определен'; 
+            
+            if (!VALID_REGIONS.has(regionKey) && regionKey !== 'Регион не определен') {
+                const recovered = recoverRegion(regionKey, row.city);
+                if (recovered !== 'Регион не определен') {
+                    regionKey = recovered;
+                } else {
+                    const std = standardizeRegion(regionKey);
+                    if (VALID_REGIONS.has(std)) {
+                        regionKey = std;
+                    } else {
+                        regionKey = 'Регион не определен';
+                    }
+                }
+            }
+            // --------------------------------
 
             if (!rmBuckets.has(normRm)) {
                 rmBuckets.set(normRm, { 
@@ -135,7 +163,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 row.clients.forEach(c => regBucket.activeClients.add(c.key));
             }
 
-            // Brand Fact accumulator within this region
             const brandName = row.brand || 'No Brand';
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
         });
@@ -152,30 +179,26 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
 
-            // Get OKB map for this RM
-            const okbMap = okbRegionCounts.get(normRmKey);
-
             rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size;
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
-                // Find Total OKB count for this region
-                // Since both are standardized via standardizeRegion, this match should be robust.
-                let totalRegionOkb = okbMap?.get(regionKey) || 0;
+                // UPDATED LOOKUP: Use the GLOBAL region count from OKB.
+                // If "Orlovskaya Oblast" has 1000 records in OKB, that is the potential for this region.
+                // It doesn't matter if the OKB file assigns them to "Ivanov" or "Petrov" or "Empty".
+                let totalRegionOkb = globalOkbRegionCounts.get(regionKey) || 0;
                 
-                // Fallback: check for capitalization mismatches just in case
-                if (totalRegionOkb === 0 && okbMap) {
-                    // Try to find a key that roughly matches
-                    const fuzzyKey = Array.from(okbMap.keys()).find(k => k.toLowerCase() === regionKey.toLowerCase());
-                    if (fuzzyKey) {
-                        totalRegionOkb = okbMap.get(fuzzyKey)!;
-                    }
+                // Fallback for case-insensitive match if exact match fails
+                if (totalRegionOkb === 0) {
+                     const fuzzyKey = Array.from(globalOkbRegionCounts.keys()).find(k => k.toLowerCase() === regionKey.toLowerCase());
+                     if (fuzzyKey) totalRegionOkb = globalOkbRegionCounts.get(fuzzyKey)!;
                 }
-                
-                // If OKB exists but region not found, check if 'unknown' bucket has items (fallback)
-                if (totalRegionOkb === 0 && regionKey === 'Регион не определен') {
-                     totalRegionOkb = okbMap?.get('Регион не определен') || 0;
+
+                // If we still have 0 OKB but we have active clients, logic dictates OKB must be at least Active.
+                // This prevents division by zero and 0% market share when OKB data is missing for a region.
+                if (totalRegionOkb < activeCount) {
+                    totalRegionOkb = Math.max(totalRegionOkb, activeCount);
                 }
 
                 rmTotalOkb += totalRegionOkb;
@@ -183,15 +206,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 // --- SMART PLAN LOGIC PER REGION ---
                 let marketShare = 0;
                 if (totalRegionOkb > 0) {
-                    marketShare = Math.min(1, activeCount / totalRegionOkb);
-                } else if (okbData.length === 0) {
-                    // Fallback if no OKB loaded
-                    marketShare = regData.potential > 0 ? (regData.fact / regData.potential) : 0.5;
-                }
+                    marketShare = activeCount / totalRegionOkb;
+                } 
+                
+                // Cap market share at 100% visually, though logic handles it.
+                const effectiveShare = Math.min(1, marketShare);
                 
                 const sensitivity = 20; 
                 // Pivot at 40%. Share < 40% -> High Growth. Share > 40% -> Lower Growth.
-                let adjustment = (0.4 - marketShare) * sensitivity;
+                let adjustment = (0.4 - effectiveShare) * sensitivity;
                 const minRate = 5; 
                 const maxRate = 25;
                 
@@ -202,19 +225,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 rmTotalCalculatedPlan += regionPlan;
 
                 regionMetrics.push({
-                    name: regionKey, // Exactly matches ResultsTable
+                    name: regionKey, 
                     fact: regData.fact,
                     plan: regionPlan,
                     growthPct: calculatedRate,
-                    marketShare: marketShare * 100,
+                    marketShare: effectiveShare * 100,
                     activeCount: activeCount,
                     totalCount: totalRegionOkb
                 });
 
-                // Distribute Plan to Brands in this Region
                 regData.brandFacts.forEach((bFact, bName) => {
                     const bPlan = bFact * (1 + calculatedRate / 100);
-                    
                     if (!brandAggregates.has(bName)) {
                         brandAggregates.set(bName, { fact: 0, plan: 0 });
                     }
@@ -224,7 +245,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 });
             });
 
-            // Create Brand Metrics List
             const brandMetrics: PlanMetric[] = Array.from(brandAggregates.entries()).map(([name, val]) => ({
                 name,
                 fact: val.fact,
@@ -232,12 +252,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                 growthPct: val.fact > 0 ? ((val.plan - val.fact) / val.fact) * 100 : 0
             })).sort((a, b) => b.plan - a.plan);
 
-            // Final RM Aggregates
             const effectiveGrowthPct = rmData.totalFact > 0 
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100 
                 : BASE_GROWTH_RATE;
 
-            // Weighted Market Share (for display)
             const weightedShare = rmTotalOkb > 0 ? (rmTotalClients / rmTotalOkb) * 100 : 0;
 
             resultMetrics.push({
@@ -314,67 +332,63 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                     <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {metrics.map((rm) => {
-                                    const isHighGrowth = rm.recommendedGrowthPct > BASE_GROWTH_RATE;
-                                    const isLowGrowth = rm.recommendedGrowthPct < BASE_GROWTH_RATE;
-                                    const pctColor = isHighGrowth ? 'text-emerald-400' : isLowGrowth ? 'text-amber-400' : 'text-gray-300';
+                            <tbody className="divide-y divide-gray-700">
+                                {metrics.map(rm => {
                                     const isExpanded = expandedRM === rm.rmName;
+                                    const shareColor = rm.marketShare < 10 ? 'text-red-400' : (rm.marketShare < 40 ? 'text-yellow-400' : 'text-emerald-400');
+                                    const growthColor = rm.recommendedGrowthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : (rm.recommendedGrowthPct < BASE_GROWTH_RATE ? 'text-amber-400' : 'text-indigo-300');
 
                                     return (
                                         <React.Fragment key={rm.rmName}>
                                             <tr 
-                                                className={`border-b border-gray-700 hover:bg-indigo-500/10 transition-colors cursor-pointer ${isExpanded ? 'bg-indigo-500/5' : ''}`}
+                                                className={`hover:bg-gray-800/50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-800/30' : ''}`}
                                                 onClick={() => toggleExpand(rm.rmName)}
                                             >
                                                 <td className="px-4 py-3 text-gray-500">
                                                     {isExpanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
                                                 </td>
                                                 <td className="px-4 py-3 font-medium text-white">{rm.rmName}</td>
-                                                <td className="px-4 py-3 text-center font-bold text-gray-200">{formatNum(rm.totalFact)}</td>
-                                                <td className="px-4 py-3 text-center text-gray-500">
-                                                    {rm.totalClients} / {rm.totalOkbCount > 0 ? rm.totalOkbCount : '?'}
+                                                <td className="px-4 py-3 text-center font-mono text-white">{formatNum(rm.totalFact)}</td>
+                                                <td className="px-4 py-3 text-center font-mono text-gray-400">
+                                                    <span className="text-white">{rm.totalClients}</span>
+                                                    <span className="mx-1">/</span>
+                                                    <span>{rm.totalOkbCount > 0 ? rm.totalOkbCount : '?'}</span>
                                                 </td>
-                                                <td className="px-4 py-3 text-center font-mono text-indigo-300">
+                                                <td className={`px-4 py-3 text-center font-bold font-mono ${shareColor}`}>
                                                     {rm.marketShare.toFixed(1)}%
                                                 </td>
-                                                
-                                                {/* Smart Planning Columns */}
-                                                <td className={`px-4 py-3 text-center font-bold border-l border-gray-700 bg-gray-800/30 ${pctColor}`}>
+                                                <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${growthColor}`}>
                                                     {rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%
                                                 </td>
-                                                <td className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">
-                                                    <button 
+                                                <td className="px-4 py-3 text-center border-r border-gray-700">
+                                                    <button
                                                         onClick={(e) => handleAnalyzeClick(e, rm)}
-                                                        className="text-xs bg-indigo-600/80 hover:bg-indigo-500 text-white py-1 px-3 rounded-md flex items-center gap-1 mx-auto transition-all shadow-md hover:shadow-indigo-500/30"
-                                                        title="Получить анализ и обоснование от AI"
+                                                        className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1.5 mx-auto transition-colors"
                                                     >
-                                                        <BrainIcon />
-                                                        Анализ
+                                                        <BrainIcon /> Анализ
                                                     </button>
                                                 </td>
-                                                <td className="px-4 py-3 text-center font-bold text-white bg-gray-800/30">
+                                                <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20">
                                                     {formatNum(rm.nextYearPlan)}
-                                                    <div className="text-[10px] text-gray-500 font-normal">+{formatNum(rm.nextYearPlan - rm.totalFact)}</div>
+                                                    <div className="text-[10px] text-gray-500 font-normal">
+                                                        +{formatNum(rm.nextYearPlan - rm.totalFact)}
+                                                    </div>
                                                 </td>
-
-                                                <td className="px-4 py-3 text-center text-amber-400">{rm.countA}</td>
-                                                <td className="px-4 py-3 text-center text-emerald-400">{rm.countB}</td>
-                                                <td className="px-4 py-3 text-center text-slate-400">{rm.countC}</td>
+                                                <td className="px-4 py-3 text-center font-mono text-amber-400">{rm.countA}</td>
+                                                <td className="px-4 py-3 text-center font-mono text-emerald-400">{rm.countB}</td>
+                                                <td className="px-4 py-3 text-center font-mono text-slate-400">{rm.countC}</td>
                                             </tr>
                                             
-                                            {/* Expanded Detail View */}
                                             {isExpanded && (
-                                                <tr className="bg-gray-800/30 shadow-inner">
-                                                    <td colSpan={11} className="p-4">
-                                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                                            {/* Regional Breakdown */}
-                                                            <div className="bg-gray-900/50 rounded-lg border border-gray-700 overflow-hidden">
-                                                                <h4 className="px-4 py-2 bg-gray-800 text-xs font-bold uppercase text-gray-400 border-b border-gray-700">
-                                                                    Детализация по регионам
-                                                                </h4>
+                                                <tr>
+                                                    <td colSpan={11} className="p-0 bg-gray-900/40 border-b border-gray-700 shadow-inner">
+                                                        <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
+                                                            
+                                                            {/* Region Breakdown */}
+                                                            <div className="border border-gray-700 rounded-lg overflow-hidden">
+                                                                <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">Детализация по Регионам</div>
                                                                 <table className="w-full text-xs text-left">
-                                                                    <thead className="text-gray-500 border-b border-gray-700 bg-gray-800/50">
+                                                                    <thead className="bg-gray-800 text-gray-400 font-normal">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Регион</th>
                                                                             <th className="px-3 py-2 text-right">Доля рынка</th>
@@ -383,31 +397,33 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
                                                                         </tr>
                                                                     </thead>
-                                                                    <tbody>
-                                                                        {rm.regions.map((reg, idx) => (
-                                                                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                                                                                <td className="px-3 py-2 font-medium text-gray-300">{reg.name}</td>
-                                                                                <td className="px-3 py-2 text-right text-indigo-300">
-                                                                                    {reg.activeCount}/{reg.totalCount} ({reg.marketShare?.toFixed(0)}%)
-                                                                                </td>
-                                                                                <td className={`px-3 py-2 text-right font-bold ${reg.growthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                                                                    {reg.growthPct.toFixed(1)}%
-                                                                                </td>
-                                                                                <td className="px-3 py-2 text-right text-gray-400">{formatNum(reg.fact)}</td>
-                                                                                <td className="px-3 py-2 text-right text-white">{formatNum(reg.plan)}</td>
-                                                                            </tr>
-                                                                        ))}
+                                                                    <tbody className="divide-y divide-gray-700/50 text-gray-300">
+                                                                        {rm.regions.map(reg => {
+                                                                            const regShareColor = (reg.marketShare || 0) < 40 ? 'text-indigo-300' : 'text-gray-400';
+                                                                            const regGrowthColor = reg.growthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : 'text-amber-400';
+                                                                            return (
+                                                                                <tr key={reg.name} className="hover:bg-gray-700/20">
+                                                                                    <td className="px-3 py-2">{reg.name}</td>
+                                                                                    <td className={`px-3 py-2 text-right font-mono ${regShareColor}`}>
+                                                                                        {reg.activeCount}/{reg.totalCount} ({reg.marketShare?.toFixed(0)}%)
+                                                                                    </td>
+                                                                                    <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
+                                                                                        {reg.growthPct.toFixed(1)}%
+                                                                                    </td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
                                                                     </tbody>
                                                                 </table>
                                                             </div>
 
                                                             {/* Brand Breakdown */}
-                                                            <div className="bg-gray-900/50 rounded-lg border border-gray-700 overflow-hidden h-fit">
-                                                                <h4 className="px-4 py-2 bg-gray-800 text-xs font-bold uppercase text-gray-400 border-b border-gray-700">
-                                                                    План по брендам (Агрегированный)
-                                                                </h4>
+                                                            <div className="border border-gray-700 rounded-lg overflow-hidden h-fit">
+                                                                <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">План по Брендам (Агрегированный)</div>
                                                                 <table className="w-full text-xs text-left">
-                                                                    <thead className="text-gray-500 border-b border-gray-700 bg-gray-800/50">
+                                                                    <thead className="bg-gray-800 text-gray-400 font-normal">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Бренд</th>
                                                                             <th className="px-3 py-2 text-right">Средний Рост</th>
@@ -415,20 +431,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
                                                                         </tr>
                                                                     </thead>
-                                                                    <tbody>
-                                                                        {rm.brands.map((br, idx) => (
-                                                                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                                                                                <td className="px-3 py-2 font-medium text-gray-300">{br.name}</td>
-                                                                                <td className="px-3 py-2 text-right text-gray-400">
-                                                                                    ~{br.growthPct.toFixed(1)}%
-                                                                                </td>
-                                                                                <td className="px-3 py-2 text-right text-gray-400">{formatNum(br.fact)}</td>
-                                                                                <td className="px-3 py-2 text-right text-white font-semibold">{formatNum(br.plan)}</td>
+                                                                    <tbody className="divide-y divide-gray-700/50 text-gray-300">
+                                                                        {rm.brands.map(br => (
+                                                                            <tr key={br.name} className="hover:bg-gray-700/20">
+                                                                                <td className="px-3 py-2">{br.name}</td>
+                                                                                <td className="px-3 py-2 text-right font-mono text-gray-400">~{br.growthPct.toFixed(1)}%</td>
+                                                                                <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
+                                                                                <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(br.plan)}</td>
                                                                             </tr>
                                                                         ))}
                                                                     </tbody>
                                                                 </table>
                                                             </div>
+
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -436,9 +451,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
                                         </React.Fragment>
                                     );
                                 })}
-                                {metrics.length === 0 && (
-                                     <tr><td colSpan={11} className="px-4 py-8 text-center text-gray-500">Нет данных для отображения</td></tr>
-                                )}
                             </tbody>
                         </table>
                     </div>
@@ -446,8 +458,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
             </Modal>
 
             <RMAnalysisModal 
-                isOpen={isAnalysisModalOpen} 
-                onClose={() => setIsAnalysisModalOpen(false)} 
+                isOpen={isAnalysisModalOpen}
+                onClose={() => setIsAnalysisModalOpen(false)}
                 rmData={selectedRMForAnalysis}
                 baseRate={BASE_GROWTH_RATE}
             />
