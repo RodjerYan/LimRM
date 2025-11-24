@@ -5,7 +5,7 @@ import {
   SummaryMetrics,
   OkbDataRow,
 } from '../types';
-import { REGION_KEYWORD_MAP } from './addressMappings';
+import { REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from './addressMappings';
 import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
@@ -153,6 +153,32 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
+};
+
+const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
+
+export const recoverRegion = (dirtyString: string, cityHint: string): string => {
+    const lowerDirty = dirtyString ? dirtyString.toLowerCase() : '';
+    if (!lowerDirty && !cityHint) return 'Регион не определен';
+
+    if (lowerDirty) {
+        for (const keyword of sortedRegionKeywords) {
+            const validRegion = REGION_KEYWORD_MAP[keyword];
+            const escapedKey = keyword.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
+
+            if (regex.test(lowerDirty)) {
+                return validRegion;
+            }
+        }
+    }
+
+    const lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
+        return REGION_BY_CITY_MAP[lowerCity];
+    }
+
+    return 'Регион не определен';
 };
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---

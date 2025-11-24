@@ -73,6 +73,7 @@ const App: React.FC = () => {
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
+    const [okbRegionCounts, setOkbRegionCounts] = useState<{ [key: string]: number } | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
@@ -179,6 +180,7 @@ const App: React.FC = () => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
         setUnidentifiedRows(data.unidentifiedRows);
+        setOkbRegionCounts(data.okbRegionCounts);
         setFilters({ rm: '', brand: [], region: [] });
         addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
         if (data.unidentifiedRows.length > 0) {
@@ -575,7 +577,7 @@ const App: React.FC = () => {
                 isOpen={isRMDashboardOpen} 
                 onClose={() => setIsRMDashboardOpen(false)} 
                 data={filteredData}
-                okbData={okbData}
+                okbRegionCounts={okbRegionCounts}
             />
         </div>
     );

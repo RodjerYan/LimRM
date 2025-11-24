@@ -13,7 +13,7 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -129,6 +129,35 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
+    const okbRegionCounts: { [key: string]: number } = {};
+    if (okbData) {
+        okbData.forEach(row => {
+            const address = findAddressInRow(row);
+            const distributor = findValueInRow(row, ['дистрибьютор']);
+
+            let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
+            try {
+                parsed = parseRussianAddress(address || '', distributor);
+            } catch (e) { /* ignore parser errors */ }
+
+            let region = parsed.region;
+            
+            if (region === 'Регион не определен') {
+                const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
+                const cityCol = findValueInRow(row, ['город']);
+                const recovered = recoverRegion(rawRegionCol, cityCol);
+                if (recovered !== 'Регион не определен') region = recovered;
+            }
+
+            if (region && region !== 'Регион не определен') {
+                const normRegion = standardizeRegion(region).trim();
+                if (normRegion) {
+                    okbRegionCounts[normRegion] = (okbRegionCounts[normRegion] || 0) + 1;
+                }
+            }
+        });
+    }
+
     // --- CACHE INITIALIZATION with Redirects ---
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
     const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
@@ -368,7 +397,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows };
+    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows, okbRegionCounts };
     postMessage({ type: 'result', payload: resultPayload });
 
     // --- BACKGROUND TASKS ---

@@ -1,4 +1,5 @@
 
+
 export interface AggregatedDataRow {
     key: string;
     rm: string;
@@ -120,6 +121,7 @@ export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     plottableActiveClients: MapPoint[];
     unidentifiedRows: UnidentifiedRow[];
+    okbRegionCounts: { [key: string]: number };
 };
 export type WorkerErrorPayload = string;
 
