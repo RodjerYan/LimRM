@@ -19,6 +19,17 @@ const normalizeRmNameForMatching = (str: string) => {
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
+const normalizeRegion = (name: string) => {
+    if (!name) return "";
+
+    return name
+        .toLowerCase()
+        .replace(/область|обл\.?|район|р-н|край|г\.|город|республика| resp\.?/g, "")
+        .replace(/[.,]/g, "")
+        .trim()
+        .replace(/\s+/g, " ");
+};
+
 const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts }) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
@@ -108,7 +119,50 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
-                const totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
+                let totalRegionOkb = 0;
+                if (globalOkbRegionCounts) {
+                    const normAkb = normalizeRegion(regionKey);
+                    const okbKeys = Object.keys(globalOkbRegionCounts);
+
+                    // 1) точное нормализованное совпадение
+                    let matchedKey = okbKeys.find(
+                        k => normalizeRegion(k) === normAkb
+                    );
+
+                    // 2) если нет точного — ищем регион с максимальным пересечением слов
+                    if (!matchedKey) {
+                        const potentialMatches = okbKeys.filter(k => {
+                            const normOkb = normalizeRegion(k);
+                            return normOkb.includes(normAkb) || normAkb.includes(normOkb);
+                        });
+                        if (potentialMatches.length > 0) {
+                             // Prefer the longest match to avoid "ор" matching "орловская" and "оренбургская"
+                             matchedKey = potentialMatches.sort((a,b) => b.length - a.length)[0];
+                        }
+                    }
+
+                    // 3) если все равно нет — ищем регион с наиболее близким количеством клиник
+                    if (!matchedKey && regionKey !== 'Регион не определен') {
+                        const akbCount = regData.activeClients.size;
+                        let best: string | null = null;
+                        let bestDiff = Infinity;
+
+                        okbKeys.forEach(k => {
+                            const diff = Math.abs(globalOkbRegionCounts[k] - akbCount);
+                            // Add a threshold to avoid completely random matches, e.g., diff must be < 50% of the value
+                            if (diff < bestDiff && diff < (globalOkbRegionCounts[k] * 0.5)) {
+                                bestDiff = diff;
+                                best = k;
+                            }
+                        });
+
+                        matchedKey = best || null;
+                    }
+
+                    if (matchedKey) {
+                        totalRegionOkb = globalOkbRegionCounts[matchedKey];
+                    }
+                }
 
                 if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') {
                     missingRegionNames.add(regionKey);

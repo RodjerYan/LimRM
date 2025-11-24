@@ -13,99 +13,38 @@ import {
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion, haversineDistance } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
 
-// FIX: Define the CommonProcessArgs type to resolve "Cannot find name 'CommonProcessArgs'".
-// This type consolidates the arguments passed between different file processing functions within the worker.
+type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 type CommonProcessArgs = {
     okbData: OkbDataRow[];
     cacheData: CoordsCache;
     postMessage: PostMessageFn;
 };
-
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- NEW: Coordinate-based matching ---
-const MATCH_RADIUS_KM = 0.5; // 500 meters
-const GRID_CELL_SIZE = 0.01; // Approx 1.1km at equator, good for city-level density
 
-type OkbSpatialIndex = Map<string, OkbDataRow[]>;
-type OkbAddressIndex = Map<string, OkbDataRow>;
-
-/**
- * Builds a spatial grid index and a normalized address index for fast lookups in the OKB data.
- */
-const buildOkbIndices = (okbData: OkbDataRow[]): { spatialIndex: OkbSpatialIndex, addressIndex: OkbAddressIndex } => {
-    const spatialIndex: OkbSpatialIndex = new Map();
-    const addressIndex: OkbAddressIndex = new Map();
-
-    if (!okbData) return { spatialIndex, addressIndex };
+const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
+    const coordIndex: OkbCoordIndex = new Map();
+    if (!okbData) return coordIndex;
 
     for (const row of okbData) {
-        // Address Index
         const address = findAddressInRow(row);
-        if (address) {
-            const normalized = normalizeAddress(address);
-            if (normalized && !addressIndex.has(normalized)) {
-                addressIndex.set(normalized, row);
-            }
-        }
-
-        // Spatial Index
         const lat = row.lat;
         const lon = row.lon;
-        if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
-            const cellX = Math.floor(lon / GRID_CELL_SIZE);
-            const cellY = Math.floor(lat / GRID_CELL_SIZE);
-            const key = `${cellX}_${cellY}`;
-            if (!spatialIndex.has(key)) {
-                spatialIndex.set(key, []);
-            }
-            spatialIndex.get(key)!.push(row);
-        }
-    }
-    return { spatialIndex, addressIndex };
-};
-
-/**
- * Finds the closest OKB point to a given coordinate within a search radius.
- */
-const findOkbMatchByCoords = (lat: number, lon: number, spatialIndex: OkbSpatialIndex): OkbDataRow | null => {
-    const cellX = Math.floor(lon / GRID_CELL_SIZE);
-    const cellY = Math.floor(lat / GRID_CELL_SIZE);
-    
-    let bestMatch: OkbDataRow | null = null;
-    let minDistance = Infinity;
-
-    // Search in a 3x3 grid around the target cell to account for edge cases
-    for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-            const key = `${cellX + dx}_${cellY + dy}`;
-            const candidates = spatialIndex.get(key);
-            if (candidates) {
-                for (const candidate of candidates) {
-                    if (candidate.lat && candidate.lon) {
-                        const distance = haversineDistance(lat, lon, candidate.lat, candidate.lon);
-                        if (distance < minDistance) {
-                            minDistance = distance;
-                            bestMatch = candidate;
-                        }
-                    }
-                }
+        
+        if (address && lat && lon && !isNaN(lat) && !isNaN(lon)) {
+            const normalized = normalizeAddress(address);
+            if (normalized && !coordIndex.has(normalized)) {
+                coordIndex.set(normalized, { lat, lon });
             }
         }
     }
-
-    if (bestMatch && minDistance <= MATCH_RADIUS_KM) {
-        return bestMatch;
-    }
-
-    return null;
+    return coordIndex;
 };
-
 
 function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
     if (!okbData) return [];
@@ -187,30 +126,36 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных ОКБ...' } });
-    const { spatialIndex, addressIndex } = buildOkbIndices(okbData);
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
+    const okbCoordIndex = createOkbCoordIndex(okbData);
     
     const okbRegionCounts: { [key: string]: number } = {};
     if (okbData) {
-        postMessage({ type: 'progress', payload: { percentage: 8, message: 'Агрегация ОКБ по регионам...' } });
-        for (const row of okbData) {
+        okbData.forEach(row => {
             const address = findAddressInRow(row);
             const distributor = findValueInRow(row, ['дистрибьютор']);
-            const parsed = parseRussianAddress(address || '', distributor);
-            let region = parsed.region;
 
+            let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
+            try {
+                parsed = parseRussianAddress(address || '', distributor);
+            } catch (e) { /* ignore parser errors */ }
+
+            let region = parsed.region;
+            
             if (region === 'Регион не определен') {
-                const rawRegionCol = findValueInRow(row, ['регион', 'область']);
+                const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
                 const cityCol = findValueInRow(row, ['город']);
                 const recovered = recoverRegion(rawRegionCol, cityCol);
                 if (recovered !== 'Регион не определен') region = recovered;
             }
-            
-            const normRegion = standardizeRegion(region).trim();
-            if (normRegion && normRegion !== 'Регион не определен') {
-                okbRegionCounts[normRegion] = (okbRegionCounts[normRegion] || 0) + 1;
+
+            if (region && region !== 'Регион не определен') {
+                const normRegion = standardizeRegion(region).trim();
+                if (normRegion) {
+                    okbRegionCounts[normRegion] = (okbRegionCounts[normRegion] || 0) + 1;
+                }
             }
-        }
+        });
     }
 
     // --- CACHE INITIALIZATION with Redirects ---
@@ -222,20 +167,34 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         for (const rm of Object.keys(cacheData)) {
             for (const item of cacheData[rm]) {
                 if (!item.address) continue;
+
                 const normalizedTarget = normalizeAddress(item.address);
+
                 if (item.isDeleted) {
                     deletedAddresses.add(normalizedTarget);
                     continue;
                 }
+
+                // Store canonical entry
                 if (!cacheAddressMap.has(normalizedTarget)) {
                     cacheAddressMap.set(normalizedTarget, { lat: item.lat, lon: item.lon, originalAddress: item.address });
                 }
+
+                // Parse history for redirects
                 if (item.history) {
-                    const historyEntries = String(item.history).split(/\r?\n|\s*\|\|\s*/).map(s => s.trim()).filter(Boolean);
+                    const historyEntries = String(item.history)
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/&nbsp;/g, ' ')
+                        .split(/\r?\n|\s*\|\|\s*|<br\s*\/?>/i)
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
                     for (const entry of historyEntries) {
                         const oldAddrRaw = entry.split('[')[0].trim();
                         if (!oldAddrRaw) continue;
+                        
                         const normalizedOld = normalizeAddress(oldAddrRaw);
+                        // If the old address matches the current canonical one, it's not a redirect, just a variant/duplicate
                         if (normalizedOld && normalizedOld !== normalizedTarget) {
                             cacheRedirectMap.set(normalizedOld, normalizedTarget);
                         }
@@ -244,6 +203,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         }
     }
+    console.log('[CACHE LOAD] addresses=', cacheAddressMap.size, 'redirects=', cacheRedirectMap.size, 'deleted=', deletedAddresses.size);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Кэш обработан: ${cacheAddressMap.size} записей.` } });
 
     const aggregatedData: AggregationMap = {};
@@ -269,62 +229,54 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             continue;
         }
 
+        // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
+
+            // 1. Check if explicitly deleted
             if (deletedAddresses.has(normalizedRaw)) continue;
+
+            // 2. Check for Redirect (History)
             if (cacheRedirectMap.has(normalizedRaw)) {
                 const newNormalizedTarget = cacheRedirectMap.get(normalizedRaw)!;
                 const targetEntry = cacheAddressMap.get(newNormalizedTarget);
-                if (targetEntry) clientAddress = targetEntry.originalAddress || clientAddress;
-                if (deletedAddresses.has(newNormalizedTarget)) continue;
+                
+                if (targetEntry) {
+                    // Redirect found! Swap to the NEW canonical address immediately.
+                    // This ensures that even if the file has the Old Address, we process it as the New Address.
+                    clientAddress = targetEntry.originalAddress || clientAddress;
+                    normalizedRaw = newNormalizedTarget;
+                } else {
+                    // Fallback: we have a redirect target key but missing full entry (rare).
+                    // We proceed with the key to ensure grouping matches the new entity.
+                    normalizedRaw = newNormalizedTarget;
+                }
+
+                // Re-check delete status on the *new* address
+                if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 
-        const parsedAddressFromFile = parseRussianAddress(clientAddress || '', distributor);
-        let finalAddress = parsedAddressFromFile.finalAddress;
-        const normalizedFinalAddress = normalizeAddress(finalAddress);
-
-        let matchedOkb: OkbDataRow | null = null;
-        let regionForAggregation: string;
-
-        let akbLat: number | undefined, akbLon: number | undefined;
-        const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
-        if (cacheEntry?.lat && cacheEntry?.lon) {
-            akbLat = cacheEntry.lat;
-            akbLon = cacheEntry.lon;
-        }
-
-        if (akbLat && akbLon) {
-            matchedOkb = findOkbMatchByCoords(akbLat, akbLon, spatialIndex);
-        }
+        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
-        if (!matchedOkb) {
-            matchedOkb = addressIndex.get(normalizedFinalAddress) || null;
-        }
-        
-        if (matchedOkb) {
-            const okbAddress = findAddressInRow(matchedOkb);
-            const okbDistributor = findValueInRow(matchedOkb, ['дистрибьютор']);
-            regionForAggregation = parseRussianAddress(okbAddress || '', okbDistributor).region;
-        } else {
-            regionForAggregation = parsedAddressFromFile.region;
-        }
-
-        if (regionForAggregation === 'Регион не определен') {
+        if (parsedAddress.city === 'Город не определен') {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
-        
+
+        const finalAddress = parsedAddress.finalAddress;
+        const regionForAggregation = parsedAddress.region;
+        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
-        if (isNaN(weight)) continue;
-        
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
-        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+
+        if (isNaN(weight)) continue;
         
+        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: parsedAddressFromFile.city,
+                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
                 region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Map<string, MapPoint>(),
             };
@@ -336,21 +288,40 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
-        if (!uniquePlottableClients.has(normalizedFinalAddress)) {
-            let lat: number | undefined = akbLat, lon: number | undefined = akbLon;
-            let isCached = !!(cacheEntry?.lat && cacheEntry?.lon);
-            let displayAddress = cacheEntry?.originalAddress || finalAddress;
+        // --- Map Point Logic ---
+        const normalizedFinalAddress = normalizeAddress(finalAddress);
 
-            if (!lat || !lon) {
-                const okbMatch = addressIndex.get(normalizedFinalAddress);
-                if (okbMatch?.lat && okbMatch?.lon) {
-                    lat = okbMatch.lat;
-                    lon = okbMatch.lon;
+        if (!uniquePlottableClients.has(normalizedFinalAddress)) {
+            let lat: number | undefined;
+            let lon: number | undefined;
+            let isCached = false;
+            
+            // UI DISPLAY LOGIC:
+            // Even if we didn't trigger a redirect above, we might match an existing cache entry by normalization (typos, case).
+            // If so, we want to use the cache's "Clean" address string for display to ensure synchronization.
+            let displayAddress = finalAddress;
+
+            const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
+
+            if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+                lat = cacheEntry.lat;
+                lon = cacheEntry.lon;
+                isCached = true;
+                // CRITICAL: Use the canonical address from cache if available.
+                if (cacheEntry.originalAddress) {
+                    displayAddress = cacheEntry.originalAddress;
+                }
+            } else {
+                if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
+                    newAddressesToCache[rm].push({ address: finalAddress });
+                }
+
+                const okbEntry = okbCoordIndex.get(normalizedFinalAddress);
+                if (okbEntry) {
+                    lat = okbEntry.lat;
+                    lon = okbEntry.lon;
                 } else if (finalAddress && !isCached) {
-                    if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                    if (!newAddressesToCache[rm].some(item => item.address === finalAddress)) {
-                         newAddressesToCache[rm].push({ address: finalAddress });
-                    }
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
@@ -359,49 +330,72 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
             
             uniquePlottableClients.set(normalizedFinalAddress, {
-                key: normalizedFinalAddress, lat, lon, isCached, status: 'match', name: clientName,
-                address: displayAddress, city: parsedAddressFromFile.city, region: regionForAggregation, 
-                rm, brand, type: findValueInRow(row, ['канал продаж']), contacts: findValueInRow(row, ['контакты']),
-                originalRow: row, fact: weight, 
+                key: normalizedFinalAddress,
+                lat, lon, isCached,
+                status: 'match',
+                name: clientName,
+                address: displayAddress, // Use the corrected/canonical address for display
+                city: parsedAddress.city,
+                region: parsedAddress.region, 
+                rm, brand,
+                type: findValueInRow(row, ['канал продаж']),
+                contacts: findValueInRow(row, ['контакты']),
+                originalRow: row,
+                fact: weight, 
             });
         } else {
              const existing = uniquePlottableClients.get(normalizedFinalAddress);
-             if (existing) existing.fact = (existing.fact || 0) + weight;
+             if (existing) {
+                 existing.fact = (existing.fact || 0) + weight;
+             }
         }
         
         const mapPointForGroup = uniquePlottableClients.get(normalizedFinalAddress);
-        if (mapPointForGroup) aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
+        if (mapPointForGroup) {
+            aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
+        }
     }
 
     postMessage({ type: 'progress', payload: { percentage: 90, message: 'ABC-анализ клиентов...' } });
     
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
+    
     const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
     if (totalFact > 0) {
         plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+        
         let runningTotal = 0;
         plottableActiveClients.forEach(client => {
             runningTotal += (client.fact || 0);
             const percentage = runningTotal / totalFact;
-            client.abcCategory = percentage <= 0.80 ? 'A' : (percentage <= 0.95 ? 'B' : 'C');
+            
+            if (percentage <= 0.80) {
+                client.abcCategory = 'A';
+            } else if (percentage <= 0.95) {
+                client.abcCategory = 'B';
+            } else {
+                client.abcCategory = 'C';
+            }
         });
     }
 
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
-    const finalData: AggregatedDataRow[] = Object.values(aggregatedData).map(item => {
+    const finalData: AggregatedDataRow[] = [];
+    for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
-        return {
+        
+        finalData.push({
             ...item, potential,
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
             potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
             clients: Array.from(item.clients.values()) 
-        };
-    });
+        });
+    }
 
     const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows, okbRegionCounts };
     postMessage({ type: 'result', payload: resultPayload });
@@ -426,6 +420,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             for (let i = 0; i < addresses.length; i++) {
                 const address = addresses[i];
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
+                
                 let coords: { lat: number, lon: number } | null = null;
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     try {
@@ -439,6 +434,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
                 if (coords) updates.push({ address, ...coords });
             }
+
             if (updates.length > 0) {
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
                 try {
