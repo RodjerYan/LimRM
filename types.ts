@@ -1,3 +1,4 @@
+
 export interface AggregatedDataRow {
     key: string;
     rm: string;
@@ -137,3 +138,18 @@ export type WorkerMessage =
 // Type for the coordinate cache data structure from Google Sheets
 // Updated to include history string for redirect parsing in worker
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
+
+// Shared interface for RM Metrics used in Dashboard and Analysis
+export interface RMMetrics {
+    rmName: string;
+    totalClients: number;
+    totalFact: number;
+    totalPotential: number;
+    avgFactPerClient: number;
+    marketShare: number; // Percentage (0-100)
+    countA: number;
+    countB: number;
+    countC: number;
+    recommendedGrowthPct: number;
+    nextYearPlan: number;
+}

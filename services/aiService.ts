@@ -1,11 +1,12 @@
-import { AggregatedDataRow, MapPoint } from "../types";
+
+import { AggregatedDataRow, MapPoint, RMMetrics } from "../types";
 
 // The proxy URL should be configured in one place, but for simplicity, we define it here.
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
 /**
  * Generates a prompt for Gemini based on a client's data (individual or grouped).
- * @param clientData - The data for a single aggregated client row.
+ * @param clientData - The data for the client/group.
  * @returns A string prompt for the AI.
  */
 const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
@@ -19,7 +20,6 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const clientIdentifier = isGroup ? 'Группа' : 'Клиент';
     const clientName = isGroup ? `${clientData.clientName} (РМ: ${clientData.rm})` : clientData.clientName;
     
-    // FIX: Changed `c.trim()` to `c.address.trim()` to correctly access the address string from the MapPoint object.
     const clientListInfo = isGroup && clientData.clients
     ? `\n        - **Клиенты в группе (${clientData.clients.length} ТТ). Примеры:**\n${clientData.clients.slice(0, 5).map(c => `          - ${c.address.trim()}`).join('\n')}`
     : '';
@@ -47,13 +47,49 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     `;
 };
 
+/**
+ * Generates a prompt to justify the calculated sales plan for an RM.
+ */
+const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => {
+    const share = metrics.marketShare.toFixed(1);
+    const plan = metrics.recommendedGrowthPct.toFixed(1);
+    const fact = new Intl.NumberFormat('ru-RU').format(metrics.totalFact);
+    const potential = new Intl.NumberFormat('ru-RU').format(metrics.totalPotential);
+    const nextPlan = new Intl.NumberFormat('ru-RU').format(metrics.nextYearPlan);
+
+    return `
+        Ты — Коммерческий Директор. Твоя задача — обосновать индивидуальный план продаж на 2025 год для Регионального Менеджера (РМ).
+        РМ может быть недоволен цифрой, поэтому нужно четко и аргументированно объяснить, почему выставлен именно такой процент.
+
+        **Вводные данные:**
+        - **РМ:** ${metrics.rmName}
+        - **Факт 2024:** ${fact}
+        - **Общий Потенциал территории:** ${potential}
+        - **Текущая Доля Рынка (Насыщенность):** ${share}%
+        - **Базовая ставка повышения для всех:** ${baseRate}%
+        - **Индивидуальный план (рассчитанный):** ${plan}%
+        - **План в цифрах на 2025:** ${nextPlan}
+
+        **Логика расчета ("Умное планирование"):**
+        1. Если Доля Рынка низкая (< 35-40%), значит территория пустая. Мы требуем рост ВЫШЕ базового (${baseRate}%), так как расти с нуля легко.
+        2. Если Доля Рынка высокая (> 45%), значит территория насыщена. Расти на ${baseRate}% нереально без демпинга. Мы СНИЖАЕМ план, чтобы он был выполнимым.
+        3. Если Доля Рынка средняя (~40%), план близок к базовому.
+
+        **Твоя задача:**
+        Напиши короткое, структурированное обоснование для РМ (на русском языке, Markdown).
+        
+        **Структура ответа:**
+        1.  **Анализ ситуации:** Оцени текущую долю рынка (${share}%). Это много (потолок) или мало (голубой океан)?
+        2.  **Обоснование цифры:** Объясни, почему план именно ${plan}% (выше или ниже базового). Используй фразы вроде "С учетом низкой базы..." или "Учитывая высокую насыщенность...".
+        3.  **Резюме:** Мотивирующая фраза. Например: "План амбициозный, но с твоим потенциалом реальный" или "План консервативный, задача — удержать позиции".
+
+        Будь убедителен, краток и профессионален. Не используй сложные формулы, объясняй суть.
+    `;
+};
+
 
 /**
  * Fetches AI-powered insights for a given client from the Gemini API via our proxy.
- * @param clientData - The data for the client to be analyzed.
- * @param onChunk - A callback function that receives streaming text chunks.
- * @param onError - A callback for handling errors.
- * @param signal - An AbortSignal to cancel the request.
  */
 export const streamClientInsights = async (
     clientData: AggregatedDataRow,
@@ -61,16 +97,37 @@ export const streamClientInsights = async (
     onError: (error: Error) => void,
     signal: AbortSignal
 ) => {
-    try {
-        const prompt = createClientInsightPrompt(clientData);
+    return streamResponse(createClientInsightPrompt(clientData), onChunk, onError, signal);
+};
 
+/**
+ * Fetches AI justification for an RM's sales plan.
+ */
+export const streamRMInsights = async (
+    metrics: RMMetrics,
+    baseRate: number,
+    onChunk: (chunk: string) => void,
+    onError: (error: Error) => void,
+    signal: AbortSignal
+) => {
+    return streamResponse(createRMInsightPrompt(metrics, baseRate), onChunk, onError, signal);
+};
+
+/**
+ * Shared helper to call the proxy
+ */
+async function streamResponse(
+    prompt: string,
+    onChunk: (chunk: string) => void,
+    onError: (error: Error) => void,
+    signal: AbortSignal
+) {
+    try {
         const response = await fetch(PROXY_URL, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt }),
-            signal, // Pass the abort signal to the fetch request
+            signal,
         });
 
         if (!response.ok) {
@@ -78,18 +135,14 @@ export const streamClientInsights = async (
             throw new Error(errorData.error || `Ошибка сервера: ${response.statusText}`);
         }
 
-        if (!response.body) {
-            throw new Error('Ответ не содержит тела.');
-        }
+        if (!response.body) throw new Error('Ответ не содержит тела.');
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
         while (true) {
             const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
+            if (done) break;
             onChunk(decoder.decode(value, { stream: true }));
         }
     } catch (error) {
@@ -97,4 +150,4 @@ export const streamClientInsights = async (
              onError(error as Error);
         }
     }
-};
+}
