@@ -58,9 +58,10 @@ const getCanonicalRegion = (row: any): string => {
     if (region === 'Регион не определен') {
         let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
         
-        // FIX: Clean the city key from prefixes (e.g. "г. орел" -> "орел") to match map keys
+        // FIX: Clean the city key from prefixes (e.g. "г. орел", "г орел", "ст. елизаветинская") to match map keys
         if (cityKey) {
-            cityKey = cityKey.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+            // Regex matches start of string -> prefix -> dot OR space(s)
+            cityKey = cityKey.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
             cityKey = cityKey.replace(/ё/g, 'е');
         }
 

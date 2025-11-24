@@ -228,12 +228,27 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         }
     }
 
-    // 2. Fallback to City Hint only if Region String didn't match
-    // FIX: Normalize the city hint by removing common prefixes ("г.", "пос.", etc.)
-    // This ensures that "г. Орёл" is treated as "орел" and correctly matched in REGION_BY_CITY_MAP.
+    // 2. Check City Hint for Region Names as well.
+    // Sometimes the region is written in the City column (e.g. "Орловская область" inside the City cell)
+    if (cityHint) {
+        const lowerCityHint = cityHint.toLowerCase().replace(/ё/g, 'е');
+        // Check if City column actually contains a region name
+        for (const { root, regionName } of REGION_MATCHER_LIST) {
+            if (lowerCityHint.includes(root)) {
+                return regionName;
+            }
+        }
+    }
+
+    // 3. Fallback to City -> Region Lookup
+    // FIX: Robust normalization of city hint.
+    // Removes prefixes like "г.", "г ", "пос.", "ст.", etc. to handle "г Орел" vs "Орел".
     let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
     if (lowerCity) {
-        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+        // Regex matches:
+        // Start of string -> (prefixes like г, город, п, пос, с, д, ст, х) -> followed by dot OR whitespace(s)
+        lowerCity = lowerCity.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
+        
         // Also handle "Орёл" -> "орел" normalization for map lookup
         lowerCity = lowerCity.replace(/ё/g, 'е');
     }
