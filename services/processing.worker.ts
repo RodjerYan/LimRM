@@ -13,7 +13,7 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_BY_CITY_MAP } from '../utils/addressMappings';
+import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -28,28 +28,24 @@ type CommonProcessArgs = {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- LOCAL WORKER CACHES ---
-// Used to memoize expensive operations during the heavy loop
 const parsedAddressCache = new Map<string, EnrichedParsedAddress>();
 const canonicalRegionCache = new Map<string, string>();
 
 /**
- * Determines the Canonical Region Name for a given data row (Sales or OKB).
- * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
- * MEMOIZED.
+ * Determines the Canonical Region Name for a given data row.
+ * Uses the robust recoverRegion logic from dataUtils.
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. Priority: Look for explicit "Region" column data.
+    // 1. Try to recover region from explicit columns (Highest Priority)
     const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика', 'субъект', 'subject']);
     const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town']);
     
-    // Create a cache key from the relevant columns
     const cacheKey = `${rawRegionCol}|${cityCol}`;
     if (canonicalRegionCache.has(cacheKey)) {
         return canonicalRegionCache.get(cacheKey)!;
     }
 
-    // Attempt recovery from explicit columns first
-    // recoverRegion is now robust enough to handle 'орел' or 'орловская' directly.
+    // recoverRegion now contains the strict logic to check for keywords like 'орловская' or cities like 'орел'
     const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
     if (recoveredFromCols !== 'Регион не определен') {
         const std = standardizeRegion(recoveredFromCols);
@@ -57,11 +53,10 @@ const getCanonicalRegion = (row: any): string => {
         return std;
     }
 
-    // 2. Fallback: Parse the address string structure
+    // 2. Fallback: Parse the full address string if columns failed
     const address = findAddressInRow(row) || '';
     const distributor = findValueInRow(row, ['дистрибьютор']);
     
-    // Check cache for parsed address
     const addressCacheKey = `${address}|${distributor}`;
     let parsed: EnrichedParsedAddress;
     
@@ -74,18 +69,12 @@ const getCanonicalRegion = (row: any): string => {
 
     let region = parsed.region;
 
-    // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
-    if (region === 'Регион не определен') {
-        let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
-        
-        if (cityKey) {
-            // Improved regex to handle "г Орел" (space without dot)
-            cityKey = cityKey.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
-            cityKey = cityKey.replace(/ё/g, 'е');
-        }
-
-        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
-            region = REGION_BY_CITY_MAP[cityKey];
+    // 3. Last Resort: Use parsed city to find region
+    if (region === 'Регион не определен' && parsed.city !== 'Город не определен') {
+        // recoverRegion can also check just a city name against the DB
+        const recoveredFromParsedCity = recoverRegion('', parsed.city);
+        if (recoveredFromParsedCity !== 'Регион не определен') {
+            region = recoveredFromParsedCity;
         }
     }
 
@@ -117,7 +106,6 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
     if (!okbData) return [];
     
-    // Use the same canonical extraction for robust matching
     const potentialForRegion = okbData.filter(row => {
         const rowRegion = getCanonicalRegion(row);
         return rowRegion === region;
@@ -174,7 +162,6 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cac
     const { file, okbData, cacheData } = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
-    // Clear caches for new file run
     parsedAddressCache.clear();
     canonicalRegionCache.clear();
 
@@ -201,7 +188,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    // --- COUNT OKB BY REGION (ROBUST) ---
     const okbRegionCounts: { [key: string]: number } = {};
     if (okbData) {
         okbData.forEach(row => {
@@ -212,9 +198,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    // --- CACHE INITIALIZATION with Redirects ---
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
-    const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
+    const cacheRedirectMap = new Map<string, string>();
     const deletedAddresses = new Set<string>();
 
     if (cacheData) {
@@ -229,12 +214,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     continue;
                 }
 
-                // Store canonical entry
                 if (!cacheAddressMap.has(normalizedTarget)) {
                     cacheAddressMap.set(normalizedTarget, { lat: item.lat, lon: item.lon, originalAddress: item.address });
                 }
 
-                // Parse history for redirects
                 if (item.history) {
                     const historyEntries = String(item.history)
                         .replace(/\u00A0/g, ' ')
@@ -256,7 +239,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         }
     }
-    console.log('[CACHE LOAD] addresses=', cacheAddressMap.size, 'redirects=', cacheRedirectMap.size, 'deleted=', deletedAddresses.size);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Кэш обработан: ${cacheAddressMap.size} записей.` } });
 
     const aggregatedData: AggregationMap = {};
@@ -266,7 +248,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const unidentifiedRows: UnidentifiedRow[] = [];
 
     const totalRows = jsonData.length;
-    // Increase update interval for very large files to avoid message flooding
     const updateInterval = totalRows > 50000 ? 10000 : 2000;
 
     for (let i = 0; i < totalRows; i++) {
@@ -288,30 +269,22 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             continue;
         }
 
-        // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
-
-            // 1. Check if explicitly deleted
             if (deletedAddresses.has(normalizedRaw)) continue;
-
-            // 2. Check for Redirect (History)
             if (cacheRedirectMap.has(normalizedRaw)) {
                 const newNormalizedTarget = cacheRedirectMap.get(normalizedRaw)!;
                 const targetEntry = cacheAddressMap.get(newNormalizedTarget);
-                
                 if (targetEntry) {
                     clientAddress = targetEntry.originalAddress || clientAddress;
                     normalizedRaw = newNormalizedTarget;
                 } else {
                     normalizedRaw = newNormalizedTarget;
                 }
-
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 
-        // CACHED ADDRESS PARSING
         const addressCacheKey = `${clientAddress || ''}|${distributor || ''}`;
         let parsedAddress: EnrichedParsedAddress;
         if (parsedAddressCache.has(addressCacheKey)) {
@@ -327,10 +300,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        const regionForAggregation = getCanonicalRegion(row); // Uses internal cache
+        const regionForAggregation = getCanonicalRegion(row);
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         
-        // Fast float parsing without replacing if not needed
         let weightStr = String(findValueInRow(row, ['вес']) || '0');
         if (weightStr.includes(',')) weightStr = weightStr.replace(',', '.');
         if (weightStr.includes(' ')) weightStr = weightStr.replace(/\s/g, '');
@@ -359,14 +331,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
-        // --- Map Point Logic ---
         const normalizedFinalAddress = normalizeAddress(finalAddress);
 
         if (!uniquePlottableClients.has(normalizedFinalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
-            
             let displayAddress = finalAddress;
 
             const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
@@ -375,9 +345,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
-                if (cacheEntry.originalAddress) {
-                    displayAddress = cacheEntry.originalAddress;
-                }
+                if (cacheEntry.originalAddress) displayAddress = cacheEntry.originalAddress;
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
@@ -390,8 +358,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lon = okbEntry.lon;
                 } else if (finalAddress && !isCached) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    // Optimization: check inclusion on array only if small, Set otherwise. 
-                    // Here we assume the list per RM isn't massive in one run.
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
                     }
@@ -447,7 +413,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     const finalData: AggregatedDataRow[] = [];
-    // Optimized aggregation loop
     const aggKeys = Object.keys(aggregatedData);
     for (let i = 0; i < aggKeys.length; i++) {
         const key = aggKeys[i];
@@ -468,7 +433,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows, okbRegionCounts };
     postMessage({ type: 'result', payload: resultPayload });
 
-    // --- BACKGROUND TASKS ---
+    // Background tasks
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
@@ -518,7 +483,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 async function processXlsx(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла XLSX...' } });
     const data = await file.arrayBuffer();
-    // OPTIMIZATION: Use raw: true to speed up parsing significantly
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false, cellText: false, cellHTML: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
