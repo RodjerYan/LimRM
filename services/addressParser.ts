@@ -6,8 +6,29 @@ import {
 import { EnrichedParsedAddress } from '../types';
 import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
-// Memoize the sorted list of cities to avoid re-computing it on every call.
-const CITIES_SORTED_BY_LENGTH = Object.keys(REGION_BY_CITY_WITH_INDEXES).sort((a, b) => b.length - a.length);
+// --- OPTIMIZATION: PRE-PROCESSING CITIES ---
+// Split cities into single-word and multi-word lists for optimized searching.
+// This prevents iterating through thousands of cities for every single row.
+
+const ALL_CITIES = Object.keys(REGION_BY_CITY_WITH_INDEXES);
+
+// 1. Set for O(1) lookup of single-word cities (e.g., "Москва", "Тверь")
+const SINGLE_WORD_CITIES_SET = new Set<string>();
+
+// 2. Array for multi-word cities (e.g., "Нижний Новгород", "Санкт-Петербург") sorted by length
+const MULTI_WORD_CITIES: string[] = [];
+
+ALL_CITIES.forEach(city => {
+    if (city.includes(' ') || city.includes('-')) {
+        MULTI_WORD_CITIES.push(city);
+    } else {
+        SINGLE_WORD_CITIES_SET.add(city.toLowerCase());
+    }
+});
+
+// Sort multi-word cities by length (descending) to match longest first
+MULTI_WORD_CITIES.sort((a, b) => b.length - a.length);
+
 
 // NEW: A more robust override system using substring checks for specific problematic addresses.
 const KYRGYZSTAN_FORCE_OVERRIDES: { test: (addr: string) => boolean, city: string }[] = [
@@ -75,21 +96,35 @@ const capitalize = (str: string | null): string => {
 
 /**
  * Finds a city name within a normalized address string.
+ * HIGHLY OPTIMIZED version.
  * @param normalizedAddress A pre-processed, lowercased address string.
- * @returns The capitalized city name or a default string if not found.
+ * @returns The capitalized city name or 'Город не определен'.
  */
 function getCityFromAddress(normalizedAddress: string): string {
     if (!normalizedAddress) return 'Город не определен';
 
-    // We check longer city names first to avoid partial matches (e.g., "Нижний Новгород" before "Новгород").
-    for (const city of CITIES_SORTED_BY_LENGTH) {
-        // Use regex with word boundaries to ensure we're matching the whole city name.
-        const escapedCity = city.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        // \b matches word boundary for latin, but fails for Cyrillic in some browsers/cases.
-        // We use custom boundary check: start of string OR non-word char (space, comma, etc)
-        const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedCity}([^а-яёa-z0-9]|$)`, 'i');
-        if (regex.test(normalizedAddress)) {
-            return capitalize(city);
+    // 1. Check Multi-word cities first (Priority due to length)
+    // Optimization: Use .includes() first before Regex. It's much faster.
+    for (const city of MULTI_WORD_CITIES) {
+        const lowerCity = city.toLowerCase();
+        if (normalizedAddress.includes(lowerCity)) {
+            // Only if string exists, check boundaries to avoid partial word matches
+            // e.g. avoid matching "Nov" inside "Novgorod" if "Nov" was a city
+            const escapedCity = lowerCity.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedCity}([^а-яёa-z0-9]|$)`, 'i');
+            if (regex.test(normalizedAddress)) {
+                return capitalize(city);
+            }
+        }
+    }
+
+    // 2. Check Single-word cities using Tokenization + Set Lookup (O(1) per word)
+    // Split by common delimiters: spaces, commas, dots, etc.
+    const tokens = normalizedAddress.split(/[\s,.;()]+/);
+    
+    for (const token of tokens) {
+        if (token.length > 2 && SINGLE_WORD_CITIES_SET.has(token)) {
+            return capitalize(token);
         }
     }
     
@@ -107,12 +142,11 @@ function findRegionByKeyword(normalizedAddress: string): string | null {
     // Sort keys by length descending to match longer phrases first (e.g., "московская область" before "москва")
     const sortedKeys = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.length - a.length);
     for (const key of sortedKeys) {
+        // Optimization: Check includes first
+        if (!normalizedAddress.includes(key)) continue;
+
         // This regex ensures we match the key as a whole word/phrase.
         const escapedKey = key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        // REPLACED \b with explicit character class checks for better Cyrillic support.
-        // Matches if preceded by Start-Of-Line OR non-alphanumeric char
-        // AND followed by End-Of-Line OR non-alphanumeric char.
-        // This prevents "Гори" matching inside "Григория" or "ло" inside "Панфиловское".
         const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedKey}([^а-яёa-z0-9]|$)`, 'i');
 
         if (regex.test(normalizedAddress)) {
