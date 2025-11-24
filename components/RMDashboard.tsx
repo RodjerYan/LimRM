@@ -108,16 +108,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
-                let totalRegionOkb = 0;
-                if (globalOkbRegionCounts) {
-                    const exact = globalOkbRegionCounts[regionKey];
-                    if (exact) {
-                        totalRegionOkb = exact;
-                    } else {
-                        const fuzzyKey = Object.keys(globalOkbRegionCounts).find(k => k.toLowerCase() === regionKey.toLowerCase());
-                        if (fuzzyKey) totalRegionOkb = globalOkbRegionCounts[fuzzyKey];
-                    }
-                }
+                const totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
 
                 if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') {
                     missingRegionNames.add(regionKey);
@@ -247,7 +238,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                     <th className="px-4 py-3 text-center text-indigo-300" title="Покрытие территории (АКБ / ОКБ)">Доля рынка</th>
                                     <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
                                     <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
-                                    <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
+                                    <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План ${nextYear} (кг)</th>
                                     <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
                                     <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
                                     <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
@@ -314,7 +305,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                             <th className="px-3 py-2 text-right">Доля рынка</th>
                                                                             <th className="px-3 py-2 text-right">Рост (%)</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
-                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
+                                                                            <th className="px-3 py-2 text-right">План ${nextYear}</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
@@ -348,7 +339,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                             <th className="px-3 py-2">Бренд</th>
                                                                             <th className="px-3 py-2 text-right">Средний Рост</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
-                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
+                                                                            <th className="px-3 py-2 text-right">План ${nextYear}</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
