@@ -23,8 +23,7 @@ const sortedRegionKeywords = Object.keys(REGION_KEYWORD_MAP).sort((a, b) => b.le
 const normalizeRmNameForMatching = (str: string) => {
     if (!str) return '';
     let clean = str.toLowerCase().trim();
-    const surname = clean.split(/[
-        \s.]+/)[0];
+    const surname = clean.split(/[\s.]+/)[0];
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
