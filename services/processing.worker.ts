@@ -55,12 +55,14 @@ const getCanonicalRegion = (row: any): string => {
     }
 
     // 3. STRONG FALLBACK: If we have a city (from parser or column), FORCE the region from the city map.
-    // This fixes the issue where "Orel" is found as a city, but region remains ambiguous or mismatched.
-    const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город'])).toLowerCase().trim();
-    if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
-        // If the city is known, the region is strictly defined by that city.
-        // This overrides vague region detections.
-        region = REGION_BY_CITY_MAP[cityKey];
+    // CRITICAL FIX: Only apply fallback if region is STILL undefined. 
+    // Do NOT override an existing region (e.g. "Kaluga obl") just because we found a city name ("Kirov") 
+    // that might map to a different region capital ("Kirov region") in the lookup table.
+    if (region === 'Регион не определен') {
+        const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город'])).toLowerCase().trim();
+        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
+            region = REGION_BY_CITY_MAP[cityKey];
+        }
     }
 
     return standardizeRegion(region);
