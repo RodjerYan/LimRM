@@ -69,7 +69,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbDat
 
             let parsed = { region: 'Регион не определен' } as any;
             try {
-                parsed = parseRussianAddress(address, distributor) || parsed;
+                parsed = parseRussianAddress(address || '', distributor) || parsed;
             } catch (e) {
                 // parser may fail on dirty input — we'll fallback below
             }
