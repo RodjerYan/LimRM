@@ -210,25 +210,18 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         : '';
     const lowerCityHint = cityHint ? cityHint.toLowerCase().replace(/ё/g, 'е').trim() : '';
 
-    // --- HARD FIX FOR ORYOL REGION ---
-    // This block ensures Oryol region is prioritized and correctly identified
-    // regardless of minor spelling variations or missing region data.
-    if (lowerDirty.includes('орловская') || lowerCityHint === 'орел' || lowerCityHint === 'г орел' || lowerCityHint === 'г. орел' || lowerCityHint.includes('орел')) {
-        return 'Орловская область';
-    }
-        
     // If neither exists, give up early
     if (!lowerDirty && !cityHint) return 'Регион не определен';
 
-    // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
+    // 1. UNIVERSAL PRIORITY CHECK: Look for region keywords in the dirty string.
+    // Since we added 'орел' to REGION_KEYWORD_MAP, it will match here if present.
     if (lowerDirty) {
-        // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
         for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
-             // Check if the full keyword exists in the string
+             // Use word boundary check? No, simple includes is usually enough for regions.
              if (lowerDirty.includes(key)) return value;
         }
-
-        // Second pass: Root matching (handles "Калужская" in "Калужская область")
+        
+        // Root matching fallback
         for (const { root, regionName } of REGION_MATCHER_LIST) {
             if (lowerDirty.includes(root)) {
                 return regionName;
@@ -237,23 +230,17 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     }
 
     // 2. Check City Hint for Region Names as well.
-    // Sometimes the region is written in the City column (e.g. "Орловская область" inside the City cell)
-    if (cityHint) {
-        // Check if City column actually contains a region name
-        for (const { root, regionName } of REGION_MATCHER_LIST) {
-            if (lowerCityHint.includes(root)) {
-                return regionName;
-            }
+    if (lowerCityHint) {
+        for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
+             if (lowerCityHint.includes(key)) return value;
         }
     }
 
     // 3. Fallback to City -> Region Lookup
-    // FIX: Robust normalization of city hint.
-    // Removes prefixes like "г.", "г ", "пос.", "ст.", etc. to handle "г Орел" vs "Орел".
     let lowerCity = lowerCityHint;
     if (lowerCity) {
-        // Regex matches:
-        // Start of string -> (prefixes like г, город, п, пос, с, д, ст, х) -> followed by dot OR whitespace(s)
+        // Regex matches: Start of string -> (prefixes) -> followed by dot OR whitespace(s)
+        // This handles "г Орел" turning into "Орел".
         lowerCity = lowerCity.replace(/^(город|поселок|село|деревня|станица|хутор|пгт|рп|г|п|с|д|ст|х)(\.|\s)+/i, '').trim();
     }
 

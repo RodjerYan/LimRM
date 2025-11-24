@@ -83,10 +83,9 @@ const getCanonicalRegion = (row: any): string => {
             cityKey = cityKey.replace(/ё/g, 'е');
         }
 
-        // HARD FIX: Explicit check for Orel if it slipped through everything else
-        if (cityKey === 'орел' || cityKey === 'орёл') {
-            region = 'Орловская область';
-        } else if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
+        // Note: Specific hardcoded checks like 'орел' are now handled via the recoverRegion 
+        // or REGION_BY_CITY_MAP mechanism which has been updated with keyword mapping.
+        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
             region = REGION_BY_CITY_MAP[cityKey];
         }
     }
