@@ -509,6 +509,7 @@ const App: React.FC = () => {
                             flyToClientKey={flyToClientKey}
                             theme={theme}
                             onToggleTheme={toggleTheme}
+                            onEditClient={(client) => handleStartEdit(client, 'clients')}
                         />
 
                         <ResultsTable 

@@ -18,7 +18,8 @@ interface InteractiveRegionMapProps {
     conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
     theme?: Theme; // Global theme (initial state)
-    onToggleTheme?: () => void; // Legacy prop, keeping for interface compatibility but not using for map toggle
+    onToggleTheme?: () => void;
+    onEditClient: (client: MapPoint) => void;
 }
 
 interface SearchableLocation {
@@ -57,7 +58,7 @@ const MapLegend: React.FC = () => (
     </div>
 );
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark' }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -69,6 +70,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const layerControl = useRef<L.Control.Layers | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
+    
+    // Ref to hold latest activeClients to avoid stale closures in event listeners
+    const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
 
     const highlightedLayer = useRef<L.Layer | null>(null);
     const capitalMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map());
@@ -82,6 +86,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     // New UI States
     const [isFullscreen, setIsFullscreen] = useState(false);
+
+    // Sync ref with props
+    useEffect(() => {
+        activeClientsDataRef.current = activeClients;
+    }, [activeClients]);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         const locations: SearchableLocation[] = [];
@@ -184,8 +193,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { 
-                center: [55, 75], 
-                zoom: 3, 
+                center: [55, 55], // More western-focused center to cover European Russia better
+                zoom: 4, // Higher initial zoom
+                minZoom: 3, // Prevent zooming out too far (World view)
                 scrollWheelZoom: true, 
                 preferCanvas: true,
                 worldCopyJump: true,
@@ -221,6 +231,27 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
 
             map.on('click', resetHighlight);
+
+            // Global listener for popup open to attach event listeners to the edit button
+            map.on('popupopen', (e) => {
+                const popupNode = e.popup.getElement();
+                if (popupNode) {
+                    const editBtn = popupNode.querySelector('.edit-location-btn');
+                    if (editBtn) {
+                        // Use a fresh listener every time a popup opens
+                        editBtn.addEventListener('click', (event) => {
+                            event.stopPropagation(); // Prevent map clicks
+                            const key = editBtn.getAttribute('data-key');
+                            if (key) {
+                                const client = activeClientsDataRef.current.find(c => c.key === key);
+                                if (client) {
+                                    onEditClient(client);
+                                }
+                            }
+                        });
+                    }
+                }
+            });
         }
         return () => {
             if (mapInstance.current) {
@@ -229,7 +260,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current = null;
             }
         };
-    }, [resetHighlight]);
+    }, [resetHighlight, onEditClient]);
 
     // Handle Theme Change & Tile Layer Management
     // Independent of the global app theme to allow user preference for map visibility
@@ -263,11 +294,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    const createPopupContent = (name: string, address: string, type: string, contacts?: string) => `
-        <b>${name}</b><br>
-        ${address}<br>
-        <small>${type || 'н/д'}</small>
-        ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+    const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
+        <div class="popup-inner-content">
+            <b>${name}</b><br>
+            ${address}<br>
+            <small>${type || 'н/д'}</small>
+            ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+            <button 
+                class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
+                data-key="${key}"
+            >
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                Изменить местоположение
+            </button>
+        </div>
     `;
     
     // Data Layers (Active/Potential)
@@ -291,12 +331,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Potential Clients (Blue)
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(
-                    findValueInRow(tt, ['наименование', 'клиент']),
-                    findValueInRow(tt, ['юридический адрес', 'адрес']),
-                    findValueInRow(tt, ['вид деятельности', 'тип']),
-                    findValueInRow(tt, ['контакты'])
-                );
+                // Potential clients use a simple popup without edit button
+                const popupContent = `
+                    <b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>
+                    ${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br>
+                    <small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>
+                    ${findValueInRow(tt, ['контакты']) ? `<hr style="margin: 5px 0;"/><small>Контакты: ${findValueInRow(tt, ['контакты'])}</small>` : ''}
+                `;
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.8
@@ -308,7 +349,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Active Clients (Green)
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts);
+                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
                     fillColor: '#22c55e', // Green
@@ -341,10 +382,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
             } catch(e) {
                 console.error("Error calculating bounds for map:", e);
-                map.setView([55, 75], 3);
+                map.setView([55, 55], 4);
             }
         } else if (data.length === 0) {
-            map.setView([55, 75], 3);
+            map.setView([55, 55], 4);
         }
         
     }, [potentialClients, activeClients, data, isFullscreen]);
