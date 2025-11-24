@@ -20,17 +20,6 @@ const normalizeRmNameForMatching = (str: string) => {
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
-const normalizeRegion = (name: string) => {
-    if (!name) return "";
-
-    return name
-        .toLowerCase()
-        .replace(/область|обл\.?|район|р-н|край|г\.|город|республика| resp\.?/g, "")
-        .replace(/[.,]/g, "")
-        .trim()
-        .replace(/\s+/g, " ");
-};
-
 const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts }) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
@@ -84,7 +73,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             }
 
             if (!rmBucket.regions.has(regionKey)) {
-                // FIX: The region bucket was being added to the main `rmBuckets` map instead of the nested `regions` map for the current RM. This caused a type mismatch and incorrect data aggregation.
                 rmBucket.regions.set(regionKey, {
                     fact: 0,
                     potential: 0,
@@ -121,49 +109,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 rmTotalClients += activeCount;
                 rmTotalPotentialFile += regData.potential;
 
+                // Direct lookup because worker has already standardized everything
                 let totalRegionOkb = 0;
-                if (globalOkbRegionCounts) {
-                    const normAkb = normalizeRegion(regionKey);
-                    const okbKeys = Object.keys(globalOkbRegionCounts);
-
-                    // 1) точное нормализованное совпадение
-                    let matchedKey = okbKeys.find(
-                        k => normalizeRegion(k) === normAkb
-                    );
-
-                    // 2) если нет точного — ищем регион с максимальным пересечением слов
-                    if (!matchedKey) {
-                        const potentialMatches = okbKeys.filter(k => {
-                            const normOkb = normalizeRegion(k);
-                            return normOkb.includes(normAkb) || normAkb.includes(normOkb);
-                        });
-                        if (potentialMatches.length > 0) {
-                             // Prefer the longest match to avoid "ор" matching "орловская" and "оренбургская"
-                             matchedKey = potentialMatches.sort((a,b) => b.length - a.length)[0];
-                        }
-                    }
-
-                    // 3) если все равно нет — ищем регион с наиболее близким количеством клиник
-                    if (!matchedKey && regionKey !== 'Регион не определен') {
-                        const akbCount = regData.activeClients.size;
-                        let best: string | null = null;
-                        let bestDiff = Infinity;
-
-                        okbKeys.forEach(k => {
-                            const diff = Math.abs(globalOkbRegionCounts[k] - akbCount);
-                            // Add a threshold to avoid completely random matches, e.g., diff must be < 50% of the value
-                            if (diff < bestDiff && diff < (globalOkbRegionCounts[k] * 0.5)) {
-                                bestDiff = diff;
-                                best = k;
-                            }
-                        });
-
-                        matchedKey = best ?? undefined;
-                    }
-
-                    if (matchedKey) {
-                        totalRegionOkb = globalOkbRegionCounts[matchedKey];
-                    }
+                if (globalOkbRegionCounts && globalOkbRegionCounts[regionKey]) {
+                    totalRegionOkb = globalOkbRegionCounts[regionKey];
                 }
 
                 if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') {
@@ -294,7 +243,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                     <th className="px-4 py-3 text-center text-indigo-300" title="Покрытие территории (АКБ / ОКБ)">Доля рынка</th>
                                     <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
                                     <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
-                                    <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План ${nextYear} (кг)</th>
+                                    <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
                                     <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
                                     <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
                                     <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
@@ -361,7 +310,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                             <th className="px-3 py-2 text-right">Доля рынка</th>
                                                                             <th className="px-3 py-2 text-right">Рост (%)</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
-                                                                            <th className="px-3 py-2 text-right">План ${nextYear}</th>
+                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
@@ -395,7 +344,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                             <th className="px-3 py-2">Бренд</th>
                                                                             <th className="px-3 py-2 text-right">Средний Рост</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
-                                                                            <th className="px-3 py-2 text-right">План ${nextYear}</th>
+                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
                                                                         </tr>
                                                                     </thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">

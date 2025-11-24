@@ -12,7 +12,7 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion } from '../utils/addressMappings';
+import { standardizeRegion, REGION_BY_CITY_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -25,6 +25,46 @@ type CommonProcessArgs = {
     postMessage: PostMessageFn;
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Determines the Canonical Region Name for a given data row (Sales or OKB).
+ * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
+ */
+const getCanonicalRegion = (row: any): string => {
+    // 1. Try to parse the address structure first
+    const address = findAddressInRow(row);
+    const distributor = findValueInRow(row, ['дистрибьютор']);
+    let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
+    
+    try {
+        parsed = parseRussianAddress(address || '', distributor);
+    } catch (e) { /* ignore */ }
+
+    let region = parsed.region;
+
+    // 2. If parser failed to find region, look at specific columns
+    if (region === 'Регион не определен') {
+        const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
+        const cityCol = findValueInRow(row, ['город']);
+        
+        // Recover from column values
+        const recovered = recoverRegion(rawRegionCol, cityCol);
+        if (recovered !== 'Регион не определен') {
+            region = recovered;
+        }
+    }
+
+    // 3. STRONG FALLBACK: If we have a city (from parser or column), FORCE the region from the city map.
+    // This fixes the issue where "Orel" is found as a city, but region remains ambiguous or mismatched.
+    const cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город'])).toLowerCase().trim();
+    if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
+        // If the city is known, the region is strictly defined by that city.
+        // This overrides vague region detections.
+        region = REGION_BY_CITY_MAP[cityKey];
+    }
+
+    return standardizeRegion(region);
+};
 
 
 const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
@@ -49,10 +89,10 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
     if (!okbData) return [];
     
+    // Use the same canonical extraction for robust matching
     const potentialForRegion = okbData.filter(row => {
-        const regionKey = findValueInRow(row, ['регион']);
-        const standardized = standardizeRegion(regionKey);
-        return standardized === region;
+        const rowRegion = getCanonicalRegion(row);
+        return rowRegion === region;
     });
     
     if (potentialForRegion.length === 0) return [];
@@ -129,31 +169,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
+    // --- COUNT OKB BY REGION (ROBUST) ---
     const okbRegionCounts: { [key: string]: number } = {};
     if (okbData) {
         okbData.forEach(row => {
-            const address = findAddressInRow(row);
-            const distributor = findValueInRow(row, ['дистрибьютор']);
-
-            let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
-            try {
-                parsed = parseRussianAddress(address || '', distributor);
-            } catch (e) { /* ignore parser errors */ }
-
-            let region = parsed.region;
-            
-            if (region === 'Регион не определен') {
-                const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика']);
-                const cityCol = findValueInRow(row, ['город']);
-                const recovered = recoverRegion(rawRegionCol, cityCol);
-                if (recovered !== 'Регион не определен') region = recovered;
-            }
-
-            if (region && region !== 'Регион не определен') {
-                const normRegion = standardizeRegion(region).trim();
-                if (normRegion) {
-                    okbRegionCounts[normRegion] = (okbRegionCounts[normRegion] || 0) + 1;
-                }
+            const canonicalRegion = getCanonicalRegion(row);
+            if (canonicalRegion && canonicalRegion !== 'Регион не определен') {
+                okbRegionCounts[canonicalRegion] = (okbRegionCounts[canonicalRegion] || 0) + 1;
             }
         });
     }
@@ -265,7 +287,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        const regionForAggregation = parsedAddress.region;
+        // USE CANONICAL REGION HERE TO MATCH OKB
+        const regionForAggregation = getCanonicalRegion(row);
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
@@ -296,9 +319,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             let lon: number | undefined;
             let isCached = false;
             
-            // UI DISPLAY LOGIC:
-            // Even if we didn't trigger a redirect above, we might match an existing cache entry by normalization (typos, case).
-            // If so, we want to use the cache's "Clean" address string for display to ensure synchronization.
             let displayAddress = finalAddress;
 
             const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
@@ -307,7 +327,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
-                // CRITICAL: Use the canonical address from cache if available.
                 if (cacheEntry.originalAddress) {
                     displayAddress = cacheEntry.originalAddress;
                 }
@@ -334,9 +353,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 lat, lon, isCached,
                 status: 'match',
                 name: clientName,
-                address: displayAddress, // Use the corrected/canonical address for display
+                address: displayAddress, 
                 city: parsedAddress.city,
-                region: parsedAddress.region, 
+                region: regionForAggregation, // Ensure individual points also use canonical region
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
