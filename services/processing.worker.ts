@@ -13,7 +13,7 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { standardizeRegion } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
@@ -28,49 +28,22 @@ type CommonProcessArgs = {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Determines the Canonical Region Name for a given data row (Sales or OKB).
+ * Determines the Canonical Region Name for a given data row.
  * 
- * STRICT LOGIC UPDATE:
- * 1. Prioritizes the "Субъект" (Subject) column above all else.
- * 2. Ignores ambiguous columns like "Region" which might contain sales zones.
- * 3. Standardizes variations (e.g., "г. Орел" -> "Орловская область") using the keyword map.
+ * STRICT LOGIC (v2):
+ * 1. Exclusively looks for the "Subject" column (B).
+ * 2. Ignores "Region", "City", or any other column to avoid ambiguity with Sales Regions.
+ * 3. Does not attempt to recover region from city names.
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. STRICT PRIORITY: Look ONLY for the "Субъект" column.
+    // STRICT PRIORITY: Look ONLY for the "Subject" column variants.
     // We intentionally exclude 'region', 'area', 'область' from the search to avoid picking up 
-    // sales hierarchy columns (e.g. "Region Center", "Manager Region").
-    const subjectValue = findValueInRow(row, ['субъект', 'subject']);
+    // sales hierarchy columns (e.g. "Region Center", "Manager Region", "Sales Region").
+    const subjectValue = findValueInRow(row, ["субъект", "subj", "subject", "субъект рф"]);
 
     if (subjectValue && subjectValue.trim()) {
-        const cleanVal = subjectValue.trim();
-        const lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
-
-        // Direct mapping check against known variations.
-        // This handles cases where the Subject column contains "г. Орел", "Орловская обл", etc.
-        // We iterate through our robust keyword map to find the canonical name.
-        for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            // Check if the column value contains the key (e.g. value "г. Орел" contains key "г орел")
-            if (lowerVal.includes(key)) {
-                return standardName;
-            }
-        }
-        
-        // If no specific keyword match, standardize the capitalization and return.
-        return standardizeRegion(cleanVal);
-    }
-
-    // 2. Fallback: Parse the address string ONLY if "Субъект" column is completely missing.
-    // This is a safety net for non-standard files.
-    const address = findAddressInRow(row);
-    const distributor = findValueInRow(row, ['дистрибьютор']);
-    
-    if (address || distributor) {
-        try {
-            const parsed = parseRussianAddress(address || '', distributor);
-            if (parsed.region && parsed.region !== 'Регион не определен') {
-                return standardizeRegion(parsed.region);
-            }
-        } catch (e) { /* ignore */ }
+        // Standardize the found value to ensure "Орловская обл" matches "Орловская область" in our maps.
+        return standardizeRegion(subjectValue);
     }
 
     return 'Регион не определен';
@@ -99,7 +72,7 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
     if (!okbData) return [];
     
-    // Use the same canonical extraction for robust matching
+    // Use the exact same strict extraction for OKB rows to ensure matching
     const potentialForRegion = okbData.filter(row => {
         const rowRegion = getCanonicalRegion(row);
         return rowRegion === region;
@@ -179,7 +152,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    // --- COUNT OKB BY REGION (ROBUST) ---
+    // --- COUNT OKB BY REGION (STRICT) ---
     const okbRegionCounts: { [key: string]: number } = {};
     if (okbData) {
         okbData.forEach(row => {
@@ -297,7 +270,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        // USE CANONICAL REGION HERE TO MATCH OKB
+        // STRICT REGION DETERMINATION
         const regionForAggregation = getCanonicalRegion(row);
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -365,7 +338,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 name: clientName,
                 address: displayAddress, 
                 city: parsedAddress.city,
-                region: regionForAggregation, // Ensure individual points also use canonical region
+                region: regionForAggregation, // Ensure individual points also use the strict canonical region
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
