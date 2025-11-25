@@ -296,6 +296,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+            // Use data.address directly if available (for edited points), otherwise fall back to raw parsing
             const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
             setEditedAddress(currentAddress);
             
@@ -337,6 +338,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
+        // CRITICAL: Derive oldAddress from the CURRENT data state to capture previous edits correctly.
+        // Fallback to originalRow only if data.address is missing (e.g., first edit of UnidentifiedRow).
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         
         let oldKey = '';
@@ -491,7 +494,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-    const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+    // Display current address from map point state to reflect recent edits
+    const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
 
@@ -508,7 +512,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
     // Determine save button text
-    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
+    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     
     let saveButtonText = "Сохранить и найти координаты";

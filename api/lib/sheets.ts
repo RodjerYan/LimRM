@@ -422,16 +422,35 @@ export async function updateAddressInCache(
     // Preserve coordinates!
     const currentLat = row[1] ?? ''; 
     const currentLon = row[2] ?? '';
-    const currentHistory = String(row[3] || '');
+    // Handle history: check if row[3] exists, otherwise empty string.
+    const currentHistory = row[3] ? String(row[3]) : '';
 
     // 3) If the address in Column A is already the New Address, we don't need to change A.
+    // BUT we might still want to update history if for some reason it was missed? 
+    // Generally, if A matches New, we are likely done, but let's double check we aren't looping.
     if (normalizeForComparison(currentAddress) === newNorm) {
         return;
     }
 
     // 4) Construct new history
     // Append the OLD value of the row (which is what we are replacing) to the history.
-    const historyEntry = `${oldAddress} [${timestamp}]`;
+    const historyEntry = `${currentAddress || oldAddress} [${timestamp}]`;
+    
+    // Check if this exact history entry already exists to prevent duplicates on rapid clicks
+    if (currentHistory.includes(historyEntry)) {
+        // Just update the address part if history is already there
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!A${rowIndex + 1}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[newAddress]],
+            },
+        });
+        return;
+    }
+
+    // Use \n for explicit new line in Google Sheets cell
     const newHistory = currentHistory
         ? `${currentHistory}\n${historyEntry}`
         : historyEntry;

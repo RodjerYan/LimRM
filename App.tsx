@@ -334,10 +334,9 @@ const App: React.FC = () => {
         // 4. Sync editingClient state so Modal receives updates even if closed/reopened
         setEditingClient(prev => {
             if (!prev) return prev;
-            if ((prev as MapPoint).key === oldKey) {
-                 return { ...newPoint, isGeocoding: newPoint.isGeocoding };
-            }
-            if ((prev as UnidentifiedRow).originalIndex === originalIndex) {
+            // NOTE: Check against BOTH oldKey and newPoint.key to ensure we catch it whether it was just updated or not.
+            // When editing consecutively, oldKey is the 'current' key.
+            if ((prev as MapPoint).key === oldKey || (prev as UnidentifiedRow).originalIndex === originalIndex) {
                  return { ...newPoint, isGeocoding: newPoint.isGeocoding };
             }
             return prev;
