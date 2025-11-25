@@ -87,15 +87,16 @@ export const calculateSimilarity = (
     // Normalize inputs to 0-1 scale to give them equal weight
     // Use maxVolume for volume normalization to handle scale differences
     
-    const v1 = target.volume / maxVolume;
-    const v2 = candidate.volume / maxVolume;
+    const v1 = target.volume / (maxVolume || 1);
+    const v2 = candidate.volume / (maxVolume || 1);
     
     // Growth is percentage (0-100), normalize to 0-1
     const g1 = target.growth / 100;
     const g2 = candidate.growth / 100;
 
-    const p1 = target.potential / maxVolume;
-    const p2 = candidate.potential / maxVolume;
+    // Potential is volume-based, normalize like volume
+    const p1 = target.potential / (maxVolume || 1);
+    const p2 = candidate.potential / (maxVolume || 1);
 
     const distance = Math.sqrt(
         Math.pow(v1 - v2, 2) + 
@@ -103,7 +104,7 @@ export const calculateSimilarity = (
         Math.pow(p1 - p2, 2)
     );
 
-    // Convert distance to similarity score. Max possible distance is roughly sqrt(3) ~ 1.73
+    // Convert distance to similarity score. Max possible distance in 3D unit cube is sqrt(3) ~ 1.73
     const maxDistance = 1.73;
     const similarity = Math.max(0, 1 - (distance / maxDistance)) * 100;
     
@@ -122,7 +123,7 @@ export const performParetoAnalysis = (
     const threshold = totalValue * 0.8;
 
     let runningTotal = 0;
-    let splitIndex = 0;
+    let splitIndex = sorted.length - 1;
 
     for (let i = 0; i < sorted.length; i++) {
         runningTotal += sorted[i].value;
