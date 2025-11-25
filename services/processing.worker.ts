@@ -13,8 +13,8 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_BY_CITY_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
+import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -29,47 +29,51 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
- * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
+ * 
+ * STRICT LOGIC UPDATE:
+ * 1. Prioritizes the "Субъект" (Subject) column above all else.
+ * 2. Ignores ambiguous columns like "Region" which might contain sales zones.
+ * 3. Standardizes variations (e.g., "г. Орел" -> "Орловская область") using the keyword map.
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. Priority: Look for explicit "Region" column data.
-    // Added 'субъект' to explicitly support columns named "Субъект" or "Субъект РФ" as requested.
-    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика', 'субъект', 'subject']);
-    const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town']);
-    
-    // Attempt recovery from explicit columns first
-    const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
-    if (recoveredFromCols !== 'Регион не определен') {
-        return standardizeRegion(recoveredFromCols);
+    // 1. STRICT PRIORITY: Look ONLY for the "Субъект" column.
+    // We intentionally exclude 'region', 'area', 'область' from the search to avoid picking up 
+    // sales hierarchy columns (e.g. "Region Center", "Manager Region").
+    const subjectValue = findValueInRow(row, ['субъект', 'subject']);
+
+    if (subjectValue && subjectValue.trim()) {
+        const cleanVal = subjectValue.trim();
+        const lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // Direct mapping check against known variations.
+        // This handles cases where the Subject column contains "г. Орел", "Орловская обл", etc.
+        // We iterate through our robust keyword map to find the canonical name.
+        for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
+            // Check if the column value contains the key (e.g. value "г. Орел" contains key "г орел")
+            if (lowerVal.includes(key)) {
+                return standardName;
+            }
+        }
+        
+        // If no specific keyword match, standardize the capitalization and return.
+        return standardizeRegion(cleanVal);
     }
 
-    // 2. Fallback: Parse the address string structure
+    // 2. Fallback: Parse the address string ONLY if "Субъект" column is completely missing.
+    // This is a safety net for non-standard files.
     const address = findAddressInRow(row);
     const distributor = findValueInRow(row, ['дистрибьютор']);
-    let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
     
-    try {
-        parsed = parseRussianAddress(address || '', distributor);
-    } catch (e) { /* ignore */ }
-
-    let region = parsed.region;
-
-    // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
-    if (region === 'Регион не определен') {
-        let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
-        
-        // FIX: Clean the city key from prefixes (e.g. "г. орел" -> "орел") to match map keys
-        if (cityKey) {
-            cityKey = cityKey.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-            cityKey = cityKey.replace(/ё/g, 'е');
-        }
-
-        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
-            region = REGION_BY_CITY_MAP[cityKey];
-        }
+    if (address || distributor) {
+        try {
+            const parsed = parseRussianAddress(address || '', distributor);
+            if (parsed.region && parsed.region !== 'Регион не определен') {
+                return standardizeRegion(parsed.region);
+            }
+        } catch (e) { /* ignore */ }
     }
 
-    return standardizeRegion(region);
+    return 'Регион не определен';
 };
 
 
