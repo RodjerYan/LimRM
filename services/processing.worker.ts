@@ -35,8 +35,9 @@ const getCanonicalRegion = (row: any): string => {
     // 1. Priority: Look for explicit "Subject"/"Region" column data.
     // CRITICAL UPDATE: 'субъект'/'subject' moved to index 0 to prioritize column B as requested.
     // Explicitly exclude columns with 'менеджер' or 'manager' to prevent false positives.
+    // Added 'субъект рф' to the list.
     const rawRegionCol = findValueInRow(row, 
-        ['субъект', 'subject', 'регион', 'область', 'край', 'республика', 'region'],
+        ['субъект', 'subject', 'субъект рф', 'регион', 'область', 'край', 'республика', 'region'],
         ['менеджер', 'manager', 'код', 'code'] 
     );
     const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town', 'нас. пункт', 'нас пункт']);

@@ -247,8 +247,9 @@ REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
  */
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
     // Normalize: lowercase, remove non-breaking spaces, replace special chars with space
+    // CRITICAL: Normalize 'ё' to 'е' immediately for consistent matching
     const lowerDirty = dirtyString 
-        ? dirtyString.toLowerCase().replace(/[^а-яa-z0-9ё\s]/g, ' ').replace(/\s+/g, ' ').trim() 
+        ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
     
     // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
@@ -268,33 +269,26 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
 
         // Third pass: Check if the dirty string ITSELF is a city name (e.g. "Орёл" in Region column)
         // This is crucial for OKB files where "Region" column might just say "г. Орёл" or "Орёл"
-        // Strip prefixes:
-        let cleanPotentialCity = lowerDirty.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-        
-        // Try looking up in the city map with normalization (ё -> е)
-        const cleanCityNormalized = cleanPotentialCity.replace(/ё/g, 'е');
+        // Aggressively strip prefixes AND suffixes (like "г.", "г", "город")
+        let cleanPotentialCity = lowerDirty
+            .replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s+/, '') // prefix
+            .replace(/\s+(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)$/, '') // suffix (e.g. "Смоленск г.")
+            .replace(/\s+(г|п)\.?$/, '') // short suffix "г"
+            .trim();
         
         // Safety: Don't match short numeric strings or very short garbage as cities (e.g. "57")
-        if (cleanCityNormalized.length > 2 && isNaN(Number(cleanCityNormalized))) {
-             if (REGION_BY_CITY_MAP[cleanCityNormalized]) {
-                return REGION_BY_CITY_MAP[cleanCityNormalized];
-            }
-            // Also try raw (if map contains 'ё' version distinct from 'е' version, though 'e' is preferred)
-            if (REGION_BY_CITY_MAP[cleanPotentialCity]) {
+        if (cleanPotentialCity.length > 2 && isNaN(Number(cleanPotentialCity))) {
+             if (REGION_BY_CITY_MAP[cleanPotentialCity]) {
                 return REGION_BY_CITY_MAP[cleanPotentialCity];
             }
         }
     }
 
     // 2. Fallback to City Hint only if Region String didn't match
-    let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    let lowerCity = cityHint ? cityHint.toLowerCase().replace(/ё/g, 'е').trim() : '';
     if (lowerCity) {
         lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-        const lowerCityNorm = lowerCity.replace(/ё/g, 'е');
         
-        if (lowerCityNorm && REGION_BY_CITY_MAP[lowerCityNorm]) {
-            return REGION_BY_CITY_MAP[lowerCityNorm];
-        }
         if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
             return REGION_BY_CITY_MAP[lowerCity];
         }
