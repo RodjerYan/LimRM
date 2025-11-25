@@ -451,6 +451,9 @@ const App: React.FC = () => {
                         okbRegionCounts={okbRegionCounts}
                         okbData={okbData}
                         mode="page"
+                        metrics={summaryMetrics}
+                        okbStatus={okbStatus}
+                        onActiveClientsClick={() => setIsClientsModalOpen(true)}
                     />
                 );
             case 'prophet':
@@ -462,18 +465,8 @@ const App: React.FC = () => {
             case 'amp':
             default:
                 return (
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start animate-fade-in">
-                        <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
-                            <Filters
-                                options={filterOptions}
-                                currentFilters={filters}
-                                onFilterChange={handleFilterChange}
-                                onReset={resetFilters}
-                                disabled={!isDataLoaded || isLoading}
-                            />
-                        </aside>
-
-                        <div className="lg:col-span-3 space-y-6">
+                    <div className="grid grid-cols-1 gap-6 items-start animate-fade-in">
+                        <div className="col-span-1 space-y-6">
                             <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                                 <div>
                                     <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
@@ -481,11 +474,12 @@ const App: React.FC = () => {
                                 </div>
                             </div>
 
-                            <MetricsSummary 
-                                metrics={summaryMetrics} 
-                                okbStatus={okbStatus} 
+                            <Filters
+                                options={filterOptions}
+                                currentFilters={filters}
+                                onFilterChange={handleFilterChange}
+                                onReset={resetFilters}
                                 disabled={!isDataLoaded || isLoading}
-                                onActiveClientsClick={() => setIsClientsModalOpen(true)}
                             />
                             
                             <InteractiveRegionMap 

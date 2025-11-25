@@ -3,7 +3,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
-import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow } from '../types';
+import MetricsSummary from './MetricsSummary';
+import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus } from '../types';
 import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
@@ -13,7 +14,11 @@ interface RMDashboardProps {
     data: AggregatedDataRow[];
     okbRegionCounts: { [key: string]: number } | null;
     okbData: OkbDataRow[];
-    mode?: 'modal' | 'page'; // New prop to control rendering mode
+    mode?: 'modal' | 'page';
+    // Props required for MetricsSummary
+    metrics?: SummaryMetrics | null;
+    okbStatus?: OkbStatus | null;
+    onActiveClientsClick?: () => void;
 }
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
@@ -25,7 +30,17 @@ const normalizeRmNameForMatching = (str: string) => {
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
-const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal' }) => {
+const RMDashboard: React.FC<RMDashboardProps> = ({ 
+    isOpen, 
+    onClose, 
+    data, 
+    okbRegionCounts, 
+    okbData, 
+    mode = 'modal',
+    metrics,
+    okbStatus,
+    onActiveClientsClick
+}) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
@@ -41,7 +56,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
-    const metrics = useMemo<RMMetrics[]>(() => {
+    const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
@@ -331,7 +346,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
         setSelectedRegions(newSet);
     };
 
-    const missingOkbRegions: string[] = (metrics as any).__missingOkbRegions || [];
+    const missingOkbRegions: string[] = (metricsData as any).__missingOkbRegions || [];
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
 
     const handleAnalyzeClick = (e: React.MouseEvent, rm: RMMetrics) => {
@@ -417,7 +432,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-700">
-                        {metrics.map(rm => {
+                        {metricsData.map(rm => {
                             const isExpanded = expandedRM === rm.rmName;
                             const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
                             const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
@@ -552,6 +567,16 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                         <h2 className="text-2xl font-bold text-white">Дашборд План/Факт <span className="text-gray-500 font-normal text-lg">/ Эффективность</span></h2>
                         <p className="text-gray-400 text-sm mt-1">Анализ выполнения планов, покрытие территории и ABC-анализ.</p>
                     </div>
+                </div>
+                <div className="mb-6">
+                    {metrics && (
+                        <MetricsSummary 
+                            metrics={metrics} 
+                            okbStatus={okbStatus || null} 
+                            disabled={false}
+                            onActiveClientsClick={onActiveClientsClick}
+                        />
+                    )}
                 </div>
                 {mainContent}
                 <RMAnalysisModal 
