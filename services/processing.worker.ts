@@ -1,4 +1,3 @@
-
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -11,9 +10,10 @@ import {
     CoordsCache,
     EnrichedParsedAddress,
     UnidentifiedRow,
-} from '../../types';
+} from '../types';
 import { parseRussianAddress } from './addressParser';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { REGION_BY_CITY_MAP } from '../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -32,8 +32,11 @@ const normalizeRegionString = (input: string): string => {
     
     let s = input.toLowerCase().replace(/\u00A0/g, ' ').replace(/ё/g, 'е').trim();
     
-    // REMOVED: City lookup fallback based on user request to strictly use the region column.
-    // The region column in OKB ("Субъект") is trusted to be correct.
+    // 1. Check if the "Region" string is actually a known city (e.g. "Орел" -> "Орловская область")
+    // This handles cases where the user puts the capital city in the Subject column.
+    if (REGION_BY_CITY_MAP[s]) {
+        return REGION_BY_CITY_MAP[s];
+    }
 
     // Remove "г.", "город" prefixes/words
     s = s.replace(/^г\.\s*/i, '').replace(/\s+г\.\s*/i, ' ').replace(/\bгород\b/gi, '');
@@ -68,9 +71,12 @@ const normalizeRegionString = (input: string): string => {
  * Fallback logic primarily for OKB which is parsed as objects.
  */
 const getCanonicalRegionForObject = (row: any): string => {
-    // STRICT: Only look for Subject/Subj to identify the Region column correctly.
-    // Explicitly exclude "code", "id", "код" to avoid picking up Region IDs.
-    const region = findValueInRow(row, ["субъект", "subject", "subj", "субъект рф"], ["код", "code", "id"]);
+    let region = findValueInRow(row, [
+        'субъект', 'subject', 'субъект рф', 'subj',
+        'регион', 'область', 'region', 'province',
+        'облыс', 'области', 'вилоят', 'viloyat',
+        'марз', 'raion'
+    ], []);
 
     if (!region) return 'Регион не определен';
     return normalizeRegionString(String(region).trim());

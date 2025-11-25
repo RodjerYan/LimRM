@@ -2,9 +2,9 @@ import {
     standardizeRegion, 
     REGION_KEYWORD_MAP, 
     CITY_NORMALIZATION_MAP
-} from '../../utils/addressMappings';
-import { EnrichedParsedAddress } from '../../types';
-import { REGION_BY_CITY_WITH_INDEXES } from '../../utils/regionMap';
+} from '../utils/addressMappings';
+import { EnrichedParsedAddress } from '../types';
+import { REGION_BY_CITY_WITH_INDEXES } from '../utils/regionMap';
 
 // --- OPTIMIZATION: PRE-PROCESSING CITIES ---
 // Split cities into single-word and multi-word lists for optimized searching.

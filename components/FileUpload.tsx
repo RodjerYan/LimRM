@@ -51,8 +51,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
             workerRef.current.terminate();
         }
 
-        // FIX: Correct path to worker. Was '../services/processing.worker.ts', but FileUpload is in components/ and worker is in components/services/.
-        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        workerRef.current = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
 
         workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
             const { type, payload } = e.data;

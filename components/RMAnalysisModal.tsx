@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
 import { RMMetrics } from '../types';
-import { streamRMInsights } from './services/aiService';
+import { streamRMInsights } from '../services/aiService';
 import { LoaderIcon, TrendingUpIcon, TargetIcon } from './icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -47,8 +48,8 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
         streamRMInsights(
             rmData,
             baseRate,
-            (chunk: string) => setAnalysis(prev => prev + chunk),
-            (err: any) => {
+            (chunk) => setAnalysis(prev => prev + chunk),
+            (err) => {
                 if (err.name !== 'AbortError') {
                     setError(`Ошибка при получении анализа: ${err.message}`);
                 }
