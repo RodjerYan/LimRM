@@ -13,8 +13,7 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_BY_CITY_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -28,46 +27,33 @@ type CommonProcessArgs = {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Determines the Canonical Region Name for a given data row (Sales or OKB).
- * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
+ * Determines the Canonical Region Name for a given data row.
+ * STRICT MODE: Only uses the "Subject" column. No fallbacks to address or city.
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. Priority: Look for explicit "Subject"/"Region" column data.
-    // CRITICAL UPDATE: 'субъект'/'subject' moved to index 0 to prioritize column B as requested.
-    // Explicitly exclude columns with 'менеджер' or 'manager' to prevent false positives.
-    // Added 'субъект рф' to the list.
-    const rawRegionCol = findValueInRow(row, 
-        ['субъект', 'subject', 'субъект рф', 'регион', 'область', 'край', 'республика', 'region'],
-        ['менеджер', 'manager', 'код', 'code'] 
-    );
-    const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town', 'нас. пункт', 'нас пункт']);
+    // 1. Strict Priority: Look ONLY for explicit "Subject" column data.
+    // We assume the file structure always contains this column for valid region identification.
+    let region = findValueInRow(row, ['субъект', 'subject', 'субъект рф', 'subj'], []);
     
-    // Attempt recovery from explicit columns first
-    let region = recoverRegion(rawRegionCol, cityCol);
-    
-    // 2. Fallback: If explicit columns failed, try parsing the full address string.
-    // This is critical for files where "Region" column is missing or empty, but "Address" contains it.
-    if (region === 'Регион не определен') {
-        const address = findAddressInRow(row);
-        const distributor = findValueInRow(row, ['дистрибьютор']);
-        try {
-            const parsed = parseRussianAddress(address || '', distributor);
-            region = parsed.region;
-            
-            // 3. Nested Fallback: If address parser found a city but not a region, try mapping that city.
-            if (region === 'Регион не определен' && parsed.city !== 'Город не определен') {
-                 let cityKey = parsed.city.toLowerCase().trim();
-                 // Clean city key from prefixes to match map keys
-                 cityKey = cityKey.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-                 cityKey = cityKey.replace(/ё/g, 'е');
-                 if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
-                     region = REGION_BY_CITY_MAP[cityKey];
-                 }
-            }
-        } catch (e) { /* ignore */ }
+    // 2. If empty, we DO NOT guess.
+    if (!region) {
+        return 'Регион не определен';
     }
 
-    return standardizeRegion(region);
+    // 3. Simple Normalization
+    region = String(region).trim();
+    
+    // Fix common abbreviations and garbage prefixes
+    region = region
+        .replace(/^г\.\s*/i, '') // Remove "г." prefix (e.g. "г. Москва" -> "Москва")
+        .replace(/\s+г\.\s*/i, ' ') // Remove internal " g. "
+        .replace(/обл\.?$/i, ' область') // "обл" -> "область"
+        .replace(/р-?н\.?$/i, ' район') // "р-н" -> "район"
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Capitalize for consistency (e.g. "москва" -> "Москва")
+    return region.split(/[\s-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 };
 
 
@@ -299,7 +285,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         const finalAddress = parsedAddress.finalAddress;
         // USE CANONICAL REGION HERE TO MATCH OKB
+        // Note: We pass the whole row, not parsed parts, as per strict instruction to look at Subject column
         const regionForAggregation = getCanonicalRegion(row);
+        
+        // If region is undefined from Subject column, we DO NOT fallback to address parsing.
+        // It will remain 'Регион не определен'.
+        
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
