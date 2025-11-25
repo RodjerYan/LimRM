@@ -440,9 +440,6 @@ export async function updateAddressInCache(
     const valueToArchive = currentAddress || oldAddress;
     const historyEntry = `${valueToArchive} [${timestamp}]`;
     
-    // We deliberately do NOT return early even if history entry exists, to FORCE update column A.
-    // This fixes issues where Col A failed to update in previous attempts.
-    
     // Use explicit \n for new line in Google Sheets cell. 
     // Google Sheets treats \n as a newline when valueInputOption is USER_ENTERED.
     const newHistory = currentHistory
@@ -450,22 +447,22 @@ export async function updateAddressInCache(
         : historyEntry;
 
     // 5) Update the row. 
-    // CRITICAL: We write back currentLat and currentLon to avoid wiping them out.
-    // rowIndex is 0-based index of the array (which matches the sheet row index if we fetched from A1).
-    // Sheet API is 1-based for A1 notation.
-    // Example: rows[0] is header (Row 1). rows[1] is data (Row 2).
-    // If rowIndex is 1, we want to update Row 2. So A2:D2.
-    // Math: Row Number = rowIndex + 1.
+    // CRITICAL UPDATE: As per user request, we MUST CLEAR existing coordinates (Col B, C)
+    // when the address (Col A) changes, because the old coordinates are likely valid
+    // for the old address, not the new one.
+    // The frontend will trigger a new geocoding process or save manual coordinates subsequently.
+    
     const rowNumber = rowIndex + 1;
     
-    console.log(`[updateAddressInCache] Updating Row ${rowNumber}. Old: "${currentAddress}" -> New: "${newAddress}". History len: ${newHistory.length}`);
+    console.log(`[updateAddressInCache] Updating Row ${rowNumber}. Old: "${currentAddress}" -> New: "${newAddress}". Clearing Coords.`);
 
     await sheets.spreadsheets.values.update({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A${rowNumber}:D${rowNumber}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
-            values: [[newAddress, currentLat, currentLon, newHistory]],
+            // Set Col B (Lat) and Col C (Lon) to empty strings
+            values: [[newAddress, "", "", newHistory]], 
         },
     });
 }
