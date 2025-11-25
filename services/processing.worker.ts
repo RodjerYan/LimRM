@@ -43,7 +43,16 @@ const getCanonicalRegion = (row: any): string => {
 
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
-        const lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+        
+        // Normalize logic: remove common city prefixes which might appear in Subject column
+        // e.g. "г Орел" -> "Орел" to match key "орел" in map.
+        const lowerVal = cleanVal.toLowerCase()
+            .replace(/ё/g, 'е')
+            .replace(/[.,]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .replace(/^г\s+/g, '') // remove "г " prefix
+            .replace(/\s+г$/g, '') // remove " г" suffix
+            .trim();
 
         // Direct mapping check against known variations.
         // This handles cases where the Subject column contains "г. Орел", "Орловская обл", etc.
