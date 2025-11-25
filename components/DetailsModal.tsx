@@ -4,7 +4,7 @@ import DOMPurify from 'dompurify';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
 import { AggregatedDataRow, OkbStatus, MapPoint } from '../types';
-import { streamClientInsights } from '../services/aiService';
+import { streamClientInsights } from './services/aiService';
 import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon } from './icons';
 
 interface DetailsModalProps {

@@ -10,10 +10,10 @@ import {
     CoordsCache,
     EnrichedParsedAddress,
     UnidentifiedRow,
-} from '../types';
+} from '../../types';
 import { parseRussianAddress } from './addressParser';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
-import { REGION_BY_CITY_MAP } from '../utils/addressMappings';
+import { normalizeAddress, findAddressInRow, findValueInRow } from '../../utils/dataUtils';
+import { REGION_BY_CITY_MAP } from '../../utils/addressMappings';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -76,7 +76,7 @@ const getCanonicalRegionForObject = (row: any): string => {
         'регион', 'область', 'region', 'province',
         'облыс', 'области', 'вилоят', 'viloyat',
         'марз', 'raion'
-    ], []);
+    ]);
 
     if (!region) return 'Регион не определен';
     return normalizeRegionString(String(region).trim());

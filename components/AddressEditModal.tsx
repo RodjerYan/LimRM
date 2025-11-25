@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
-import { parseRussianAddress } from '../services/addressParser';
+import { parseRussianAddress } from './services/addressParser';
 import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
