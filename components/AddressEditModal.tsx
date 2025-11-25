@@ -338,8 +338,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
-        // CRITICAL: Derive oldAddress from the CURRENT data state to capture previous edits correctly.
-        // Fallback to originalRow only if data.address is missing (e.g., first edit of UnidentifiedRow).
+        
+        // CRITICAL: Derive oldAddress from the CURRENT data state.
+        // If 'data' was updated by parent after last save, (data as MapPoint).address holds the NEW value.
+        // We use this new value as the 'oldAddress' for the NEXT save.
+        // Fallback to originalRow only for the very first edit.
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         
         let oldKey = '';
@@ -379,7 +382,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
                 }
                 
-                // Optimistic history update
+                // Optimistic history update - Visual only
                 const timestamp = new Date().toLocaleString('ru-RU', {
                     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
                 });
@@ -434,6 +437,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 lastUpdated: updateTimestamp
             };
             
+            // Update parent state immediately so 'data' prop updates for next edit
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
             // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)

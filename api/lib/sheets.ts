@@ -375,6 +375,7 @@ export async function updateAddressInCache(
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
     // Fetch A:D to check current addresses, coordinates, and history
+    // We must include header check or skip it. Assuming row 1 is header.
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:D`,
@@ -402,6 +403,7 @@ export async function updateAddressInCache(
     });
 
     if (rowIndex === -1) {
+        console.log(`[updateAddressInCache] Row not found for "${oldAddress}" (norm: ${oldNorm}). Appending new row.`);
         // Case: The row doesn't exist at all (neither current nor history).
         // Treat as a new entry.
         await sheets.spreadsheets.values.append({
@@ -426,40 +428,41 @@ export async function updateAddressInCache(
     const currentHistory = row[3] ? String(row[3]) : '';
 
     // 3) If the address in Column A is already the New Address, we don't need to change A.
-    // BUT we might still want to update history if for some reason it was missed? 
-    // Generally, if A matches New, we are likely done, but let's double check we aren't looping.
     if (normalizeForComparison(currentAddress) === newNorm) {
+        console.log(`[updateAddressInCache] Address already up to date: ${newAddress}`);
         return;
     }
 
     // 4) Construct new history
     // Append the OLD value of the row (which is what we are replacing) to the history.
-    const historyEntry = `${currentAddress || oldAddress} [${timestamp}]`;
+    // We use the current value in A (currentAddress) because that's what is being overwritten.
+    // If A is empty/broken, fallback to oldAddress request param.
+    const valueToArchive = currentAddress || oldAddress;
+    const historyEntry = `${valueToArchive} [${timestamp}]`;
     
-    // Check if this exact history entry already exists to prevent duplicates on rapid clicks
-    if (currentHistory.includes(historyEntry)) {
-        // Just update the address part if history is already there
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${actualSheetTitle}'!A${rowIndex + 1}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[newAddress]],
-            },
-        });
-        return;
-    }
-
-    // Use \n for explicit new line in Google Sheets cell
+    // We deliberately do NOT return early even if history entry exists, to FORCE update column A.
+    // This fixes issues where Col A failed to update in previous attempts.
+    
+    // Use explicit \n for new line in Google Sheets cell. 
+    // Google Sheets treats \n as a newline when valueInputOption is USER_ENTERED.
     const newHistory = currentHistory
         ? `${currentHistory}\n${historyEntry}`
         : historyEntry;
 
     // 5) Update the row. 
     // CRITICAL: We write back currentLat and currentLon to avoid wiping them out.
+    // rowIndex is 0-based index of the array (which matches the sheet row index if we fetched from A1).
+    // Sheet API is 1-based for A1 notation.
+    // Example: rows[0] is header (Row 1). rows[1] is data (Row 2).
+    // If rowIndex is 1, we want to update Row 2. So A2:D2.
+    // Math: Row Number = rowIndex + 1.
+    const rowNumber = rowIndex + 1;
+    
+    console.log(`[updateAddressInCache] Updating Row ${rowNumber}. Old: "${currentAddress}" -> New: "${newAddress}". History len: ${newHistory.length}`);
+
     await sheets.spreadsheets.values.update({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${actualSheetTitle}'!A${rowIndex + 1}:D${rowIndex + 1}`,
+        range: `'${actualSheetTitle}'!A${rowNumber}:D${rowNumber}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
             values: [[newAddress, currentLat, currentLon, newHistory]],
