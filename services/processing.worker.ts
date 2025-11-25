@@ -49,10 +49,18 @@ const getCanonicalRegion = (row: any): string => {
         const lowerVal = cleanVal.toLowerCase()
             .replace(/ё/g, 'е')
             .replace(/[.,]/g, ' ')
-            .replace(/\s+/g, ' ')
+            .replace(/\s+/g, ' ');
+
+        // Stronger normalization for cases like "г. Орел"
+        const normalized = lowerVal
             .replace(/^г\s+/g, '') // remove "г " prefix
             .replace(/\s+г$/g, '') // remove " г" suffix
             .trim();
+
+        // Explicit check for Orel/Orel variations to ensure mapping to Orlovskaya Oblast
+        if (["орел", "орёл", "orel"].includes(normalized)) {
+            return "Орловская область";
+        }
 
         // Direct mapping check against known variations.
         // This handles cases where the Subject column contains "г. Орел", "Орловская обл", etc.
