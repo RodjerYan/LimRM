@@ -29,78 +29,28 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 /**
  * Determines the Canonical Region Name for a given data row.
  * STRICT MODE: Only uses the "Subject" column. No fallbacks to address or city.
- * Enhanced to support CIS countries (KZ, BY, UA, UZ, KG, AM, GE, MD).
  */
 const getCanonicalRegion = (row: any): string => {
-    // Expanded keywords to cover CIS column naming conventions
-    // 'облыс' (KZ), 'вилоят' (UZ/TJ), 'province' (Generic), 'region' (Generic)
-    let region = findValueInRow(row, [
-        'субъект', 'subject', 'субъект рф', 'subj', 
-        'регион', 'область', 'region', 'province', 
-        'облыс', 'области', 'вилоят', 'viloyat'
-    ], []);
+    // 1. Strict Priority: Look ONLY for explicit "Subject" column data.
+    // We assume the file structure always contains this column for valid region identification.
+    let region = findValueInRow(row, ['субъект', 'subject', 'субъект рф', 'subj'], []);
     
-    // If empty, we DO NOT guess from address.
+    // 2. If empty, we DO NOT guess.
     if (!region) {
         return 'Регион не определен';
     }
 
-    // Normalization
+    // 3. Simple Normalization
     region = String(region).trim();
     
     // Fix common abbreviations and garbage prefixes
     region = region
-        .replace(/^г\.\s*/i, '') 
-        .replace(/\s+г\.\s*/i, ' ')
-        .replace(/^г\s+/i, ''); // "г Алматы" -> "Алматы"
-
-    // --- РФ / General ---
-    region = region
-        .replace(/обл\.?$/i, ' область') 
-        .replace(/р-?н\.?$/i, ' район');
-
-    // --- УКРАИНА ---
-    region = region
-        .replace(/обл\.?$/i, ' область') 
-        .replace(/район$/i, ' район')
-        .replace(/р-н$/i, ' район')
-        .replace(/місто/i, 'город');
-
-    // --- БЕЛАРУСЬ ---
-    region = region
-        .replace(/вобл\.?$/i, ' область') 
-        .replace(/раён$/i, ' район');
-
-    // --- КАЗАХСТАН ---
-    region = region
-        .replace(/облысы?$/i, ' область') 
-        .replace(/аудан[ы]?$/i, ' район')
-        .replace(/қаласы?$/i, ''); // "Алматы қаласы" -> "Алматы"
-
-    // --- УЗБЕКИСТАН ---
-    region = region
-        .replace(/вилоят[и]?$/i, ' область')
-        .replace(/туман[и]?$/i, ' район')
-        .replace(/respublikasi?$/i, 'Республика'); 
-
-    // --- КЫРГЫЗСТАН ---
-    region = region
-        .replace(/облусу?$/i, ' область')
-        .replace(/району?$/i, ' район')
-        .replace(/шаары?$/i, ''); // "Ош шаары" -> "Ош"
-
-    // --- АРМЕНИЯ ---
-    region = region.replace(/марз$/i, ' область');
-
-    // --- МОЛДОВА ---
-    region = region
-        .replace(/^raionul\s+/i, '')
-        .replace(/\s+raion$/i, ' район');
-
-    // --- ГРУЗИЯ ---
-    region = region.replace(/мхаре$/i, ' край');
-
-    region = region.replace(/\s+/g, ' ').trim();
+        .replace(/^г\.\s*/i, '') // Remove "г." prefix (e.g. "г. Москва" -> "Москва")
+        .replace(/\s+г\.\s*/i, ' ') // Remove internal " g. "
+        .replace(/обл\.?$/i, ' область') // "обл" -> "область"
+        .replace(/р-?н\.?$/i, ' район') // "р-н" -> "район"
+        .replace(/\s+/g, ' ')
+        .trim();
 
     // Capitalize for consistency (e.g. "москва" -> "Москва")
     return region.split(/[\s-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
