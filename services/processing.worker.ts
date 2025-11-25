@@ -1,4 +1,3 @@
-
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -201,8 +200,20 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
     const headers = rows[0].map(h => String(h || ''));
     
     // Identify Column Indices
-    // REGION IS STRICTLY INDEX 1 (Column B)
-    const idxRegion = 1; 
+    
+    // Region Column Detection: Prioritize explicit keywords
+    // We look for headers like "Субъект", "Регион", "Oblast", "Region", "Subject".
+    // We exclude "Код", "Code", "Менеджер", "Manager" to avoid false positives.
+    let idxRegion = findColumnIndex(headers, ['субъект', 'регион', 'область', 'region', 'subject'], ['код', 'code', 'менеджер', 'manager']);
+    
+    // Fallback: If dynamic search fails, default to index 1 (Column B), BUT with safety checks
+    if (idxRegion === -1 && headers.length > 1) {
+        const colBHeader = headers[1].toLowerCase();
+        // Safety check: Don't default to Col B if it looks like Brand or Client or something else known
+        if (!colBHeader.includes('бренд') && !colBHeader.includes('brand') && !colBHeader.includes('клиент') && !colBHeader.includes('контрагент')) {
+             idxRegion = 1; 
+        }
+    }
     
     const idxWeight = findColumnIndex(headers, ['вес', 'факт', 'продажи']);
     if (idxWeight === -1) throw new Error('Не найдена колонка "Вес" (или Факт).');
@@ -333,10 +344,13 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
 
         const finalAddress = parsedAddress.finalAddress;
         
-        // STRICT REGION LOGIC: Always use Column B (Index 1)
-        // We also run it through normalization to handle "g. Orel" -> "Oryol Region" mapping.
-        const rawRegionCol = row[idxRegion];
-        const regionForAggregation = rawRegionCol ? normalizeRegionString(String(rawRegionCol)) : 'Регион не определен';
+        // DYNAMIC REGION EXTRACTION
+        // Try to get the region from the found index.
+        // If not found (idxRegion == -1), use 'Регион не определен'.
+        let regionForAggregation = 'Регион не определен';
+        if (idxRegion !== -1 && row[idxRegion]) {
+             regionForAggregation = normalizeRegionString(String(row[idxRegion]));
+        }
         
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         
