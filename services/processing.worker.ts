@@ -26,66 +26,84 @@ type CommonProcessArgs = {
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- HELPER: Universal Region Normalization (RF + CIS) ---
-const normalizeRegionString = (input: string): string => {
-    if (!input) return 'Регион не определен';
-    let s = input.toLowerCase().replace(/\u00A0/g, ' ').replace(/ё/g, 'е').trim();
-
-    // Remove "г.", "город" prefixes/words
-    s = s.replace(/^г\.\s*/i, '').replace(/\s+г\.\s*/i, ' ').replace(/\bгород\b/gi, '');
-
-    // General replacements for RF and CIS (UA, BY, KZ, UZ, KG, AM, MD, GE)
-    s = s
-        .replace(/\bобл\.?$/i, ' область')
-        .replace(/\bвобл\.?$/i, ' область')     // Belarus: вобласць
-        .replace(/\bоблыс(ы|ь)?$/i, ' область') // Kazakhstan: облысы
-        .replace(/\bвилоят(ы)?$/i, ' область')  // Uzbekistan: вилоят
-        .replace(/\bобл(?:аст|ь)?s?$/i, ' область')
-        .replace(/\bр-?н\.?$/i, ' район')
-        .replace(/\bрайон\b$/i, ' район')
-        .replace(/\bаудан(ы)?$/i, ' район')     // Kazakhstan: ауданы
-        .replace(/\bтуман(ы)?$/i, ' район')     // Uzbekistan: тумани
-        .replace(/\bоблусу?$/i, ' область')     // Kyrgyzstan: облусу
-        .replace(/\bмарз$/i, ' область')        // Armenia: марз
-        .replace(/^raionul\s+/i, '')            // Moldova: raionul
-        .replace(/\s+raion$/i, ' район')        // Moldova
-        .replace(/\bмхаре$/i, ' край')          // Georgia: mkhare
-        ;
-
-    // Remove extra characters and double spaces
-    s = s.replace(/[^а-я0-9\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
-
-    // Capitalize each word
-    return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-};
-
 /**
  * Determines the Canonical Region Name for a given data row.
- * If `headers` are provided, strictly checks Column B (index 1).
- * Otherwise falls back to keyword search.
+ * STRICT MODE: Only uses the "Subject" column. No fallbacks to address or city.
+ * Enhanced to support CIS countries (KZ, BY, UA, UZ, KG, AM, GE, MD).
  */
-const getCanonicalRegion = (row: any, headers?: string[]): string => {
-    // 1) If headers are provided and Column B exists — strictly use it.
-    if (headers && headers.length >= 2) {
-        const subjHeader = String(headers[1]).trim();
-        // Only proceed if the row has this specific key (handling potential duplicate header names in parsing)
-        if (subjHeader && row[subjHeader] != null) {
-            const raw = String(row[subjHeader]).trim();
-            if (raw !== '') return normalizeRegionString(raw);
-        }
+const getCanonicalRegion = (row: any): string => {
+    // Expanded keywords to cover CIS column naming conventions
+    // 'облыс' (KZ), 'вилоят' (UZ/TJ), 'province' (Generic), 'region' (Generic)
+    let region = findValueInRow(row, [
+        'субъект', 'subject', 'субъект рф', 'subj', 
+        'регион', 'область', 'region', 'province', 
+        'облыс', 'области', 'вилоят', 'viloyat'
+    ], []);
+    
+    // If empty, we DO NOT guess from address.
+    if (!region) {
+        return 'Регион не определен';
     }
 
-    // 2) Fallback: search by keywords
-    // Expanded keywords to cover CIS column naming conventions
-    let region = findValueInRow(row, [
-        'субъект', 'subject', 'субъект рф', 'subj',
-        'регион', 'область', 'region', 'province',
-        'облыс', 'области', 'вилоят', 'viloyat',
-        'марз', 'raion'
-    ], []);
+    // Normalization
+    region = String(region).trim();
+    
+    // Fix common abbreviations and garbage prefixes
+    region = region
+        .replace(/^г\.\s*/i, '') 
+        .replace(/\s+г\.\s*/i, ' ')
+        .replace(/^г\s+/i, ''); // "г Алматы" -> "Алматы"
 
-    if (!region) return 'Регион не определен';
-    return normalizeRegionString(String(region).trim());
+    // --- РФ / General ---
+    region = region
+        .replace(/обл\.?$/i, ' область') 
+        .replace(/р-?н\.?$/i, ' район');
+
+    // --- УКРАИНА ---
+    region = region
+        .replace(/обл\.?$/i, ' область') 
+        .replace(/район$/i, ' район')
+        .replace(/р-н$/i, ' район')
+        .replace(/місто/i, 'город');
+
+    // --- БЕЛАРУСЬ ---
+    region = region
+        .replace(/вобл\.?$/i, ' область') 
+        .replace(/раён$/i, ' район');
+
+    // --- КАЗАХСТАН ---
+    region = region
+        .replace(/облысы?$/i, ' область') 
+        .replace(/аудан[ы]?$/i, ' район')
+        .replace(/қаласы?$/i, ''); // "Алматы қаласы" -> "Алматы"
+
+    // --- УЗБЕКИСТАН ---
+    region = region
+        .replace(/вилоят[и]?$/i, ' область')
+        .replace(/туман[и]?$/i, ' район')
+        .replace(/respublikasi?$/i, 'Республика'); 
+
+    // --- КЫРГЫЗСТАН ---
+    region = region
+        .replace(/облусу?$/i, ' область')
+        .replace(/району?$/i, ' район')
+        .replace(/шаары?$/i, ''); // "Ош шаары" -> "Ош"
+
+    // --- АРМЕНИЯ ---
+    region = region.replace(/марз$/i, ' область');
+
+    // --- МОЛДОВА ---
+    region = region
+        .replace(/^raionul\s+/i, '')
+        .replace(/\s+raion$/i, ' район');
+
+    // --- ГРУЗИЯ ---
+    region = region.replace(/мхаре$/i, ' край');
+
+    region = region.replace(/\s+/g, ' ').trim();
+
+    // Capitalize for consistency (e.g. "москва" -> "Москва")
+    return region.split(/[\s-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
 };
 
 
@@ -208,12 +226,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         });
     }
-    
-    // Debugging OKB regions
-    console.log('OKB regions counts:', okbRegionCounts);
-    if (okbRegionCounts['Регион не определен']) {
-        console.warn(`WARNING: ${okbRegionCounts['Регион не определен']} rows in OKB have undefined region.`);
-    }
 
     // --- CACHE INITIALIZATION with Redirects ---
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
@@ -322,10 +334,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        
         // USE CANONICAL REGION HERE TO MATCH OKB
-        // STRICT MODE: Pass headers to ensure we prioritize Column B ("Субъект")
-        const regionForAggregation = getCanonicalRegion(row, headers);
+        // Note: We pass the whole row, not parsed parts, as per strict instruction to look at Subject column
+        const regionForAggregation = getCanonicalRegion(row);
         
         // If region is undefined from Subject column, we DO NOT fallback to address parsing.
         // It will remain 'Регион не определен'.
