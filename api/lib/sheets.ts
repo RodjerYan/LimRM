@@ -68,8 +68,25 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        const latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
-        const lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
+        // STRICT COLUMN MAPPING BASED ON USER REQUEST:
+        // OKB Sheet: Column L = Longitude (Index 11), Column M = Latitude (Index 12)
+        // 0-based index: A=0, B=1 ... L=11, M=12
+        
+        let latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
+        let lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
+
+        // Force override from specific columns if headers failed or just to be safe
+        if (rowArray.length > 12) {
+             // If header parsing didn't find a clear lat/lon, or to enforce the L/M rule:
+             // Check if Column M (Lat) and Column L (Lon) have data
+             const rawLon = rowArray[11]; // Column L
+             const rawLat = rowArray[12]; // Column M
+             
+             if (rawLat && rawLon) {
+                 latVal = rawLat;
+                 lonVal = rawLon;
+             }
+        }
 
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
@@ -187,7 +204,13 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         const values = valueRange.values || [];
         if (values.length > 1) { // Skip header
             cache[title] = values.slice(1).map(row => {
-                const latStr = String(row[1] || '').trim();
+                // AKB CACHE MAPPING:
+                // Column A (Index 0): Address
+                // Column B (Index 1): Latitude
+                // Column C (Index 2): Longitude
+                // Column D (Index 3): History
+                
+                const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
                 
                 // Check for soft delete flag

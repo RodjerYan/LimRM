@@ -289,7 +289,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                     <th className="px-4 py-3">РМ</th>
                                     <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
                                     <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                    <th className="px-4 py-3 text-center text-indigo-300" title="Процент покрытия ОКБ. Рассчитывается как (Кол-во совпадений по координатам / Всего в ОКБ).">Покрытие ОКБ</th>
+                                    <th className="px-4 py-3 text-center text-indigo-300" title="Процент покрытия ОКБ. Рассчитывается как (Кол-во совпадений по координатам / Всего в ОКБ).">Покрытие (по координатам)</th>
                                     <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
                                     <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
                                     <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
@@ -356,7 +356,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                     <thead className="bg-gray-800 text-gray-400 font-normal">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Регион</th>
-                                                                            <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие (ОКБ)</th>
+                                                                            <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие (Координаты)</th>
                                                                             <th className="px-3 py-2 text-right">Рост (%)</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
