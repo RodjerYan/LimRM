@@ -1,8 +1,11 @@
 
 import React, { useMemo, useState } from 'react';
+import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow } from '../types';
+import { ExportIcon } from './icons';
+import { findValueInRow } from '../utils/dataUtils';
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -239,6 +242,47 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
     }, [data, okbRegionCounts, okbData]);
 
+    const handleExportUncovered = () => {
+        // 1. Gather all Active Client Coordinate Hashes
+        const activeCoordSet = new Set<string>();
+        data.forEach(group => {
+            group.clients.forEach(c => {
+                if (c.lat && c.lon) {
+                    const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
+                    activeCoordSet.add(hash);
+                }
+            });
+        });
+
+        // 2. Filter OKB Data for unmatched rows
+        const uncoveredRows = okbData.filter(row => {
+            // If row has no coords, we assume it's uncovered (safe default) or can't match it.
+            // Let's include it as potential.
+            if (!row.lat || !row.lon || isNaN(row.lat) || isNaN(row.lon)) return true;
+            
+            const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
+            // If hash is NOT in active set, it is uncovered
+            return !activeCoordSet.has(hash);
+        });
+
+        // 3. Map to Requested Columns
+        const worksheetData = uncoveredRows.map(row => ({
+            'Страна': findValueInRow(row, ['страна', 'country']) || '',
+            'Субъект': findValueInRow(row, ['субъект', 'регион', 'region', 'область']),
+            'Город': findValueInRow(row, ['город', 'city', 'населенный пункт']),
+            'Категория': findValueInRow(row, ['вид деятельности', 'тип', 'категория']),
+            'Наименование': findValueInRow(row, ['наименование', 'клиент', 'название']),
+            'Адрес': findValueInRow(row, ['юридический адрес', 'адрес', 'фактический адрес']),
+            'Контакты': findValueInRow(row, ['контакты', 'телефон', 'email']),
+        }));
+
+        // 4. Create and Download Excel
+        const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Непокрытый Потенциал');
+        XLSX.writeFile(workbook, `Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     const missingOkbRegions: string[] = (metrics as any).__missingOkbRegions || [];
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
 
@@ -269,6 +313,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                             <span className="w-3 h-3 rounded-full bg-amber-500"></span>
                             <span>Высокая доля рынка (Сниженный план)</span>
                         </div>
+                        
+                        {/* Export Button */}
+                        {okbData.length > 0 && (
+                            <button 
+                                onClick={handleExportUncovered}
+                                className="ml-auto flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"
+                                title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам"
+                            >
+                                <ExportIcon />
+                                Скачать непокрытый потенциал (XLSX)
+                            </button>
+                        )}
+
                         {!okbRegionCounts && (
                             <div className="ml-auto text-xs text-red-400 border border-red-500/30 px-2 py-1 rounded">
                                 ⚠️ База ОКБ не загружена. Расчет приблизительный.
