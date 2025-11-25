@@ -109,15 +109,20 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
+ * Now supports an optional exclusion list to avoid false positives (e.g., "Subject Code" when looking for "Subject").
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
+ * @param excludeKeywords An optional array of lowercase keywords to exclude.
  * @returns The found string value or an empty string.
  */
-export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+export const findValueInRow = (row: { [key: string]: any }, keywords: string[], excludeKeywords: string[] = []): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        const foundKey = rowKeys.find(rKey => {
+            const lowerKey = rKey.toLowerCase().trim();
+            return lowerKey.includes(keyword) && !excludeKeywords.some(ex => lowerKey.includes(ex));
+        });
         if (foundKey && row[foundKey] != null) { // Check for null and undefined
             return String(row[foundKey]);
         }
