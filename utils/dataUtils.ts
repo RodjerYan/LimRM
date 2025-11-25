@@ -109,6 +109,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
+ * Prioritizes exact matches and ensures non-empty return values.
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
  * @returns The found string value or an empty string.
@@ -116,10 +117,32 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
+    
+    // 1. Try Exact Matches First (case-insensitive)
+    // This helps avoid picking "Код региона" when we want "Регион".
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
-        if (foundKey && row[foundKey] != null) { // Check for null and undefined
-            return String(row[foundKey]);
+        const exactKey = rowKeys.find(k => k.toLowerCase().trim() === keyword.toLowerCase().trim());
+        if (exactKey && row[exactKey] != null) {
+             const val = String(row[exactKey]).trim();
+             if (val !== '') return val;
+        }
+    }
+
+    // 2. Try Partial Matches
+    // We iterate through ALL keywords, finding candidate columns for each.
+    // For each keyword, we prefer the shortest column name that contains it (heuristic for "Region" over "Region Code").
+    for (const keyword of keywords) {
+        const lowerKeyword = keyword.toLowerCase();
+        const matchingKeys = rowKeys.filter(k => k.toLowerCase().includes(lowerKeyword));
+        
+        // Sort by length ascending (shortest first)
+        matchingKeys.sort((a, b) => a.length - b.length);
+        
+        for (const key of matchingKeys) {
+            if (row[key] != null) {
+                const val = String(row[key]).trim();
+                if (val !== '') return val;
+            }
         }
     }
     return '';
@@ -208,10 +231,7 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     const lowerDirty = dirtyString 
         ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
-        
-    // If neither exists, give up early
-    if (!lowerDirty && !cityHint) return 'Регион не определен';
-
+    
     // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
     if (lowerDirty) {
         // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
