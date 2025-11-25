@@ -247,7 +247,7 @@ REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
  */
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
     // Normalize: lowercase, remove non-breaking spaces, replace special chars with space
-    // CRITICAL: Normalize 'ё' to 'е' immediately for consistent matching
+    // CRITICAL: Normalize 'ё' to 'е' immediately for consistent matching globally
     const lowerDirty = dirtyString 
         ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
@@ -257,7 +257,8 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
         // Note: REGION_KEYWORD_MAP keys should be lowercased in source, but check just in case
         for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
-             if (lowerDirty.includes(key)) return value;
+             // normalized comparison
+             if (lowerDirty.includes(key.toLowerCase().replace(/ё/g, 'е'))) return value;
         }
 
         // Second pass: Root matching (handles "Калужская" in "Калужская область")
@@ -270,16 +271,23 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         // Third pass: Check if the dirty string ITSELF is a city name (e.g. "Орёл" in Region column)
         // This is crucial for OKB files where "Region" column might just say "г. Орёл" or "Орёл"
         // Aggressively strip prefixes AND suffixes (like "г.", "г", "город")
+        // Since we removed dots/punct earlier with regex `[^а-яa-z0-9\s]`, "г." became "г ".
         let cleanPotentialCity = lowerDirty
-            .replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s+/, '') // prefix
-            .replace(/\s+(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)$/, '') // suffix (e.g. "Смоленск г.")
-            .replace(/\s+(г|п)\.?$/, '') // short suffix "г"
+            .replace(/^(г|город|пгт|пос|с|село|дер|д)\s+/, '') // prefix
+            .replace(/\s+(г|город|пгт|пос|с|село|дер|д)$/, '') // suffix (e.g. "Смоленск г")
             .trim();
         
         // Safety: Don't match short numeric strings or very short garbage as cities (e.g. "57")
         if (cleanPotentialCity.length > 2 && isNaN(Number(cleanPotentialCity))) {
+             // First try exact match (normalized ye)
              if (REGION_BY_CITY_MAP[cleanPotentialCity]) {
                 return REGION_BY_CITY_MAP[cleanPotentialCity];
+            }
+            
+            // Fallback: Try matching the original dirty string if cleaning was too aggressive
+            // or if the map key contains the 'г.' part (unlikely but safe)
+             if (REGION_BY_CITY_MAP[lowerDirty]) {
+                return REGION_BY_CITY_MAP[lowerDirty];
             }
         }
     }
@@ -287,7 +295,10 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
     // 2. Fallback to City Hint only if Region String didn't match
     let lowerCity = cityHint ? cityHint.toLowerCase().replace(/ё/g, 'е').trim() : '';
     if (lowerCity) {
-        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+        // Since cityHint usually comes from a "City" column, it might contain "г."
+        // Normalize punctuation again to match logic above
+        lowerCity = lowerCity.replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+        lowerCity = lowerCity.replace(/^(г|город|пгт|пос|с|село|дер|д)\s+/, '').trim();
         
         if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
             return REGION_BY_CITY_MAP[lowerCity];
