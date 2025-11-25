@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
+import RoiGenome from './components/modules/RoiGenome'; // NEW IMPORT
 
 // Existing components needed for AMP module
 import Filters from './components/Filters';
@@ -18,7 +20,7 @@ import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import RMDashboard from './components/RMDashboard'; 
-import RMAnalysisModal from './components/RMAnalysisModal'; // Assuming this exists
+import RMAnalysisModal from './components/RMAnalysisModal'; 
 
 import { 
     AggregatedDataRow, 
@@ -436,6 +438,7 @@ const App: React.FC = () => {
                         disabled={isControlPanelLocked}
                         unidentifiedCount={unidentifiedRows.length}
                         activeClientsCount={allActiveClients.length}
+                        uploadedData={allData} // Pass loaded data for analysis
                     />
                 );
             case 'prophet':
@@ -443,15 +446,7 @@ const App: React.FC = () => {
             case 'agile':
                 return <AgileLearning data={allData} />;
             case 'roi-genome':
-                return (
-                    <div className="text-center py-20 bg-gray-900/50 rounded-2xl border border-gray-800">
-                        <h2 className="text-2xl font-bold text-white mb-2">ROI GENOME</h2>
-                        <p className="text-gray-400">
-                            Интеллектуальный слой (Intelligence Layer) интегрирован в модули AMP и PROPHET через AI-подсказки.<br/>
-                            Ищите кнопки "Анализ" и "Инсайты" в соответствующих метриках.
-                        </p>
-                    </div>
-                );
+                return <RoiGenome data={allData} />;
             case 'amp':
             default:
                 return (
