@@ -127,33 +127,34 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
-    if (!okbData) return [];
-    
-    // Use the same canonical extraction for robust matching
-    const potentialForRegion = okbData.filter(row => {
-        const rowRegion = getCanonicalRegion(row);
-        return rowRegion === region;
-    });
-    
-    if (potentialForRegion.length === 0) return [];
+/**
+ * Optimized: Finds potential clients from a pre-filtered list of OKB rows for a specific region.
+ */
+function findPotentialClients(
+    regionRows: OkbDataRow[] | undefined, 
+    existingClients: Set<string>
+): PotentialClient[] {
+    if (!regionRows || regionRows.length === 0) return [];
 
     const potential: PotentialClient[] = [];
-    for (const okbRow of potentialForRegion) {
+    // Iterate over pre-grouped OKB rows for this region only
+    for (const okbRow of regionRows) {
         const okbAddress = findAddressInRow(okbRow) || '';
-        const normalizedOkbAddress = normalizeAddress(okbAddress);
         
-        if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
-            const client: PotentialClient = {
-                name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
-                address: okbAddress,
-                type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
-            };
-            if(okbRow.lat && okbRow.lon) {
-                client.lat = okbRow.lat;
-                client.lon = okbRow.lon;
+        if (okbAddress) {
+             const normalizedOkbAddress = normalizeAddress(okbAddress);
+             if (!existingClients.has(normalizedOkbAddress)) {
+                const client: PotentialClient = {
+                    name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
+                    address: okbAddress,
+                    type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
+                };
+                if(okbRow.lat && okbRow.lon) {
+                    client.lat = okbRow.lat;
+                    client.lon = okbRow.lon;
+                }
+                potential.push(client);
             }
-            potential.push(client);
         }
         if (potential.length >= 200) break; 
     }
@@ -210,13 +211,21 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    // --- COUNT OKB BY REGION (ROBUST) ---
+    // --- PRE-GROUP OKB BY REGION ---
+    // Optimized: Create region buckets once to avoid traversing full OKB for every aggregation row
     const okbRegionCounts: { [key: string]: number } = {};
+    const okbByRegion: Record<string, OkbDataRow[]> = {};
+
     if (okbData) {
         okbData.forEach(row => {
             const canonicalRegion = getCanonicalRegion(row);
             if (canonicalRegion && canonicalRegion !== 'Регион не определен') {
                 okbRegionCounts[canonicalRegion] = (okbRegionCounts[canonicalRegion] || 0) + 1;
+                
+                if (!okbByRegion[canonicalRegion]) {
+                    okbByRegion[canonicalRegion] = [];
+                }
+                okbByRegion[canonicalRegion].push(row);
             }
         });
     }
@@ -441,6 +450,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
+    
+    // Cache for potential clients to avoid re-calculating for the same region multiple times (Optimization for many groups in same region)
+    const potentialClientsCache = new Map<string, PotentialClient[]>();
 
     const finalData: AggregatedDataRow[] = [];
     for (const item of Object.values(aggregatedData)) {
@@ -448,11 +460,18 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
         
+        // OPTIMIZATION: Memoize potential clients lookup
+        let regionPotentialClients = potentialClientsCache.get(item.region);
+        if (!regionPotentialClients) {
+            regionPotentialClients = findPotentialClients(okbByRegion[item.region], existingClientsForPotentialSearch);
+            potentialClientsCache.set(item.region, regionPotentialClients);
+        }
+
         finalData.push({
             ...item, potential,
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
-            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
+            potentialClients: regionPotentialClients,
             clients: Array.from(item.clients.values()) 
         });
     }
