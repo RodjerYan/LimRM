@@ -2,13 +2,14 @@
 import React, { useMemo, useState } from 'react';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
-import { AggregatedDataRow, RMMetrics, PlanMetric } from '../types';
+import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow } from '../types';
 
 interface RMDashboardProps {
     isOpen: boolean;
     onClose: () => void;
     data: AggregatedDataRow[];
     okbRegionCounts: { [key: string]: number } | null;
+    okbData: OkbDataRow[];
 }
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
@@ -20,7 +21,7 @@ const normalizeRmNameForMatching = (str: string) => {
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
-const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts }) => {
+const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData }) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
@@ -30,12 +31,29 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
     const metrics = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
-        const isOkbLoaded = okbRegionCounts !== null;
+        const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
+
+        // --- 1. Pre-process OKB Data for Coordinate Matching ---
+        // We build a Set of coordinate hashes for the entire OKB to enable O(1) lookup.
+        // This allows us to count exactly how many AKB clients match an OKB point physically.
+        const globalOkbCoordSet = new Set<string>();
+        if (isOkbLoaded) {
+            okbData.forEach(row => {
+                if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
+                    // 4 decimal places = ~11 meters precision. 
+                    // This assumes strict matching: if AKB and OKB have same coords, it's the same shop.
+                    const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
+                    globalOkbCoordSet.add(hash);
+                }
+            });
+        }
 
         type RegionBucket = {
             fact: number;
             potential: number;
             activeClients: Set<string>;
+            // Store unique hashes of active clients that matched OKB
+            matchedOkbCoords: Set<string>;
             brandFacts: Map<string, number>;
             originalRegionName?: string;
         };
@@ -78,6 +96,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                     fact: 0,
                     potential: 0,
                     activeClients: new Set(),
+                    matchedOkbCoords: new Set(),
                     brandFacts: new Map(),
                     originalRegionName: row.region
                 });
@@ -87,7 +106,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             regBucket.fact += row.fact;
             regBucket.potential += row.potential || 0;
 
-            if (row.clients) row.clients.forEach(c => regBucket.activeClients.add(c.key));
+            if (row.clients) {
+                row.clients.forEach(c => {
+                    regBucket.activeClients.add(c.key);
+                    // CHECK COORDINATE MATCH AGAINST OKB
+                    if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) {
+                        const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
+                        if (globalOkbCoordSet.has(hash)) {
+                            regBucket.matchedOkbCoords.add(hash);
+                        }
+                    }
+                });
+            }
 
             const brandName = row.brand || 'No Brand';
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
@@ -101,17 +131,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             const brandAggregates = new Map<string, { fact: number, plan: number }>();
 
             let rmTotalOkbRaw = 0;
-            let rmTotalEffectiveMarket = 0;
+            let rmTotalMatched = 0; // Total number of AKB clients that are in OKB
             let rmTotalClients = 0;
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
 
             rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size;
+                const matchedCount = regData.matchedOkbCoords.size;
+                
                 rmTotalClients += activeCount;
+                rmTotalMatched += matchedCount;
                 rmTotalPotentialFile += regData.potential;
 
-                // Direct lookup because worker has already standardized everything
                 let totalRegionOkb = 0;
                 if (globalOkbRegionCounts && globalOkbRegionCounts[regionKey]) {
                     totalRegionOkb = globalOkbRegionCounts[regionKey];
@@ -123,20 +155,20 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // Market Share Calculation
-                // Logic: If Active > OKB, it means the OKB is incomplete. 
-                // In this case, the "True Market" is at least the Active count.
-                // We use Math.max(activeCount, totalRegionOkb) as the denominator to cap share at 100%.
-                const effectiveRegionMarket = Math.max(activeCount, totalRegionOkb);
-                rmTotalEffectiveMarket += effectiveRegionMarket;
-
+                // Market Share Calculation (STRICT COORDINATE MATCHING)
+                // Numerator: Count of Active Clients that PHYSICALLY match an OKB point.
+                // Denominator: Total OKB points in that region.
+                // This represents "Percentage of the Known Potential Market Captured".
+                // This can NEVER exceed 100% because matchedCount <= totalRegionOkb (assuming unique coords in OKB, or effectively so)
+                // NOTE: activeCount can be > matchedCount if we have clients NOT in OKB.
+                
                 let marketShare = NaN;
-                if (isOkbLoaded) {
-                    marketShare = effectiveRegionMarket > 0 ? (activeCount / effectiveRegionMarket) : 0;
+                if (isOkbLoaded && totalRegionOkb > 0) {
+                    marketShare = (matchedCount / totalRegionOkb);
                 }
 
-                // Use capped market share for plan adjustment logic
-                const effectiveShareForCalc = Math.min(1, Number.isNaN(marketShare) ? 0 : marketShare);
+                // Use strict share for plan adjustment
+                const effectiveShareForCalc = Number.isNaN(marketShare) ? 0 : marketShare;
 
                 const sensitivity = 20;
                 let adjustment = (0.4 - effectiveShareForCalc) * sensitivity;
@@ -155,8 +187,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                     plan: regionPlan,
                     growthPct: calculatedRate,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
-                    activeCount: activeCount,
-                    totalCount: totalRegionOkb // Keep raw OKB count for display (X/Y)
+                    activeCount: matchedCount, // We display "Matched / Total"
+                    totalCount: totalRegionOkb
                 });
 
                 regData.brandFacts.forEach((bFact, bName) => {
@@ -179,14 +211,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : BASE_GROWTH_RATE;
 
-            // Weighted share based on Effective Market Size
-            const weightedShare = (isOkbLoaded && rmTotalEffectiveMarket > 0) 
-                ? (rmTotalClients / rmTotalEffectiveMarket) * 100 
+            // Weighted share based on Matched Counts
+            const weightedShare = (isOkbLoaded && rmTotalOkbRaw > 0) 
+                ? (rmTotalMatched / rmTotalOkbRaw) * 100 
                 : NaN;
 
             resultMetrics.push({
                 rmName: rmData.originalName,
-                totalClients: rmTotalClients,
+                totalClients: rmTotalClients, // This remains Total Active from File
                 totalOkbCount: rmTotalOkbRaw,
                 totalFact: rmData.totalFact,
                 totalPotential: rmTotalPotentialFile,
@@ -205,7 +237,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
         (resultMetrics as any).__missingOkbRegions = Array.from(missingRegionNames.values());
         return resultMetrics.sort((a, b) => b.totalFact - a.totalFact);
 
-    }, [data, okbRegionCounts]);
+    }, [data, okbRegionCounts, okbData]);
 
     const missingOkbRegions: string[] = (metrics as any).__missingOkbRegions || [];
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
@@ -256,8 +288,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                     <th className="px-4 py-3 w-8"></th>
                                     <th className="px-4 py-3">РМ</th>
                                     <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
-                                    <th className="px-4 py-3 text-center">АКБ / ОКБ (шт)</th>
-                                    <th className="px-4 py-3 text-center text-indigo-300" title="Покрытие территории. Если >100%, значит база ОКБ неполная.">Доля рынка</th>
+                                    <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
+                                    <th className="px-4 py-3 text-center text-indigo-300" title="Процент покрытия ОКБ. Рассчитывается как (Кол-во совпадений по координатам / Всего в ОКБ).">Покрытие ОКБ</th>
                                     <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
                                     <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
                                     <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
@@ -285,9 +317,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                 <td className="px-4 py-3 font-medium text-white">{rm.rmName}</td>
                                                 <td className="px-4 py-3 text-center font-mono text-white">{formatNum(rm.totalFact)}</td>
                                                 <td className="px-4 py-3 text-center font-mono text-gray-400">
-                                                    <span className="text-white">{rm.totalClients}</span>
+                                                    <span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span>
                                                     <span className="mx-1">/</span>
-                                                    <span>{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
+                                                    <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
                                                 </td>
                                                 <td className={`px-4 py-3 text-center font-bold font-mono ${shareColor}`}>
                                                     {shareValue === null ? '—' : `${shareValue.toFixed(1)}%`}
@@ -324,7 +356,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                     <thead className="bg-gray-800 text-gray-400 font-normal">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Регион</th>
-                                                                            <th className="px-3 py-2 text-right">АКБ / ОКБ (Доля)</th>
+                                                                            <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие (ОКБ)</th>
                                                                             <th className="px-3 py-2 text-right">Рост (%)</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
@@ -339,7 +371,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                                 <tr key={reg.name} className="hover:bg-gray-700/20">
                                                                                     <td className="px-3 py-2">{reg.name}</td>
                                                                                     <td className={`px-3 py-2 text-right font-mono`}>
-                                                                                        <span className="text-gray-400">{reg.activeCount}/{reg.totalCount}</span>
+                                                                                        <span className="text-gray-400" title="Совпадений / Всего ОКБ">{reg.activeCount}/{reg.totalCount}</span>
                                                                                         <span className={`ml-2 font-bold ${regShareColor}`}>
                                                                                             {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(неизв.)'}
                                                                                         </span>

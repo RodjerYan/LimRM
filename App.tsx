@@ -578,6 +578,7 @@ const App: React.FC = () => {
                 onClose={() => setIsRMDashboardOpen(false)} 
                 data={filteredData}
                 okbRegionCounts={okbRegionCounts}
+                okbData={okbData}
             />
         </div>
     );
