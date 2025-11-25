@@ -5,7 +5,7 @@ import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
-import RoiGenome from './components/modules/RoiGenome'; // NEW IMPORT
+import RoiGenome from './components/modules/RoiGenome'; 
 
 // Existing components needed for AMP module
 import Filters from './components/Filters';
@@ -61,7 +61,7 @@ const App: React.FC = () => {
     }
 
     // --- GPS-Enterprise State ---
-    const [activeModule, setActiveModule] = useState('adapta'); // adapta, amp, prophet, agile, roi-genome
+    const [activeModule, setActiveModule] = useState('adapta'); // adapta, amp, dashboard, prophet, agile, roi-genome
 
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
@@ -75,6 +75,7 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    // RMDashboard is now also a main view, but state kept for modal usage if needed or legacy
     const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false);
     const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
@@ -438,7 +439,18 @@ const App: React.FC = () => {
                         disabled={isControlPanelLocked}
                         unidentifiedCount={unidentifiedRows.length}
                         activeClientsCount={allActiveClients.length}
-                        uploadedData={allData} // Pass loaded data for analysis
+                        uploadedData={allData} 
+                    />
+                );
+            case 'dashboard':
+                return (
+                    <RMDashboard 
+                        isOpen={true} // Always open when in this view
+                        onClose={() => setActiveModule('amp')} 
+                        data={filteredData}
+                        okbRegionCounts={okbRegionCounts}
+                        okbData={okbData}
+                        mode="page"
                     />
                 );
             case 'prophet':
@@ -467,14 +479,6 @@ const App: React.FC = () => {
                                     <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
                                     <p className="text-gray-400 text-sm mt-1">Построение многомерных моделей, выявление драйверов роста. Holistic (целостное) моделирование.</p>
                                 </div>
-                                <button
-                                    onClick={() => setIsRMDashboardOpen(true)}
-                                    disabled={!isDataLoaded || isLoading}
-                                    className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all text-sm"
-                                >
-                                    <TargetIcon />
-                                    Дашборд План/Факт
-                                </button>
                             </div>
 
                             <MetricsSummary 
@@ -561,12 +565,15 @@ const App: React.FC = () => {
                 onDelete={handleClientDelete}
                 globalTheme={theme}
             />
+            
+            {/* Retain Modal version if needed, but main access is via sidebar now */}
             <RMDashboard 
                 isOpen={isRMDashboardOpen} 
                 onClose={() => setIsRMDashboardOpen(false)} 
                 data={filteredData}
                 okbRegionCounts={okbRegionCounts}
                 okbData={okbData}
+                mode="modal" 
             />
         </div>
     );
