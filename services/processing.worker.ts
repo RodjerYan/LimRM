@@ -90,20 +90,17 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
-    if (!okbData) return [];
-    
-    // Use the same canonical extraction for robust matching
-    const potentialForRegion = okbData.filter(row => {
-        const rowRegion = getCanonicalRegion(row);
-        return rowRegion === region;
-    });
-    
-    if (potentialForRegion.length === 0) return [];
+// Optimized to use pre-grouped map instead of filtering full array every time
+function findPotentialClients(
+    region: string, 
+    existingClients: Set<string>, 
+    okbByRegion: Map<string, { row: OkbDataRow, address: string }[]>
+): PotentialClient[] {
+    const potentialForRegion = okbByRegion.get(region);
+    if (!potentialForRegion || potentialForRegion.length === 0) return [];
 
     const potential: PotentialClient[] = [];
-    for (const okbRow of potentialForRegion) {
-        const okbAddress = findAddressInRow(okbRow) || '';
+    for (const { row: okbRow, address: okbAddress } of potentialForRegion) {
         const normalizedOkbAddress = normalizeAddress(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
@@ -173,13 +170,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    // --- COUNT OKB BY REGION (ROBUST) ---
+    // --- PRE-PROCESS OKB BY REGION (OPTIMIZATION) ---
+    // Group OKB rows by canonical region once to avoid O(N*M) complexity in findPotentialClients
+    const okbByRegion = new Map<string, { row: OkbDataRow, address: string }[]>();
     const okbRegionCounts: { [key: string]: number } = {};
+
     if (okbData) {
         okbData.forEach(row => {
             const canonicalRegion = getCanonicalRegion(row);
             if (canonicalRegion && canonicalRegion !== 'Регион не определен') {
                 okbRegionCounts[canonicalRegion] = (okbRegionCounts[canonicalRegion] || 0) + 1;
+                
+                if (!okbByRegion.has(canonicalRegion)) {
+                    okbByRegion.set(canonicalRegion, []);
+                }
+                // Cache address lookup as well
+                const address = findAddressInRow(row) || '';
+                okbByRegion.get(canonicalRegion)!.push({ row, address });
             }
         });
     }
@@ -406,6 +413,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     const finalData: AggregatedDataRow[] = [];
+    // NOTE: This loop was previously O(N*M) causing the hang.
+    // Now it uses O(1) map lookup for regions inside findPotentialClients.
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
         if (!hasPotentialColumn) potential = item.fact * 1.15;
@@ -415,7 +424,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             ...item, potential,
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
-            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
+            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbByRegion),
             clients: Array.from(item.clients.values()) 
         });
     }
