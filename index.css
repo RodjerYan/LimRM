@@ -13,6 +13,16 @@
   --text-muted: 156 163 175; /* #9ca3af (gray-400) */
 }
 
+/* 
+   SCALING: 75% 
+   Standard browser font-size is 16px. 
+   Setting root to 12px scales all REM-based Tailwind classes (width, height, padding, font) to 75%.
+   This creates the "Zoom Out" effect without breaking 100vh layout calculations.
+*/
+html {
+  font-size: 12px;
+}
+
 .light-mode {
   /* Light Mode */
   --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) */
@@ -24,7 +34,6 @@
 @layer base {
   body {
     @apply text-text-main;
-    /* zoom: 75%; - Removed to prevent layout overflow/cutoff issues */
   }
 }
 
