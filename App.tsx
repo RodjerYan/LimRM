@@ -1,5 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
+import Navigation from './components/Navigation';
+import Adapta from './components/modules/Adapta';
+import Prophet from './components/modules/Prophet';
+import AgileLearning from './components/modules/AgileLearning';
+
+// Existing components needed for AMP module
 import Filters from './components/Filters';
 import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
@@ -10,10 +16,10 @@ import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import OKBManagement from './components/OKBManagement';
-import FileUpload from './components/FileUpload';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import RMDashboard from './components/RMDashboard'; 
+import RMAnalysisModal from './components/RMAnalysisModal'; // Assuming this exists
+
 import { 
     AggregatedDataRow, 
     FilterOptions, 
@@ -25,10 +31,11 @@ import {
     WorkerResultPayload,
     MapPoint,
     UnidentifiedRow,
+    RMMetrics
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import type { FeatureCollection } from 'geojson';
-import { SunIcon, MoonIcon, TargetIcon } from './components/icons';
+import { TargetIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -51,6 +58,9 @@ const App: React.FC = () => {
         return <ApiKeyErrorDisplay />;
     }
 
+    // --- GPS-Enterprise State ---
+    const [activeModule, setActiveModule] = useState('adapta'); // adapta, amp, prophet, agile, roi-genome
+
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
     
@@ -63,7 +73,7 @@ const App: React.FC = () => {
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false); // New State for RM Dashboard
+    const [isRMDashboardOpen, setIsRMDashboardOpen] = useState(false);
     const [modalHistory, setModalHistory] = useState<ModalType[]>([]);
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
@@ -182,10 +192,12 @@ const App: React.FC = () => {
         setUnidentifiedRows(data.unidentifiedRows);
         setOkbRegionCounts(data.okbRegionCounts);
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Данные успешно загружены. Найдено ${data.aggregatedData.length} групп и ${data.plottableActiveClients.length} клиентов.`, 'success');
+        addNotification(`Data ingested. ${data.aggregatedData.length} groups, ${data.plottableActiveClients.length} active points.`, 'success');
         if (data.unidentifiedRows.length > 0) {
-            addNotification(`Обнаружено ${data.unidentifiedRows.length} строк с неопределенными адресами.`, 'info');
+            addNotification(`${data.unidentifiedRows.length} unidentified records flagged in ADAPTA.`, 'info');
         }
+        // Auto-switch to Analytics if data loaded
+        setActiveModule('amp');
     }, [addNotification]);
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
@@ -239,50 +251,30 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
-    // Improved data update handler that syncs all state slices including lastUpdated
+    // Improved data update handler
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        
-        // 1. Update Active Clients (Flat list for map and list view)
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
             if (exists) {
-                // Update existing
-                return prev.map(c => {
-                    if (c.key === oldKey) {
-                        // Merge all new props including lastUpdated
-                        return { 
-                            ...newPoint, 
-                            isGeocoding: newPoint.isGeocoding ?? c.isGeocoding 
-                        };
-                    }
-                    return c;
-                });
+                return prev.map(c => c.key === oldKey ? { ...newPoint, isGeocoding: newPoint.isGeocoding ?? c.isGeocoding } : c);
             } else {
-                // New client (was unidentified)
                 return [newPoint, ...prev];
             }
         });
     
-        // 2. Update Unidentified Rows (Remove if it was one)
         if (typeof originalIndex === 'number') {
             setUnidentifiedRows(prev => prev.filter(row => row.originalIndex !== originalIndex));
         }
 
-        // 3. Update Aggregated Data (allData) to reflect changes in Search and Tables
         setAllData(prevData => {
             const newData = [...prevData];
             let wasUpdated = false;
-
-            // Try to find existing client in groups
             for (let i = 0; i < newData.length; i++) {
                 const group = newData[i];
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey || c.key === newPoint.key);
-                
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
-                    // Update client preserving all properties from newPoint including lastUpdated
                     updatedClients[clientIndex] = { ...newPoint, isGeocoding: newPoint.isGeocoding };
-                    
                     newData[i] = {
                         ...group,
                         clients: updatedClients,
@@ -292,15 +284,8 @@ const App: React.FC = () => {
                     break; 
                 }
             }
-
-            // If not found in existing groups (e.g. was Unidentified), find target group or create new
             if (!wasUpdated) {
-                const targetGroupIndex = newData.findIndex(g => 
-                    g.rm === newPoint.rm && 
-                    g.brand === newPoint.brand && 
-                    g.region === newPoint.region
-                );
-
+                const targetGroupIndex = newData.findIndex(g => g.rm === newPoint.rm && g.brand === newPoint.brand && g.region === newPoint.region);
                 if (targetGroupIndex !== -1) {
                     const group = newData[targetGroupIndex];
                     const updatedClients = [newPoint, ...group.clients];
@@ -331,17 +316,13 @@ const App: React.FC = () => {
             return newData;
         });
 
-        // 4. Sync editingClient state so Modal receives updates even if closed/reopened
         setEditingClient(prev => {
             if (!prev) return prev;
-            // NOTE: Check against BOTH oldKey and newPoint.key to ensure we catch it whether it was just updated or not.
-            // When editing consecutively, oldKey is the 'current' key.
             if ((prev as MapPoint).key === oldKey || (prev as UnidentifiedRow).originalIndex === originalIndex) {
                  return { ...newPoint, isGeocoding: newPoint.isGeocoding };
             }
             return prev;
         });
-
     }, []);
 
     const MAX_POLL_TIME = 48 * 60 * 60 * 1000; 
@@ -365,57 +346,38 @@ const App: React.FC = () => {
                 }
             }).catch(console.error);
 
-
         const check = async () => {
             try {
-                if (Date.now() - startTime > MAX_POLL_TIME) {
-                    throw new Error('Timeout waiting for coordinates');
-                }
-
+                if (Date.now() - startTime > MAX_POLL_TIME) throw new Error('Timeout waiting for coordinates');
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
-                
                 if (res.ok) {
                     const data = await res.json();
                     if (data.lat && data.lon) {
-                        // Success!
-                        const finalPoint = { 
-                            ...basePoint, // Includes lastUpdated from initial save
-                            lat: data.lat, 
-                            lon: data.lon, 
-                            isGeocoding: false 
-                        };
+                        const finalPoint = { ...basePoint, lat: data.lat, lon: data.lon, isGeocoding: false };
                         handleDataUpdate(tempKey, finalPoint, originalIndex);
-                        addNotification(`Координаты получены из таблицы: ${address}`, 'success');
+                        addNotification(`Coordinates resolved: ${address}`, 'success');
                         processingQueue.current.delete(processKey);
                         return;
                     }
                 }
-                
-                // Not found yet, continue polling
-                setTimeout(check, 5000); // Check every 5 seconds
-
+                setTimeout(check, 5000);
             } catch (e) {
                 console.error("Polling stopped:", e);
                 const failedPoint = { ...basePoint, isGeocoding: false };
                 handleDataUpdate(tempKey, failedPoint, originalIndex);
-                addNotification(`Время ожидания координат истекло: ${address}`, 'error');
+                addNotification(`Geocoding timeout: ${address}`, 'error');
                 processingQueue.current.delete(processKey);
             }
         };
-
         check();
-
     }, [handleDataUpdate, addNotification]);
-
 
     const handleClientDelete = useCallback((keyToDelete: string) => {
         setAllActiveClients(prev => prev.filter(c => c.key !== keyToDelete));
-        
         setUnidentifiedRows(prev => prev.filter(row => {
             const originalAddress = findAddressInRow(row.rowData);
             return normalizeAddress(originalAddress) !== keyToDelete;
         }));
-
         setAllData(prevData => {
             return prevData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === keyToDelete);
@@ -430,10 +392,9 @@ const App: React.FC = () => {
                 return group;
             }).filter(group => group.clients.length > 0);
         });
-        
         setIsEditModalOpen(false);
         setModalHistory([]);
-        addNotification('Строка успешно удалена.', 'success');
+        addNotification('Record deleted.', 'success');
     }, [addNotification]);
     
     const handleOkbStatusChange = (status: OkbStatus) => {
@@ -460,83 +421,116 @@ const App: React.FC = () => {
     const isControlPanelLocked = isLoading;
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
 
+    // --- RENDER CONTENT BASED ON ACTIVE TAB ---
+    const renderContent = () => {
+        switch (activeModule) {
+            case 'adapta':
+                return (
+                    <Adapta 
+                        onFileProcessed={handleFileProcessed}
+                        onProcessingStateChange={handleProcessingStateChange}
+                        okbData={okbData}
+                        okbStatus={okbStatus}
+                        onOkbStatusChange={handleOkbStatusChange}
+                        onOkbDataChange={setOkbData}
+                        disabled={isControlPanelLocked}
+                        unidentifiedCount={unidentifiedRows.length}
+                        activeClientsCount={allActiveClients.length}
+                    />
+                );
+            case 'prophet':
+                return <Prophet summaryMetrics={summaryMetrics} />;
+            case 'agile':
+                return <AgileLearning data={allData} />;
+            case 'roi-genome':
+                return (
+                    <div className="text-center py-20 bg-gray-900/50 rounded-2xl border border-gray-800">
+                        <h2 className="text-2xl font-bold text-white mb-2">ROI GENOME</h2>
+                        <p className="text-gray-400">
+                            Intelligence Layer is integrated into the AMP and PROPHET modules via AI prompts.<br/>
+                            Look for the "Analysis" and "Insights" buttons within specific metrics.
+                        </p>
+                    </div>
+                );
+            case 'amp':
+            default:
+                return (
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start animate-fade-in">
+                        <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
+                            <Filters
+                                options={filterOptions}
+                                currentFilters={filters}
+                                onFilterChange={handleFilterChange}
+                                onReset={resetFilters}
+                                disabled={!isDataLoaded || isLoading}
+                            />
+                        </aside>
+
+                        <div className="lg:col-span-3 space-y-6">
+                            <div className="flex justify-between items-center border-b border-gray-800 pb-4">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Analytics</span></h2>
+                                    <p className="text-gray-400 text-sm mt-1">Holistic modeling and growth driver analysis.</p>
+                                </div>
+                                <button
+                                    onClick={() => setIsRMDashboardOpen(true)}
+                                    disabled={!isDataLoaded || isLoading}
+                                    className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all text-sm"
+                                >
+                                    <TargetIcon />
+                                    Plan vs Fact Dashboard
+                                </button>
+                            </div>
+
+                            <MetricsSummary 
+                                metrics={summaryMetrics} 
+                                okbStatus={okbStatus} 
+                                disabled={!isDataLoaded || isLoading}
+                                onActiveClientsClick={() => setIsClientsModalOpen(true)}
+                            />
+                            
+                            <InteractiveRegionMap 
+                                data={filteredData} 
+                                selectedRegions={filters.region} 
+                                potentialClients={potentialClients}
+                                activeClients={filteredActiveClients}
+                                conflictZones={conflictZones}
+                                flyToClientKey={flyToClientKey}
+                                theme={theme}
+                                onToggleTheme={toggleTheme}
+                                onEditClient={(client) => handleStartEdit(client, 'clients')}
+                            />
+
+                            <ResultsTable 
+                                data={filteredData} 
+                                onRowClick={handleRowClick} 
+                                disabled={!isDataLoaded || isLoading}
+                                unidentifiedRowsCount={unidentifiedRows.length}
+                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                            />
+                            {filteredData.length > 0 && <PotentialChart data={filteredData} />}
+                        </div>
+                    </div>
+                );
+        }
+    };
+
     return (
-        <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300">
-            <main className={`max-w-screen-2xl mx-auto space-y-6 p-4 lg:p-6 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
-                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold text-text-main tracking-tight">Аналитическая панель "Потенциал Роста"</h1>
-                        <p className="text-text-muted mt-1">Инструмент для анализа и визуализации данных по продажам</p>
-                    </div>
-                    <button
-                        onClick={() => setIsRMDashboardOpen(true)}
-                        disabled={!isDataLoaded || isLoading}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-6 rounded-lg shadow-lg flex items-center gap-2 transition-all"
-                    >
-                        <TargetIcon />
-                        План-Факт Панель РМ
-                    </button>
-                </header>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                    <aside className="lg:col-span-1 space-y-6 lg:sticky lg:top-6">
-                        <OKBManagement 
-                            onStatusChange={handleOkbStatusChange}
-                            onDataChange={setOkbData}
-                            status={okbStatus}
-                            disabled={isControlPanelLocked}
-                        />
-                        <FileUpload 
-                            onFileProcessed={handleFileProcessed}
-                            onProcessingStateChange={handleProcessingStateChange}
-                            okbData={okbData}
-                            okbStatus={okbStatus}
-                            disabled={isControlPanelLocked || !okbStatus || okbStatus.status !== 'ready'}
-                        />
-                        <Filters
-                            options={filterOptions}
-                            currentFilters={filters}
-                            onFilterChange={handleFilterChange}
-                            onReset={resetFilters}
-                            disabled={!isDataLoaded || isLoading}
-                        />
-                    </aside>
+        <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300 flex">
+            {/* SIDEBAR NAVIGATION */}
+            <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
 
-                    <div className="lg:col-span-3 space-y-6">
-                        <MetricsSummary 
-                            metrics={summaryMetrics} 
-                            okbStatus={okbStatus} 
-                            disabled={!isDataLoaded || isLoading}
-                            onActiveClientsClick={() => setIsClientsModalOpen(true)}
-                        />
-                        
-                        <InteractiveRegionMap 
-                            data={filteredData} 
-                            selectedRegions={filters.region} 
-                            potentialClients={potentialClients}
-                            activeClients={filteredActiveClients}
-                            conflictZones={conflictZones}
-                            flyToClientKey={flyToClientKey}
-                            theme={theme}
-                            onToggleTheme={toggleTheme}
-                            onEditClient={(client) => handleStartEdit(client, 'clients')}
-                        />
-
-                        <ResultsTable 
-                            data={filteredData} 
-                            onRowClick={handleRowClick} 
-                            disabled={!isDataLoaded || isLoading}
-                            unidentifiedRowsCount={unidentifiedRows.length}
-                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                        />
-                        {filteredData.length > 0 && <PotentialChart data={filteredData} />}
-                    </div>
-                </div>
+            {/* MAIN CONTENT AREA - Shifted right due to fixed sidebar */}
+            <main className={`flex-1 ml-0 lg:ml-64 p-4 lg:p-8 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
+                {renderContent()}
             </main>
-            <div className="fixed bottom-4 right-4 z-50 space-y-3 w-full max-w-sm">
-                {notifications.map(n => (
-                    <Notification key={n.id} message={n.message} type={n.type} />
-                ))}
+
+            <div className="fixed bottom-4 right-4 z-[100] space-y-3 w-full max-w-sm pointer-events-none">
+                <div className="pointer-events-auto space-y-3">
+                    {notifications.map(n => (
+                        <Notification key={n.id} message={n.message} type={n.type} />
+                    ))}
+                </div>
             </div>
 
             <DetailsModal 
