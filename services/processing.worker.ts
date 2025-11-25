@@ -1,5 +1,5 @@
 import * as xlsx from 'xlsx';
-import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
+import { parse as PapaParse, type ParseResult } from 'papaparse';
 import { 
     AggregatedDataRow, 
     OkbDataRow, 
@@ -32,7 +32,7 @@ const normalizeRegionString = (input: string): string => {
     
     let s = input.toLowerCase().replace(/\u00A0/g, ' ').replace(/ё/g, 'е').trim();
     
-    // 1. Check if the "Region" string is actually a known city (e.g. "Орел" -> "Орловская область")
+    // 1. Check if the "Subject" string is actually a known city (e.g. "Орел" -> "Орловская область")
     // This handles cases where the user puts the capital city in the Subject column.
     if (REGION_BY_CITY_MAP[s]) {
         return REGION_BY_CITY_MAP[s];
@@ -68,15 +68,14 @@ const normalizeRegionString = (input: string): string => {
 
 /**
  * Determines the Canonical Region Name for a given data row (Object-based for OKB).
- * Fallback logic primarily for OKB which is parsed as objects.
+ * STRICT MODE: Only looks for "Subject" columns.
  */
 const getCanonicalRegionForObject = (row: any): string => {
-    let region = findValueInRow(row, [
-        'субъект', 'subject', 'субъект рф', 'subj',
-        'регион', 'область', 'region', 'province',
-        'облыс', 'области', 'вилоят', 'viloyat',
-        'марз', 'raion'
-    ], []);
+    // STRICT: Only look for "Subject" columns to identify the region.
+    // Removed 'region', 'область' to avoid matching "Sales Region", "Manager Region", etc.
+    const region = findValueInRow(row, [
+        'субъект', 'subject', 'субъект рф', 'subj'
+    ]);
 
     if (!region) return 'Регион не определен';
     return normalizeRegionString(String(region).trim());
@@ -201,15 +200,14 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
     
     // Identify Column Indices
     
-    // Region Column Detection: Prioritize explicit keywords
-    // We look for headers like "Субъект", "Регион", "Oblast", "Region", "Subject".
-    // We exclude "Код", "Code", "Менеджер", "Manager" to avoid false positives.
-    let idxRegion = findColumnIndex(headers, ['субъект', 'регион', 'область', 'region', 'subject'], ['код', 'code', 'менеджер', 'manager']);
+    // Region Column Detection: STRICTLY "Subject"
+    // Removed 'регион', 'область', 'region' to avoid false positives with "Sales Region" columns.
+    let idxRegion = findColumnIndex(headers, ['субъект', 'subject', 'субъект рф', 'subj'], ['код', 'code', 'менеджер', 'manager']);
     
-    // Fallback: If dynamic search fails, default to index 1 (Column B), BUT with safety checks
+    // Fallback: If dynamic search fails, default to index 1 (Column B) as per user "Always exists" claim
     if (idxRegion === -1 && headers.length > 1) {
-        const colBHeader = headers[1].toLowerCase();
         // Safety check: Don't default to Col B if it looks like Brand or Client or something else known
+        const colBHeader = headers[1].toLowerCase();
         if (!colBHeader.includes('бренд') && !colBHeader.includes('brand') && !colBHeader.includes('клиент') && !colBHeader.includes('контрагент')) {
              idxRegion = 1; 
         }
