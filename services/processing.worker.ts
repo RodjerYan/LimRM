@@ -31,30 +31,28 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
  * 
  * STRICT LOGIC UPDATE:
- * 1. Prioritizes the "Субъект" (Subject) column above all else.
- * 2. Ignores ambiguous columns like "Region" which might contain sales zones.
- * 3. Standardizes variations (e.g., "г. Орел" -> "Орловская область") using the keyword map.
+ * 1. Prioritizes the "Субъект" (Subject) column above all else, but also checks "Регион"/"Region".
+ * 2. Standardizes variations (e.g., "г. Орел" -> "Орловская область") using the keyword map and strict normalization.
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. STRICT PRIORITY: Look ONLY for the "Субъект" column.
-    // We intentionally exclude 'region', 'area', 'область' from the search to avoid picking up 
-    // sales hierarchy columns (e.g. "Region Center", "Manager Region").
-    const subjectValue = findValueInRow(row, ['субъект', 'subject']);
+    // 1. Search for relevant columns. Priority: Subject > Region > Oblast
+    const subjectValue = findValueInRow(row, ['субъект', 'subject', 'регион', 'region', 'область']);
 
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
         
-        // Normalize logic: remove common city prefixes which might appear in Subject column
-        // e.g. "г Орел" -> "Орел" to match key "орел" in map.
-        const lowerVal = cleanVal.toLowerCase()
+        // Initial cleaning: lower case, normalize e, replace punctuation with space
+        let lowerVal = cleanVal.toLowerCase()
             .replace(/ё/g, 'е')
             .replace(/[.,]/g, ' ')
             .replace(/\s+/g, ' ');
 
-        // Stronger normalization for cases like "г. Орел"
+        // Strict Normalization: Remove 'г', 'г.', 'гор', 'гор.', 'город' prefixes and suffixes
+        // regex: start of string, followed by (г|гор|город), followed by optional dot/space
         const normalized = lowerVal
-            .replace(/^г\s+/g, '') // remove "г " prefix
-            .replace(/\s+г$/g, '') // remove " г" suffix
+            .replace(/^(г|гор|город)[.\s]+/g, '') 
+            .replace(/\s+(г|гор|город)$/g, '')
+            .replace(/\s+/g, ' ')
             .trim();
 
         // Explicit check for Orel/Orel variations to ensure mapping to Orlovskaya Oblast
@@ -63,21 +61,27 @@ const getCanonicalRegion = (row: any): string => {
         }
 
         // Direct mapping check against known variations.
-        // This handles cases where the Subject column contains "г. Орел", "Орловская обл", etc.
-        // We iterate through our robust keyword map to find the canonical name.
+        // Priority 1: Exact match on normalized string (e.g. "орловская")
+        if (REGION_KEYWORD_MAP[normalized]) {
+            return REGION_KEYWORD_MAP[normalized];
+        }
+
+        // Priority 2: Keyword search
         for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            // Check if the column value contains the key (e.g. value "г. Орел" contains key "г орел")
+            // Check if normalized starts with key (e.g. "орловская" matches "орловская обл" if key is "орловская")
+            if (normalized.startsWith(key)) {
+                return standardName;
+            }
+            // Fallback: Check if original lowerVal includes the key (e.g. "г. орел" includes "г орел")
             if (lowerVal.includes(key)) {
                 return standardName;
             }
         }
         
-        // If no specific keyword match, standardize the capitalization and return.
         return standardizeRegion(cleanVal);
     }
 
-    // 2. Fallback: Parse the address string ONLY if "Субъект" column is completely missing.
-    // This is a safety net for non-standard files.
+    // 2. Fallback: Parse the address string ONLY if region column is missing.
     const address = findAddressInRow(row);
     const distributor = findValueInRow(row, ['дистрибьютор']);
     
@@ -88,6 +92,16 @@ const getCanonicalRegion = (row: any): string => {
                 return standardizeRegion(parsed.region);
             }
         } catch (e) { /* ignore */ }
+    }
+
+    // 3. Final Fallback: Check keywords in address directly if parsing failed
+    if (address) {
+        const lowerAddr = address.toLowerCase();
+        for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
+            if (lowerAddr.includes(key)) {
+                return standardName;
+            }
+        }
     }
 
     return 'Регион не определен';
