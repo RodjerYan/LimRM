@@ -26,34 +26,66 @@ type CommonProcessArgs = {
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- HELPER: Universal Region Normalization (RF + CIS) ---
+const normalizeRegionString = (input: string): string => {
+    if (!input) return 'Регион не определен';
+    let s = input.toLowerCase().replace(/\u00A0/g, ' ').replace(/ё/g, 'е').trim();
+
+    // Remove "г.", "город" prefixes/words
+    s = s.replace(/^г\.\s*/i, '').replace(/\s+г\.\s*/i, ' ').replace(/\bгород\b/gi, '');
+
+    // General replacements for RF and CIS (UA, BY, KZ, UZ, KG, AM, MD, GE)
+    s = s
+        .replace(/\bобл\.?$/i, ' область')
+        .replace(/\bвобл\.?$/i, ' область')     // Belarus: вобласць
+        .replace(/\bоблыс(ы|ь)?$/i, ' область') // Kazakhstan: облысы
+        .replace(/\bвилоят(ы)?$/i, ' область')  // Uzbekistan: вилоят
+        .replace(/\bобл(?:аст|ь)?s?$/i, ' область')
+        .replace(/\bр-?н\.?$/i, ' район')
+        .replace(/\bрайон\b$/i, ' район')
+        .replace(/\bаудан(ы)?$/i, ' район')     // Kazakhstan: ауданы
+        .replace(/\bтуман(ы)?$/i, ' район')     // Uzbekistan: тумани
+        .replace(/\bоблусу?$/i, ' область')     // Kyrgyzstan: облусу
+        .replace(/\bмарз$/i, ' область')        // Armenia: марз
+        .replace(/^raionul\s+/i, '')            // Moldova: raionul
+        .replace(/\s+raion$/i, ' район')        // Moldova
+        .replace(/\bмхаре$/i, ' край')          // Georgia: mkhare
+        ;
+
+    // Remove extra characters and double spaces
+    s = s.replace(/[^а-я0-9\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    // Capitalize each word
+    return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+};
+
 /**
  * Determines the Canonical Region Name for a given data row.
- * STRICT MODE: Only uses the "Subject" column. No fallbacks to address or city.
+ * If `headers` are provided, strictly checks Column B (index 1).
+ * Otherwise falls back to keyword search.
  */
-const getCanonicalRegion = (row: any): string => {
-    // 1. Strict Priority: Look ONLY for explicit "Subject" column data.
-    // We assume the file structure always contains this column for valid region identification.
-    let region = findValueInRow(row, ['субъект', 'subject', 'субъект рф', 'subj'], []);
-    
-    // 2. If empty, we DO NOT guess.
-    if (!region) {
-        return 'Регион не определен';
+const getCanonicalRegion = (row: any, headers?: string[]): string => {
+    // 1) If headers are provided and Column B exists — strictly use it.
+    if (headers && headers.length >= 2) {
+        const subjHeader = String(headers[1]).trim();
+        // Only proceed if the row has this specific key (handling potential duplicate header names in parsing)
+        if (subjHeader && row[subjHeader] != null) {
+            const raw = String(row[subjHeader]).trim();
+            if (raw !== '') return normalizeRegionString(raw);
+        }
     }
 
-    // 3. Simple Normalization
-    region = String(region).trim();
-    
-    // Fix common abbreviations and garbage prefixes
-    region = region
-        .replace(/^г\.\s*/i, '') // Remove "г." prefix (e.g. "г. Москва" -> "Москва")
-        .replace(/\s+г\.\s*/i, ' ') // Remove internal " g. "
-        .replace(/обл\.?$/i, ' область') // "обл" -> "область"
-        .replace(/р-?н\.?$/i, ' район') // "р-н" -> "район"
-        .replace(/\s+/g, ' ')
-        .trim();
+    // 2) Fallback: search by keywords
+    // Expanded keywords to cover CIS column naming conventions
+    let region = findValueInRow(row, [
+        'субъект', 'subject', 'субъект рф', 'subj',
+        'регион', 'область', 'region', 'province',
+        'облыс', 'области', 'вилоят', 'viloyat',
+        'марз', 'raion'
+    ], []);
 
-    // Capitalize for consistency (e.g. "москва" -> "Москва")
-    return region.split(/[\s-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+    if (!region) return 'Регион не определен';
+    return normalizeRegionString(String(region).trim());
 };
 
 
@@ -176,6 +208,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         });
     }
+    
+    // Debugging OKB regions
+    console.log('OKB regions counts:', okbRegionCounts);
+    if (okbRegionCounts['Регион не определен']) {
+        console.warn(`WARNING: ${okbRegionCounts['Регион не определен']} rows in OKB have undefined region.`);
+    }
 
     // --- CACHE INITIALIZATION with Redirects ---
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
@@ -284,9 +322,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
+        
         // USE CANONICAL REGION HERE TO MATCH OKB
-        // Note: We pass the whole row, not parsed parts, as per strict instruction to look at Subject column
-        const regionForAggregation = getCanonicalRegion(row);
+        // STRICT MODE: Pass headers to ensure we prioritize Column B ("Субъект")
+        const regionForAggregation = getCanonicalRegion(row, headers);
         
         // If region is undefined from Subject column, we DO NOT fallback to address parsing.
         // It will remain 'Регион не определен'.
