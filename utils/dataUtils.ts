@@ -110,18 +110,29 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
  * Prioritizes exact matches and ensures non-empty return values.
+ * Can explicitly exclude keys containing specific words (e.g., exclude "Manager" when looking for "Region").
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
+ * @param excludeKeywords An array of lowercase keywords to exclude from the search.
  * @returns The found string value or an empty string.
  */
-export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
+export const findValueInRow = (row: { [key: string]: any }, keywords: string[], excludeKeywords: string[] = []): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
+    const lowerExclude = excludeKeywords.map(k => k.toLowerCase());
+
+    const isExcluded = (key: string) => {
+        const lower = key.toLowerCase();
+        return lowerExclude.some(ex => lower.includes(ex));
+    };
     
     // 1. Try Exact Matches First (case-insensitive)
     // This helps avoid picking "Код региона" when we want "Регион".
     for (const keyword of keywords) {
-        const exactKey = rowKeys.find(k => k.toLowerCase().trim() === keyword.toLowerCase().trim());
+        const exactKey = rowKeys.find(k => {
+            const lowerK = k.toLowerCase().trim();
+            return lowerK === keyword.toLowerCase().trim() && !isExcluded(k);
+        });
         if (exactKey && row[exactKey] != null) {
              const val = String(row[exactKey]).trim();
              if (val !== '') return val;
@@ -133,7 +144,7 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
     // For each keyword, we prefer the shortest column name that contains it (heuristic for "Region" over "Region Code").
     for (const keyword of keywords) {
         const lowerKeyword = keyword.toLowerCase();
-        const matchingKeys = rowKeys.filter(k => k.toLowerCase().includes(lowerKeyword));
+        const matchingKeys = rowKeys.filter(k => k.toLowerCase().includes(lowerKeyword) && !isExcluded(k));
         
         // Sort by length ascending (shortest first)
         matchingKeys.sort((a, b) => a.length - b.length);
@@ -169,15 +180,23 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     }
 
     // Fallback to partial match if no exact match is found
-    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
+    const addressKey = rowKeys.find(key => {
+        const lower = key.toLowerCase();
+        return lower.includes('адрес') && !lower.includes('менеджер');
+    });
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
     // Last resort fallback
-    // Explicitly EXCLUDE "субъект" to avoid using the region name as the address string.
-    const fallbackKey = rowKeys.find(key => 
-        (key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')) && 
-        !key.toLowerCase().includes('субъект')
-    );
+    // Explicitly EXCLUDE "субъект", "менеджер", "код" to avoid misinterpretation.
+    const fallbackKey = rowKeys.find(key => {
+        const lower = key.toLowerCase();
+        return (lower.includes('город') || lower.includes('регион')) && 
+               !lower.includes('субъект') && 
+               !lower.includes('менеджер') &&
+               !lower.includes('manager') &&
+               !lower.includes('код') &&
+               !lower.includes('code');
+    });
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
@@ -229,14 +248,14 @@ REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
     // Normalize: lowercase, remove non-breaking spaces, replace special chars with space
     const lowerDirty = dirtyString 
-        ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
+        ? dirtyString.toLowerCase().replace(/[^а-яa-z0-9ё\s]/g, ' ').replace(/\s+/g, ' ').trim() 
         : '';
     
     // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
     if (lowerDirty) {
         // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
+        // Note: REGION_KEYWORD_MAP keys should be lowercased in source, but check just in case
         for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
-             // Check if the full keyword exists in the string
              if (lowerDirty.includes(key)) return value;
         }
 
@@ -246,20 +265,39 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
                 return regionName;
             }
         }
+
+        // Third pass: Check if the dirty string ITSELF is a city name (e.g. "Орёл" in Region column)
+        // This is crucial for OKB files where "Region" column might just say "г. Орёл" or "Орёл"
+        // Strip prefixes:
+        let cleanPotentialCity = lowerDirty.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+        
+        // Try looking up in the city map with normalization (ё -> е)
+        const cleanCityNormalized = cleanPotentialCity.replace(/ё/g, 'е');
+        
+        // Safety: Don't match short numeric strings or very short garbage as cities (e.g. "57")
+        if (cleanCityNormalized.length > 2 && isNaN(Number(cleanCityNormalized))) {
+             if (REGION_BY_CITY_MAP[cleanCityNormalized]) {
+                return REGION_BY_CITY_MAP[cleanCityNormalized];
+            }
+            // Also try raw (if map contains 'ё' version distinct from 'е' version, though 'e' is preferred)
+            if (REGION_BY_CITY_MAP[cleanPotentialCity]) {
+                return REGION_BY_CITY_MAP[cleanPotentialCity];
+            }
+        }
     }
 
     // 2. Fallback to City Hint only if Region String didn't match
-    // FIX: Normalize the city hint by removing common prefixes ("г.", "пос.", etc.)
-    // This ensures that "г. Орёл" is treated as "орел" and correctly matched in REGION_BY_CITY_MAP.
     let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
     if (lowerCity) {
         lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-        // Also handle "Орёл" -> "орел" normalization for map lookup
-        lowerCity = lowerCity.replace(/ё/g, 'е');
-    }
-
-    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
-        return REGION_BY_CITY_MAP[lowerCity];
+        const lowerCityNorm = lowerCity.replace(/ё/g, 'е');
+        
+        if (lowerCityNorm && REGION_BY_CITY_MAP[lowerCityNorm]) {
+            return REGION_BY_CITY_MAP[lowerCityNorm];
+        }
+        if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
+            return REGION_BY_CITY_MAP[lowerCity];
+        }
     }
 
     return 'Регион не определен';

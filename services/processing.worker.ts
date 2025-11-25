@@ -32,8 +32,13 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
  */
 const getCanonicalRegion = (row: any): string => {
-    // 1. Priority: Look for explicit "Region" column data.
-    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика', 'субъект', 'subject', 'region']);
+    // 1. Priority: Look for explicit "Subject"/"Region" column data.
+    // CRITICAL UPDATE: 'субъект'/'subject' moved to index 0 to prioritize column B as requested.
+    // Explicitly exclude columns with 'менеджер' or 'manager' to prevent false positives.
+    const rawRegionCol = findValueInRow(row, 
+        ['субъект', 'subject', 'регион', 'область', 'край', 'республика', 'region'],
+        ['менеджер', 'manager', 'код', 'code'] 
+    );
     const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town', 'нас. пункт', 'нас пункт']);
     
     // Attempt recovery from explicit columns first
