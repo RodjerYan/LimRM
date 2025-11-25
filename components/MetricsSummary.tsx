@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { OkbStatus, SummaryMetrics } from '../types';
 import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon, CoverageIcon, InfoIcon } from './icons';
@@ -25,7 +26,7 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tool
         <div>
             <p className="text-sm text-gray-400 flex items-center gap-1">
                 {title}
-                {isClickable && <span className="opacity-50 text-[10px]"><InfoIcon /></span>}
+                {isClickable && <span className="w-4 h-4 opacity-50"><InfoIcon /></span>}
             </p>
             <p className="text-2xl font-bold text-white">{value}</p>
         </div>
