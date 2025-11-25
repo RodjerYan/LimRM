@@ -1,10 +1,10 @@
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow } from '../types';
-import { ExportIcon } from './icons';
+import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
 interface RMDashboardProps {
@@ -29,6 +29,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
 
+    // --- Export Modal State ---
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+    const [uncoveredRowsCache, setUncoveredRowsCache] = useState<OkbDataRow[]>([]);
+    const [exportHierarchy, setExportHierarchy] = useState<Record<string, Set<string>>>({});
+    const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
+    const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
+    const [regionSearch, setRegionSearch] = useState('');
+
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
@@ -36,15 +44,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
-        // --- 1. Pre-process OKB Data for Coordinate Matching ---
-        // We build a Set of coordinate hashes for the entire OKB to enable O(1) lookup.
-        // This allows us to count exactly how many AKB clients match an OKB point physically.
         const globalOkbCoordSet = new Set<string>();
         if (isOkbLoaded) {
             okbData.forEach(row => {
                 if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
-                    // 4 decimal places = ~11 meters precision. 
-                    // This assumes strict matching: if AKB and OKB have same coords, it's the same shop.
                     const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
                     globalOkbCoordSet.add(hash);
                 }
@@ -55,7 +58,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             fact: number;
             potential: number;
             activeClients: Set<string>;
-            // Store unique hashes of active clients that matched OKB
             matchedOkbCoords: Set<string>;
             brandFacts: Map<string, number>;
             originalRegionName?: string;
@@ -112,7 +114,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             if (row.clients) {
                 row.clients.forEach(c => {
                     regBucket.activeClients.add(c.key);
-                    // CHECK COORDINATE MATCH AGAINST OKB
                     if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) {
                         const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
                         if (globalOkbCoordSet.has(hash)) {
@@ -134,7 +135,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             const brandAggregates = new Map<string, { fact: number, plan: number }>();
 
             let rmTotalOkbRaw = 0;
-            let rmTotalMatched = 0; // Total number of AKB clients that are in OKB
+            let rmTotalMatched = 0;
             let rmTotalClients = 0;
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
@@ -158,19 +159,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // Market Share Calculation (STRICT COORDINATE MATCHING)
-                // Numerator: Count of Active Clients that PHYSICALLY match an OKB point.
-                // Denominator: Total OKB points in that region.
-                // This represents "Percentage of the Known Potential Market Captured".
-                // This can NEVER exceed 100% because matchedCount <= totalRegionOkb (assuming unique coords in OKB, or effectively so)
-                // NOTE: activeCount can be > matchedCount if we have clients NOT in OKB.
-                
                 let marketShare = NaN;
                 if (isOkbLoaded && totalRegionOkb > 0) {
                     marketShare = (matchedCount / totalRegionOkb);
                 }
 
-                // Use strict share for plan adjustment
                 const effectiveShareForCalc = Number.isNaN(marketShare) ? 0 : marketShare;
 
                 const sensitivity = 20;
@@ -190,7 +183,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                     plan: regionPlan,
                     growthPct: calculatedRate,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
-                    activeCount: matchedCount, // We display "Matched / Total"
+                    activeCount: matchedCount,
                     totalCount: totalRegionOkb
                 });
 
@@ -214,14 +207,13 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : BASE_GROWTH_RATE;
 
-            // Weighted share based on Matched Counts
             const weightedShare = (isOkbLoaded && rmTotalOkbRaw > 0) 
                 ? (rmTotalMatched / rmTotalOkbRaw) * 100 
                 : NaN;
 
             resultMetrics.push({
                 rmName: rmData.originalName,
-                totalClients: rmTotalClients, // This remains Total Active from File
+                totalClients: rmTotalClients,
                 totalOkbCount: rmTotalOkbRaw,
                 totalFact: rmData.totalFact,
                 totalPotential: rmTotalPotentialFile,
@@ -242,8 +234,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
     }, [data, okbRegionCounts, okbData]);
 
-    const handleExportUncovered = () => {
-        // 1. Gather all Active Client Coordinate Hashes
+    // --- EXPORT LOGIC ---
+
+    const prepareExportData = () => {
+        // 1. Find all unmatched rows
         const activeCoordSet = new Set<string>();
         data.forEach(group => {
             group.clients.forEach(c => {
@@ -254,19 +248,48 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             });
         });
 
-        // 2. Filter OKB Data for unmatched rows
-        const uncoveredRows = okbData.filter(row => {
-            // If row has no coords, we assume it's uncovered (safe default) or can't match it.
-            // Let's include it as potential.
+        const uncovered = okbData.filter(row => {
             if (!row.lat || !row.lon || isNaN(row.lat) || isNaN(row.lon)) return true;
-            
             const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
-            // If hash is NOT in active set, it is uncovered
             return !activeCoordSet.has(hash);
         });
 
-        // 3. Map to Requested Columns
-        const worksheetData = uncoveredRows.map(row => ({
+        setUncoveredRowsCache(uncovered);
+
+        // 2. Build Hierarchy: Country -> Regions
+        const hierarchy: Record<string, Set<string>> = {};
+        const countries = new Set<string>();
+        const regions = new Set<string>();
+
+        uncovered.forEach(row => {
+            const country = findValueInRow(row, ['страна', 'country']) || 'Не указана';
+            const region = findValueInRow(row, ['субъект', 'регион', 'region', 'область']) || 'Не указан';
+            
+            if (!hierarchy[country]) {
+                hierarchy[country] = new Set();
+            }
+            hierarchy[country].add(region);
+            countries.add(country);
+            regions.add(region);
+        });
+
+        setExportHierarchy(hierarchy);
+        setSelectedCountries(countries); // Select all by default
+        setSelectedRegions(regions); // Select all by default
+        setRegionSearch('');
+        setIsExportModalOpen(true);
+    };
+
+    const performExport = () => {
+        // Filter rows based on selection
+        const rowsToExport = uncoveredRowsCache.filter(row => {
+            const country = findValueInRow(row, ['страна', 'country']) || 'Не указана';
+            const region = findValueInRow(row, ['субъект', 'регион', 'region', 'область']) || 'Не указан';
+            return selectedCountries.has(country) && selectedRegions.has(region);
+        });
+
+        // Map to columns
+        const worksheetData = rowsToExport.map(row => ({
             'Страна': findValueInRow(row, ['страна', 'country']) || '',
             'Субъект': findValueInRow(row, ['субъект', 'регион', 'region', 'область']),
             'Город': findValueInRow(row, ['город', 'city', 'населенный пункт']),
@@ -276,11 +299,35 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             'Контакты': findValueInRow(row, ['контакты', 'телефон', 'email']),
         }));
 
-        // 4. Create and Download Excel
         const worksheet = XLSX.utils.json_to_sheet(worksheetData);
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Непокрытый Потенциал');
         XLSX.writeFile(workbook, `Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
+        
+        setIsExportModalOpen(false);
+    };
+
+    // Toggles
+    const toggleCountry = (country: string) => {
+        const newSet = new Set(selectedCountries);
+        if (newSet.has(country)) {
+            newSet.delete(country);
+            // Optional: Deselect regions of this country? Or keep them in state but filter in UI?
+            // Let's keep them in state to allow re-checking country to restore region selection easily.
+        } else {
+            newSet.add(country);
+        }
+        setSelectedCountries(newSet);
+    };
+
+    const toggleRegion = (region: string) => {
+        const newSet = new Set(selectedRegions);
+        if (newSet.has(region)) {
+            newSet.delete(region);
+        } else {
+            newSet.add(region);
+        }
+        setSelectedRegions(newSet);
     };
 
     const missingOkbRegions: string[] = (metrics as any).__missingOkbRegions || [];
@@ -295,6 +342,20 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
     const toggleExpand = (rmName: string) => {
         setExpandedRM(prev => prev === rmName ? null : rmName);
     };
+
+    // Derived list for UI
+    const availableCountries = Object.keys(exportHierarchy).sort();
+    const availableRegions = useMemo(() => {
+        const regions = new Set<string>();
+        availableCountries.forEach(c => {
+            if (selectedCountries.has(c)) {
+                exportHierarchy[c].forEach(r => regions.add(r));
+            }
+        });
+        return Array.from(regions).sort();
+    }, [exportHierarchy, selectedCountries]);
+
+    const filteredRegions = availableRegions.filter(r => r.toLowerCase().includes(regionSearch.toLowerCase()));
 
     return (
         <>
@@ -317,7 +378,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                         {/* Export Button */}
                         {okbData.length > 0 && (
                             <button 
-                                onClick={handleExportUncovered}
+                                onClick={prepareExportData}
                                 className="ml-auto flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"
                                 title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам"
                             >
@@ -478,6 +539,100 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                 })}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Export Config Modal */}
+            <Modal 
+                isOpen={isExportModalOpen} 
+                onClose={() => setIsExportModalOpen(false)} 
+                title="Настройка выгрузки непокрытого потенциала"
+                footer={
+                    <div className="flex justify-between p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
+                        <button
+                            onClick={() => setIsExportModalOpen(false)}
+                            className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
+                        >
+                            <ArrowLeftIcon /> Отмена
+                        </button>
+                        <button
+                            onClick={performExport}
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
+                        >
+                            <ExportIcon /> Скачать Excel ({uncoveredRowsCache.filter(r => selectedCountries.has(findValueInRow(r, ['страна', 'country']) || 'Не указана') && selectedRegions.has(findValueInRow(r, ['субъект', 'регион', 'region', 'область']) || 'Не указан')).length} строк)
+                        </button>
+                    </div>
+                }
+            >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
+                    {/* Left Col: Countries */}
+                    <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+                        <div className="p-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+                            <h4 className="font-bold text-gray-300">Страны</h4>
+                            <div className="text-xs flex gap-2">
+                                <button onClick={() => setSelectedCountries(new Set(availableCountries))} className="text-indigo-400 hover:text-white">Все</button>
+                                <button onClick={() => setSelectedCountries(new Set())} className="text-gray-500 hover:text-white">Сброс</button>
+                            </div>
+                        </div>
+                        <div className="flex-grow overflow-y-auto custom-scrollbar p-2">
+                            {availableCountries.map(c => (
+                                <label key={c} className="flex items-center p-2 hover:bg-gray-700 rounded cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={selectedCountries.has(c)}
+                                        onChange={() => toggleCountry(c)}
+                                        className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out bg-gray-900 border-gray-600 rounded focus:ring-indigo-500"
+                                    />
+                                    <span className="ml-2 text-sm text-gray-200">{c}</span>
+                                    <span className="ml-auto text-xs text-gray-500 bg-gray-900 px-1.5 py-0.5 rounded-full">
+                                        {exportHierarchy[c]?.size || 0} рег.
+                                    </span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Right Col: Regions */}
+                    <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+                        <div className="p-3 bg-gray-800 border-b border-gray-700 flex flex-col gap-2">
+                            <div className="flex justify-between items-center">
+                                <h4 className="font-bold text-gray-300">Регионы</h4>
+                                <div className="text-xs flex gap-2">
+                                    <button onClick={() => setSelectedRegions(new Set(availableRegions))} className="text-indigo-400 hover:text-white">Все</button>
+                                    <button onClick={() => setSelectedRegions(new Set())} className="text-gray-500 hover:text-white">Сброс</button>
+                                </div>
+                            </div>
+                            <div className="relative">
+                                <input 
+                                    type="text" 
+                                    placeholder="Поиск региона..." 
+                                    value={regionSearch}
+                                    onChange={(e) => setRegionSearch(e.target.value)}
+                                    className="w-full p-1.5 pl-8 bg-gray-900 border border-gray-600 rounded text-xs text-white focus:ring-1 focus:ring-indigo-500"
+                                />
+                                <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none text-gray-500"><SearchIcon /></div>
+                            </div>
+                        </div>
+                        <div className="flex-grow overflow-y-auto custom-scrollbar p-2">
+                            {filteredRegions.length > 0 ? (
+                                filteredRegions.map(r => (
+                                    <label key={r} className="flex items-center p-2 hover:bg-gray-700 rounded cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedRegions.has(r)}
+                                            onChange={() => toggleRegion(r)}
+                                            className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out bg-gray-900 border-gray-600 rounded focus:ring-indigo-500"
+                                        />
+                                        <span className="ml-2 text-sm text-gray-200">{r}</span>
+                                    </label>
+                                ))
+                            ) : (
+                                <div className="text-center py-10 text-gray-500 text-sm">
+                                    {selectedCountries.size === 0 ? 'Выберите страну слева' : 'Ничего не найдено'}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </Modal>
