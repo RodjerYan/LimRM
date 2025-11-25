@@ -1,3 +1,4 @@
+
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -12,8 +13,8 @@ import {
     UnidentifiedRow,
 } from '../types';
 import { parseRussianAddress } from './addressParser';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
-import { REGION_BY_CITY_MAP } from '../utils/addressMappings';
+import { standardizeRegion, REGION_BY_CITY_MAP } from '../utils/addressMappings';
+import { normalizeAddress, findAddressInRow, findValueInRow, recoverRegion } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -26,60 +27,49 @@ type CommonProcessArgs = {
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- HELPER: Universal Region Normalization (RF + CIS) ---
-const normalizeRegionString = (input: string): string => {
-    if (!input) return 'Регион не определен';
+/**
+ * Determines the Canonical Region Name for a given data row (Sales or OKB).
+ * This ensures that "Орёл", "г. Орел", "Орловская обл." all map to "Орловская область".
+ */
+const getCanonicalRegion = (row: any): string => {
+    // 1. Priority: Look for explicit "Region" column data.
+    // Added 'субъект' to explicitly support columns named "Субъект" or "Субъект РФ" as requested.
+    const rawRegionCol = findValueInRow(row, ['регион', 'область', 'край', 'республика', 'субъект', 'subject']);
+    const cityCol = findValueInRow(row, ['город', 'населенный пункт', 'city', 'town']);
     
-    let s = input.toLowerCase().replace(/\u00A0/g, ' ').replace(/ё/g, 'е').trim();
-    
-    // 1. Check if the "Region" string is actually a known city (e.g. "Орел" -> "Орловская область")
-    // This handles cases where the user puts the capital city in the Subject column.
-    if (REGION_BY_CITY_MAP[s]) {
-        return REGION_BY_CITY_MAP[s];
+    // Attempt recovery from explicit columns first
+    const recoveredFromCols = recoverRegion(rawRegionCol, cityCol);
+    if (recoveredFromCols !== 'Регион не определен') {
+        return standardizeRegion(recoveredFromCols);
     }
 
-    // Remove "г.", "город" prefixes/words
-    s = s.replace(/^г\.\s*/i, '').replace(/\s+г\.\s*/i, ' ').replace(/\bгород\b/gi, '');
+    // 2. Fallback: Parse the address string structure
+    const address = findAddressInRow(row);
+    const distributor = findValueInRow(row, ['дистрибьютор']);
+    let parsed: EnrichedParsedAddress = { region: 'Регион не определен', city: 'Город не определен', finalAddress: '' };
+    
+    try {
+        parsed = parseRussianAddress(address || '', distributor);
+    } catch (e) { /* ignore */ }
 
-    // General replacements for RF and CIS (UA, BY, KZ, UZ, KG, AM, MD, GE)
-    s = s
-        .replace(/\bобл\.?$/i, ' область')
-        .replace(/\bвобл\.?$/i, ' область')     // Belarus: вобласць
-        .replace(/\bоблыс(ы|ь)?$/i, ' область') // Kazakhstan: облысы
-        .replace(/\bвилоят(ы)?$/i, ' область')  // Uzbekistan: вилоят
-        .replace(/\bобл(?:аст|ь)?s?$/i, ' область')
-        .replace(/\bр-?н\.?$/i, ' район')
-        .replace(/\bрайон\b$/i, ' район')
-        .replace(/\bаудан(ы)?$/i, ' район')     // Kazakhstan: ауданы
-        .replace(/\bтуман(ы)?$/i, ' район')     // Uzbekistan: тумани
-        .replace(/\bоблусу?$/i, ' область')     // Kyrgyzstan: облусу
-        .replace(/\bмарз$/i, ' область')        // Armenia: марз
-        .replace(/^raionul\s+/i, '')            // Moldova: raionul
-        .replace(/\s+raion$/i, ' район')        // Moldova
-        .replace(/\bмхаре$/i, ' край')          // Georgia: mkhare
-        ;
+    let region = parsed.region;
 
-    // Remove extra characters and double spaces
-    s = s.replace(/[^а-я0-9\s\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    // 3. STRONG FALLBACK: If we have a city (from parser or column), use it to find region.
+    if (region === 'Регион не определен') {
+        let cityKey = (parsed.city !== 'Город не определен' ? parsed.city : findValueInRow(row, ['город', 'населенный пункт'])).toLowerCase().trim();
+        
+        // FIX: Clean the city key from prefixes (e.g. "г. орел" -> "орел") to match map keys
+        if (cityKey) {
+            cityKey = cityKey.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+            cityKey = cityKey.replace(/ё/g, 'е');
+        }
 
-    // Capitalize each word
-    return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-};
+        if (cityKey && REGION_BY_CITY_MAP[cityKey]) {
+            region = REGION_BY_CITY_MAP[cityKey];
+        }
+    }
 
-/**
- * Determines the Canonical Region Name for a given data row (Object-based for OKB).
- * Fallback logic primarily for OKB which is parsed as objects.
- */
-const getCanonicalRegionForObject = (row: any): string => {
-    let region = findValueInRow(row, [
-        'субъект', 'subject', 'субъект рф', 'subj',
-        'регион', 'область', 'region', 'province',
-        'облыс', 'области', 'вилоят', 'viloyat',
-        'марз', 'raion'
-    ], []);
-
-    if (!region) return 'Регион не определен';
-    return normalizeRegionString(String(region).trim());
+    return standardizeRegion(region);
 };
 
 
@@ -102,17 +92,20 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-// Optimized to use pre-grouped map instead of filtering full array every time
-function findPotentialClients(
-    region: string, 
-    existingClients: Set<string>, 
-    okbByRegion: Map<string, { row: OkbDataRow, address: string }[]>
-): PotentialClient[] {
-    const potentialForRegion = okbByRegion.get(region);
-    if (!potentialForRegion || potentialForRegion.length === 0) return [];
+function findPotentialClients(region: string, existingClients: Set<string>, okbData: OkbDataRow[]): PotentialClient[] {
+    if (!okbData) return [];
+    
+    // Use the same canonical extraction for robust matching
+    const potentialForRegion = okbData.filter(row => {
+        const rowRegion = getCanonicalRegion(row);
+        return rowRegion === region;
+    });
+    
+    if (potentialForRegion.length === 0) return [];
 
     const potential: PotentialClient[] = [];
-    for (const { row: okbRow, address: okbAddress } of potentialForRegion) {
+    for (const okbRow of potentialForRegion) {
+        const okbAddress = findAddressInRow(okbRow) || '';
         const normalizedOkbAddress = normalizeAddress(okbAddress);
         
         if (okbAddress && !existingClients.has(normalizedOkbAddress)) {
@@ -132,47 +125,26 @@ function findPotentialClients(
     return potential;
 }
 
-// Helper to find column index by keywords
-const findColumnIndex = (headers: string[], keywords: string[], excludeKeywords: string[] = []): number => {
-    const lowerHeaders = headers.map(h => String(h).toLowerCase().trim());
-    
-    // 1. Exact matches
-    for (const keyword of keywords) {
-        const idx = lowerHeaders.findIndex(h => h === keyword && !excludeKeywords.some(ex => h.includes(ex)));
-        if (idx !== -1) return idx;
-    }
 
-    // 2. Partial matches
-    for (const keyword of keywords) {
-        const idx = lowerHeaders.findIndex(h => h.includes(keyword) && !excludeKeywords.some(ex => h.includes(ex)));
-        if (idx !== -1) return idx;
+const findClientNameHeader = (headers: string[]): string | undefined => {
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+
+    const priorityTerms = ['наименование клиента', 'контрагент', 'клиент', 'уникальное наименование товара'];
+    for (const term of priorityTerms) {
+        const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
+        if (foundIndex !== -1) return headers[foundIndex];
     }
     
-    return -1;
-};
-
-// Helper to find Address column index with priority
-const findAddressColumnIndex = (headers: string[]): number => {
-    const lowerHeaders = headers.map(h => String(h).toLowerCase().trim());
-    
-    // Priority 1: Specific known headers
-    const priority = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
-    for (const p of priority) {
-        const idx = lowerHeaders.indexOf(p);
-        if (idx !== -1) return idx;
+    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
+    if (nameColumns.length > 0) {
+        const cleanNameColumn = nameColumns.find(h => {
+            const lH = h.toLowerCase().trim();
+            return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
+        });
+        return cleanNameColumn || nameColumns[0];
     }
-
-    // Priority 2: Contains 'адрес' but not manager
-    const idxAddr = lowerHeaders.findIndex(h => h.includes('адрес') && !h.includes('менеджер'));
-    if (idxAddr !== -1) return idxAddr;
-
-    // Priority 3: Fallback
-    return lowerHeaders.findIndex(h => 
-        (h.includes('город') || h.includes('регион')) && 
-        !h.includes('субъект') && 
-        !h.includes('менеджер') && 
-        !h.includes('код')
-    );
+    
+    return undefined;
 };
 
 
@@ -182,7 +154,6 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cac
 
     try {
         const commonArgs = { okbData, cacheData, postMessage };
-        // Both processors now return raw 2D arrays (Array of Arrays)
         if (file.name.toLowerCase().endsWith('.csv')) {
             await processCsv(file, commonArgs);
         } else {
@@ -194,86 +165,64 @@ self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cac
     }
 };
 
-async function processFile(rows: any[][], { okbData, cacheData, postMessage }: CommonProcessArgs) {
-    if (rows.length < 2) throw new Error('Файл пуст или не содержит данных.');
+async function processFile(jsonData: any[], headers: string[], { okbData, cacheData, postMessage }: CommonProcessArgs) {
+    if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
-    const headers = rows[0].map(h => String(h || ''));
+    const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
+    const clientNameHeader = findClientNameHeader(headers);
     
-    // Identify Column Indices
-    
-    // Region Column Detection: Prioritize explicit keywords
-    // We look for headers like "Субъект", "Регион", "Oblast", "Region", "Subject".
-    // We exclude "Код", "Code", "Менеджер", "Manager" to avoid false positives.
-    let idxRegion = findColumnIndex(headers, ['субъект', 'регион', 'область', 'region', 'subject'], ['код', 'code', 'менеджер', 'manager']);
-    
-    // Fallback: If dynamic search fails, default to index 1 (Column B), BUT with safety checks
-    if (idxRegion === -1 && headers.length > 1) {
-        const colBHeader = headers[1].toLowerCase();
-        // Safety check: Don't default to Col B if it looks like Brand or Client or something else known
-        if (!colBHeader.includes('бренд') && !colBHeader.includes('brand') && !colBHeader.includes('клиент') && !colBHeader.includes('контрагент')) {
-             idxRegion = 1; 
-        }
-    }
-    
-    const idxWeight = findColumnIndex(headers, ['вес', 'факт', 'продажи']);
-    if (idxWeight === -1) throw new Error('Не найдена колонка "Вес" (или Факт).');
-
-    const idxPotential = findColumnIndex(headers, ['потенциал']);
-    const idxClientName = findColumnIndex(headers, ['наименование клиента', 'контрагент', 'клиент', 'партнер'], ['менеджер']);
-    const idxBrand = findColumnIndex(headers, ['торговая марка', 'бренд']);
-    const idxRM = findColumnIndex(headers, ['рм', 'региональный', 'менеджер']);
-    const idxAddress = findAddressColumnIndex(headers);
-    const idxDistributor = findColumnIndex(headers, ['дистрибьютор', 'дистрибьютер']);
-    const idxType = findColumnIndex(headers, ['канал продаж', 'тип', 'вид деятельности']);
-    const idxContacts = findColumnIndex(headers, ['контакты', 'телефон']);
-
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
-    // --- PRE-PROCESS OKB BY REGION (Object-based logic for OKB) ---
-    const okbByRegion = new Map<string, { row: OkbDataRow, address: string }[]>();
+    // --- COUNT OKB BY REGION (ROBUST) ---
     const okbRegionCounts: { [key: string]: number } = {};
-
     if (okbData) {
         okbData.forEach(row => {
-            const canonicalRegion = getCanonicalRegionForObject(row);
+            const canonicalRegion = getCanonicalRegion(row);
             if (canonicalRegion && canonicalRegion !== 'Регион не определен') {
                 okbRegionCounts[canonicalRegion] = (okbRegionCounts[canonicalRegion] || 0) + 1;
-                
-                if (!okbByRegion.has(canonicalRegion)) {
-                    okbByRegion.set(canonicalRegion, []);
-                }
-                const address = findAddressInRow(row) || '';
-                okbByRegion.get(canonicalRegion)!.push({ row, address });
             }
         });
     }
-    
-    console.log('OKB regions counts:', okbRegionCounts);
 
-    // --- CACHE INITIALIZATION ---
+    // --- CACHE INITIALIZATION with Redirects ---
     const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
-    const cacheRedirectMap = new Map<string, string>();
+    const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
     const deletedAddresses = new Set<string>();
 
     if (cacheData) {
         for (const rm of Object.keys(cacheData)) {
             for (const item of cacheData[rm]) {
                 if (!item.address) continue;
+
                 const normalizedTarget = normalizeAddress(item.address);
+
                 if (item.isDeleted) {
                     deletedAddresses.add(normalizedTarget);
                     continue;
                 }
+
+                // Store canonical entry
                 if (!cacheAddressMap.has(normalizedTarget)) {
                     cacheAddressMap.set(normalizedTarget, { lat: item.lat, lon: item.lon, originalAddress: item.address });
                 }
+
+                // Parse history for redirects
                 if (item.history) {
-                    const historyEntries = String(item.history).replace(/\u00A0/g, ' ').split(/\r?\n|\s*\|\|\s*/).map(s => s.trim()).filter(Boolean);
+                    const historyEntries = String(item.history)
+                        .replace(/\u00A0/g, ' ')
+                        .replace(/&nbsp;/g, ' ')
+                        .split(/\r?\n|\s*\|\|\s*|<br\s*\/?>/i)
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
                     for (const entry of historyEntries) {
                         const oldAddrRaw = entry.split('[')[0].trim();
                         if (!oldAddrRaw) continue;
+                        
                         const normalizedOld = normalizeAddress(oldAddrRaw);
+                        // If the old address matches the current canonical one, it's not a redirect, just a variant/duplicate
                         if (normalizedOld && normalizedOld !== normalizedTarget) {
                             cacheRedirectMap.set(normalizedOld, normalizedTarget);
                         }
@@ -282,6 +231,7 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
             }
         }
     }
+    console.log('[CACHE LOAD] addresses=', cacheAddressMap.size, 'redirects=', cacheRedirectMap.size, 'deleted=', deletedAddresses.size);
     postMessage({ type: 'progress', payload: { percentage: 10, message: `Кэш обработан: ${cacheAddressMap.size} записей.` } });
 
     const aggregatedData: AggregationMap = {};
@@ -290,77 +240,68 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
     const addressesToGeocode: { [rmName: string]: string[] } = {};
     const unidentifiedRows: UnidentifiedRow[] = [];
 
-    // Start loop from index 1 (skip header)
-    for (let i = 1; i < rows.length; i++) {
-        const row = rows[i];
-        
-        // Safe Access via Index
-        const rawRM = idxRM !== -1 ? row[idxRM] : undefined;
-        const rm = rawRM ? String(rawRM).trim() : '';
+    for (let i = 0; i < jsonData.length; i++) {
+        const row = jsonData[i];
+        const rm = findValueInRow(row, ['рм']);
 
         if (i > 0 && i % 5000 === 0) {
-            const percentage = 10 + Math.round((i / rows.length) * 85);
+            const percentage = 10 + Math.round((i / jsonData.length) * 85);
             postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
         }
         
-        let clientAddress = idxAddress !== -1 ? String(row[idxAddress] || '').trim() : '';
-        const distributor = idxDistributor !== -1 ? String(row[idxDistributor] || '').trim() : '';
-
-        // Skip empty rows
-        if (!clientAddress && !distributor) continue;
-
-        // Reconstruct object for Unidentified Modal to allow editing (best effort)
-        const rowObject: any = {};
-        headers.forEach((h, idx) => rowObject[h] = row[idx]);
-
+        let clientAddress = findAddressInRow(row);
+        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
+        if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         if (!rm) {
-            unidentifiedRows.push({ rm: 'РМ не указан', rowData: rowObject, originalIndex: i });
+            unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
             continue;
         }
 
-        // --- REDIRECT LOGIC ---
+        // --- REDIRECT & DELETE LOGIC ---
         if (clientAddress) {
             let normalizedRaw = normalizeAddress(clientAddress);
+
+            // 1. Check if explicitly deleted
             if (deletedAddresses.has(normalizedRaw)) continue;
+
+            // 2. Check for Redirect (History)
             if (cacheRedirectMap.has(normalizedRaw)) {
                 const newNormalizedTarget = cacheRedirectMap.get(normalizedRaw)!;
                 const targetEntry = cacheAddressMap.get(newNormalizedTarget);
+                
                 if (targetEntry) {
+                    // Redirect found! Swap to the NEW canonical address immediately.
+                    // This ensures that even if the file has the Old Address, we process it as the New Address.
                     clientAddress = targetEntry.originalAddress || clientAddress;
                     normalizedRaw = newNormalizedTarget;
                 } else {
+                    // Fallback: we have a redirect target key but missing full entry (rare).
+                    // We proceed with the key to ensure grouping matches the new entity.
                     normalizedRaw = newNormalizedTarget;
                 }
+
+                // Re-check delete status on the *new* address
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
 
-        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress, distributor);
+        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
         if (parsedAddress.city === 'Город не определен') {
-            unidentifiedRows.push({ rm, rowData: rowObject, originalIndex: i });
+            unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        
-        // DYNAMIC REGION EXTRACTION
-        // Try to get the region from the found index.
-        // If not found (idxRegion == -1), use 'Регион не определен'.
-        let regionForAggregation = 'Регион не определен';
-        if (idxRegion !== -1 && row[idxRegion]) {
-             regionForAggregation = normalizeRegionString(String(row[idxRegion]));
-        }
-        
+        // USE CANONICAL REGION HERE TO MATCH OKB
+        const regionForAggregation = getCanonicalRegion(row);
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
-        
-        const rawWeight = String(row[idxWeight] || '0').replace(/\s/g, '').replace(',', '.');
-        const weight = parseFloat(rawWeight);
+        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
+        const brand = findValueInRow(row, ['торговая марка']);
+
         if (isNaN(weight)) continue;
-
-        const clientName = (idxClientName !== -1 && row[idxClientName]) ? String(row[idxClientName]) : 'Без названия';
-        const brand = (idxBrand !== -1 && row[idxBrand]) ? String(row[idxBrand]) : 'Unknown';
-
+        
         const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
@@ -371,8 +312,8 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
         }
         aggregatedData[key].fact += weight;
 
-        if (idxPotential !== -1) {
-            const potential = parseFloat(String(row[idxPotential] || '0').replace(/\s/g, '').replace(',', '.'));
+        if (hasPotentialColumn) {
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
@@ -383,6 +324,7 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
             let lat: number | undefined;
             let lon: number | undefined;
             let isCached = false;
+            
             let displayAddress = finalAddress;
 
             const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
@@ -391,7 +333,9 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
                 isCached = true;
-                if (cacheEntry.originalAddress) displayAddress = cacheEntry.originalAddress;
+                if (cacheEntry.originalAddress) {
+                    displayAddress = cacheEntry.originalAddress;
+                }
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
@@ -417,11 +361,11 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
                 name: clientName,
                 address: displayAddress, 
                 city: parsedAddress.city,
-                region: regionForAggregation,
+                region: regionForAggregation, // Ensure individual points also use canonical region
                 rm, brand,
-                type: (idxType !== -1) ? String(row[idxType] || '') : '',
-                contacts: (idxContacts !== -1) ? String(row[idxContacts] || '') : '',
-                originalRow: rowObject, // Store the object version for display in modals
+                type: findValueInRow(row, ['канал продаж']),
+                contacts: findValueInRow(row, ['контакты']),
+                originalRow: row,
                 fact: weight, 
             });
         } else {
@@ -444,13 +388,19 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
     const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
     if (totalFact > 0) {
         plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+        
         let runningTotal = 0;
         plottableActiveClients.forEach(client => {
             runningTotal += (client.fact || 0);
             const percentage = runningTotal / totalFact;
-            if (percentage <= 0.80) client.abcCategory = 'A';
-            else if (percentage <= 0.95) client.abcCategory = 'B';
-            else client.abcCategory = 'C';
+            
+            if (percentage <= 0.80) {
+                client.abcCategory = 'A';
+            } else if (percentage <= 0.95) {
+                client.abcCategory = 'B';
+            } else {
+                client.abcCategory = 'C';
+            }
         });
     }
 
@@ -458,17 +408,16 @@ async function processFile(rows: any[][], { okbData, cacheData, postMessage }: C
     const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
 
     const finalData: AggregatedDataRow[] = [];
-    
     for (const item of Object.values(aggregatedData)) {
         let potential = item.potential;
-        if (idxPotential === -1) potential = item.fact * 1.15;
+        if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
         
         finalData.push({
             ...item, potential,
             growthPotential: Math.max(0, potential - item.fact),
             growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
-            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbByRegion),
+            potentialClients: findPotentialClients(item.region, existingClientsForPotentialSearch, okbData),
             clients: Array.from(item.clients.values()) 
         });
     }
@@ -529,32 +478,33 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    // Use header: 1 to get Array of Arrays. This guarantees index-based access (Col B = index 1).
-    const rows: any[][] = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
+    const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
     
-    await processFile(rows, args);
+    await processFile(jsonData, headers, args);
 }
 
 
 async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
     
-    const parsePromise = new Promise<any[][]>((resolve, reject) => {
+    const parsePromise = new Promise<{ data: any[], meta: ParseMeta }>((resolve, reject) => {
         PapaParse(file, {
-            header: false, // Force Array of Arrays
+            header: true,
             skipEmptyLines: true,
             complete: (results: ParseResult<any>) => {
                 if (results.errors.length > 0) console.warn('CSV parsing errors:', results.errors);
-                resolve(results.data);
+                resolve({ data: results.data, meta: results.meta });
             },
             error: (error: Error) => reject(error)
         });
     });
 
     try {
-        const rows = await parsePromise;
-        if (!rows || rows.length === 0) throw new Error("CSV файл пуст или не удалось его прочитать.");
-        await processFile(rows, args);
+        const { data: jsonData, meta } = await parsePromise;
+        if (!jsonData || jsonData.length === 0) throw new Error("CSV файл пуст или не удалось его прочитать.");
+        const headers = meta.fields || Object.keys(jsonData[0] || {});
+        await processFile(jsonData, headers, args);
     } catch (error) {
         throw new Error(`Failed to parse CSV file: ${(error as Error).message}`);
     }
