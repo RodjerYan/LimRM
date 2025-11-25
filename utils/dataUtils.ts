@@ -109,51 +109,17 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
- * Prioritizes exact matches and ensures non-empty return values.
- * Can explicitly exclude keys containing specific words (e.g., exclude "Manager" when looking for "Region").
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
- * @param excludeKeywords An array of lowercase keywords to exclude from the search.
  * @returns The found string value or an empty string.
  */
-export const findValueInRow = (row: { [key: string]: any }, keywords: string[], excludeKeywords: string[] = []): string => {
+export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
-    const lowerExclude = excludeKeywords.map(k => k.toLowerCase());
-
-    const isExcluded = (key: string) => {
-        const lower = key.toLowerCase();
-        return lowerExclude.some(ex => lower.includes(ex));
-    };
-    
-    // 1. Try Exact Matches First (case-insensitive)
-    // This helps avoid picking "Код региона" when we want "Регион".
     for (const keyword of keywords) {
-        const exactKey = rowKeys.find(k => {
-            const lowerK = k.toLowerCase().trim();
-            return lowerK === keyword.toLowerCase().trim() && !isExcluded(k);
-        });
-        if (exactKey && row[exactKey] != null) {
-             const val = String(row[exactKey]).trim();
-             if (val !== '') return val;
-        }
-    }
-
-    // 2. Try Partial Matches
-    // We iterate through ALL keywords, finding candidate columns for each.
-    // For each keyword, we prefer the shortest column name that contains it (heuristic for "Region" over "Region Code").
-    for (const keyword of keywords) {
-        const lowerKeyword = keyword.toLowerCase();
-        const matchingKeys = rowKeys.filter(k => k.toLowerCase().includes(lowerKeyword) && !isExcluded(k));
-        
-        // Sort by length ascending (shortest first)
-        matchingKeys.sort((a, b) => a.length - b.length);
-        
-        for (const key of matchingKeys) {
-            if (row[key] != null) {
-                const val = String(row[key]).trim();
-                if (val !== '') return val;
-            }
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
+        if (foundKey && row[foundKey] != null) { // Check for null and undefined
+            return String(row[foundKey]);
         }
     }
     return '';
@@ -180,28 +146,104 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     }
 
     // Fallback to partial match if no exact match is found
-    const addressKey = rowKeys.find(key => {
-        const lower = key.toLowerCase();
-        return lower.includes('адрес') && !lower.includes('менеджер');
-    });
+    const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
     if (addressKey && row[addressKey]) return String(row[addressKey]);
     
     // Last resort fallback
-    // Explicitly EXCLUDE "субъект", "менеджер", "код" to avoid misinterpretation.
-    const fallbackKey = rowKeys.find(key => {
-        const lower = key.toLowerCase();
-        return (lower.includes('город') || lower.includes('регион')) && 
-               !lower.includes('субъект') && 
-               !lower.includes('менеджер') &&
-               !lower.includes('manager') &&
-               !lower.includes('код') &&
-               !lower.includes('code');
-    });
+    // Explicitly EXCLUDE "субъект" to avoid using the region name as the address string.
+    const fallbackKey = rowKeys.find(key => 
+        (key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')) && 
+        !key.toLowerCase().includes('субъект')
+    );
     if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
 
     return null;
 };
 
+// --- UNIVERSAL REGION MATCHER GENERATOR ---
+// This generates a list of "root" words for regions to allow flexible matching.
+// Example: "Владимирская область" -> root "владимирская".
+// Input "г. Владимирская обл." will match root "владимирская" -> return "Владимирская область".
+const REGION_MATCHER_LIST = Object.values(REGION_KEYWORD_MAP).reduce((acc, regionName) => {
+    const lowerName = regionName.toLowerCase();
+    
+    // Create a "root" by stripping common administrative terms
+    let root = lowerName
+        .replace(/\bобласть\b/g, '')
+        .replace(/\bкрай\b/g, '')
+        .replace(/\bреспублика\b/g, '')
+        .replace(/\bавтономный округ\b/g, '')
+        .replace(/\bао\b/g, '')
+        .replace(/\bг\.\s*/g, '') // Remove "г." prefix if present in region name (rare but possible in dirty data)
+        .replace(/[()]/g, '')     // Remove brackets
+        .trim();
+    
+    // Skip if root became empty or too short (noise protection)
+    if (root.length > 2) {
+         // Check uniqueness to avoid adding duplicates
+         if (!acc.some(item => item.root === root)) {
+             acc.push({ root, regionName });
+         }
+    }
+    return acc;
+}, [] as { root: string, regionName: string }[]);
+
+// Sort by length descending. This ensures that "Северная Осетия" is matched before "Осетия" (if such partials existed),
+// and generally matches more specific names first.
+REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
+
+
+/**
+ * Recovers a standardized region name from a potentially "dirty" string (e.g. from an Excel cell)
+ * or a city hint.
+ * 
+ * UNIVERSAL ALGORITHM:
+ * 1. Priority: Search the 'dirtyString' (Region Column) for any known region name or its "root".
+ *    If found, this is the source of truth. This fixes issues where a city name (e.g. Kirov)
+ *    conflicts with a region name (e.g. Kaluzhskaya oblast).
+ * 2. Fallback: If no region found in string, use the 'cityHint' to lookup the region.
+ */
+export const recoverRegion = (dirtyString: string, cityHint: string): string => {
+    // Normalize: lowercase, remove non-breaking spaces, replace special chars with space
+    const lowerDirty = dirtyString 
+        ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
+        : '';
+        
+    // If neither exists, give up early
+    if (!lowerDirty && !cityHint) return 'Регион не определен';
+
+    // 1. UNIVERSAL PRIORITY CHECK: Look for region roots in the dirty string.
+    if (lowerDirty) {
+        // First pass: Exact keyword matches (handles abbreviations if they are in REGION_KEYWORD_MAP)
+        for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
+             // Check if the full keyword exists in the string
+             if (lowerDirty.includes(key)) return value;
+        }
+
+        // Second pass: Root matching (handles "Калужская" in "Калужская область")
+        for (const { root, regionName } of REGION_MATCHER_LIST) {
+            if (lowerDirty.includes(root)) {
+                return regionName;
+            }
+        }
+    }
+
+    // 2. Fallback to City Hint only if Region String didn't match
+    // FIX: Normalize the city hint by removing common prefixes ("г.", "пос.", etc.)
+    // This ensures that "г. Орёл" is treated as "орел" and correctly matched in REGION_BY_CITY_MAP.
+    let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
+    if (lowerCity) {
+        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
+        // Also handle "Орёл" -> "орел" normalization for map lookup
+        lowerCity = lowerCity.replace(/ё/g, 'е');
+    }
+
+    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
+        return REGION_BY_CITY_MAP[lowerCity];
+    }
+
+    return 'Регион не определен';
+};
 
 // --- START OF NEW, ROBUST ADDRESS NORMALIZATION LOGIC ---
 
