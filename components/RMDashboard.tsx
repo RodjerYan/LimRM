@@ -30,6 +30,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
 
     const metrics = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
+        const isOkbLoaded = okbRegionCounts !== null;
 
         type RegionBucket = {
             fact: number;
@@ -99,7 +100,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
             const regionMetrics: PlanMetric[] = [];
             const brandAggregates = new Map<string, { fact: number, plan: number }>();
 
-            let rmTotalOkb = 0;
+            let rmTotalOkbRaw = 0;
+            let rmTotalEffectiveMarket = 0;
             let rmTotalClients = 0;
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
@@ -119,9 +121,21 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                     missingRegionNames.add(regionKey);
                 }
 
-                rmTotalOkb += totalRegionOkb;
+                rmTotalOkbRaw += totalRegionOkb;
 
-                const marketShare = totalRegionOkb > 0 ? (activeCount / totalRegionOkb) : NaN;
+                // Market Share Calculation
+                // Logic: If Active > OKB, it means the OKB is incomplete. 
+                // In this case, the "True Market" is at least the Active count.
+                // We use Math.max(activeCount, totalRegionOkb) as the denominator to cap share at 100%.
+                const effectiveRegionMarket = Math.max(activeCount, totalRegionOkb);
+                rmTotalEffectiveMarket += effectiveRegionMarket;
+
+                let marketShare = NaN;
+                if (isOkbLoaded) {
+                    marketShare = effectiveRegionMarket > 0 ? (activeCount / effectiveRegionMarket) : 0;
+                }
+
+                // Use capped market share for plan adjustment logic
                 const effectiveShareForCalc = Math.min(1, Number.isNaN(marketShare) ? 0 : marketShare);
 
                 const sensitivity = 20;
@@ -142,7 +156,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                     growthPct: calculatedRate,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
                     activeCount: activeCount,
-                    totalCount: totalRegionOkb
+                    totalCount: totalRegionOkb // Keep raw OKB count for display (X/Y)
                 });
 
                 regData.brandFacts.forEach((bFact, bName) => {
@@ -165,12 +179,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : BASE_GROWTH_RATE;
 
-            const weightedShare = rmTotalOkb > 0 ? (rmTotalClients / rmTotalOkb) * 100 : NaN;
+            // Weighted share based on Effective Market Size
+            const weightedShare = (isOkbLoaded && rmTotalEffectiveMarket > 0) 
+                ? (rmTotalClients / rmTotalEffectiveMarket) * 100 
+                : NaN;
 
             resultMetrics.push({
                 rmName: rmData.originalName,
                 totalClients: rmTotalClients,
-                totalOkbCount: rmTotalOkb,
+                totalOkbCount: rmTotalOkbRaw,
                 totalFact: rmData.totalFact,
                 totalPotential: rmTotalPotentialFile,
                 avgFactPerClient: rmTotalClients > 0 ? rmData.totalFact / rmTotalClients : 0,
@@ -240,7 +257,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                     <th className="px-4 py-3">РМ</th>
                                     <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
                                     <th className="px-4 py-3 text-center">АКБ / ОКБ (шт)</th>
-                                    <th className="px-4 py-3 text-center text-indigo-300" title="Покрытие территории (АКБ / ОКБ)">Доля рынка</th>
+                                    <th className="px-4 py-3 text-center text-indigo-300" title="Покрытие территории. Если >100%, значит база ОКБ неполная.">Доля рынка</th>
                                     <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
                                     <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
                                     <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
@@ -253,7 +270,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                 {metrics.map(rm => {
                                     const isExpanded = expandedRM === rm.rmName;
                                     const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
-                                    const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue > 100 ? 'text-red-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-emerald-400'));
+                                    const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                     const growthColor = rm.recommendedGrowthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : (rm.recommendedGrowthPct < BASE_GROWTH_RATE ? 'text-amber-400' : 'text-indigo-300');
 
                                     return (
@@ -307,7 +324,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                     <thead className="bg-gray-800 text-gray-400 font-normal">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Регион</th>
-                                                                            <th className="px-3 py-2 text-right">Доля рынка</th>
+                                                                            <th className="px-3 py-2 text-right">АКБ / ОКБ (Доля)</th>
                                                                             <th className="px-3 py-2 text-right">Рост (%)</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
@@ -316,13 +333,16 @@ const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbReg
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
                                                                         {rm.regions.map(reg => {
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare);
-                                                                            const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! > 100 ? 'text-red-400' : (reg.marketShare! < 40 ? 'text-indigo-300' : 'text-gray-400'));
+                                                                            const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : 'text-amber-400';
                                                                             return (
                                                                                 <tr key={reg.name} className="hover:bg-gray-700/20">
                                                                                     <td className="px-3 py-2">{reg.name}</td>
-                                                                                    <td className={`px-3 py-2 text-right font-mono ${regShareColor}`}>
-                                                                                        {regShareKnown ? `${reg.activeCount}/${reg.totalCount} (${reg.marketShare?.toFixed(0)}%)` : `${reg.activeCount}/? (неизв.)`}
+                                                                                    <td className={`px-3 py-2 text-right font-mono`}>
+                                                                                        <span className="text-gray-400">{reg.activeCount}/{reg.totalCount}</span>
+                                                                                        <span className={`ml-2 font-bold ${regShareColor}`}>
+                                                                                            {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(неизв.)'}
+                                                                                        </span>
                                                                                     </td>
                                                                                     <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
                                                                                         {reg.growthPct.toFixed(1)}%
