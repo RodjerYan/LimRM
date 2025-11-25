@@ -37,15 +37,15 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
     }, [selectedRegion, data, regions]);
 
     if (data.length === 0) {
-        return <div className="text-center text-gray-500 mt-20">Please load data in ADAPTA module first.</div>;
+        return <div className="text-center text-gray-500 mt-20">Пожалуйста, сначала загрузите данные в модуле ADAPTA.</div>;
     }
 
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                 <div>
-                    <h2 className="text-2xl font-bold text-white">AGILE LEARNING <span className="text-gray-500 font-normal text-lg">/ Experimentation</span></h2>
-                    <p className="text-gray-400 text-sm mt-1">Design "Test vs Control" experiments to measure incrementality.</p>
+                    <h2 className="text-2xl font-bold text-white">AGILE LEARNING <span className="text-gray-500 font-normal text-lg">/ Эксперименты</span></h2>
+                    <p className="text-gray-400 text-sm mt-1">Проектирование экспериментов "Тест против Контроля" для измерения инкрементальности.</p>
                 </div>
             </div>
 
@@ -53,31 +53,31 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
                 {/* Setup */}
                 <div className="bg-gray-900/50 backdrop-blur-xl border border-gray-700 rounded-2xl p-6">
                     <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                        <LabIcon small /> Experiment Setup
+                        <LabIcon small /> Настройка эксперимента
                     </h3>
                     
-                    <label className="block text-sm text-gray-400 mb-2">Select Test Region (Impact Zone)</label>
+                    <label className="block text-sm text-gray-400 mb-2">Выберите Тестовый Регион (Зона воздействия)</label>
                     <select 
                         className="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white focus:ring-2 focus:ring-indigo-500 mb-6"
                         value={selectedRegion}
                         onChange={(e) => setSelectedRegion(e.target.value)}
                     >
-                        <option value="">-- Choose Region --</option>
+                        <option value="">-- Выберите регион --</option>
                         {regions.map(r => <option key={r} value={r}>{r}</option>)}
                     </select>
 
                     {selectedRegion && (
                         <div className="p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-xl">
-                            <div className="text-xs text-indigo-300 uppercase font-bold mb-2">Experiment Parameters</div>
+                            <div className="text-xs text-indigo-300 uppercase font-bold mb-2">Параметры эксперимента</div>
                             <ul className="space-y-2 text-sm text-gray-300">
                                 <li className="flex justify-between">
-                                    <span>Metric:</span> <span className="text-white">Sales Volume (kg)</span>
+                                    <span>Метрика:</span> <span className="text-white">Объем продаж (кг)</span>
                                 </li>
                                 <li className="flex justify-between">
-                                    <span>Duration:</span> <span className="text-white">3 Months (Recommended)</span>
+                                    <span>Длительность:</span> <span className="text-white">3 Месяца (Рекомендуется)</span>
                                 </li>
                                 <li className="flex justify-between">
-                                    <span>Contamination Check:</span> <span className="text-emerald-400">Passed</span>
+                                    <span>Проверка на смешивание:</span> <span className="text-emerald-400">Пройдена</span>
                                 </li>
                             </ul>
                         </div>
@@ -87,10 +87,10 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
                 {/* Candidates */}
                 <div className="space-y-4">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        <TargetIcon small /> Recommended Control Groups
+                        <TargetIcon small /> Рекомендуемые Контрольные Группы
                     </h3>
                     <p className="text-xs text-gray-400">
-                        Regions with highest statistical similarity to <strong>{selectedRegion || '...'}</strong> based on historical sales volume.
+                        Регионы с наивысшим статистическим сходством с <strong>{selectedRegion || '...'}</strong> на основе исторических продаж.
                     </p>
 
                     {controlCandidates.map((c, idx) => (
@@ -101,19 +101,19 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
                                     <span className="font-bold text-white">{c.region}</span>
                                 </div>
                                 <div className="text-xs text-gray-500 mt-1">
-                                    Volume: {new Intl.NumberFormat('ru-RU').format(c.volume)}
+                                    Объем: {new Intl.NumberFormat('ru-RU').format(c.volume)}
                                 </div>
                             </div>
                             <div className="text-right">
                                 <div className="text-2xl font-bold text-emerald-400">{c.similarity.toFixed(1)}%</div>
-                                <div className="text-[10px] text-gray-500 uppercase">Match Score</div>
+                                <div className="text-[10px] text-gray-500 uppercase">Сходство</div>
                             </div>
                         </div>
                     ))}
 
                     {selectedRegion && controlCandidates.length > 0 && (
                         <button className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-900/20 mt-4">
-                            Launch Experiment Simulation
+                            Запустить симуляцию эксперимента
                         </button>
                     )}
                 </div>

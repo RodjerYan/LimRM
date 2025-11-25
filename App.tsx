@@ -192,9 +192,9 @@ const App: React.FC = () => {
         setUnidentifiedRows(data.unidentifiedRows);
         setOkbRegionCounts(data.okbRegionCounts);
         setFilters({ rm: '', brand: [], region: [] });
-        addNotification(`Data ingested. ${data.aggregatedData.length} groups, ${data.plottableActiveClients.length} active points.`, 'success');
+        addNotification(`Данные загружены. ${data.aggregatedData.length} групп, ${data.plottableActiveClients.length} активных точек.`, 'success');
         if (data.unidentifiedRows.length > 0) {
-            addNotification(`${data.unidentifiedRows.length} unidentified records flagged in ADAPTA.`, 'info');
+            addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
         // Auto-switch to Analytics if data loaded
         setActiveModule('amp');
@@ -447,8 +447,8 @@ const App: React.FC = () => {
                     <div className="text-center py-20 bg-gray-900/50 rounded-2xl border border-gray-800">
                         <h2 className="text-2xl font-bold text-white mb-2">ROI GENOME</h2>
                         <p className="text-gray-400">
-                            Intelligence Layer is integrated into the AMP and PROPHET modules via AI prompts.<br/>
-                            Look for the "Analysis" and "Insights" buttons within specific metrics.
+                            Интеллектуальный слой (Intelligence Layer) интегрирован в модули AMP и PROPHET через AI-подсказки.<br/>
+                            Ищите кнопки "Анализ" и "Инсайты" в соответствующих метриках.
                         </p>
                     </div>
                 );
@@ -469,8 +469,8 @@ const App: React.FC = () => {
                         <div className="lg:col-span-3 space-y-6">
                             <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                                 <div>
-                                    <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Analytics</span></h2>
-                                    <p className="text-gray-400 text-sm mt-1">Holistic modeling and growth driver analysis.</p>
+                                    <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
+                                    <p className="text-gray-400 text-sm mt-1">Целостное моделирование и анализ драйверов роста.</p>
                                 </div>
                                 <button
                                     onClick={() => setIsRMDashboardOpen(true)}
@@ -478,7 +478,7 @@ const App: React.FC = () => {
                                     className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow-lg flex items-center gap-2 transition-all text-sm"
                                 >
                                     <TargetIcon />
-                                    Plan vs Fact Dashboard
+                                    Дашборд План/Факт
                                 </button>
                             </div>
 

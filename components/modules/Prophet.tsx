@@ -52,9 +52,9 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
         chartInstance.current = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Baseline 2026', 'Scenario 2026'],
+                labels: ['Базовый прогноз 2026', 'Сценарий 2026'],
                 datasets: [{
-                    label: 'Projected Revenue',
+                    label: 'Прогнозируемый объем',
                     data: [baseRevenue, scenarioResult],
                     backgroundColor: [
                         'rgba(75, 85, 99, 0.5)', // Gray for baseline
@@ -75,7 +75,7 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: (ctx) => new Intl.NumberFormat('ru-RU').format(ctx.raw as number) + ' kg/units'
+                            label: (ctx) => new Intl.NumberFormat('ru-RU').format(ctx.raw as number) + ' кг/ед'
                         }
                     }
                 },
@@ -92,15 +92,15 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
     }, [baseRevenue, scenarioResult]);
 
     if (!summaryMetrics) {
-        return <div className="text-center text-gray-500 mt-20">Please load data in ADAPTA module first.</div>;
+        return <div className="text-center text-gray-500 mt-20">Пожалуйста, сначала загрузите данные в модуле ADAPTA.</div>;
     }
 
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                 <div>
-                    <h2 className="text-2xl font-bold text-white">PROPHET <span className="text-gray-500 font-normal text-lg">/ Decisioning</span></h2>
-                    <p className="text-gray-400 text-sm mt-1">Forecasting, Scenario Planning ("What-if"), and Optimization.</p>
+                    <h2 className="text-2xl font-bold text-white">PROPHET <span className="text-gray-500 font-normal text-lg">/ Прогнозирование</span></h2>
+                    <p className="text-gray-400 text-sm mt-1">Прогнозирование, сценарное планирование ("What-if") и оптимизация.</p>
                 </div>
             </div>
 
@@ -108,12 +108,12 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                 {/* Controls */}
                 <div className="bg-gray-900/50 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6 space-y-8">
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                        <ProphetIcon small /> Scenario Builder
+                        <ProphetIcon small /> Построитель сценариев
                     </h3>
 
                     <div>
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-gray-300">Marketing Budget</span>
+                            <span className="text-gray-300">Маркетинговый бюджет</span>
                             <span className="text-indigo-400 font-mono">{marketingSpend > 0 ? '+' : ''}{marketingSpend}%</span>
                         </div>
                         <input 
@@ -121,12 +121,12 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                             value={marketingSpend} onChange={(e) => setMarketingSpend(Number(e.target.value))}
                             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Impacts brand awareness. ROI Factor: 0.6</p>
+                        <p className="text-xs text-gray-500 mt-1">Влияет на узнаваемость бренда. ROI Factor: 0.6</p>
                     </div>
 
                     <div>
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-gray-300">Price Strategy</span>
+                            <span className="text-gray-300">Ценовая стратегия</span>
                             <span className="text-amber-400 font-mono">{priceChange > 0 ? '+' : ''}{priceChange}%</span>
                         </div>
                         <input 
@@ -134,12 +134,12 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                             value={priceChange} onChange={(e) => setPriceChange(Number(e.target.value))}
                             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Price Elasticity assumed at -1.2</p>
+                        <p className="text-xs text-gray-500 mt-1">Эластичность спроса принята за -1.2</p>
                     </div>
 
                     <div>
                         <div className="flex justify-between text-sm mb-2">
-                            <span className="text-gray-300">Distribution Growth</span>
+                            <span className="text-gray-300">Рост дистрибуции</span>
                             <span className="text-emerald-400 font-mono">+{distributionGrowth}%</span>
                         </div>
                         <input 
@@ -147,7 +147,7 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                             value={distributionGrowth} onChange={(e) => setDistributionGrowth(Number(e.target.value))}
                             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Physical availability expansion.</p>
+                        <p className="text-xs text-gray-500 mt-1">Расширение физической доступности.</p>
                     </div>
                 </div>
 
@@ -155,13 +155,13 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                 <div className="lg:col-span-2 space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                         <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                            <p className="text-gray-400 text-xs uppercase">Baseline 2026</p>
+                            <p className="text-gray-400 text-xs uppercase">Базовый прогноз 2026</p>
                             <p className="text-2xl font-bold text-white font-mono mt-1">
                                 {new Intl.NumberFormat('ru-RU').format(Math.round(baseRevenue))}
                             </p>
                         </div>
                         <div className={`bg-gray-800/50 p-4 rounded-xl border ${pctChange >= 0 ? 'border-emerald-500/30' : 'border-red-500/30'}`}>
-                            <p className="text-gray-400 text-xs uppercase">Scenario Projection</p>
+                            <p className="text-gray-400 text-xs uppercase">Сценарный прогноз</p>
                             <div className="flex items-end gap-3 mt-1">
                                 <p className="text-2xl font-bold text-white font-mono">
                                     {new Intl.NumberFormat('ru-RU').format(Math.round(scenarioResult))}
@@ -180,9 +180,9 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                     <div className="bg-indigo-900/10 border border-indigo-500/20 p-4 rounded-xl flex gap-3">
                         <div className="text-indigo-400 mt-1"><TrendingUpIcon small /></div>
                         <div className="text-sm text-indigo-200">
-                            <strong>PROPHET Insight:</strong> Based on standard elasticity curves, increasing price by {priceChange}% while boosting marketing by {marketingSpend}% results in a net {pctChange > 0 ? 'positive' : 'negative'} outcome. 
-                            {pctChange > 5 && " This looks like a viable growth strategy."}
-                            {pctChange < 0 && " Careful: Volume loss from price hike outweighs revenue gains."}
+                            <strong>Инсайт PROPHET:</strong> На основе стандартных кривых эластичности, повышение цены на {priceChange}% при увеличении маркетинга на {marketingSpend}% приведет к {pctChange > 0 ? 'положительному' : 'отрицательному'} результату. 
+                            {pctChange > 5 && " Это выглядит как жизнеспособная стратегия роста."}
+                            {pctChange < 0 && " Осторожно: Потеря объема от повышения цены перевешивает рост выручки."}
                         </div>
                     </div>
                 </div>

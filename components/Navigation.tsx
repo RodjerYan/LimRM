@@ -1,5 +1,5 @@
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -8,9 +8,9 @@ interface NavigationProps {
 
 const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     const navItems = [
-        { id: 'adapta', label: 'ADAPTA (Data)', icon: <DataIcon small /> },
-        { id: 'amp', label: 'AMP (Analytics)', icon: <AnalyticsIcon small /> },
-        { id: 'prophet', label: 'PROPHET (Decisioning)', icon: <ProphetIcon small /> },
+        { id: 'adapta', label: 'ADAPTA (Данные)', icon: <DataIcon small /> },
+        { id: 'amp', label: 'AMP (Аналитика)', icon: <AnalyticsIcon small /> },
+        { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
         { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
         { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
     ];
@@ -23,7 +23,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 </div>
                 <div>
                     <h1 className="font-bold text-white tracking-tight">GPS-Enterprise</h1>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Commercial Analytics</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Коммерческая Аналитика</p>
                 </div>
             </div>
             
@@ -50,9 +50,9 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-500 border border-gray-700">
                     <div className="flex items-center gap-2 mb-1">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <span className="text-gray-300">System Online</span>
+                        <span className="text-gray-300">Система активна</span>
                     </div>
-                    <div className="text-[10px]">Version 2.5.0 (GPS-E)</div>
+                    <div className="text-[10px]">Версия 2.5.0 (GPS-E)</div>
                 </div>
             </div>
         </nav>
