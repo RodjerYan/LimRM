@@ -8,6 +8,11 @@ interface RoiGenomeProps {
     data: AggregatedDataRow[];
 }
 
+interface ParetoItem {
+    name: string;
+    value: number;
+}
+
 const RoiGenome: React.FC<RoiGenomeProps> = ({ data }) => {
     
     // Prepare data for Pareto Analysis (By RM Growth Potential)
@@ -66,7 +71,7 @@ const RoiGenome: React.FC<RoiGenomeProps> = ({ data }) => {
                     <p className="text-xs text-gray-400 mb-4">Эти РМ обладают наибольшим запасом для роста. Рекомендуется: Aggressive Investment.</p>
                     
                     <div className="space-y-3">
-                        {paretoData.top20.map((item, idx) => (
+                        {paretoData.top20.map((item: ParetoItem, idx: number) => (
                             <div key={item.name} className="flex items-center p-3 bg-gray-800/50 rounded-xl border border-gray-700">
                                 <div className="w-8 h-8 flex items-center justify-center bg-emerald-900/50 text-emerald-400 font-bold rounded-lg mr-4">
                                     {idx + 1}
@@ -99,7 +104,7 @@ const RoiGenome: React.FC<RoiGenomeProps> = ({ data }) => {
                     <p className="text-xs text-gray-400 mb-4">Остальные территории. Рекомендуется: Maintenance Strategy.</p>
                     
                     <div className="overflow-y-auto max-h-[400px] custom-scrollbar pr-2 space-y-2">
-                        {paretoData.bottom80.map((item) => (
+                        {paretoData.bottom80.map((item: ParetoItem) => (
                             <div key={item.name} className="flex justify-between items-center p-2 hover:bg-gray-800 rounded-lg transition-colors">
                                 <span className="text-gray-300 text-sm">{item.name}</span>
                                 <span className="text-gray-500 text-xs font-mono">+{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(item.value)}</span>

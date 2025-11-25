@@ -20,6 +20,12 @@ interface AdaptaProps {
     uploadedData?: AggregatedDataRow[]; 
 }
 
+interface OutlierItem {
+    row: AggregatedDataRow;
+    zScore: number;
+    reason: string;
+}
+
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
 
@@ -35,7 +41,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Perform outlier analysis
-    const outliers = useMemo(() => {
+    const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
         return detectOutliers(props.uploadedData);
     }, [props.uploadedData]);
@@ -161,7 +167,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                             </tr>
                                         </thead>
                                         <tbody className="text-gray-300 divide-y divide-gray-800">
-                                            {outliers.map((item, idx) => (
+                                            {outliers.map((item: OutlierItem, idx: number) => (
                                                 <tr key={idx} className="hover:bg-white/5">
                                                     <td className="py-3 font-medium text-white">{item.row.clientName}</td>
                                                     <td className="py-3 font-mono">{new Intl.NumberFormat('ru-RU').format(item.row.fact)}</td>
