@@ -100,7 +100,7 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                 <div>
                     <h2 className="text-2xl font-bold text-white">PROPHET <span className="text-gray-500 font-normal text-lg">/ Прогнозирование</span></h2>
-                    <p className="text-gray-400 text-sm mt-1">Прогнозирование, сценарное планирование ("What-if") и оптимизация.</p>
+                    <p className="text-gray-400 text-sm mt-1">Прогнозирование, сценарное планирование ("What-if"), оптимизация и анализ чувствительности.</p>
                 </div>
             </div>
 

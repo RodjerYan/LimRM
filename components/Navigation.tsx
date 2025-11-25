@@ -17,7 +17,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
 
     return (
         <nav className="hidden lg:flex flex-col w-64 bg-gray-900/90 backdrop-blur-xl border-r border-gray-800 h-screen fixed left-0 top-0 z-50">
-            <div className="p-6 flex items-center gap-3 border-b border-gray-800">
+            <div className="p-6 flex items-center gap-3 border-b border-gray-800 shrink-0">
                 <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold">
                     G
                 </div>
@@ -27,7 +27,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 </div>
             </div>
             
-            <div className="flex-1 py-6 px-3 space-y-1">
+            <div className="flex-1 py-6 px-3 space-y-1 overflow-y-auto custom-scrollbar">
                 {navItems.map(item => (
                     <button
                         key={item.id}
@@ -46,7 +46,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 ))}
             </div>
 
-            <div className="p-4 border-t border-gray-800">
+            <div className="p-4 border-t border-gray-800 shrink-0">
                 <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-500 border border-gray-700">
                     <div className="flex items-center gap-2 mb-1">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>

@@ -34,7 +34,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
                 <div>
                     <h2 className="text-2xl font-bold text-white">ADAPTA <span className="text-gray-500 font-normal text-lg">/ Управление данными</span></h2>
-                    <p className="text-gray-400 text-sm mt-1">Автоматизированная загрузка, очистка и стандартизация данных.</p>
+                    <p className="text-gray-400 text-sm mt-1">Автоматизация загрузки, валидации и стандартизации данных. Оценка качества и скоринг.</p>
                 </div>
             </div>
 

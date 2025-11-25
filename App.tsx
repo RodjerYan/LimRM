@@ -470,7 +470,7 @@ const App: React.FC = () => {
                             <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                                 <div>
                                     <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
-                                    <p className="text-gray-400 text-sm mt-1">Целостное моделирование и анализ драйверов роста.</p>
+                                    <p className="text-gray-400 text-sm mt-1">Построение многомерных моделей, выявление драйверов роста. Holistic (целостное) моделирование.</p>
                                 </div>
                                 <button
                                     onClick={() => setIsRMDashboardOpen(true)}

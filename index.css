@@ -24,7 +24,7 @@
 @layer base {
   body {
     @apply text-text-main;
-    zoom: 75%;
+    /* zoom: 75%; - Removed to prevent layout overflow/cutoff issues */
   }
 }
 
