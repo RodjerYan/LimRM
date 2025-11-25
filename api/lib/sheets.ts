@@ -68,19 +68,20 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        // STRICT COLUMN MAPPING BASED ON USER REQUEST:
-        // OKB Sheet: Column L = Longitude (Index 11), Column M = Latitude (Index 12)
-        // 0-based index: A=0, B=1 ... L=11, M=12
+        // STRICT COLUMN MAPPING CONFIRMED BY SCREENSHOTS:
+        // OKB Sheet "Base for RM": 
+        // Column L (Index 11) = "Долгота" (Longitude)
+        // Column M (Index 12) = "Широта" (Latitude)
+        // 0-based index: A=0 ... K=10, L=11, M=12
         
         let latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
         let lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
         // Force override from specific columns if headers failed or just to be safe
+        // We check if the row has enough columns to contain L and M
         if (rowArray.length > 12) {
-             // If header parsing didn't find a clear lat/lon, or to enforce the L/M rule:
-             // Check if Column M (Lat) and Column L (Lon) have data
-             const rawLon = rowArray[11]; // Column L
-             const rawLat = rowArray[12]; // Column M
+             const rawLon = rowArray[11]; // Column L is Longitude (Index 11)
+             const rawLat = rowArray[12]; // Column M is Latitude (Index 12)
              
              if (rawLat && rawLon) {
                  latVal = rawLat;
@@ -204,11 +205,11 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         const values = valueRange.values || [];
         if (values.length > 1) { // Skip header
             cache[title] = values.slice(1).map(row => {
-                // AKB CACHE MAPPING:
+                // AKB CACHE MAPPING CONFIRMED BY SCREENSHOTS "AKB base active":
                 // Column A (Index 0): Address
-                // Column B (Index 1): Latitude
-                // Column C (Index 2): Longitude
-                // Column D (Index 3): History
+                // Column B (Index 1): Latitude (lat)
+                // Column C (Index 2): Longitude (lon)
+                // Column D (Index 3): History/Old address
                 
                 const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
