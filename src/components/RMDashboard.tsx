@@ -773,7 +773,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
             </div>
             
-            {/* Modals */}
             {selectedRegionDetails && (
                 <RegionDetailsModal 
                     isOpen={isRegionModalOpen}
