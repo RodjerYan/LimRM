@@ -164,6 +164,9 @@ export interface RMMetrics {
     countA: number;
     countB: number;
     countC: number;
+    factA: number; // Total sales volume for category A
+    factB: number; // Total sales volume for category B
+    factC: number; // Total sales volume for category C
     recommendedGrowthPct: number; // Effective weighted growth
     nextYearPlan: number;
     // Detailed breakdowns

@@ -1,4 +1,5 @@
 
+
 import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
@@ -6,7 +7,7 @@ import RMAnalysisModal from './RMAnalysisModal';
 import MetricsSummary from './MetricsSummary';
 import ClientsListModal from './ClientsListModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint } from '../types';
-import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon } from './icons';
+import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
 interface RMDashboardProps {
@@ -22,8 +23,6 @@ interface RMDashboardProps {
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
 }
-
-const BASE_GROWTH_RATE = 13.0; // Base 13%
 
 const normalizeRmNameForMatching = (str: string) => {
     if (!str) return '';
@@ -44,6 +43,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     onActiveClientsClick,
     onEditClient
 }) => {
+    const [baseRate, setBaseRate] = useState(15); // Default 15% as requested
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
@@ -94,6 +94,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             countA: number;
             countB: number;
             countC: number;
+            factA: number;
+            factB: number;
+            factC: number;
         }>();
 
         data.forEach(row => {
@@ -106,7 +109,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     originalName: rmName,
                     regions: new Map(),
                     totalFact: 0,
-                    countA: 0, countB: 0, countC: 0
+                    countA: 0, countB: 0, countC: 0,
+                    factA: 0, factB: 0, factC: 0
                 });
             }
             const rmBucket = rmBuckets.get(normRm)!;
@@ -114,9 +118,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             if (row.clients) {
                 row.clients.forEach(c => {
-                    if (c.abcCategory === 'A') rmBucket.countA++;
-                    else if (c.abcCategory === 'B') rmBucket.countB++;
-                    else rmBucket.countC++;
+                    const clientFact = c.fact || 0;
+                    if (c.abcCategory === 'A') {
+                        rmBucket.countA++;
+                        rmBucket.factA += clientFact;
+                    } else if (c.abcCategory === 'B') {
+                        rmBucket.countB++;
+                        rmBucket.factB += clientFact;
+                    } else {
+                        rmBucket.countC++;
+                        rmBucket.factC += clientFact;
+                    }
                 });
             }
 
@@ -192,10 +204,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
                 const sensitivity = 20;
                 let adjustment = (0.4 - effectiveShareForCalc) * sensitivity;
-                const minRate = 5;
-                const maxRate = 25;
+                // Dynamic boundaries based on baseRate
+                const minRate = Math.max(0, baseRate - 10);
+                const maxRate = baseRate + 15;
 
-                let calculatedRate = BASE_GROWTH_RATE + adjustment;
+                let calculatedRate = baseRate + adjustment;
                 calculatedRate = Math.max(minRate, Math.min(maxRate, calculatedRate));
 
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);
@@ -229,7 +242,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             const effectiveGrowthPct = rmData.totalFact > 0
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
-                : BASE_GROWTH_RATE;
+                : baseRate;
 
             const weightedShare = (isOkbLoaded && rmTotalOkbRaw > 0) 
                 ? (rmTotalMatched / rmTotalOkbRaw) * 100 
@@ -246,6 +259,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 countA: rmData.countA,
                 countB: rmData.countB,
                 countC: rmData.countC,
+                factA: rmData.factA,
+                factB: rmData.factB,
+                factC: rmData.factC,
                 recommendedGrowthPct: effectiveGrowthPct,
                 nextYearPlan: rmTotalCalculatedPlan,
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
@@ -256,7 +272,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         (resultMetrics as any).__missingOkbRegions = Array.from(missingRegionNames.values());
         return resultMetrics.sort((a, b) => b.totalFact - a.totalFact);
 
-    }, [data, okbRegionCounts, okbData]);
+    }, [data, okbRegionCounts, okbData, baseRate]);
 
     // --- EXPORT LOGIC ---
 
@@ -409,9 +425,24 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const mainContent = (
         <div className="space-y-4 animate-fade-in">
             <div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400 border border-gray-700 flex flex-wrap gap-4 items-center">
-                <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-indigo-500"></span>
-                    <span>Базовое повышение: <b>{BASE_GROWTH_RATE}%</b></span>
+                <div className="flex items-center gap-2 bg-gray-900/50 p-1 pr-3 rounded-lg border border-indigo-500/30 shadow-sm">
+                    <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2"></span>
+                    <div className="flex items-center gap-2">
+                        <label htmlFor="baseRateInput" className="cursor-pointer font-medium text-gray-300 select-none">Базовое повышение:</label>
+                        <div className="relative">
+                            <input
+                                id="baseRateInput"
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={baseRate}
+                                onChange={(e) => setBaseRate(Number(e.target.value))}
+                                className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
+                        </div>
+                        <span className="font-bold text-indigo-400">%</span>
+                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-emerald-500"></span>
@@ -468,7 +499,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                             const isExpanded = expandedRM === rm.rmName;
                             const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
                             const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                            const growthColor = rm.recommendedGrowthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : (rm.recommendedGrowthPct < BASE_GROWTH_RATE ? 'text-amber-400' : 'text-indigo-300');
+                            const growthColor = rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300');
 
                             return (
                                 <React.Fragment key={rm.rmName}>
@@ -507,25 +538,34 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             </div>
                                         </td>
                                         <td 
-                                            className="px-4 py-3 text-center font-mono text-amber-400 font-bold hover:bg-amber-500/10 hover:text-white transition-colors cursor-pointer"
-                                            title={`Показать ${rm.countA} клиентов категории A для ${rm.rmName}`}
+                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10"
+                                            title={`Показать клиентов A для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}
                                         >
-                                            {rm.countA}
+                                            <div className="flex flex-col items-center justify-center">
+                                                <span className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</span>
+                                                <span className="font-bold font-mono text-amber-400 text-lg">{rm.countA}</span>
+                                            </div>
                                         </td>
                                         <td 
-                                            className="px-4 py-3 text-center font-mono text-emerald-400 font-bold hover:bg-emerald-500/10 hover:text-white transition-colors cursor-pointer"
-                                            title={`Показать ${rm.countB} клиентов категории B для ${rm.rmName}`}
+                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10"
+                                            title={`Показать клиентов B для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}
                                         >
-                                            {rm.countB}
+                                            <div className="flex flex-col items-center justify-center">
+                                                <span className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</span>
+                                                <span className="font-bold font-mono text-emerald-400 text-lg">{rm.countB}</span>
+                                            </div>
                                         </td>
                                         <td 
-                                            className="px-4 py-3 text-center font-mono text-slate-400 font-bold hover:bg-slate-500/10 hover:text-white transition-colors cursor-pointer"
-                                            title={`Показать ${rm.countC} клиентов категории C для ${rm.rmName}`}
+                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10"
+                                            title={`Показать клиентов C для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}
                                         >
-                                            {rm.countC}
+                                            <div className="flex flex-col items-center justify-center">
+                                                <span className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</span>
+                                                <span className="font-bold font-mono text-slate-400 text-lg">{rm.countC}</span>
+                                            </div>
                                         </td>
                                     </tr>
 
@@ -549,7 +589,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                 {rm.regions.map(reg => {
                                                                     const regShareKnown = !Number.isNaN(reg.marketShare);
                                                                     const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                                                                    const regGrowthColor = reg.growthPct > BASE_GROWTH_RATE ? 'text-emerald-400' : 'text-amber-400';
+                                                                    const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
                                                                     return (
                                                                         <tr key={reg.name} className="hover:bg-gray-700/20">
                                                                             <td className="px-3 py-2">{reg.name}</td>
@@ -633,7 +673,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     isOpen={isAnalysisModalOpen}
                     onClose={() => setIsAnalysisModalOpen(false)}
                     rmData={selectedRMForAnalysis}
-                    baseRate={BASE_GROWTH_RATE}
+                    baseRate={baseRate}
                 />
                 {/* ABC Clients List Modal */}
                 <ClientsListModal 
@@ -751,7 +791,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 isOpen={isAnalysisModalOpen}
                 onClose={() => setIsAnalysisModalOpen(false)}
                 rmData={selectedRMForAnalysis}
-                baseRate={BASE_GROWTH_RATE}
+                baseRate={baseRate}
             />
             {/* ABC Clients List Modal */}
             <ClientsListModal 

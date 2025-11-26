@@ -1,3 +1,5 @@
+
+
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
 import { MapPoint } from '../types';
@@ -35,6 +37,11 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
         prevGeocoding.current = client.isGeocoding;
     }, [client.isGeocoding, client.lat, client.lon]);
 
+    const formatNumber = (num: number | undefined) => {
+        if (num === undefined || num === null) return '0';
+        return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(num);
+    };
+
     return (
         <tr className='border-b border-gray-700 hover:bg-indigo-500/10'>
             <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{client.name}</th>
@@ -70,6 +77,7 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
                 </div>
             </td>
             <td className="px-4 py-3">{client.city}</td>
+            <td className="px-4 py-3 font-mono text-emerald-400 font-bold text-right">{formatNumber(client.fact)}</td>
             <td className="px-4 py-3">{client.rm}</td>
             <td className="px-4 py-3">{client.brand}</td>
         </tr>
@@ -77,7 +85,7 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
 };
 
 const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onStartEdit }) => {
-    const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'name', direction: 'ascending' });
+    const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'fact', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [rowsPerPage, setRowsPerPage] = useState(15);
@@ -85,9 +93,9 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['Наименование', 'Адрес', 'Город/Группа', 'Регион', 'РМ', 'Бренд', 'Канал продаж'].join('\t'),
+            ['Наименование', 'Адрес', 'Город/Группа', 'Объем (кг)', 'Регион', 'РМ', 'Бренд', 'Канал продаж'].join('\t'),
             ...sortedData.map(row => [
-                row.name, row.address, row.city, row.region, row.rm, row.brand, row.type
+                row.name, row.address, row.city, row.fact || 0, row.region, row.rm, row.brand, row.type
             ].join('\t'))
         ].join('\n');
         navigator.clipboard.writeText(tsv).then(() => {
@@ -114,6 +122,9 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
             sortableItems.sort((a, b) => {
                 const aValue = a[sortConfig.key];
                 const bValue = b[sortConfig.key];
+                
+                // Handle null/undefined gracefully
+                if ((aValue === undefined || aValue === null) && (bValue === undefined || bValue === null)) return 0;
                 if (aValue === undefined || aValue === null) return 1;
                 if (bValue === undefined || bValue === null) return -1;
                 
@@ -155,7 +166,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
         if (isOpen) {
             setSearchTerm('');
             setCurrentPage(1);
-            setSortConfig({ key: 'name', direction: 'ascending' });
+            setSortConfig({ key: 'fact', direction: 'descending' });
         }
     }, [isOpen]);
 
@@ -180,6 +191,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                                 <SortableHeader sortKey="name">Наименование</SortableHeader>
                                 <th scope="col" className="px-4 py-3">Адрес</th>
                                 <SortableHeader sortKey="city">Город/Группа</SortableHeader>
+                                <SortableHeader sortKey="fact">Объем (кг)</SortableHeader>
                                 <SortableHeader sortKey="rm">РМ</SortableHeader>
                                 <SortableHeader sortKey="brand">Бренд</SortableHeader>
                             </tr>
