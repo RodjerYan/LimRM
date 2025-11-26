@@ -405,12 +405,14 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        const commonWrapperClass = "max-w-7xl mx-auto"; // Limit width and center content
+        // Separate wrapper classes based on content type
+        const limitedWrapperClass = "max-w-7xl mx-auto";
+        const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 
         switch (activeModule) {
             case 'adapta':
                 return (
-                    <div className={commonWrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <Adapta 
                             onFileProcessed={handleFileProcessed}
                             onProcessingStateChange={handleProcessingStateChange}
@@ -427,7 +429,7 @@ const App: React.FC = () => {
                 );
             case 'dashboard':
                 return (
-                    <div className={commonWrapperClass}>
+                    <div className={fullWidthWrapperClass}>
                         <RMDashboard 
                             isOpen={true} // Always open when in this view
                             onClose={() => setActiveModule('amp')} 
@@ -444,26 +446,26 @@ const App: React.FC = () => {
                 );
             case 'prophet':
                 return (
-                    <div className={commonWrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <Prophet summaryMetrics={summaryMetrics} />
                     </div>
                 );
             case 'agile':
                 return (
-                    <div className={commonWrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <AgileLearning data={allData} />
                     </div>
                 );
             case 'roi-genome':
                 return (
-                    <div className={commonWrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <RoiGenome data={allData} />
                     </div>
                 );
             case 'amp':
             default:
                 return (
-                    <div className={`space-y-6 animate-fade-in ${commonWrapperClass}`}>
+                    <div className={`space-y-6 animate-fade-in ${fullWidthWrapperClass}`}>
                         <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                             <div>
                                 <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
