@@ -405,14 +405,13 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        // Separate wrapper classes based on content type
-        const limitedWrapperClass = "max-w-7xl mx-auto";
-        const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
+        // UNIFIED WRAPPER CLASS FOR ALL MODULES TO RESTORE FULL WIDTH
+        const wrapperClass = "w-full px-4 lg:px-8";
 
         switch (activeModule) {
             case 'adapta':
                 return (
-                    <div className={limitedWrapperClass}>
+                    <div className={wrapperClass}>
                         <Adapta 
                             onFileProcessed={handleFileProcessed}
                             onProcessingStateChange={handleProcessingStateChange}
@@ -429,7 +428,7 @@ const App: React.FC = () => {
                 );
             case 'dashboard':
                 return (
-                    <div className={fullWidthWrapperClass}>
+                    <div className={wrapperClass}>
                         <RMDashboard 
                             isOpen={true} // Always open when in this view
                             onClose={() => setActiveModule('amp')} 
@@ -446,26 +445,26 @@ const App: React.FC = () => {
                 );
             case 'prophet':
                 return (
-                    <div className={limitedWrapperClass}>
+                    <div className={wrapperClass}>
                         <Prophet summaryMetrics={summaryMetrics} />
                     </div>
                 );
             case 'agile':
                 return (
-                    <div className={limitedWrapperClass}>
+                    <div className={wrapperClass}>
                         <AgileLearning data={allData} />
                     </div>
                 );
             case 'roi-genome':
                 return (
-                    <div className={limitedWrapperClass}>
+                    <div className={wrapperClass}>
                         <RoiGenome data={allData} />
                     </div>
                 );
             case 'amp':
             default:
                 return (
-                    <div className={`space-y-6 animate-fade-in ${fullWidthWrapperClass}`}>
+                    <div className={`space-y-6 animate-fade-in ${wrapperClass}`}>
                         <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                             <div>
                                 <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
@@ -485,9 +484,9 @@ const App: React.FC = () => {
                             onEditClient={(client) => handleStartEdit(client, 'clients')}
                         />
 
-                        {/* Split layout: Filters & Chart (Left) vs Results Table (Right) */}
+                        {/* Split layout: Filters (Left) | Chart (Right) - Equal Width */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div className="flex flex-col gap-6">
+                            <div className="h-full">
                                 <Filters
                                     options={filterOptions}
                                     currentFilters={filters}
@@ -495,18 +494,27 @@ const App: React.FC = () => {
                                     onReset={resetFilters}
                                     disabled={!isDataLoaded || isLoading}
                                 />
-                                {filteredData.length > 0 && <PotentialChart data={filteredData} />}
                             </div>
-                            
-                            <div className="h-full min-h-[500px]">
-                                <ResultsTable 
-                                    data={filteredData} 
-                                    onRowClick={handleRowClick} 
-                                    disabled={!isDataLoaded || isLoading}
-                                    unidentifiedRowsCount={unidentifiedRows.length}
-                                    onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                                />
+                            <div className="h-full">
+                                {filteredData.length > 0 ? (
+                                    <PotentialChart data={filteredData} />
+                                ) : (
+                                    <div className="h-full bg-card-bg/50 border border-indigo-500/10 rounded-2xl flex items-center justify-center text-gray-500">
+                                        Нет данных для графика
+                                    </div>
+                                )}
                             </div>
+                        </div>
+                        
+                        {/* Results Table - Full Width at Bottom */}
+                        <div className="w-full">
+                            <ResultsTable 
+                                data={filteredData} 
+                                onRowClick={handleRowClick} 
+                                disabled={!isDataLoaded || isLoading}
+                                unidentifiedRowsCount={unidentifiedRows.length}
+                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                            />
                         </div>
                     </div>
                 );
