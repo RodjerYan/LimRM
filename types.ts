@@ -139,6 +139,8 @@ export type WorkerMessage =
 // Type for the coordinate cache data structure from Google Sheets
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
 
+// --- PLANNING ENGINE TYPES ---
+
 export interface GrowthFactors {
     base: number;
     share: number;
@@ -157,11 +159,6 @@ export interface PlanMetric {
     activeCount?: number; // Active clients
     totalCount?: number; // Total potential clients (OKB) - only for regions
     brands?: PlanMetric[]; // Nested brand breakdown for this specific region
-    
-    // New Excel-Logic Specific Fields
-    kpiScore?: number; // Normalized KPI score (0-1)
-    riskFactor?: number; // Applied risk coefficient
-    seasonalCoef?: number; // Seasonal adjustment
     
     // Breakdown of the calculation
     factors?: GrowthFactors;

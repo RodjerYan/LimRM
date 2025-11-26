@@ -2,7 +2,7 @@
 import React from 'react';
 import Modal from './Modal';
 import { PlanMetric } from '../types';
-import { TrendingUpIcon, TargetIcon, CalculatorIcon } from './icons';
+import { TargetIcon, CalculatorIcon } from './icons';
 
 interface GrowthExplanationModalProps {
     isOpen: boolean;
@@ -110,7 +110,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                                 <div className="text-sm text-white font-medium">Захват Территории (Acquisition)</div>
                                 <div className="text-xs text-gray-500">
                                     {factors.acquisition > 0 
-                                        ? "Регион не покрыт. Задача на активный вход в новые точки (ОКБ)." 
+                                        ? "Регион не покрыт. Задача на активный вход в новые точки (ОКБ) с учетом эффективности РМ." 
                                         : "Покрытие стабильное."}
                                 </div>
                             </div>

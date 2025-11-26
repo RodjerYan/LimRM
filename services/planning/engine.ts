@@ -49,7 +49,7 @@ export class PlanningEngine {
             
             // А. Поправка на Долю Рынка (Extensive)
             // Если доля мала (< 20%), растем быстрее. Если велика (> 40%), растем медленнее.
-            if (marketShare > 0) {
+            if (marketShare > 0 && marketShare < 0.9) {
                 const normalizedShare = Formulas.normalizeNonLinear(marketShare, 0.3);
                 growthComponents.share = Formulas.calculateBaseEffect(
                     normalizedShare, 
@@ -103,13 +103,6 @@ export class PlanningEngine {
             }
 
             growthComponents.acquisition = acquisitionBonus;
-            
-            // При нулевом факте база для % роста равна 0. 
-            // В этом случае "План" должен быть не % от 0, а абсолютным значением.
-            // Но архитектура требует вернуть %.
-            // Поэтому мы вернем ОЧЕНЬ ВЫСОКИЙ процент, который при умножении на 
-            // "Виртуальный Факт" (если бы он был) дал бы результат.
-            // В UI мы это обработаем отдельно: если факт 0, план берется из "Потенциала" * acquisitionRate.
         }
 
         // 5. Суммируем и применяем лимиты
@@ -137,17 +130,19 @@ export class PlanningEngine {
             // Стандартный рост от достигнутого
             planVolume = rmData.totalFact * (1 + finalGrowthPct / 100);
         } else {
-            // Расчет "с нуля" на основе ОКБ
-            // План = (Емкость ОКБ * ЦелеваяДоляЗахвата * СреднийЧекПоКомпании)
-            // ЦелеваяДоляЗахвата ~ 5% для старта
-            const acquisitionTargetShare = 0.05; 
-            // Если емкость ОКБ неизвестна, берем 0
+            // Расчет "с нуля" на основе ОКБ (Логика "Накинуть точек")
+            // Эвристика: 
+            // Цель = (Емкость ОКБ * TargetShare * AvgSalesPerClient)
+            
+            // TargetShare зависит от эффективности РМ (acquisitionBonus)
+            // Если бонус высокий (12%), цель 5% рынка. Если низкий (3%), цель 1% рынка.
+            const acquisitionTargetShare = (growthComponents.acquisition / 100) * 0.5; // ~1-6%
+            
             if (rmData.totalRegionOkb > 0 && context.globalAvgSales > 0) {
-                 // Эвристика: (Кол-во точек * 5%) * (Средние продажи на точку по компании)
                  // Средние продажи на точку ~ GlobalAvgSales * GlobalAvgSku
                  const avgClientVolume = context.globalAvgSales * context.globalAvgSku;
                  const targetClients = Math.ceil(rmData.totalRegionOkb * acquisitionTargetShare);
-                 planVolume = targetClients * avgClientVolume;
+                 planVolume = Math.max(1, targetClients * avgClientVolume);
             }
         }
 
