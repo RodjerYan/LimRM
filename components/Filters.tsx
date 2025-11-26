@@ -138,9 +138,6 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
                 
                 {/* Header */}
                 <div className="flex items-center gap-4 mb-6">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-white font-bold shadow-lg shadow-emerald-500/30 ring-2 ring-white/10">
-                        3
-                    </div>
                     <div>
                         <h2 className="text-lg font-bold text-white leading-tight">Фильтрация</h2>
                         <p className="text-xs text-gray-400">Настройка выборки данных</p>

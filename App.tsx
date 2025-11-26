@@ -454,13 +454,7 @@ const App: React.FC = () => {
                                 </div>
                             </div>
 
-                            <Filters
-                                options={filterOptions}
-                                currentFilters={filters}
-                                onFilterChange={handleFilterChange}
-                                onReset={resetFilters}
-                                disabled={!isDataLoaded || isLoading}
-                            />
+                            {/* Changed order: Map first, then Filters */}
                             
                             <InteractiveRegionMap 
                                 data={filteredData} 
@@ -471,6 +465,14 @@ const App: React.FC = () => {
                                 theme={theme}
                                 onToggleTheme={toggleTheme}
                                 onEditClient={(client) => handleStartEdit(client, 'clients')}
+                            />
+
+                            <Filters
+                                options={filterOptions}
+                                currentFilters={filters}
+                                onFilterChange={handleFilterChange}
+                                onReset={resetFilters}
+                                disabled={!isDataLoaded || isLoading}
                             />
 
                             <ResultsTable 
