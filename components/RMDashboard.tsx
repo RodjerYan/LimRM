@@ -3,11 +3,10 @@ import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
-import MetricsSummary from './MetricsSummary';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
 interface RMDashboardProps {
@@ -77,7 +76,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
         // --- STEP 1: Pre-Calculate Global Benchmarks ---
-        // We need to know Company Averages to compare each RM against them.
         let globalTotalListings = 0; // Total SKU/Brand connections
         let globalTotalUniqueClients = 0;
         let globalTotalVolume = 0;
@@ -85,10 +83,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
         data.forEach(row => {
             globalTotalVolume += row.fact;
-            // Each row in `data` represents a Brand-Region group. 
-            // The number of clients in this row equals the number of "listings" for that brand in that region.
             globalTotalListings += row.clients.length;
-            
             row.clients.forEach(c => allUniqueClientKeys.add(c.key));
         });
         globalTotalUniqueClients = allUniqueClientKeys.size;
@@ -128,7 +123,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             factA: number;
             factB: number;
             factC: number;
-            // Metrics for Smart Calc
             uniqueClientKeys: Set<string>;
             totalListings: number;
         }>();
@@ -151,11 +145,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             }
             const rmBucket = rmBuckets.get(normRm)!;
             rmBucket.totalFact += row.fact;
-            rmBucket.totalListings += row.clients.length; // Add listings count
+            rmBucket.totalListings += row.clients.length;
 
             if (row.clients) {
                 row.clients.forEach(c => {
-                    rmBucket.uniqueClientKeys.add(c.key); // Track unique clients
+                    rmBucket.uniqueClientKeys.add(c.key);
                     const clientFact = c.fact || 0;
                     if (c.abcCategory === 'A') {
                         rmBucket.countA++;
@@ -211,32 +205,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             let rmTotalOkbRaw = 0;
             let rmTotalMatched = 0;
             
-            // --- SMART CALCULATION: RM Level Metrics ---
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
-            
-            // 1. RM SKU Width (Avg Listings per Client)
-            // This is local to the RM.
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
-            
-            // 2. RM Velocity (Avg Sales per Listing/SKU)
-            // This is local to the RM.
             const rmAvgSalesPerSku = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
 
             // --- SMART CALCULATION: Coefficients ---
-            
-            // Width Gap: Compare RM's SKU width to Global Average.
-            // If RM has fewer SKUs (gap > 0), they have high potential to cross-sell.
-            // Coefficient: ~15% boost if they have 0 width (theoretical), 0% if they are average.
             const widthGapPct = globalAvgSkuPerClient > 0 ? (globalAvgSkuPerClient - rmAvgSkuPerClient) / globalAvgSkuPerClient : 0;
-            // Cap: Min -5% (if they are very good), Max +15% (if they are very bad)
             const widthBonus = Math.max(-5, Math.min(15, widthGapPct * 15));
 
-            // Velocity Gap: Compare RM's Sales per SKU to Global Average.
-            // If RM sells less per SKU (gap > 0), they have quality issues / potential to upsell.
             const velocityGapPct = globalAvgSalesPerSku > 0 ? (globalAvgSalesPerSku - rmAvgSalesPerSku) / globalAvgSalesPerSku : 0;
             const velocityBonus = Math.max(-5, Math.min(15, velocityGapPct * 15));
 
-            // --- REGION ITERATION ---
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
 
@@ -262,25 +241,25 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 let shareAdjustment = 0;
                 let marketShare = NaN;
 
-                // Only calculate share adjustment if we have VALID OKB data and matches.
-                // If coverage is 0 (either no data or no matches), we DO NOT assume "Empty Market" boost (because it might be a data error).
-                // Instead, we fallback to neutral share adjustment and rely on Width/Velocity bonuses.
-                if (isOkbLoaded && totalRegionOkb > 0 && matchedCount > 0) {
+                // FIX: Calculate share if we know the total, regardless of other flags.
+                // This ensures we see (0%) instead of (n/d) if active=0 but potential>0.
+                if (totalRegionOkb > 0) {
                     marketShare = (matchedCount / totalRegionOkb);
+                }
+
+                // Calculate Plan Adjustment
+                // We only apply "Low Share Bonus" if we have confirmed matches > 0. 
+                // If coverage is 0%, it might be a data error, so we don't boost the plan automatically.
+                if (!Number.isNaN(marketShare) && matchedCount > 0) {
                     // Center at 35% share. 
-                    // If Share < 35%, adjustment is positive (up to +8%).
-                    // If Share > 35%, adjustment is negative (saturation).
                     shareAdjustment = (0.35 - marketShare) * 20;
                 } else {
-                    // No data match? Neutral share impact.
                     shareAdjustment = 0;
                 }
                 
-                // Combine Factors:
-                // Rate = Base + ShareAdj + WidthBonus + VelocityBonus
+                // Combine Factors
                 let calculatedRate = baseRate + shareAdjustment + widthBonus + velocityBonus;
                 
-                // Clamp limits to keep plans sane
                 const minRate = Math.max(0, baseRate - 15);
                 const maxRate = baseRate + 30; 
                 calculatedRate = Math.max(minRate, Math.min(maxRate, calculatedRate));
@@ -328,11 +307,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
-            const weightedShare = (isOkbLoaded && rmTotalOkbRaw > 0) 
+            const weightedShare = (rmTotalOkbRaw > 0) 
                 ? (rmTotalMatched / rmTotalOkbRaw) * 100 
                 : NaN;
 
-            // Store extended metrics in the object (casting to any to avoid strict type breaking for now, or extend type)
             const extendedMetrics = {
                 rmName: rmData.originalName,
                 totalClients: rmUniqueClientsCount,
@@ -351,7 +329,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 nextYearPlan: rmTotalCalculatedPlan,
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
                 brands: brandMetrics,
-                // New Analytics Fields
                 avgSkuPerClient: rmAvgSkuPerClient,
                 avgSalesPerSku: rmAvgSalesPerSku,
                 globalAvgSku: globalAvgSkuPerClient,
@@ -366,8 +343,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     }, [data, okbRegionCounts, okbData, baseRate]);
 
-    // --- EXPORT LOGIC ---
-
+    // ... (Export Logic remains same) ...
     const prepareExportData = () => {
         const activeCoordSet = new Set<string>();
         data.forEach(group => {
@@ -517,19 +493,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         setIsAbcModalOpen(true);
     };
 
-    // --- LOGIC FOR REGION DETAILS MODAL ---
     const handleRegionClick = (rmName: string, regionName: string) => {
         const active: MapPoint[] = [];
         let potential: PotentialClient[] = [];
         const normalizedTargetRm = normalizeRmNameForMatching(rmName);
 
-        // Scan data to find all groups matching this RM and Region
         data.forEach(group => {
             if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) {
                 active.push(...group.clients);
-                
-                // The worker calculates potential clients PER REGION and attaches them to the group.
-                // We only need to grab it once for this region.
                 if (potential.length === 0 && group.potentialClients && group.potentialClients.length > 0) {
                     potential = group.potentialClients;
                 }
@@ -562,7 +533,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     const filteredRegions = availableRegions.filter(r => r.toLowerCase().includes(regionSearch.toLowerCase()));
 
-    // --- Main Content ---
     const mainContent = (
         <>
             <div className="space-y-4 animate-fade-in">
@@ -762,7 +732,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                     <td className={`px-3 py-2 text-right font-mono`}>
                                                                                         <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
                                                                                         <span className={`ml-2 font-bold ${regShareColor}`}>
-                                                                                            {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(н/д)'}
+                                                                                            {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(0%)'}
                                                                                         </span>
                                                                                     </td>
                                                                                     <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
@@ -834,7 +804,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
             </div>
             
-            {/* Modals */}
             {selectedRegionDetails && (
                 <RegionDetailsModal 
                     isOpen={isRegionModalOpen}
@@ -845,7 +814,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     potentialClients={selectedRegionDetails.potentialClients}
                 />
             )}
-            {/* Reuse Export Modal for 'modal' mode */}
+            
             <Modal 
                 isOpen={isExportModalOpen} 
                 onClose={() => setIsExportModalOpen(false)} 
@@ -937,7 +906,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
             </Modal>
 
-            {/* Analysis Modal */}
             {selectedRMForAnalysis && (
                 <RMAnalysisModal
                     isOpen={isAnalysisModalOpen}
@@ -947,7 +915,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 />
             )}
 
-            {/* ABC Modal */}
             {isAbcModalOpen && (
                 <ClientsListModal
                     isOpen={isAbcModalOpen}
