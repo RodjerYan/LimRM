@@ -359,6 +359,38 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         setIsExportModalOpen(false);
     };
 
+    const handleExportRMDetails = (rm: RMMetrics) => {
+        const exportData: any[] = [];
+
+        rm.regions.forEach(reg => {
+            if (reg.brands && reg.brands.length > 0) {
+                reg.brands.forEach(br => {
+                    exportData.push({
+                        'Регион': reg.name,
+                        'Бренд': br.name,
+                        'Инд. Рост (%)': (br.growthPct || 0).toFixed(1),
+                        'Факт (кг)': br.fact,
+                        'План (кг)': br.plan.toFixed(0)
+                    });
+                });
+            } else {
+                 // Fallback if no brand details (though specific request implies there are)
+                 exportData.push({
+                    'Регион': reg.name,
+                    'Бренд': 'Сводный',
+                    'Инд. Рост (%)': (reg.growthPct || 0).toFixed(1),
+                    'Факт (кг)': reg.fact,
+                    'План (кг)': reg.plan.toFixed(0)
+                });
+            }
+        });
+
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Детализация');
+        XLSX.writeFile(workbook, `Plan_Details_${rm.rmName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     // Toggles
     const toggleCountry = (country: string) => {
         const newSet = new Set(selectedCountries);
@@ -631,8 +663,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
                                                     {/* Right Column: Detailed Brand Breakdown Per Region */}
                                                     <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/20">
-                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
-                                                            Детализация: Регионы и Бренды
+                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center">
+                                                            <span>Детализация: Регионы и Бренды</span>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }}
+                                                                className="text-gray-500 hover:text-emerald-400 transition-colors"
+                                                                title="Выгрузить в Excel"
+                                                            >
+                                                                <ExportIcon />
+                                                            </button>
                                                         </div>
                                                         <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
                                                             <table className="w-full text-xs text-left">

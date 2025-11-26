@@ -1,11 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
+import React, { useState } from 'react';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
 import { AggregatedDataRow, OkbStatus, MapPoint } from '../types';
-import { streamClientInsights } from '../services/aiService';
-import { LoaderIcon, FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon } from './icons';
+import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon } from './icons';
 
 interface DetailsModalProps {
     isOpen: boolean;
@@ -37,99 +34,6 @@ const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode
         </div>
     </div>
 );
-
-
-const AiInsightSection: React.FC<{ data: AggregatedDataRow }> = ({ data }) => {
-    const [insight, setInsight] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [analysisStarted, setAnalysisStarted] = useState(false);
-    const abortControllerRef = useRef<AbortController | null>(null);
-
-    useEffect(() => {
-        setInsight('');
-        setError(null);
-        setIsLoading(false);
-        setAnalysisStarted(false);
-        abortControllerRef.current?.abort();
-
-        return () => {
-            abortControllerRef.current?.abort();
-        };
-    }, [data]);
-
-    const fetchInsights = useCallback(() => {
-        if (abortControllerRef.current) {
-            abortControllerRef.current.abort();
-        }
-        abortControllerRef.current = new AbortController();
-        const signal = abortControllerRef.current.signal;
-
-        setInsight('');
-        setError(null);
-        setIsLoading(true);
-
-        streamClientInsights(
-            data,
-            (chunk: string) => setInsight(prev => prev + chunk),
-            (err: Error) => {
-                if (err.name !== 'AbortError') {
-                    setError(`Не удалось получить рекомендации от AI: ${err.message}. Попробуйте еще раз.`);
-                }
-                setIsLoading(false);
-            },
-            signal
-        ).finally(() => {
-            setIsLoading(false);
-        });
-    }, [data]);
-
-    const handleFetchClick = () => {
-        setAnalysisStarted(true);
-        fetchInsights();
-    };
-
-
-    const sanitizedHtml = DOMPurify.sanitize(marked.parse(insight) as string);
-
-    return (
-        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 min-h-[150px] flex flex-col">
-            <h4 className="font-bold text-lg mb-2 text-accent">Анализ данных</h4>
-            <div className="flex-grow min-h-0 overflow-y-auto custom-scrollbar pr-2 flex items-center justify-center">
-                 {!analysisStarted ? (
-                    <button
-                        onClick={handleFetchClick}
-                        className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200"
-                    >
-                        Получить анализ информации
-                    </button>
-                ) : (
-                    <div className="w-full h-full">
-                        {isLoading && !insight && (
-                            <div className="flex items-center justify-center h-full text-gray-400">
-                                <LoaderIcon />
-                                <span className="ml-2">Анализ данных...</span>
-                            </div>
-                        )}
-                        {error && (
-                            <div className="text-center">
-                                <p className="text-danger text-sm mb-3">{error}</p>
-                                <button
-                                    onClick={fetchInsights}
-                                    disabled={isLoading}
-                                    className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg transition duration-200 text-sm disabled:bg-gray-600"
-                                >
-                                    {isLoading ? 'Загрузка...' : 'Попробовать снова'}
-                                </button>
-                            </div>
-                        )}
-                        <div className="prose prose-invert prose-sm max-w-none text-slate-300" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
 
 const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: MapPoint) => void; }> = ({ clients, onStartEdit }) => {
     const [searchTerm, setSearchTerm] = useState('');
@@ -190,24 +94,21 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
             <div className="space-y-6">
-                {/* Top Section: Metrics and AI Insights */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                        <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                             <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
-                             <div className="grid grid-cols-2 gap-3">
-                                <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
-                                <MetricCard title="Общий Потенциал" value={formatNumber(data.potential, true)} icon={<PotentialIcon />} color="text-accent" tooltip={`Прогнозируемый объем рынка для группы: ${formatNumber(data.potential, false)} кг/ед`} />
-                                <MetricCard title="Потенциал Роста" value={formatNumber(data.growthPotential, false)} icon={<GrowthIcon />} color="text-warning" tooltip={`Неосвоенный объем рынка для группы: ${formatNumber(data.growthPotential, false)} кг/ед`} />
-                                <MetricCard title="Средний Рост" value={`${data.growthPercentage.toFixed(1)}%`} icon={<TrendingUpIcon />} color="text-yellow-400" tooltip="Средний процент неосвоенного потенциала по клиентам в группе" />
-                                <MetricCard title="Активных Клиентов" value={formatNumber(activeClientsCount, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
-                                <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
-                                <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClientsCount} из ${okbStatus?.rowCount || 0})`} />
-                             </div>
-                        </div>
-                        <GroupedClientsList clients={data.clients} onStartEdit={onStartEdit} />
+                {/* Top Section: Metrics */}
+                <div className="space-y-4">
+                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
+                            <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
+                            <MetricCard title="Общий Потенциал" value={formatNumber(data.potential, true)} icon={<PotentialIcon />} color="text-accent" tooltip={`Прогнозируемый объем рынка для группы: ${formatNumber(data.potential, false)} кг/ед`} />
+                            <MetricCard title="Потенциал Роста" value={formatNumber(data.growthPotential, false)} icon={<GrowthIcon />} color="text-warning" tooltip={`Неосвоенный объем рынка для группы: ${formatNumber(data.growthPotential, false)} кг/ед`} />
+                            <MetricCard title="Средний Рост" value={`${data.growthPercentage.toFixed(1)}%`} icon={<TrendingUpIcon />} color="text-yellow-400" tooltip="Средний процент неосвоенного потенциала по клиентам в группе" />
+                            <MetricCard title="Активных Клиентов" value={formatNumber(activeClientsCount, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
+                            <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
+                            <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClientsCount} из ${okbStatus?.rowCount || 0})`} />
+                            </div>
                     </div>
-                    <AiInsightSection data={data} />
+                    <GroupedClientsList clients={data.clients} onStartEdit={onStartEdit} />
                 </div>
                 
                 {/* Bottom Section: Chart */}
