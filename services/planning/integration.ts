@@ -4,8 +4,7 @@ import { PlanningEngine } from './engine';
 
 /**
  * Enriches the raw aggregated data with "Smart Plan" calculations.
- * This ensures that the "Analysis Results" table in the AMP module matches the 
- * sophisticated logic used in the RM Dashboard (Market Share, SKU Width, Velocity).
+ * Ensures differentiation between brands within the same region based on their individual performance (Velocity).
  */
 export function enrichDataWithSmartPlan(
     data: AggregatedDataRow[],
@@ -28,88 +27,97 @@ export function enrichDataWithSmartPlan(
     });
     const globalTotalUniqueClients = allUniqueClientKeys.size;
 
+    // Calculate Global Averages
     const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
     const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
 
-    // --- STEP 2: Group Data by RM -> Region ---
-    // We need to calculate metrics contextually for each RM in each Region to get the correct "Growth Rate"
-    type RegionBucket = {
-        fact: number;
-        activeClients: Set<string>;
-        matchedOkbCoords: number; // Count of matches
-        listings: number; // Total SKU connections
+    // --- STEP 2: Region Level Aggregation (Context) ---
+    // We first need to know the total active clients in the region to calculate Market Share.
+    // This applies to all brands in that region equally.
+    type RegionContext = {
+        activeUniqueClients: Set<string>;
+        matchedOkbCoords: number;
+        totalOkbCapacity: number;
+        rmGlobalListings: number; // For acquisition bonus logic
+        rmGlobalFact: number;
     };
 
-    // Map: "RM_Name|Region_Name" -> Bucket
-    const buckets = new Map<string, RegionBucket>();
-    
-    // Also track RM-level stats for the "Acquisition Bonus" logic (Strong RM entering new region)
+    const regionContextMap = new Map<string, RegionContext>(); // Key: "RM|Region"
     const rmStats = new Map<string, { totalFact: number; totalListings: number }>();
 
     data.forEach(row => {
         const rm = row.rm;
         const region = row.region;
-        const key = `${rm}|${region}`;
+        const regKey = `${rm}|${region}`;
 
-        // Update RM Stats
+        // 2.1 Update RM Global Stats
         if (!rmStats.has(rm)) rmStats.set(rm, { totalFact: 0, totalListings: 0 });
-        const rmStat = rmStats.get(rm)!;
-        rmStat.totalFact += row.fact;
-        rmStat.totalListings += row.clients.length;
+        const stat = rmStats.get(rm)!;
+        stat.totalFact += row.fact;
+        stat.totalListings += row.clients.length;
 
-        // Update Region Bucket
-        if (!buckets.has(key)) {
-            buckets.set(key, {
-                fact: 0,
-                activeClients: new Set(),
+        // 2.2 Update Region Context
+        if (!regionContextMap.has(regKey)) {
+            regionContextMap.set(regKey, {
+                activeUniqueClients: new Set(),
                 matchedOkbCoords: 0,
-                listings: 0
+                totalOkbCapacity: globalOkbRegionCounts[region] || 0,
+                rmGlobalListings: 0,
+                rmGlobalFact: 0
             });
         }
-        const bucket = buckets.get(key)!;
-        bucket.fact += row.fact;
-        bucket.listings += row.clients.length;
+        const ctx = regionContextMap.get(regKey)!;
         
         row.clients.forEach(c => {
-            if (!bucket.activeClients.has(c.key)) {
-                bucket.activeClients.add(c.key);
-                // Simple match check based on status or coordinates presence logic from aggregation
-                // Assuming clients in row are already active/matched if they came from processing
-                // For strictness we can re-check coords, but usually 'active' implies match for our purposes or at least presence.
-                // Let's assume if it has lat/lon it's "matched" enough for density calc, 
-                // though strictly "matched" implies OKB intersection. 
-                // For the engine, we use active count as proxy for match if precise matching info isn't attached to row.
-                // Ideally `row.matchedCount` should exist, but we can approximate:
-                if (c.lat && c.lon) bucket.matchedOkbCoords++;
+            if (!ctx.activeUniqueClients.has(c.key)) {
+                ctx.activeUniqueClients.add(c.key);
+                // Approximate matching logic for share calculation
+                if (c.lat && c.lon) ctx.matchedOkbCoords++;
             }
         });
     });
 
-    // --- STEP 3: Calculate Rate per Bucket ---
-    const rateMap = new Map<string, number>(); // Key: "RM|Region", Value: GrowthPct
-
-    buckets.forEach((bucket, key) => {
-        const [rm, region] = key.split('|');
+    // --- STEP 3: Row (Brand) Level Calculation ---
+    return data.map(row => {
+        const rm = row.rm;
+        const region = row.region;
+        const regKey = `${rm}|${region}`;
+        const ctx = regionContextMap.get(regKey)!;
         const rmStat = rmStats.get(rm)!;
-        
-        // Calculate Metrics
-        const activeCount = bucket.activeClients.size;
-        const regionAvgSku = activeCount > 0 ? bucket.listings / activeCount : 0;
-        const regionAvgVelocity = bucket.listings > 0 ? bucket.fact / bucket.listings : 0;
-        
-        const rmGlobalVelocity = rmStat.totalListings > 0 ? rmStat.totalFact / rmStat.totalListings : 0;
-        
-        const totalRegionOkb = globalOkbRegionCounts[region] || 0;
 
-        // Call Engine
+        // Brand Specific Metrics
+        const brandFact = row.fact;
+        const brandListings = row.clients.length; // Number of clients buying THIS brand
+        const brandUniqueClients = new Set(row.clients.map(c => c.key)).size;
+
+        // 3.1 Calculate Brand Velocity (Kg per Point for this brand)
+        const brandVelocity = brandListings > 0 ? brandFact / brandListings : 0;
+
+        // 3.2 Calculate Brand Width (Saturation within its own clients)
+        // If row represents a single brand, AvgSku is typically 1. 
+        // If it's a category row, it might be higher. Assuming 1 for single brand rows.
+        const brandAvgSku = 1; 
+
+        // 3.3 Calculate RM Global Velocity (Proxy for acquisition potential)
+        const rmGlobalVelocity = rmStat.totalListings > 0 ? rmStat.totalFact / rmStat.totalListings : 0;
+
+        // 3.4 Call Engine for this specific Brand
         const result = PlanningEngine.calculateRMPlan(
             {
-                totalFact: bucket.fact,
-                totalPotential: totalRegionOkb, // Use OKB capacity as potential reference
-                matchedCount: bucket.matchedOkbCoords, // Use coords count as proxy for matched
-                totalRegionOkb: totalRegionOkb,
-                avgSku: regionAvgSku,
-                avgVelocity: regionAvgVelocity,
+                totalFact: brandFact,
+                // For a single brand, "potential" is hard to define without external data.
+                // We rely on the engine's growth logic relative to the Region's capacity.
+                totalPotential: ctx.totalOkbCapacity, 
+                
+                // REGIONAL Context (Shared)
+                matchedCount: ctx.matchedOkbCoords,
+                totalRegionOkb: ctx.totalOkbCapacity,
+                
+                // BRAND Specifics
+                avgSku: brandAvgSku,
+                avgVelocity: brandVelocity, // Crucial: Use this brand's velocity
+                
+                // Fallback
                 rmGlobalVelocity: rmGlobalVelocity
             },
             {
@@ -120,27 +128,18 @@ export function enrichDataWithSmartPlan(
             }
         );
 
-        // Special case for 0 fact entry
+        // Special case for new entry logic
         let rate = result.growthPct;
-        if (bucket.fact === 0 && result.plan > 0) {
-            rate = 100; // Marker for new entry
+        if (brandFact === 0 && result.plan > 0) {
+            rate = 100; 
         }
 
-        rateMap.set(key, rate);
-    });
-
-    // --- STEP 4: Update Original Rows ---
-    // Return a NEW array to avoid mutating state directly in unexpected ways (immutability pattern)
-    return data.map(row => {
-        const key = `${row.rm}|${row.region}`;
-        const rate = rateMap.get(key) || baseRate;
-        
-        const newPlan = row.fact * (1 + rate / 100);
-        const growthAbs = newPlan - row.fact;
+        const newPlan = brandFact * (1 + rate / 100);
+        const growthAbs = newPlan - brandFact;
 
         return {
             ...row,
-            potential: newPlan, // Overwrite "Potential" with "Smart Plan"
+            potential: newPlan,
             growthPotential: Math.max(0, growthAbs),
             growthPercentage: rate
         };

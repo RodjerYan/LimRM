@@ -113,10 +113,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             potential: number;
             activeClients: Set<string>;
             matchedOkbCoords: Set<string>;
-            brandFacts: Map<string, number>;
+            // Tracking brand specifics for individual calculation
+            brandFacts: Map<string, number>; 
+            brandClientCounts: Map<string, number>; // New: Track # of clients per brand
             originalRegionName?: string;
-            // Regional Metrics
-            regionListings: number; // Total SKU connections in this region
+            regionListings: number; 
         };
 
         const rmBuckets = new Map<string, {
@@ -169,7 +170,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     potential: 0, 
                     activeClients: new Set(), 
                     matchedOkbCoords: new Set(), 
-                    brandFacts: new Map(), 
+                    brandFacts: new Map(),
+                    brandClientCounts: new Map(),
                     originalRegionName: row.region,
                     regionListings: 0
                 });
@@ -177,7 +179,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             const regBucket = rmBucket.regions.get(regionKey)!;
             regBucket.fact += row.fact;
             regBucket.potential += row.potential || 0;
-            regBucket.regionListings += row.clients.length; // Add SKU count for this row (Brand-City group)
+            regBucket.regionListings += row.clients.length; 
 
             if (row.clients) {
                 row.clients.forEach(c => {
@@ -192,6 +194,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             }
             const brandName = row.brand || 'No Brand';
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
+            // Count clients for this brand in this region
+            regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
         });
 
         const missingRegionNames = new Set<string>();
@@ -228,79 +232,83 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 }
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // Calculate Region-Specific Metrics
-                // SKU Width: Listings / UniqueClients in region
-                const regionAvgSku = activeCount > 0 ? regData.regionListings / activeCount : 0;
-                // Velocity: Fact / Listings in region
-                const regionAvgVelocity = regData.regionListings > 0 ? regData.fact / regData.regionListings : 0;
-
-                // --- NEW: USE PLANNING ENGINE WITH REGIONAL CONTEXT ---
-                const calculationResult = PlanningEngine.calculateRMPlan(
-                    {
-                        totalFact: regData.fact,
-                        totalPotential: totalRegionOkb, 
-                        matchedCount: matchedCount,
-                        totalRegionOkb: totalRegionOkb,
-                        
-                        // Specific Region Metrics
-                        avgSku: regionAvgSku, 
-                        avgVelocity: regionAvgVelocity,
-                        
-                        // Fallback RM Metrics
-                        rmGlobalVelocity: rmGlobalAvgVelocity
-                    },
-                    {
-                        baseRate: baseRate,
-                        globalAvgSku: globalAvgSkuPerClient,
-                        globalAvgSales: globalAvgSalesPerSku,
-                        riskLevel: 'low'
-                    }
-                );
-
-                let regionPlan = calculationResult.plan;
-                let calculatedRate = calculationResult.growthPct;
-                
-                // Special visual fix: If Fact was 0 but Engine calculated a Plan (Acquisition), 
-                // growth % is mathematically infinite. We display a conceptual "entry" rate.
-                if (regData.fact === 0 && regionPlan > 0) {
-                    calculatedRate = 100; // "New Entry" marker
-                }
-
-                rmTotalCalculatedPlan += regionPlan;
-
-                // Brands breakdown
+                // --- NEW: Calculate Plan PER BRAND to differentiate growth ---
+                let regionCalculatedPlan = 0;
                 const regionBrands: PlanMetric[] = [];
+
                 regData.brandFacts.forEach((bFact, bName) => {
-                    // If brand fact is 0 (new brand entry), we distribute region acquisition plan
-                    // proportional to something (or just equal split). Here we use calculatedRate.
-                    const bPlan = bFact > 0 ? bFact * (1 + calculatedRate / 100) : (regionPlan / regData.brandFacts.size);
-                    
+                    const bClientCount = regData.brandClientCounts.get(bName) || 0;
+                    const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
+                    // Single brand width assumed as 1 unless aggregations change
+                    const bWidth = 1; 
+
+                    // Call Engine for THIS brand specifically
+                    const calculationResult = PlanningEngine.calculateRMPlan(
+                        {
+                            totalFact: bFact,
+                            totalPotential: totalRegionOkb, // Share context is Region
+                            matchedCount: matchedCount,     // Share context is Region
+                            totalRegionOkb: totalRegionOkb,
+                            
+                            // Brand Specifics
+                            avgSku: bWidth, 
+                            avgVelocity: bVelocity,
+                            
+                            // Fallback
+                            rmGlobalVelocity: rmGlobalAvgVelocity
+                        },
+                        {
+                            baseRate: baseRate,
+                            globalAvgSku: globalAvgSkuPerClient,
+                            globalAvgSales: globalAvgSalesPerSku,
+                            riskLevel: 'low'
+                        }
+                    );
+
+                    let bRate = calculationResult.growthPct;
+                    // New entry logic
+                    if (bFact === 0 && calculationResult.plan > 0) {
+                        bRate = 100;
+                    }
+
+                    const bPlan = bFact * (1 + bRate / 100);
+                    regionCalculatedPlan += bPlan;
+
                     regionBrands.push({
                         name: bName,
                         fact: bFact,
                         plan: bPlan,
-                        growthPct: calculatedRate,
-                        factors: calculationResult.factors // Pass factors to brand as well
+                        growthPct: bRate,
+                        factors: calculationResult.factors
                     });
+
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
                     const agg = brandAggregates.get(bName)!;
                     agg.fact += bFact;
                     agg.plan += bPlan;
                 });
+
                 regionBrands.sort((a, b) => b.fact - a.fact);
+                rmTotalCalculatedPlan += regionCalculatedPlan;
+
+                // Calculate weighted growth for the whole region
+                const regionGrowthPct = regData.fact > 0 
+                    ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100
+                    : (regionCalculatedPlan > 0 ? 100 : 0);
 
                 const marketShare = totalRegionOkb > 0 ? (matchedCount / totalRegionOkb) : NaN;
 
                 regionMetrics.push({
                     name: regionKey,
                     fact: regData.fact,
-                    plan: regionPlan,
-                    growthPct: calculatedRate,
+                    plan: regionCalculatedPlan,
+                    growthPct: regionGrowthPct,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
                     activeCount: matchedCount,
                     totalCount: totalRegionOkb,
                     brands: regionBrands,
-                    factors: calculationResult.factors // Pass factors to region
+                    // Factors for the region row are approximate (weighted average could be done, but taking top brand or simplified factors is easier for UI)
+                    // Here we leave factors undefined for the summary row to avoid confusion, or use the "weighted" concept in future.
                 });
             });
 
@@ -335,7 +343,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
                 brands: brandMetrics,
                 avgSkuPerClient: rmAvgSkuPerClient,
-                avgSalesPerSku: rmGlobalAvgVelocity, // Use computed global velocity for RM row
+                avgSalesPerSku: rmGlobalAvgVelocity, 
                 globalAvgSku: globalAvgSkuPerClient,
                 globalAvgSalesSku: globalAvgSalesPerSku
             };
