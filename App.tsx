@@ -36,7 +36,6 @@ import {
     RMMetrics
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import type { FeatureCollection } from 'geojson';
 import { TargetIcon } from './components/icons';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -89,7 +88,6 @@ const App: React.FC = () => {
     const [okbRegionCounts, setOkbRegionCounts] = useState<{ [key: string]: number } | null>(null);
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
-    const [conflictZones, setConflictZones] = useState<FeatureCollection | null>(null);
     
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
@@ -162,25 +160,6 @@ const App: React.FC = () => {
             setNotifications(prev => prev.filter(n => n.id !== newNotification.id));
         }, 5000);
     }, []);
-
-    useEffect(() => {
-        const fetchConflictZones = async () => {
-            try {
-                const response = await fetch('/api/get-conflict-zones');
-                if (!response.ok) {
-                    throw new Error('Не удалось загрузить данные о зонах конфликта.');
-                }
-                const data: FeatureCollection = await response.json();
-                setConflictZones(data);
-                addNotification('Слой с зонами повышенной опасности успешно загружен.', 'info');
-            } catch (error) {
-                console.error(error);
-                addNotification((error as Error).message, 'error');
-            }
-        };
-
-        fetchConflictZones();
-    }, [addNotification]);
     
     useEffect(() => {
         if (flyToClientKey) {
@@ -488,7 +467,6 @@ const App: React.FC = () => {
                                 selectedRegions={filters.region} 
                                 potentialClients={potentialClients}
                                 activeClients={filteredActiveClients}
-                                conflictZones={conflictZones}
                                 flyToClientKey={flyToClientKey}
                                 theme={theme}
                                 onToggleTheme={toggleTheme}

@@ -1,9 +1,10 @@
 
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import { MapPoint } from '../types';
-import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon, ErrorIcon } from './icons';
+import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, LoaderIcon, ErrorIcon, ExportIcon } from './icons';
 
 interface ClientsListModalProps {
     isOpen: boolean;
@@ -104,6 +105,24 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
         });
     };
 
+    const handleExportXLSX = () => {
+        const exportData = sortedData.map(row => ({
+            'Наименование': row.name,
+            'Адрес': row.address,
+            'Город/Группа': row.city,
+            'Объем (кг)': row.fact || 0,
+            'Регион': row.region,
+            'РМ': row.rm,
+            'Бренд': row.brand,
+            'Канал продаж': row.type
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Клиенты');
+        XLSX.writeFile(workbook, `Clients_List_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     const filteredData = useMemo(() => {
         if (!searchTerm) return clients;
         const lowercasedFilter = searchTerm.toLowerCase();
@@ -179,9 +198,14 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
                             className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition" />
                          <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
                     </div>
-                    <button onClick={handleCopyToClipboard} title="Скопировать в буфер обмена (TSV)" className="p-2 bg-gray-900/50 border border-gray-600 rounded-lg text-gray-300 hover:bg-indigo-500/20 hover:text-white transition flex-shrink-0">
-                         {copied ? <CheckIcon /> : <CopyIcon />}
-                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={handleExportXLSX} title="Выгрузить в Excel" className="p-2 bg-gray-900/50 border border-gray-600 rounded-lg text-gray-300 hover:bg-emerald-600/20 hover:text-emerald-400 transition">
+                            <ExportIcon />
+                        </button>
+                        <button onClick={handleCopyToClipboard} title="Скопировать в буфер обмена (TSV)" className="p-2 bg-gray-900/50 border border-gray-600 rounded-lg text-gray-300 hover:bg-indigo-500/20 hover:text-white transition">
+                            {copied ? <CheckIcon /> : <CopyIcon />}
+                        </button>
+                    </div>
                 </div>
                 
                 <div className="flex-grow overflow-y-auto custom-scrollbar">

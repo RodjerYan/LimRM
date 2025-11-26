@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { FilterOptions, FilterState } from '../types';
 
@@ -131,7 +132,7 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
     };
 
     return (
-        <div className={`relative group transition-opacity duration-300 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+        <div className={`relative z-40 group transition-opacity duration-300 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
             <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl blur opacity-10 group-hover:opacity-30 transition duration-1000"></div>
             <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl h-full flex flex-col">
                 

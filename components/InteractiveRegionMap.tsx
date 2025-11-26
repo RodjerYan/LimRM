@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
@@ -5,8 +6,7 @@ import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-import { SearchIcon, ErrorIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
-import type { FeatureCollection } from 'geojson';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
 
 type Theme = 'dark' | 'light';
 
@@ -15,7 +15,6 @@ interface InteractiveRegionMapProps {
     selectedRegions: string[];
     potentialClients: OkbDataRow[];
     activeClients: MapPoint[];
-    conflictZones: FeatureCollection | null;
     flyToClientKey: string | null;
     theme?: Theme; // Global theme (initial state)
     onToggleTheme?: () => void;
@@ -51,14 +50,10 @@ const MapLegend: React.FC = () => (
             <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
             <span className="text-xs font-medium">Потенциал (ОКБ)</span>
         </div>
-        <div className="flex items-center">
-            <span className="inline-block w-6 h-1 mr-2 bg-red-600"></span>
-            <span className="text-xs font-medium">Линия ЛБС</span>
-        </div>
     </div>
 );
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, conflictZones, flyToClientKey, theme = 'dark', onEditClient }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -66,7 +61,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const urbanCentersLayer = useRef<L.LayerGroup | null>(null);
     const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
     const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
-    const conflictZonesLayer = useRef<L.GeoJSON | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
@@ -80,7 +74,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
-    const [isWarningVisible, setIsWarningVisible] = useState(true);
     
     // Local Map Theme State (independent of App theme)
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
@@ -500,61 +493,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }).addTo(map);
 
     }, [selectedRegions, highlightRegion]);
-
-    // Conflict Zones (UPDATED with LineString styling)
-    useEffect(() => {
-        const map = mapInstance.current;
-        if (!map || !layerControl.current) return;
-
-        if (conflictZonesLayer.current) {
-            layerControl.current.removeLayer(conflictZonesLayer.current);
-            map.removeLayer(conflictZonesLayer.current);
-        }
-
-        if (conflictZones) {
-            conflictZonesLayer.current = L.geoJSON(conflictZones, {
-                style: (feature) => {
-                    const status = feature?.properties?.status;
-                    
-                    // Style for the Line of Contact (LBS)
-                    if (feature?.geometry.type === 'LineString') {
-                        return { color: '#dc2626', weight: 4, dashArray: '10, 5', opacity: 0.9, lineCap: 'butt' };
-                    }
-
-                    if (status === 'occupied') {
-                        return { color: '#dc2626', weight: 1.5, fillColor: '#b91c1c', fillOpacity: 0.45 };
-                    }
-                    if (status === 'border_danger_zone') {
-                        return { color: '#f59e0b', weight: 1, fillColor: '#f59e0b', fillOpacity: 0.4 };
-                    }
-                    return { color: '#ef4444', weight: 1, fillColor: '#ef4444', fillOpacity: 0.3 };
-                },
-                pointToLayer: (feature, latlng) => {
-                    // If there are specific points (e.g. cities) in the conflict data
-                    return L.circleMarker(latlng, {
-                        radius: 6,
-                        fillColor: '#ef4444',
-                        color: '#fff',
-                        weight: 2,
-                        opacity: 1,
-                        fillOpacity: 0.8
-                    });
-                },
-                onEachFeature: (feature, layer) => {
-                    const props = feature.properties;
-                    if (props && props.name) {
-                        let popupContent = `<b>${props.name}</b><br>${props.description || 'Нет описания.'}`;
-                        if (props.last_updated) {
-                            popupContent += `<br><small style="color:#9ca3af">Обновлено: ${new Date(props.last_updated).toLocaleDateString()}</small>`;
-                        }
-                        layer.bindPopup(popupContent);
-                    }
-                }
-            }).addTo(map);
-
-            layerControl.current.addOverlay(conflictZonesLayer.current, "⚠️ Зоны СВО и опасности");
-        }
-    }, [conflictZones]);
     
     const typeToLabel: Record<SearchableLocation['type'], string> = {
         region: 'Регион',
@@ -600,18 +538,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     )}
                 </div>
             </div>
-
-            {isWarningVisible && conflictZones && !isFullscreen && (
-                <div className="bg-red-900/50 border border-danger/50 text-danger text-sm rounded-lg p-3 mb-4 flex justify-between items-center">
-                    <div className="flex items-center">
-                        <div className="w-5 h-5 mr-2 flex-shrink-0"><ErrorIcon/></div>
-                        <span>
-                            Внимание: слой "Зоны опасности" носит информационный характер и обновляется ежедневно.
-                        </span>
-                    </div>
-                    <button onClick={() => setIsWarningVisible(false)} className="text-red-300 hover:text-white text-lg">&times;</button>
-                </div>
-            )}
             
             <div className={`relative w-full ${isFullscreen ? 'h-full' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
                 {/* Removed dynamic theme class from React rendering to prevent node destruction. Handled manually in useEffect. */}
