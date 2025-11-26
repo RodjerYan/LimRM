@@ -405,7 +405,7 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        // UNIFIED WRAPPER CLASS FOR ALL MODULES TO RESTORE FULL WIDTH
+        // Unified wrapper class for full width
         const wrapperClass = "w-full px-4 lg:px-8";
 
         switch (activeModule) {
@@ -484,9 +484,9 @@ const App: React.FC = () => {
                             onEditClient={(client) => handleStartEdit(client, 'clients')}
                         />
 
-                        {/* Split layout: Filters (Left) | Chart (Right) - Equal Width */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div className="h-full">
+                        {/* Split layout: Filters (Left) | Chart (Right) - Unequal Width (25% / 75%) */}
+                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                            <div className="h-full lg:col-span-1">
                                 <Filters
                                     options={filterOptions}
                                     currentFilters={filters}
@@ -495,7 +495,7 @@ const App: React.FC = () => {
                                     disabled={!isDataLoaded || isLoading}
                                 />
                             </div>
-                            <div className="h-full">
+                            <div className="h-full lg:col-span-3">
                                 {filteredData.length > 0 ? (
                                     <PotentialChart data={filteredData} />
                                 ) : (
