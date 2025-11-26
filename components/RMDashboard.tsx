@@ -241,19 +241,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 let shareAdjustment = 0;
                 let marketShare = NaN;
 
-                // FIX: Calculate share if we know the total, regardless of other flags.
-                // This ensures we see (0%) instead of (n/d) if active=0 but potential>0.
+                // FIX: Calculate Share if we know total, regardless of okbData array presence
                 if (totalRegionOkb > 0) {
                     marketShare = (matchedCount / totalRegionOkb);
                 }
 
                 // Calculate Plan Adjustment
-                // We only apply "Low Share Bonus" if we have confirmed matches > 0. 
-                // If coverage is 0%, it might be a data error, so we don't boost the plan automatically.
                 if (!Number.isNaN(marketShare) && matchedCount > 0) {
+                    // Apply bonus only if we have confirmed matches (valid data)
                     // Center at 35% share. 
                     shareAdjustment = (0.35 - marketShare) * 20;
                 } else {
+                    // If 0 matches (0%), do not apply "Low Share Bonus" as it might be a mapping error.
                     shareAdjustment = 0;
                 }
                 
@@ -814,7 +813,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     potentialClients={selectedRegionDetails.potentialClients}
                 />
             )}
-            
+            {/* Reuse Export Modal for 'modal' mode */}
             <Modal 
                 isOpen={isExportModalOpen} 
                 onClose={() => setIsExportModalOpen(false)} 
@@ -906,6 +905,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
             </Modal>
 
+            {/* Analysis Modal */}
             {selectedRMForAnalysis && (
                 <RMAnalysisModal
                     isOpen={isAnalysisModalOpen}
@@ -915,6 +915,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 />
             )}
 
+            {/* ABC Modal */}
             {isAbcModalOpen && (
                 <ClientsListModal
                     isOpen={isAbcModalOpen}
