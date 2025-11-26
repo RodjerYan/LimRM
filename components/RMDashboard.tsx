@@ -5,9 +5,9 @@ import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import MetricsSummary from './MetricsSummary';
 import ClientsListModal from './ClientsListModal';
-import RegionDetailsModal from './RegionDetailsModal'; // Import new modal
+import RegionDetailsModal from './RegionDetailsModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
 interface RMDashboardProps {
@@ -17,7 +17,6 @@ interface RMDashboardProps {
     okbRegionCounts: { [key: string]: number } | null;
     okbData: OkbDataRow[];
     mode?: 'modal' | 'page';
-    // Props required for MetricsSummary
     metrics?: SummaryMetrics | null;
     okbStatus?: OkbStatus | null;
     onActiveClientsClick?: () => void;
@@ -43,7 +42,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     onActiveClientsClick,
     onEditClient
 }) => {
-    const [baseRate, setBaseRate] = useState(15); // Default 15% as requested
+    const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
@@ -77,6 +76,29 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
+        // --- STEP 1: Pre-Calculate Global Benchmarks ---
+        // We need to know Company Averages to compare each RM against them.
+        let globalTotalListings = 0; // Total SKU/Brand connections
+        let globalTotalUniqueClients = 0;
+        let globalTotalVolume = 0;
+        const allUniqueClientKeys = new Set<string>();
+
+        data.forEach(row => {
+            globalTotalVolume += row.fact;
+            // Each row in `data` represents a Brand-Region group. 
+            // The number of clients in this row equals the number of "listings" for that brand in that region.
+            globalTotalListings += row.clients.length;
+            
+            row.clients.forEach(c => allUniqueClientKeys.add(c.key));
+        });
+        globalTotalUniqueClients = allUniqueClientKeys.size;
+
+        // Global Benchmarks
+        const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
+        const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
+
+
+        // --- STEP 2: Aggregate RM Data ---
         const globalOkbCoordSet = new Set<string>();
         if (isOkbLoaded) {
             okbData.forEach(row => {
@@ -106,6 +128,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             factA: number;
             factB: number;
             factC: number;
+            // Metrics for Smart Calc
+            uniqueClientKeys: Set<string>;
+            totalListings: number;
         }>();
 
         data.forEach(row => {
@@ -119,14 +144,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     regions: new Map(),
                     totalFact: 0,
                     countA: 0, countB: 0, countC: 0,
-                    factA: 0, factB: 0, factC: 0
+                    factA: 0, factB: 0, factC: 0,
+                    uniqueClientKeys: new Set(),
+                    totalListings: 0
                 });
             }
             const rmBucket = rmBuckets.get(normRm)!;
             rmBucket.totalFact += row.fact;
+            rmBucket.totalListings += row.clients.length; // Add listings count
 
             if (row.clients) {
                 row.clients.forEach(c => {
+                    rmBucket.uniqueClientKeys.add(c.key); // Track unique clients
                     const clientFact = c.fact || 0;
                     if (c.abcCategory === 'A') {
                         rmBucket.countA++;
@@ -181,7 +210,32 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             let rmTotalOkbRaw = 0;
             let rmTotalMatched = 0;
-            let rmTotalClients = 0;
+            
+            // --- SMART CALCULATION: RM Level Metrics ---
+            const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
+            // 1. RM Penetration (Market Share)
+            // Calculated later when summing regions, but we need components
+            
+            // 2. RM SKU Width (Avg Listings per Client)
+            const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
+            
+            // 3. RM Velocity (Avg Sales per Listing)
+            const rmAvgSalesPerSku = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
+
+            // --- SMART CALCULATION: Coefficients ---
+            // Extensive Potential (Market Share) - calculated per region then weighted, or approximated globally here.
+            // We will use the per-region logic for the plan number, but use these metrics for display/adjustments.
+
+            // Width Gap: If RM has fewer SKUs than global average, potential to grow is HIGH (Multiplier > 0).
+            // If RM has more SKUs, potential is lower (Multiplier < 0 or 0).
+            const widthGapPct = globalAvgSkuPerClient > 0 ? (globalAvgSkuPerClient - rmAvgSkuPerClient) / globalAvgSkuPerClient : 0;
+            const widthBonus = Math.max(-5, Math.min(10, widthGapPct * 10)); // Max +10% plan, Min -5%
+
+            // Velocity Gap: If RM sells less per SKU than avg, potential to optimize is HIGH.
+            const velocityGapPct = globalAvgSalesPerSku > 0 ? (globalAvgSalesPerSku - rmAvgSalesPerSku) / globalAvgSalesPerSku : 0;
+            const velocityBonus = Math.max(-5, Math.min(10, velocityGapPct * 10));
+
+            // --- REGION ITERATION ---
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
 
@@ -189,7 +243,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 const activeCount = regData.activeClients.size;
                 const matchedCount = regData.matchedOkbCoords.size;
                 
-                rmTotalClients += activeCount;
                 rmTotalMatched += matchedCount;
                 rmTotalPotentialFile += regData.potential;
 
@@ -211,12 +264,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
                 const effectiveShareForCalc = Number.isNaN(marketShare) ? 0 : marketShare;
 
+                // Base Share Adjustment: Low share = High Plan
                 const sensitivity = 20;
-                let adjustment = (0.4 - effectiveShareForCalc) * sensitivity;
+                let shareAdjustment = (0.4 - effectiveShareForCalc) * sensitivity; // Center at 40% share
+                
+                // Combine Factors:
+                // Rate = Base + ShareAdj + WidthBonus + VelocityBonus
+                let calculatedRate = baseRate + shareAdjustment + widthBonus + velocityBonus;
+                
+                // Clamp
                 const minRate = Math.max(0, baseRate - 10);
-                const maxRate = baseRate + 15;
-
-                let calculatedRate = baseRate + adjustment;
+                const maxRate = baseRate + 25; // Allow higher ceiling for high potential
                 calculatedRate = Math.max(minRate, Math.min(maxRate, calculatedRate));
 
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);
@@ -266,13 +324,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? (rmTotalMatched / rmTotalOkbRaw) * 100 
                 : NaN;
 
-            resultMetrics.push({
+            // Store extended metrics in the object (casting to any to avoid strict type breaking for now, or extend type)
+            const extendedMetrics = {
                 rmName: rmData.originalName,
-                totalClients: rmTotalClients,
+                totalClients: rmUniqueClientsCount,
                 totalOkbCount: rmTotalOkbRaw,
                 totalFact: rmData.totalFact,
                 totalPotential: rmTotalPotentialFile,
-                avgFactPerClient: rmTotalClients > 0 ? rmData.totalFact / rmTotalClients : 0,
+                avgFactPerClient: rmUniqueClientsCount > 0 ? rmData.totalFact / rmUniqueClientsCount : 0,
                 marketShare: weightedShare,
                 countA: rmData.countA,
                 countB: rmData.countB,
@@ -283,8 +342,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 recommendedGrowthPct: effectiveGrowthPct,
                 nextYearPlan: rmTotalCalculatedPlan,
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
-                brands: brandMetrics
-            });
+                brands: brandMetrics,
+                // New Analytics Fields
+                avgSkuPerClient: rmAvgSkuPerClient,
+                avgSalesPerSku: rmAvgSalesPerSku,
+                globalAvgSku: globalAvgSkuPerClient,
+                globalAvgSalesSku: globalAvgSalesPerSku
+            };
+
+            resultMetrics.push(extendedMetrics as unknown as RMMetrics);
         });
 
         (resultMetrics as any).__missingOkbRegions = Array.from(missingRegionNames.values());
@@ -490,427 +556,277 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     // --- Main Content ---
     const mainContent = (
-        <div className="space-y-4 animate-fade-in">
-            <div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400 border border-gray-700 flex flex-wrap gap-4 items-center">
-                <div className="flex items-center gap-2 bg-gray-900/50 p-1 pr-3 rounded-lg border border-indigo-500/30 shadow-sm">
-                    <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2"></span>
-                    <div className="flex items-center gap-2">
-                        <label htmlFor="baseRateInput" className="cursor-pointer font-medium text-gray-300 select-none">Базовое повышение:</label>
-                        <div className="relative">
-                            <input
-                                id="baseRateInput"
-                                type="number"
-                                min="0"
-                                max="100"
-                                value={baseRate}
-                                onChange={(e) => setBaseRate(Number(e.target.value))}
-                                className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none"
-                            />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
+        <>
+            <div className="space-y-4 animate-fade-in">
+                <div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400 border border-gray-700 flex flex-wrap gap-4 items-center">
+                    <div className="flex items-center gap-2 bg-gray-900/50 p-1 pr-3 rounded-lg border border-indigo-500/30 shadow-sm">
+                        <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2"></span>
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="baseRateInput" className="cursor-pointer font-medium text-gray-300 select-none">Базовое повышение:</label>
+                            <div className="relative">
+                                <input
+                                    id="baseRateInput"
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    value={baseRate}
+                                    onChange={(e) => setBaseRate(Number(e.target.value))}
+                                    className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
+                            </div>
+                            <span className="font-bold text-indigo-400">%</span>
                         </div>
-                        <span className="font-bold text-indigo-400">%</span>
                     </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-emerald-500"></span>
-                    <span>Низкая доля рынка (Высокий план)</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 rounded-full bg-amber-500"></span>
-                    <span>Высокая доля рынка (Сниженный план)</span>
-                </div>
-                
-                {okbData.length > 0 && (
-                    <button 
-                        onClick={prepareExportData}
-                        className="ml-auto flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"
-                        title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам"
-                    >
-                        <ExportIcon />
-                        Скачать непокрытый потенциал (XLSX)
-                    </button>
-                )}
-
-                {!okbRegionCounts && (
-                    <div className="ml-auto text-xs text-red-400 border border-red-500/30 px-2 py-1 rounded">
-                        ⚠️ База ОКБ не загружена. Расчет приблизительный.
+                    <div className="flex items-center gap-2 text-xs">
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span>Высокий План (Есть потенциал)</span></div>
+                        <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span>Сниженный План (Насыщение)</span></div>
                     </div>
-                )}
-                {missingOkbRegions.length > 0 && (
-                    <div className="ml-auto text-xs text-yellow-300 border border-yellow-500/20 px-2 py-1 rounded">
-                        ⚠️ Найдены регионы без записей в ОКБ: {missingOkbRegions.slice(0,5).join(', ')}{missingOkbRegions.length > 5 ? ` и ещё ${missingOkbRegions.length - 5}` : ''}.
-                    </div>
-                )}
-            </div>
+                    
+                    {okbData.length > 0 && (
+                        <button 
+                            onClick={prepareExportData}
+                            className="ml-auto flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"
+                            title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам"
+                        >
+                            <ExportIcon />
+                            Скачать непокрытый потенциал (XLSX)
+                        </button>
+                    )}
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-gray-300">
-                    <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 z-10">
-                        <tr>
-                            <th className="px-4 py-3 w-8"></th>
-                            <th className="px-4 py-3">РМ</th>
-                            <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
-                            <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                            <th className="px-4 py-3 text-center text-indigo-300" title="Процент покрытия ОКБ. Рассчитывается как (Кол-во совпадений по координатам / Всего в ОКБ).">Покрытие (Совпадения/Всего)</th>
-                            <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
-                            <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
-                            <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
-                            <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
-                            <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
-                            <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-700">
-                        {metricsData.map(rm => {
-                            const isExpanded = expandedRM === rm.rmName;
-                            const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
-                            const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                            const growthColor = rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300');
+                    {!okbRegionCounts && (
+                        <div className="ml-auto text-xs text-red-400 border border-red-500/30 px-2 py-1 rounded">
+                            ⚠️ База ОКБ не загружена. Расчет приблизительный.
+                        </div>
+                    )}
+                    {missingOkbRegions.length > 0 && (
+                        <div className="ml-auto text-xs text-yellow-300 border border-yellow-500/20 px-2 py-1 rounded">
+                            ⚠️ Найдены регионы без записей в ОКБ: {missingOkbRegions.slice(0,5).join(', ')}{missingOkbRegions.length > 5 ? ` и ещё ${missingOkbRegions.length - 5}` : ''}.
+                        </div>
+                    )}
+                </div>
 
-                            return (
-                                <React.Fragment key={rm.rmName}>
-                                    <tr 
-                                        className={`hover:bg-gray-800/50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-800/30' : ''}`}
-                                        onClick={() => toggleExpand(rm.rmName)}
-                                    >
-                                        <td className="px-4 py-3 text-gray-500">
-                                            {isExpanded ? '▲' : '▼'}
-                                        </td>
-                                        <td className="px-4 py-3 font-medium text-white">{rm.rmName}</td>
-                                        <td className="px-4 py-3 text-center font-mono text-white">{formatNum(rm.totalFact)}</td>
-                                        <td className="px-4 py-3 text-center font-mono text-gray-400">
-                                            <span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span>
-                                            <span className="mx-1">/</span>
-                                            <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
-                                        </td>
-                                        <td className={`px-4 py-3 text-center font-bold font-mono ${shareColor}`}>
-                                            {shareValue === null ? '—' : `${shareValue.toFixed(1)}%`}
-                                        </td>
-                                        <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${growthColor}`}>
-                                            {rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%
-                                        </td>
-                                        <td className="px-4 py-3 text-center border-r border-gray-700">
-                                            <button
-                                                onClick={(e) => handleAnalyzeClick(e, rm)}
-                                                className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1.5 mx-auto transition-colors"
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-gray-300">
+                        <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 z-10">
+                            <tr>
+                                <th className="px-4 py-3 w-8"></th>
+                                <th className="px-4 py-3">РМ</th>
+                                <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
+                                <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
+                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов (Penetration)">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-emerald-300" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
+                                <th className="px-4 py-3 text-center text-cyan-300" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
+                                <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
+                                <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
+                                <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
+                                <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
+                                <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
+                                <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-700">
+                            {metricsData.map(rm => {
+                                const isExpanded = expandedRM === rm.rmName;
+                                const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
+                                const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
+                                const growthColor = rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300');
+
+                                const skuMetric = (rm as any).avgSkuPerClient || 0;
+                                const salesMetric = (rm as any).avgSalesPerSku || 0;
+                                const globalSku = (rm as any).globalAvgSku || 0;
+                                const globalSales = (rm as any).globalAvgSalesSku || 0;
+
+                                const skuColor = skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300');
+                                const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
+
+                                return (
+                                    <React.Fragment key={rm.rmName}>
+                                        <tr 
+                                            className={`hover:bg-gray-800/50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-800/30' : ''}`}
+                                            onClick={() => toggleExpand(rm.rmName)}
+                                        >
+                                            <td className="px-4 py-3 text-gray-500">
+                                                {isExpanded ? '▲' : '▼'}
+                                            </td>
+                                            <td className="px-4 py-3 font-medium text-white">{rm.rmName}</td>
+                                            <td className="px-4 py-3 text-center font-mono text-white">{formatNum(rm.totalFact)}</td>
+                                            <td className="px-4 py-3 text-center font-mono text-gray-400">
+                                                <span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span>
+                                                <span className="mx-1">/</span>
+                                                <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
+                                            </td>
+                                            <td className={`px-4 py-3 text-center font-bold font-mono ${shareColor}`}>
+                                                {shareValue === null ? '—' : `${shareValue.toFixed(1)}%`}
+                                            </td>
+                                            
+                                            <td className={`px-4 py-3 text-center font-mono ${skuColor}`} title={`В среднем ${skuMetric.toFixed(2)} SKU на точку. Среднее по компании: ${globalSku.toFixed(2)}`}>
+                                                {skuMetric.toFixed(2)}
+                                            </td>
+                                            <td className={`px-4 py-3 text-center font-mono ${salesColor}`} title={`В среднем ${formatNum(salesMetric)} кг на одно SKU. Среднее по компании: ${formatNum(globalSales)}`}>
+                                                {formatNum(salesMetric)}
+                                            </td>
+
+                                            <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${growthColor}`}>
+                                                {rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%
+                                            </td>
+                                            <td className="px-4 py-3 text-center border-r border-gray-700">
+                                                <button
+                                                    onClick={(e) => handleAnalyzeClick(e, rm)}
+                                                    className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1.5 mx-auto transition-colors"
+                                                >
+                                                    Анализ
+                                                </button>
+                                            </td>
+                                            <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20">
+                                                {formatNum(rm.nextYearPlan)}
+                                                <div className="text-[10px] text-gray-500 font-normal">
+                                                    +{formatNum(rm.nextYearPlan - rm.totalFact)}
+                                                </div>
+                                            </td>
+                                            <td 
+                                                className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10"
+                                                title={`Показать клиентов A для ${rm.rmName}`}
+                                                onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}
                                             >
-                                                Анализ
-                                            </button>
-                                        </td>
-                                        <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20">
-                                            {formatNum(rm.nextYearPlan)}
-                                            <div className="text-[10px] text-gray-500 font-normal">
-                                                +{formatNum(rm.nextYearPlan - rm.totalFact)}
-                                            </div>
-                                        </td>
-                                        <td 
-                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10"
-                                            title={`Показать клиентов A для ${rm.rmName}`}
-                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}
-                                        >
-                                            <div className="flex flex-col items-center justify-center group/cell">
-                                                <div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div>
-                                                <div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div>
-                                            </div>
-                                        </td>
-                                        <td 
-                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10"
-                                            title={`Показать клиентов B для ${rm.rmName}`}
-                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}
-                                        >
-                                            <div className="flex flex-col items-center justify-center group/cell">
-                                                <div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div>
-                                                <div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div>
-                                            </div>
-                                        </td>
-                                        <td 
-                                            className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10"
-                                            title={`Показать клиентов C для ${rm.rmName}`}
-                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}
-                                        >
-                                            <div className="flex flex-col items-center justify-center group/cell">
-                                                <div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div>
-                                                <div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div>
-                                            </div>
-                                        </td>
-                                    </tr>
-
-                                    {isExpanded && (
-                                        <tr>
-                                            <td colSpan={11} className="p-0 bg-gray-900/40 border-b border-gray-700 shadow-inner">
-                                                <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
-                                                    
-                                                    {/* Left Column: Region Details */}
-                                                    <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/20">
-                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
-                                                            Детализация по Регионам (Нажмите на строку для списка)
-                                                        </div>
-                                                        <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
-                                                            <table className="w-full text-xs text-left">
-                                                                <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
-                                                                    <tr>
-                                                                        <th className="px-3 py-2">Регион</th>
-                                                                        <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие</th>
-                                                                        <th className="px-3 py-2 text-right">Рост</th>
-                                                                        <th className="px-3 py-2 text-right">Факт</th>
-                                                                        <th className="px-3 py-2 text-right">План {nextYear}</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody className="divide-y divide-gray-700/50 text-gray-300">
-                                                                    {rm.regions.map(reg => {
-                                                                        const regShareKnown = !Number.isNaN(reg.marketShare);
-                                                                        const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                                                                        const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
-                                                                        return (
-                                                                            <tr 
-                                                                                key={reg.name} 
-                                                                                className="hover:bg-indigo-500/20 cursor-pointer transition-colors"
-                                                                                onClick={() => handleRegionClick(rm.rmName, reg.name)}
-                                                                            >
-                                                                                <td className="px-3 py-2 font-medium flex items-center gap-1">
-                                                                                    {reg.name}
-                                                                                    <span className="text-[10px] text-gray-500 ml-1">↗</span>
-                                                                                </td>
-                                                                                <td className={`px-3 py-2 text-right font-mono`}>
-                                                                                    <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
-                                                                                    <span className={`ml-2 font-bold ${regShareColor}`}>
-                                                                                        {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(н/д)'}
-                                                                                    </span>
-                                                                                </td>
-                                                                                <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
-                                                                                    {reg.growthPct.toFixed(1)}%
-                                                                                </td>
-                                                                                <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
-                                                                                <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
-                                                                            </tr>
-                                                                        );
-                                                                    })}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Right Column: Detailed Brand Breakdown Per Region */}
-                                                    <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/20">
-                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center">
-                                                            <span>Детализация: Регионы и Бренды</span>
-                                                            <button
-                                                                onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }}
-                                                                className="text-gray-500 hover:text-emerald-400 transition-colors"
-                                                                title="Выгрузить в Excel"
-                                                            >
-                                                                <ExportIcon />
-                                                            </button>
-                                                        </div>
-                                                        <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
-                                                            <table className="w-full text-xs text-left">
-                                                                <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
-                                                                    <tr>
-                                                                        <th className="px-3 py-2 pl-6">Бренд</th>
-                                                                        <th className="px-3 py-2 text-right">Инд. Рост</th>
-                                                                        <th className="px-3 py-2 text-right">Факт</th>
-                                                                        <th className="px-3 py-2 text-right">План {nextYear}</th>
-                                                                    </tr>
-                                                                </thead>
-                                                                <tbody className="text-gray-300">
-                                                                    {rm.regions.map(reg => (
-                                                                        <React.Fragment key={`breakdown-${reg.name}`}>
-                                                                            <tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm">
-                                                                                <td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">
-                                                                                    {reg.name}
-                                                                                </td>
-                                                                            </tr>
-                                                                            {reg.brands?.map(br => (
-                                                                                <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
-                                                                                    <td className="px-3 py-2 pl-6 text-gray-300">{br.name}</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-500">+{br.growthPct.toFixed(1)}%</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td>
-                                                                                </tr>
-                                                                            ))}
-                                                                        </React.Fragment>
-                                                                    ))}
-                                                                </tbody>
-                                                            </table>
-                                                        </div>
-                                                    </div>
-
+                                                <div className="flex flex-col items-center justify-center group/cell">
+                                                    <div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div>
+                                                    <div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div>
+                                                </div>
+                                            </td>
+                                            <td 
+                                                className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10"
+                                                title={`Показать клиентов B для ${rm.rmName}`}
+                                                onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}
+                                            >
+                                                <div className="flex flex-col items-center justify-center group/cell">
+                                                    <div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div>
+                                                    <div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div>
+                                                </div>
+                                            </td>
+                                            <td 
+                                                className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10"
+                                                title={`Показать клиентов C для ${rm.rmName}`}
+                                                onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}
+                                            >
+                                                <div className="flex flex-col items-center justify-center group/cell">
+                                                    <div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div>
+                                                    <div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div>
                                                 </div>
                                             </td>
                                         </tr>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                    </tbody>
-                </table>
+
+                                        {isExpanded && (
+                                            <tr>
+                                                <td colSpan={13} className="p-0 bg-gray-900/40 border-b border-gray-700 shadow-inner">
+                                                    <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
+                                                        
+                                                        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/20">
+                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
+                                                                Детализация по Регионам (Нажмите на строку для списка)
+                                                            </div>
+                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                                                                <table className="w-full text-xs text-left">
+                                                                    <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
+                                                                        <tr>
+                                                                            <th className="px-3 py-2">Регион</th>
+                                                                            <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие</th>
+                                                                            <th className="px-3 py-2 text-right">Рост</th>
+                                                                            <th className="px-3 py-2 text-right">Факт</th>
+                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="divide-y divide-gray-700/50 text-gray-300">
+                                                                        {rm.regions.map(reg => {
+                                                                            const regShareKnown = !Number.isNaN(reg.marketShare);
+                                                                            const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
+                                                                            const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
+                                                                            return (
+                                                                                <tr 
+                                                                                    key={reg.name} 
+                                                                                    className="hover:bg-indigo-500/20 cursor-pointer transition-colors"
+                                                                                    onClick={() => handleRegionClick(rm.rmName, reg.name)}
+                                                                                >
+                                                                                    <td className="px-3 py-2 font-medium flex items-center gap-1">
+                                                                                        {reg.name}
+                                                                                        <span className="text-[10px] text-gray-500 ml-1">↗</span>
+                                                                                    </td>
+                                                                                    <td className={`px-3 py-2 text-right font-mono`}>
+                                                                                        <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
+                                                                                        <span className={`ml-2 font-bold ${regShareColor}`}>
+                                                                                            {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(н/д)'}
+                                                                                        </span>
+                                                                                    </td>
+                                                                                    <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
+                                                                                        {reg.growthPct.toFixed(1)}%
+                                                                                    </td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
+                                                                                </tr>
+                                                                            );
+                                                                        })}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/20">
+                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center">
+                                                                <span>Детализация: Регионы и Бренды</span>
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }}
+                                                                    className="text-gray-500 hover:text-emerald-400 transition-colors"
+                                                                    title="Выгрузить в Excel"
+                                                                >
+                                                                    <ExportIcon />
+                                                                </button>
+                                                            </div>
+                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                                                                <table className="w-full text-xs text-left">
+                                                                    <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
+                                                                        <tr>
+                                                                            <th className="px-3 py-2 pl-6">Бренд</th>
+                                                                            <th className="px-3 py-2 text-right">Инд. Рост</th>
+                                                                            <th className="px-3 py-2 text-right">Факт</th>
+                                                                            <th className="px-3 py-2 text-right">План {nextYear}</th>
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody className="text-gray-300">
+                                                                        {rm.regions.map(reg => (
+                                                                            <React.Fragment key={`breakdown-${reg.name}`}>
+                                                                                <tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm">
+                                                                                    <td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">
+                                                                                        {reg.name}
+                                                                                    </td>
+                                                                                </tr>
+                                                                                {reg.brands?.map(br => (
+                                                                                    <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
+                                                                                        <td className="px-3 py-2 pl-6 text-gray-300">{br.name}</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono text-gray-500">+{br.growthPct.toFixed(1)}%</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td>
+                                                                                    </tr>
+                                                                                ))}
+                                                                            </React.Fragment>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        </div>
+
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </React.Fragment>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
             </div>
             
             {/* Modals */}
-            {selectedRegionDetails && (
-                <RegionDetailsModal 
-                    isOpen={isRegionModalOpen}
-                    onClose={() => setIsRegionModalOpen(false)}
-                    rmName={selectedRegionDetails.rmName}
-                    regionName={selectedRegionDetails.regionName}
-                    activeClients={selectedRegionDetails.activeClients}
-                    potentialClients={selectedRegionDetails.potentialClients}
-                />
-            )}
-        </div>
-    );
-
-    // --- RENDER ---
-    if (mode === 'page') {
-        return (
-            <>
-                <div className="flex justify-between items-end border-b border-gray-800 pb-4 mb-6 animate-fade-in">
-                    <div>
-                        <h2 className="text-2xl font-bold text-white">Дашборд План/Факт <span className="text-gray-500 font-normal text-lg">/ Эффективность</span></h2>
-                        <p className="text-gray-400 text-sm mt-1">Анализ выполнения планов, покрытие территории и ABC-анализ.</p>
-                    </div>
-                </div>
-                <div className="mb-6">
-                    {metrics && (
-                        <MetricsSummary 
-                            metrics={metrics} 
-                            okbStatus={okbStatus || null} 
-                            disabled={false}
-                            onActiveClientsClick={onActiveClientsClick}
-                        />
-                    )}
-                </div>
-                {mainContent}
-                <RMAnalysisModal 
-                    isOpen={isAnalysisModalOpen}
-                    onClose={() => setIsAnalysisModalOpen(false)}
-                    rmData={selectedRMForAnalysis}
-                    baseRate={baseRate}
-                />
-                <ClientsListModal 
-                    isOpen={isAbcModalOpen}
-                    onClose={() => setIsAbcModalOpen(false)}
-                    clients={abcClients}
-                    onClientSelect={() => {}}
-                    onStartEdit={(client) => {
-                        if (onEditClient) onEditClient(client);
-                    }}
-                />
-                <Modal 
-                    isOpen={isExportModalOpen} 
-                    onClose={() => setIsExportModalOpen(false)} 
-                    title="Настройка выгрузки непокрытого потенциала"
-                    footer={
-                        <div className="flex justify-between p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
-                            <button
-                                onClick={() => setIsExportModalOpen(false)}
-                                className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
-                            >
-                                <ArrowLeftIcon /> Отмена
-                            </button>
-                            <button
-                                onClick={performExport}
-                                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
-                            >
-                                <ExportIcon /> Скачать Excel ({uncoveredRowsCache.filter(r => selectedCountries.has(findValueInRow(r, ['страна', 'country']) || 'Не указана') && selectedRegions.has(findValueInRow(r, ['субъект', 'регион', 'region', 'область']) || 'Не указан')).length} строк)
-                            </button>
-                        </div>
-                    }
-                >
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
-                        <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-                            <div className="p-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
-                                <h4 className="font-bold text-gray-300">Страны</h4>
-                                <div className="text-xs flex gap-2">
-                                    <button onClick={() => setSelectedCountries(new Set(availableCountries))} className="text-indigo-400 hover:text-white">Все</button>
-                                    <button onClick={() => setSelectedCountries(new Set())} className="text-gray-500 hover:text-white">Сброс</button>
-                                </div>
-                            </div>
-                            <div className="flex-grow overflow-y-auto custom-scrollbar p-2">
-                                {availableCountries.map(c => (
-                                    <label key={c} className="flex items-center p-2 hover:bg-gray-700 rounded cursor-pointer">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={selectedCountries.has(c)}
-                                            onChange={() => toggleCountry(c)}
-                                            className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out bg-gray-900 border-gray-600 rounded focus:ring-indigo-500"
-                                        />
-                                        <span className="ml-2 text-sm text-gray-200">{c}</span>
-                                        <span className="ml-auto text-xs text-gray-500 bg-gray-900 px-1.5 py-0.5 rounded-full">
-                                            {exportHierarchy[c]?.size || 0} рег.
-                                        </span>
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-                            <div className="p-3 bg-gray-800 border-b border-gray-700 flex flex-col gap-2">
-                                <div className="flex justify-between items-center">
-                                    <h4 className="font-bold text-gray-300">Регионы</h4>
-                                    <div className="text-xs flex gap-2">
-                                        <button onClick={() => setSelectedRegions(new Set(availableRegions))} className="text-indigo-400 hover:text-white">Все</button>
-                                        <button onClick={() => setSelectedRegions(new Set())} className="text-gray-500 hover:text-white">Сброс</button>
-                                    </div>
-                                </div>
-                                <div className="relative">
-                                    <input 
-                                        type="text" 
-                                        placeholder="Поиск региона..." 
-                                        value={regionSearch}
-                                        onChange={(e) => setRegionSearch(e.target.value)}
-                                        className="w-full p-1.5 pl-8 bg-gray-900 border border-gray-600 rounded text-xs text-white focus:ring-1 focus:ring-indigo-500"
-                                    />
-                                    <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none text-gray-500"><SearchIcon /></div>
-                                </div>
-                            </div>
-                            <div className="flex-grow overflow-y-auto custom-scrollbar p-2">
-                                {filteredRegions.length > 0 ? (
-                                    filteredRegions.map(r => (
-                                        <label key={r} className="flex items-center p-2 hover:bg-gray-700 rounded cursor-pointer">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={selectedRegions.has(r)}
-                                                onChange={() => toggleRegion(r)}
-                                                className="form-checkbox h-4 w-4 text-indigo-600 transition duration-150 ease-in-out bg-gray-900 border-gray-600 rounded focus:ring-indigo-500"
-                                            />
-                                            <span className="ml-2 text-sm text-gray-200">{r}</span>
-                                        </label>
-                                    ))
-                                ) : (
-                                    <div className="text-center py-10 text-gray-500 text-sm">
-                                        {selectedCountries.size === 0 ? 'Выберите страну слева' : 'Ничего не найдено'}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </Modal>
-            </>
-        );
-    }
-
-    return (
-        <>
-            <Modal isOpen={isOpen} onClose={onClose} title={`Дашборд эффективности РМ и Планирование ${nextYear}`}>
-                {mainContent}
-            </Modal>
-
-            <RMAnalysisModal 
-                isOpen={isAnalysisModalOpen}
-                onClose={() => setIsAnalysisModalOpen(false)}
-                rmData={selectedRMForAnalysis}
-                baseRate={baseRate}
-            />
-            <ClientsListModal 
-                isOpen={isAbcModalOpen}
-                onClose={() => setIsAbcModalOpen(false)}
-                clients={abcClients}
-                onClientSelect={() => {}}
-                onStartEdit={(client) => {
-                    if (onEditClient) onEditClient(client);
-                }}
-            />
             {selectedRegionDetails && (
                 <RegionDetailsModal 
                     isOpen={isRegionModalOpen}
@@ -1012,7 +928,56 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     </div>
                 </div>
             </Modal>
+
+            {/* Analysis Modal */}
+            {selectedRMForAnalysis && (
+                <RMAnalysisModal
+                    isOpen={isAnalysisModalOpen}
+                    onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }}
+                    rmData={selectedRMForAnalysis}
+                    baseRate={baseRate}
+                />
+            )}
+
+            {/* ABC Modal */}
+            {isAbcModalOpen && (
+                <ClientsListModal
+                    isOpen={isAbcModalOpen}
+                    onClose={() => setIsAbcModalOpen(false)}
+                    clients={abcClients}
+                    onClientSelect={() => {}} 
+                    onStartEdit={(client) => {
+                        if (onEditClient) onEditClient(client);
+                        setIsAbcModalOpen(false);
+                    }}
+                />
+            )}
         </>
+    );
+
+    if (mode === 'page') {
+        return (
+             <div className="space-y-6 animate-fade-in">
+                <div className="flex justify-between items-center border-b border-gray-800 pb-4">
+                    <div className="flex items-center gap-4">
+                         <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-lg">
+                            <ArrowLeftIcon />
+                        </button>
+                        <div>
+                            <h2 className="text-2xl font-bold text-white">Дашборд <span className="text-gray-500 font-normal text-lg">/ План-Факт</span></h2>
+                            <p className="text-gray-400 text-sm mt-1">Детальное планирование и анализ эффективности (Sales Efficiency).</p>
+                        </div>
+                    </div>
+                </div>
+                {mainContent}
+             </div>
+        );
+    }
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Панель управления: План/Факт">
+            {mainContent}
+        </Modal>
     );
 };
 
