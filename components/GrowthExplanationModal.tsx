@@ -25,7 +25,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
     const getFactorSign = (val: number) => (val > 0 ? '+' : '');
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Обоснование плана: ${name}`} maxWidth="max-w-2xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Обоснование плана: ${name}`} maxWidth="max-w-lg">
             <div className="space-y-6">
                 <div className="bg-gray-900/50 p-4 rounded-xl border border-gray-700 flex justify-between items-center">
                     <div>

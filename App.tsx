@@ -37,6 +37,7 @@ import {
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { TargetIcon } from './components/icons';
+import { enrichDataWithSmartPlan } from './services/planning/integration';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 
@@ -108,6 +109,12 @@ const App: React.FC = () => {
     const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
     const isDataLoaded = allData.length > 0;
+
+    // --- SMART DATA INTEGRATION ---
+    // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard
+    const smartData = useMemo(() => {
+        return enrichDataWithSmartPlan(allData, okbRegionCounts, 15);
+    }, [allData, okbRegionCounts]);
 
     const filteredActiveClients = useMemo(() => {
         if (!isDataLoaded) return [];
@@ -393,12 +400,13 @@ const App: React.FC = () => {
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
-            const result = applyFilters(allData, filters);
+            // Apply filters to the SMART (enriched) data, not the raw data
+            const result = applyFilters(smartData, filters);
             setFilteredData(result);
             setIsLoading(false);
         }, 100);
         return () => clearTimeout(timer);
-    }, [allData, filters]);
+    }, [smartData, filters]); // Depend on smartData now
 
     const isControlPanelLocked = isLoading;
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
@@ -432,7 +440,7 @@ const App: React.FC = () => {
                         <RMDashboard 
                             isOpen={true} // Always open when in this view
                             onClose={() => setActiveModule('amp')} 
-                            data={filteredData}
+                            data={filteredData} // Passing enriched data to Dashboard is redundant but safe (dashboard recalcs anyway)
                             okbRegionCounts={okbRegionCounts}
                             okbData={okbData}
                             mode="page"

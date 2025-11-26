@@ -69,7 +69,7 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
     const headerColor = isHighGrowth ? 'text-emerald-400' : (rmData.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-400');
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Анализ плана: ${rmData.rmName}`} maxWidth="max-w-4xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Анализ плана: ${rmData.rmName}`} maxWidth="max-w-3xl">
             <div className="space-y-6">
                 {/* Key Metrics Header */}
                 <div className="grid grid-cols-3 gap-4 bg-gray-900/50 p-4 rounded-xl border border-gray-700">

@@ -177,11 +177,11 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
     }, []);
 
     return (
-        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">
-            <div className="flex justify-between items-center mb-4">
+        <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 h-full flex flex-col">
+            <div className="flex justify-between items-center mb-4 flex-shrink-0">
                 <h2 className="text-lg font-bold text-white tracking-tight">Рыночный Потенциал и Эффективность</h2>
             </div>
-            <div className="relative h-[350px] w-full">
+            <div className="relative w-full flex-grow min-h-[350px]">
                 <canvas ref={chartContainer} />
             </div>
         </div>

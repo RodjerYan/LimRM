@@ -10,7 +10,7 @@ interface ModalProps {
     maxWidth?: string;
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-[95vw]' }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-2xl' }) => {
 
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {

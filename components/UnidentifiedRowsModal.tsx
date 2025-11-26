@@ -1,3 +1,4 @@
+
 import React, { useMemo } from 'react';
 import Modal from './Modal';
 import { findValueInRow, findAddressInRow } from '../utils/dataUtils';
@@ -26,7 +27,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
     const modalTitle = `Неопределенные адреса (${rows.length})`;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle}>
+        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} maxWidth="max-w-6xl">
             <div className="space-y-6">
                 <p className="text-gray-400 text-sm">
                     Для этих строк не удалось автоматически определить город или регион. 

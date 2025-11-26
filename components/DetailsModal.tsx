@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
@@ -92,7 +93,7 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
     const okbCoverage = (okbStatus?.rowCount && activeClientsCount > 0) ? (activeClientsCount / okbStatus.rowCount) * 100 : 0;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`}>
+        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-5xl">
             <div className="space-y-6">
                 {/* Top Section: Metrics */}
                 <div className="space-y-4">
