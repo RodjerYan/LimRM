@@ -199,3 +199,13 @@ export interface PlanningContext {
     globalAvgSales: number;
     riskLevel: 'low' | 'medium' | 'high'; // Corresponds to "Black Day" scenarios
 }
+
+// New Interface for Global File Processing State
+export interface FileProcessingState {
+    isProcessing: boolean;
+    progress: number;
+    message: string;
+    fileName: string | null;
+    backgroundMessage: string | null;
+    startTime: number | null;
+}

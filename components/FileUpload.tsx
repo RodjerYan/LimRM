@@ -1,122 +1,27 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { WorkerMessage, OkbStatus, WorkerResultPayload, CoordsCache } from '../types';
+
+import React, { useState, useCallback } from 'react';
+import { OkbStatus, FileProcessingState } from '../types';
 import { formatETR } from '../utils/timeUtils';
-import { LoaderIcon } from './icons';
 
 interface FileUploadProps {
-    onFileProcessed: (data: WorkerResultPayload) => void;
-    onProcessingStateChange: (isLoading: boolean, message: string) => void;
-    okbData: any[];
+    // New Props from Global State
+    processingState: FileProcessingState;
+    onStartProcessing: (file: File) => void;
+    
     okbStatus: OkbStatus | null;
     disabled: boolean;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingStateChange, okbData, okbStatus, disabled }) => {
-    const [fileName, setFileName] = useState<string | null>(null);
-    const [progress, setProgress] = useState(0);
-    const [message, setMessage] = useState('Загрузите файл с данными');
-    const [etr, setEtr] = useState<number | null>(null);
+const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcessing, okbStatus, disabled }) => {
     const [isDragging, setIsDragging] = useState(false);
-    const [backgroundMessage, setBackgroundMessage] = useState<string | null>(null);
-    const workerRef = useRef<Worker | null>(null);
-    const startTimeRef = useRef<number | null>(null);
-
-    const processFile = useCallback(async (file: File) => {
-        onProcessingStateChange(true, 'Начало обработки...');
-        setFileName(file.name);
-        setProgress(0);
-        setMessage('Загрузка кэша координат...');
-        setBackgroundMessage(null);
-        setEtr(null);
-        startTimeRef.current = Date.now();
-
-        let cacheData: CoordsCache = {};
-        try {
-            // Add timestamp and no-store directive to prevent browser caching of the redirects/history
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`, { cache: 'no-store' });
-            if (response.ok) {
-                cacheData = await response.json();
-                setMessage('Кэш загружен, инициализация воркера...');
-            } else {
-                console.warn('Не удалось загрузить кэш координат, обработка продолжится без него.');
-                setMessage('Не удалось загрузить кэш, инициализация воркера...');
-            }
-        } catch (error) {
-            console.error('Ошибка при загрузке кэша координат:', error);
-            setMessage('Ошибка кэша, инициализация воркера...');
-        }
-
-
-        if (workerRef.current) {
-            workerRef.current.terminate();
-        }
-
-        workerRef.current = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
-
-        workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
-            const { type, payload } = e.data;
-            switch (type) {
-                case 'progress':
-                    if (payload.isBackground) {
-                        // FIX: If background tasks are finished (100% or 'completed' message), clear the message immediately
-                        // to remove the "eternally spinning slider" and text.
-                        if (payload.percentage === 100 || payload.message.toLowerCase().includes('завершен')) {
-                            setBackgroundMessage(null);
-                        } else {
-                            setBackgroundMessage(payload.message);
-                        }
-                    } else {
-                        setProgress(payload.percentage);
-                        setMessage(payload.message);
-                        if (startTimeRef.current && payload.percentage > 0 && payload.percentage < 100) {
-                            const elapsedTime = (Date.now() - startTimeRef.current) / 1000;
-                            const totalTime = (elapsedTime / payload.percentage) * 100;
-                            setEtr(totalTime - elapsedTime);
-                        } else {
-                            setEtr(null);
-                        }
-                    }
-                    break;
-                case 'result':
-                    onFileProcessed(payload);
-                    onProcessingStateChange(false, `Файл "${file.name}" успешно обработан.`);
-                    setMessage(`Основная обработка завершена!`);
-                    setProgress(100);
-                    setEtr(0);
-                    break;
-                case 'error':
-                    onProcessingStateChange(false, `Ошибка при обработке файла: ${payload}`);
-                    setMessage(`Ошибка: ${payload}`);
-                    setEtr(null);
-                    setBackgroundMessage(null);
-                    break;
-                default:
-                    break;
-            }
-        };
-
-        workerRef.current.onerror = (e) => {
-            console.error('Worker error:', e);
-            onProcessingStateChange(false, `Критическая ошибка воркера: ${e.message}`);
-            setMessage(`Критическая ошибка: ${e.message}`);
-        };
-        
-        workerRef.current.postMessage({ file, okbData, cacheData });
-    }, [onFileProcessed, onProcessingStateChange, okbData]);
-    
-    useEffect(() => {
-        return () => {
-            workerRef.current?.terminate();
-        }
-    }, []);
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
-            processFile(file);
+            onStartProcessing(file);
         }
         event.target.value = '';
-    }, [processFile]);
+    }, [onStartProcessing]);
 
     const handleDragEnter = (e: React.DragEvent<HTMLLabelElement>) => {
         e.preventDefault();
@@ -137,18 +42,23 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileProcessed, onProcessingSt
         setIsDragging(false);
         if (disabled) return;
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            processFile(e.dataTransfer.files[0]);
+            onStartProcessing(e.dataTransfer.files[0]);
             e.dataTransfer.clearData();
         }
-    }, [processFile, disabled]);
+    }, [onStartProcessing, disabled]);
 
-    const isProcessing = progress > 0 && progress < 100;
+    // Derived state from global props
+    const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
-    
-    // FIX: Only show the "Upload Base" overlay if the base is strictly NOT ready
-    // AND we are NOT currently processing a file (fileName is null).
-    // This prevents the overlay from appearing on top of the progress bar during upload.
     const showBaseMissingOverlay = (!okbStatus || okbStatus.status !== 'ready') && !isProcessing && !fileName;
+
+    // Calculate ETR locally based on startTime passed from global state
+    let etr: number | null = null;
+    if (isProcessing && startTime && progress > 0 && progress < 100) {
+        const elapsedTime = (Date.now() - startTime) / 1000;
+        const totalTime = (elapsedTime / progress) * 100;
+        etr = totalTime - elapsedTime;
+    }
 
     return (
         <div className={`relative group transition-all duration-500 ${isBlocked ? 'opacity-50 grayscale' : ''}`}>

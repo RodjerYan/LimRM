@@ -33,7 +33,10 @@ import {
     WorkerResultPayload,
     MapPoint,
     UnidentifiedRow,
-    RMMetrics
+    RMMetrics,
+    FileProcessingState,
+    WorkerMessage,
+    CoordsCache
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { TargetIcon } from './components/icons';
@@ -70,6 +73,17 @@ const App: React.FC = () => {
     const [loadingMessage, setLoadingMessage] = useState('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
+    // --- PERSISTENT FILE PROCESSING STATE ---
+    const [processingState, setProcessingState] = useState<FileProcessingState>({
+        isProcessing: false,
+        progress: 0,
+        message: 'Загрузите файл с данными',
+        fileName: null,
+        backgroundMessage: null,
+        startTime: null
+    });
+    const workerRef = useRef<Worker | null>(null);
+
     // Modal States
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
     const [isClientsModalOpen, setIsClientsModalOpen] = useState(false);
@@ -175,6 +189,8 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
+    // --- FILE PROCESSING LOGIC (Moved from FileUpload.tsx) ---
+    
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
@@ -185,9 +201,109 @@ const App: React.FC = () => {
         if (data.unidentifiedRows.length > 0) {
             addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
-        // Auto-switch to Analytics if data loaded
-        setActiveModule('amp');
+        
+        // Auto-switch to Analytics if data loaded, but give a small delay so user sees 100% progress
+        setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
+
+    const handleStartFileProcessing = useCallback(async (file: File) => {
+        // Reset State
+        setProcessingState({
+            isProcessing: true,
+            progress: 0,
+            message: 'Загрузка кэша координат...',
+            fileName: file.name,
+            backgroundMessage: null,
+            startTime: Date.now()
+        });
+
+        // Pre-load cache
+        let cacheData: CoordsCache = {};
+        try {
+            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`, { cache: 'no-store' });
+            if (response.ok) {
+                cacheData = await response.json();
+                setProcessingState(prev => ({ ...prev, message: 'Кэш загружен, инициализация...' }));
+            } else {
+                console.warn('Не удалось загрузить кэш координат.');
+                setProcessingState(prev => ({ ...prev, message: 'Не удалось загрузить кэш, инициализация...' }));
+            }
+        } catch (error) {
+            console.error('Ошибка при загрузке кэша координат:', error);
+            setProcessingState(prev => ({ ...prev, message: 'Ошибка кэша, инициализация...' }));
+        }
+
+        if (workerRef.current) {
+            workerRef.current.terminate();
+        }
+
+        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+
+        workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
+            const { type, payload } = e.data;
+            switch (type) {
+                case 'progress':
+                    if (payload.isBackground) {
+                        if (payload.percentage === 100 || payload.message.toLowerCase().includes('завершен')) {
+                            setProcessingState(prev => ({ ...prev, backgroundMessage: null }));
+                        } else {
+                            setProcessingState(prev => ({ ...prev, backgroundMessage: payload.message }));
+                        }
+                    } else {
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            progress: payload.percentage, 
+                            message: payload.message 
+                        }));
+                    }
+                    break;
+                case 'result':
+                    handleFileProcessed(payload);
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        isProcessing: false, // Keep file name but stop processing flag
+                        progress: 100, 
+                        message: 'Обработка завершена!' 
+                    }));
+                    break;
+                case 'error':
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        isProcessing: false, 
+                        message: `Ошибка: ${payload}`,
+                        backgroundMessage: null
+                    }));
+                    addNotification(`Ошибка при обработке файла: ${payload}`, 'error');
+                    break;
+                default:
+                    break;
+            }
+        };
+
+        workerRef.current.onerror = (e) => {
+            console.error('Worker error:', e);
+            setProcessingState(prev => ({ 
+                ...prev, 
+                isProcessing: false, 
+                message: `Критическая ошибка: ${e.message}` 
+            }));
+            addNotification(`Критическая ошибка воркера: ${e.message}`, 'error');
+        };
+        
+        // Start Worker
+        workerRef.current.postMessage({ file, okbData, cacheData });
+
+    }, [okbData, handleFileProcessed, addNotification]);
+
+    // Cleanup worker on unmount of App (page close)
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+        }
+    }, []);
+
+
+    // --- Legacy / Shared Handlers ---
     
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
         setIsLoading(loading);
@@ -421,8 +537,12 @@ const App: React.FC = () => {
                 return (
                     <div className={wrapperClass}>
                         <Adapta 
-                            onFileProcessed={handleFileProcessed}
-                            onProcessingStateChange={handleProcessingStateChange}
+                            // Pass down the processing state and start handler
+                            processingState={processingState}
+                            onStartProcessing={handleStartFileProcessing}
+                            // Legacy props (some might be deprecated in FileUpload but kept for compatibility if needed)
+                            onFileProcessed={handleFileProcessed} // Redundant if handled via state but good for clear interface
+                            onProcessingStateChange={handleProcessingStateChange} // Legacy, could be removed
                             okbData={okbData}
                             okbStatus={okbStatus}
                             onOkbStatusChange={handleOkbStatusChange}

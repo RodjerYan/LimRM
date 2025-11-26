@@ -2,11 +2,16 @@
 import React, { useState, useMemo } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
-import { OkbStatus, WorkerResultPayload, AggregatedDataRow } from '../../types';
+import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState } from '../../types';
 import { CheckIcon, WarningIcon, AlertIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
+    // Global Processing Props
+    processingState: FileProcessingState;
+    onStartProcessing: (file: File) => void;
+
+    // Legacy/Data Props
     onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
     okbData: any[];
@@ -16,7 +21,6 @@ interface AdaptaProps {
     disabled: boolean;
     unidentifiedCount: number;
     activeClientsCount: number;
-    // Added prop to receive loaded data for analysis
     uploadedData?: AggregatedDataRow[]; 
 }
 
@@ -80,9 +84,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             disabled={props.disabled}
                         />
                         <FileUpload 
-                            onFileProcessed={props.onFileProcessed}
-                            onProcessingStateChange={props.onProcessingStateChange}
-                            okbData={props.okbData}
+                            // New props for global state
+                            processingState={props.processingState}
+                            onStartProcessing={props.onStartProcessing}
+                            
+                            // Data dependencies
                             okbStatus={props.okbStatus}
                             disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'}
                         />
