@@ -1,3 +1,4 @@
+
 import React, { useEffect } from 'react';
 
 interface ModalProps {
@@ -34,7 +35,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer 
             aria-labelledby="modal-title"
         >
             <div 
-                className="bg-card-bg/80 backdrop-blur-lg rounded-2xl shadow-2xl w-full max-w-6xl border border-indigo-500/20 transform animate-scale-in flex flex-col max-h-[95vh]"
+                className="bg-card-bg/80 backdrop-blur-lg rounded-2xl shadow-2xl w-full max-w-[95vw] border border-indigo-500/20 transform animate-scale-in flex flex-col max-h-[95vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center p-5 border-b border-gray-700 flex-shrink-0">

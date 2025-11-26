@@ -71,7 +71,10 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                         categoryPercentage: 0.8,
                         grouped: false, // Allows overlay
                         order: 2, // Behind
-                        yAxisID: 'y'
+                        yAxisID: 'y',
+                        hoverBackgroundColor: 'rgba(99, 102, 241, 0.4)', // Added hover color
+                        hoverBorderColor: '#6366f1',
+                        hoverBorderWidth: 2
                     },
                     {
                         label: 'Факт',
@@ -165,6 +168,13 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
         });
 
     }, [data]);
+
+    useEffect(() => {
+        return () => {
+            chartInstance.current?.destroy();
+            chartInstance.current = null;
+        }
+    }, []);
 
     return (
         <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10">

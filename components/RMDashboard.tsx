@@ -213,27 +213,28 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             
             // --- SMART CALCULATION: RM Level Metrics ---
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
-            // 1. RM Penetration (Market Share)
-            // Calculated later when summing regions, but we need components
             
-            // 2. RM SKU Width (Avg Listings per Client)
+            // 1. RM SKU Width (Avg Listings per Client)
+            // This is local to the RM.
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
             
-            // 3. RM Velocity (Avg Sales per Listing)
+            // 2. RM Velocity (Avg Sales per Listing/SKU)
+            // This is local to the RM.
             const rmAvgSalesPerSku = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
 
             // --- SMART CALCULATION: Coefficients ---
-            // Extensive Potential (Market Share) - calculated per region then weighted, or approximated globally here.
-            // We will use the per-region logic for the plan number, but use these metrics for display/adjustments.
-
-            // Width Gap: If RM has fewer SKUs than global average, potential to grow is HIGH (Multiplier > 0).
-            // If RM has more SKUs, potential is lower (Multiplier < 0 or 0).
+            
+            // Width Gap: Compare RM's SKU width to Global Average.
+            // If RM has fewer SKUs (gap > 0), they have high potential to cross-sell.
+            // Coefficient: ~15% boost if they have 0 width (theoretical), 0% if they are average.
             const widthGapPct = globalAvgSkuPerClient > 0 ? (globalAvgSkuPerClient - rmAvgSkuPerClient) / globalAvgSkuPerClient : 0;
-            const widthBonus = Math.max(-5, Math.min(10, widthGapPct * 10)); // Max +10% plan, Min -5%
+            // Cap: Min -5% (if they are very good), Max +15% (if they are very bad)
+            const widthBonus = Math.max(-5, Math.min(15, widthGapPct * 15));
 
-            // Velocity Gap: If RM sells less per SKU than avg, potential to optimize is HIGH.
+            // Velocity Gap: Compare RM's Sales per SKU to Global Average.
+            // If RM sells less per SKU (gap > 0), they have quality issues / potential to upsell.
             const velocityGapPct = globalAvgSalesPerSku > 0 ? (globalAvgSalesPerSku - rmAvgSalesPerSku) / globalAvgSalesPerSku : 0;
-            const velocityBonus = Math.max(-5, Math.min(10, velocityGapPct * 10));
+            const velocityBonus = Math.max(-5, Math.min(15, velocityGapPct * 15));
 
             // --- REGION ITERATION ---
             let rmTotalCalculatedPlan = 0;
@@ -257,24 +258,31 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
                 rmTotalOkbRaw += totalRegionOkb;
 
+                // --- Share Adjustment Logic ---
+                let shareAdjustment = 0;
                 let marketShare = NaN;
-                if (isOkbLoaded && totalRegionOkb > 0) {
+
+                // Only calculate share adjustment if we have VALID OKB data and matches.
+                // If coverage is 0 (either no data or no matches), we DO NOT assume "Empty Market" boost (because it might be a data error).
+                // Instead, we fallback to neutral share adjustment and rely on Width/Velocity bonuses.
+                if (isOkbLoaded && totalRegionOkb > 0 && matchedCount > 0) {
                     marketShare = (matchedCount / totalRegionOkb);
+                    // Center at 35% share. 
+                    // If Share < 35%, adjustment is positive (up to +8%).
+                    // If Share > 35%, adjustment is negative (saturation).
+                    shareAdjustment = (0.35 - marketShare) * 20;
+                } else {
+                    // No data match? Neutral share impact.
+                    shareAdjustment = 0;
                 }
-
-                const effectiveShareForCalc = Number.isNaN(marketShare) ? 0 : marketShare;
-
-                // Base Share Adjustment: Low share = High Plan
-                const sensitivity = 20;
-                let shareAdjustment = (0.4 - effectiveShareForCalc) * sensitivity; // Center at 40% share
                 
                 // Combine Factors:
                 // Rate = Base + ShareAdj + WidthBonus + VelocityBonus
                 let calculatedRate = baseRate + shareAdjustment + widthBonus + velocityBonus;
                 
-                // Clamp
-                const minRate = Math.max(0, baseRate - 10);
-                const maxRate = baseRate + 25; // Allow higher ceiling for high potential
+                // Clamp limits to keep plans sane
+                const minRate = Math.max(0, baseRate - 15);
+                const maxRate = baseRate + 30; 
                 calculatedRate = Math.max(minRate, Math.min(maxRate, calculatedRate));
 
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);

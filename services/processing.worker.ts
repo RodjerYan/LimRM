@@ -15,6 +15,7 @@ import {
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { getDistanceKm } from '../utils/analytics';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -29,10 +30,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
- * 
- * STRICT LOGIC UPDATE:
- * 1. Prioritizes the "Субъект" (Subject) column above all else, but also checks "Регион"/"Region".
- * 2. Standardizes variations (e.g., "г. Орел" -> "Орловская область") using the keyword map and strict normalization.
  */
 const getCanonicalRegion = (row: any): string => {
     // 1. Search for relevant columns. Priority: Subject > Region > Oblast
@@ -48,7 +45,6 @@ const getCanonicalRegion = (row: any): string => {
             .replace(/\s+/g, ' ');
 
         // Strict Normalization: Remove 'г', 'г.', 'гор', 'гор.', 'город' prefixes and suffixes
-        // regex: start of string, followed by (г|гор|город), followed by optional dot/space
         const normalized = lowerVal
             .replace(/^(г|гор|город)[.\s]+/g, '') 
             .replace(/\s+(г|гор|город)$/g, '')
@@ -61,18 +57,15 @@ const getCanonicalRegion = (row: any): string => {
         }
 
         // Direct mapping check against known variations.
-        // Priority 1: Exact match on normalized string (e.g. "орловская")
         if (REGION_KEYWORD_MAP[normalized]) {
             return REGION_KEYWORD_MAP[normalized];
         }
 
         // Priority 2: Keyword search
         for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            // Check if normalized starts with key (e.g. "орловская" matches "орловская обл" if key is "орловская")
             if (normalized.startsWith(key)) {
                 return standardName;
             }
-            // Fallback: Check if original lowerVal includes the key (e.g. "г. орел" includes "г орел")
             if (lowerVal.includes(key)) {
                 return standardName;
             }
@@ -129,34 +122,70 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 
 /**
  * Optimized: Finds potential clients from a pre-filtered list of OKB rows for a specific region.
+ * Uses Geo-Radius matching (150m) and robust string normalization to exclude existing clients.
  */
 function findPotentialClients(
-    regionRows: OkbDataRow[] | undefined, 
-    existingClients: Set<string>
+    regionOkbRows: OkbDataRow[] | undefined, 
+    activeClientsInRegion: MapPoint[] | undefined
 ): PotentialClient[] {
-    if (!regionRows || regionRows.length === 0) return [];
+    if (!regionOkbRows || regionOkbRows.length === 0) return [];
 
     const potential: PotentialClient[] = [];
-    // Iterate over pre-grouped OKB rows for this region only
-    for (const okbRow of regionRows) {
+    
+    // Prepare lookups for Active Clients in this region
+    const activeAddressSet = new Set<string>();
+    const activeCoords: { lat: number, lon: number }[] = [];
+
+    if (activeClientsInRegion) {
+        activeClientsInRegion.forEach(c => {
+            activeAddressSet.add(normalizeAddress(c.address));
+            if (c.lat && c.lon) {
+                activeCoords.push({ lat: c.lat, lon: c.lon });
+            }
+        });
+    }
+
+    // Iterate OKB rows
+    for (const okbRow of regionOkbRows) {
         const okbAddress = findAddressInRow(okbRow) || '';
-        
-        if (okbAddress) {
-             const normalizedOkbAddress = normalizeAddress(okbAddress);
-             if (!existingClients.has(normalizedOkbAddress)) {
-                const client: PotentialClient = {
-                    name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
-                    address: okbAddress,
-                    type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
-                };
-                if(okbRow.lat && okbRow.lon) {
-                    client.lat = okbRow.lat;
-                    client.lon = okbRow.lon;
+        if (!okbAddress) continue;
+
+        let isMatch = false;
+
+        // 1. Geo-Radius Match (if OKB has coords): Check if within 150m (0.15km) of any active client
+        if (okbRow.lat && okbRow.lon && !isNaN(okbRow.lat) && !isNaN(okbRow.lon)) {
+            for (const activeCoord of activeCoords) {
+                const dist = getDistanceKm(okbRow.lat, okbRow.lon, activeCoord.lat, activeCoord.lon);
+                if (dist < 0.15) { 
+                    isMatch = true;
+                    break;
                 }
-                potential.push(client);
             }
         }
-        if (potential.length >= 200) break; 
+
+        // 2. String Match (if no geo match found or possible): Check normalized string
+        if (!isMatch) {
+            const normalizedOkb = normalizeAddress(okbAddress);
+            if (activeAddressSet.has(normalizedOkb)) {
+                isMatch = true;
+            }
+        }
+
+        // If no match found in Active Clients, this is a Potential Client
+        if (!isMatch) {
+            const client: PotentialClient = {
+                name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
+                address: okbAddress,
+                type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
+            };
+            if(okbRow.lat && okbRow.lon) {
+                client.lat = okbRow.lat;
+                client.lon = okbRow.lon;
+            }
+            potential.push(client);
+        }
+        
+        if (potential.length >= 200) break; // Limit potential list per region for performance
     }
     return potential;
 }
@@ -212,7 +241,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
     // --- PRE-GROUP OKB BY REGION ---
-    // Optimized: Create region buckets once to avoid traversing full OKB for every aggregation row
     const okbRegionCounts: { [key: string]: number } = {};
     const okbByRegion: Record<string, OkbDataRow[]> = {};
 
@@ -314,17 +342,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 const targetEntry = cacheAddressMap.get(newNormalizedTarget);
                 
                 if (targetEntry) {
-                    // Redirect found! Swap to the NEW canonical address immediately.
-                    // This ensures that even if the file has the Old Address, we process it as the New Address.
                     clientAddress = targetEntry.originalAddress || clientAddress;
                     normalizedRaw = newNormalizedTarget;
                 } else {
-                    // Fallback: we have a redirect target key but missing full entry (rare).
-                    // We proceed with the key to ensure grouping matches the new entity.
                     normalizedRaw = newNormalizedTarget;
                 }
 
-                // Re-check delete status on the *new* address
                 if (deletedAddresses.has(normalizedRaw)) continue;
             }
         }
@@ -337,7 +360,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         const finalAddress = parsedAddress.finalAddress;
-        // USE CANONICAL REGION HERE TO MATCH OKB
         const regionForAggregation = getCanonicalRegion(row);
         const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
@@ -405,7 +427,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 name: clientName,
                 address: displayAddress, 
                 city: parsedAddress.city,
-                region: regionForAggregation, // Ensure individual points also use canonical region
+                region: regionForAggregation, 
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
@@ -429,29 +451,30 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
     
+    // Calculate ABC categories
     const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
     if (totalFact > 0) {
         plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
-        
         let runningTotal = 0;
         plottableActiveClients.forEach(client => {
             runningTotal += (client.fact || 0);
             const percentage = runningTotal / totalFact;
-            
-            if (percentage <= 0.80) {
-                client.abcCategory = 'A';
-            } else if (percentage <= 0.95) {
-                client.abcCategory = 'B';
-            } else {
-                client.abcCategory = 'C';
-            }
+            if (percentage <= 0.80) client.abcCategory = 'A';
+            else if (percentage <= 0.95) client.abcCategory = 'B';
+            else client.abcCategory = 'C';
         });
     }
 
-    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Завершение расчетов...' } });
-    const existingClientsForPotentialSearch = new Set(plottableActiveClients.map(client => normalizeAddress(client.address)));
+    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Анализ пересечений с ОКБ...' } });
     
-    // Cache for potential clients to avoid re-calculating for the same region multiple times (Optimization for many groups in same region)
+    // Group Active Clients by Region for efficient matching
+    const activeClientsByRegion = new Map<string, MapPoint[]>();
+    plottableActiveClients.forEach(c => {
+        if (!activeClientsByRegion.has(c.region)) activeClientsByRegion.set(c.region, []);
+        activeClientsByRegion.get(c.region)!.push(c);
+    });
+    
+    // Cache for potential clients to avoid re-calculating for the same region multiple times
     const potentialClientsCache = new Map<string, PotentialClient[]>();
 
     const finalData: AggregatedDataRow[] = [];
@@ -463,7 +486,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // OPTIMIZATION: Memoize potential clients lookup
         let regionPotentialClients = potentialClientsCache.get(item.region);
         if (!regionPotentialClients) {
-            regionPotentialClients = findPotentialClients(okbByRegion[item.region], existingClientsForPotentialSearch);
+            // Pass both the OKB rows for this region AND the Active Clients for this region
+            const activeInRegion = activeClientsByRegion.get(item.region);
+            regionPotentialClients = findPotentialClients(okbByRegion[item.region], activeInRegion);
             potentialClientsCache.set(item.region, regionPotentialClients);
         }
 
