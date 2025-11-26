@@ -112,6 +112,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             matchedOkbCoords: Set<string>;
             brandFacts: Map<string, number>;
             originalRegionName?: string;
+            // Regional Metrics
+            regionListings: number; // Total SKU connections in this region
         };
 
         const rmBuckets = new Map<string, {
@@ -160,12 +162,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             if (!rmBucket.regions.has(regionKey)) {
                 rmBucket.regions.set(regionKey, {
-                    fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map(), originalRegionName: row.region
+                    fact: 0, 
+                    potential: 0, 
+                    activeClients: new Set(), 
+                    matchedOkbCoords: new Set(), 
+                    brandFacts: new Map(), 
+                    originalRegionName: row.region,
+                    regionListings: 0
                 });
             }
             const regBucket = rmBucket.regions.get(regionKey)!;
             regBucket.fact += row.fact;
             regBucket.potential += row.potential || 0;
+            regBucket.regionListings += row.clients.length; // Add SKU count for this row (Brand-City group)
 
             if (row.clients) {
                 row.clients.forEach(c => {
@@ -195,9 +204,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
             
+            // RM Global Metrics (Proxy for empty regions)
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
+            const rmGlobalAvgVelocity = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
-            const rmAvgSalesPerSku = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
 
             // Iterate Regions
             rmData.regions.forEach((regData, regionKey) => {
@@ -215,15 +225,26 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 }
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // --- NEW: USE PLANNING ENGINE ---
+                // Calculate Region-Specific Metrics
+                // SKU Width: Listings / UniqueClients in region
+                const regionAvgSku = activeCount > 0 ? regData.regionListings / activeCount : 0;
+                // Velocity: Fact / Listings in region
+                const regionAvgVelocity = regData.regionListings > 0 ? regData.fact / regData.regionListings : 0;
+
+                // --- NEW: USE PLANNING ENGINE WITH REGIONAL CONTEXT ---
                 const calculationResult = PlanningEngine.calculateRMPlan(
                     {
                         totalFact: regData.fact,
-                        totalPotential: totalRegionOkb, // Use OKB count as proxy for potential capacity in this context if absolute potential is missing
+                        totalPotential: totalRegionOkb, 
                         matchedCount: matchedCount,
                         totalRegionOkb: totalRegionOkb,
-                        avgSku: rmAvgSkuPerClient, // Using RM avg as proxy for region (can be refined)
-                        avgVelocity: rmAvgSalesPerSku
+                        
+                        // Specific Region Metrics
+                        avgSku: regionAvgSku, 
+                        avgVelocity: regionAvgVelocity,
+                        
+                        // Fallback RM Metrics
+                        rmGlobalVelocity: rmGlobalAvgVelocity
                     },
                     {
                         baseRate: baseRate,
@@ -233,14 +254,24 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     }
                 );
 
-                const regionPlan = calculationResult.plan;
-                const calculatedRate = calculationResult.growthPct;
+                let regionPlan = calculationResult.plan;
+                let calculatedRate = calculationResult.growthPct;
+                
+                // Special visual fix: If Fact was 0 but Engine calculated a Plan (Acquisition), 
+                // growth % is mathematically infinite. We display a conceptual "entry" rate.
+                if (regData.fact === 0 && regionPlan > 0) {
+                    calculatedRate = 100; // "New Entry" marker
+                }
+
                 rmTotalCalculatedPlan += regionPlan;
 
                 // Brands breakdown
                 const regionBrands: PlanMetric[] = [];
                 regData.brandFacts.forEach((bFact, bName) => {
-                    const bPlan = bFact * (1 + calculatedRate / 100);
+                    // If brand fact is 0 (new brand entry), we distribute region acquisition plan
+                    // proportional to something (or just equal split). Here we use calculatedRate.
+                    const bPlan = bFact > 0 ? bFact * (1 + calculatedRate / 100) : (regionPlan / regData.brandFacts.size);
+                    
                     regionBrands.push({
                         name: bName,
                         fact: bFact,
@@ -299,7 +330,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
                 brands: brandMetrics,
                 avgSkuPerClient: rmAvgSkuPerClient,
-                avgSalesPerSku: rmAvgSalesPerSku,
+                avgSalesPerSku: rmGlobalAvgVelocity, // Use computed global velocity for RM row
                 globalAvgSku: globalAvgSkuPerClient,
                 globalAvgSalesSku: globalAvgSalesPerSku
             };
@@ -773,6 +804,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
             </div>
             
+            {/* Modals */}
             {selectedRegionDetails && (
                 <RegionDetailsModal 
                     isOpen={isRegionModalOpen}
@@ -892,7 +924,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     onClose={() => setIsAbcModalOpen(false)}
                     clients={abcClients}
                     onClientSelect={() => {}} 
-                    onStartEdit={(client: MapPoint) => {
+                    onStartEdit={(client) => {
                         if (onEditClient) onEditClient(client);
                         setIsAbcModalOpen(false);
                     }}

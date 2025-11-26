@@ -5,91 +5,156 @@ import * as Coefs from './coefficients';
 
 /**
  * Движок планирования (Planning Engine).
- * Эмулирует работу макроса Excel: проходит по всем РМ, применяет формулы и коэффициенты.
+ * Эмулирует сложную логику Excel и добавляет "Умное планирование" на основе бенчмарков.
  */
 export class PlanningEngine {
 
     /**
-     * Главная функция расчета плана для одного РМ.
-     * Агрегирует логику листов "Розница" и "Утв. план".
+     * Главная функция расчета плана для конкретного Региона (или Бренда в регионе).
      */
     public static calculateRMPlan(
         rmData: {
             totalFact: number;
-            totalPotential: number; // From OKB or calculated
-            matchedCount: number;
-            totalRegionOkb: number;
-            avgSku: number;
+            totalPotential: number; // Емкость из файла или суррогат
+            matchedCount: number;   // АКБ (совпадения)
+            totalRegionOkb: number; // ОКБ (емкость базы)
+            
+            // Локальные метрики региона
+            avgSku: number;      
             avgVelocity: number;
+            
+            // Глобальные метрики РМ (для случаев, когда в регионе 0 продаж)
+            rmGlobalVelocity: number; 
         },
         context: PlanningContext
     ): { plan: number; growthPct: number; factors: Record<string, number> } {
         
-        // 1. Расчет доли рынка (Penetration)
+        // --- 1. Расчет Доли Рынка (Penetration) ---
         let marketShare = 0;
         if (rmData.totalRegionOkb > 0) {
             marketShare = rmData.matchedCount / rmData.totalRegionOkb;
         }
 
-        // 2. Нормализация KPI (Лист "Целевые")
-        // Применяем нелинейную нормализацию к доле рынка, чтобы сгладить экстремумы
-        const normalizedShare = Formulas.normalizeNonLinear(marketShare, 0.3);
+        // --- 2. Базовая ставка ---
+        let growthComponents = {
+            base: context.baseRate,
+            share: 0,
+            width: 0,
+            velocity: 0,
+            acquisition: 0
+        };
 
-        // 3. Расчет корректировки на "Низкую базу" (Extensive Growth)
-        // Если доля ниже 35%, мы добавляем процент роста.
-        const shareAdjustment = Formulas.calculateBaseEffect(
-            normalizedShare, 
-            Coefs.TARGETS.MARKET_SHARE_OPTIMAL, 
-            20 // Агрессивность из Excel (коэффициент влияния)
-        );
+        // --- 3. Логика для регионов с присутствием (Есть продажи) ---
+        if (rmData.totalFact > 0) {
+            
+            // А. Поправка на Долю Рынка (Extensive)
+            // Если доля мала (< 20%), растем быстрее. Если велика (> 40%), растем медленнее.
+            if (marketShare > 0) {
+                const normalizedShare = Formulas.normalizeNonLinear(marketShare, 0.3);
+                growthComponents.share = Formulas.calculateBaseEffect(
+                    normalizedShare, 
+                    Coefs.TARGETS.MARKET_SHARE_OPTIMAL, 
+                    15 // Сила влияния доли рынка
+                );
+            }
 
-        // 4. Расчет качественных показателей (Intensive Growth)
-        
-        // Width Gap (Ширина ассортимента)
-        const widthGap = context.globalAvgSku > 0 
-            ? (context.globalAvgSku - rmData.avgSku) / context.globalAvgSku 
-            : 0;
-        // Cap: Min -5% (хорошо), Max +15% (плохо, надо расти)
-        const widthBonus = Math.max(-5, Math.min(15, widthGap * 15));
+            // Б. Качественная дистрибуция (Intensive - Width)
+            // Если SKU меньше, чем в среднем по компании -> потенциал роста через расширение матрицы.
+            if (context.globalAvgSku > 0) {
+                const widthGap = (context.globalAvgSku - rmData.avgSku) / context.globalAvgSku;
+                // Если gap положительный (у нас меньше SKU), добавляем к плану.
+                // Максимум +10% за ширину.
+                growthComponents.width = Math.max(-5, Math.min(10, widthGap * 15)); 
+            }
 
-        // Velocity Gap (Качество полки)
-        const velocityGap = context.globalAvgSales > 0
-            ? (context.globalAvgSales - rmData.avgVelocity) / context.globalAvgSales
-            : 0;
-        const velocityBonus = Math.max(-5, Math.min(15, velocityGap * 15));
+            // В. Качество продаж (Intensive - Velocity)
+            // Если продаем меньше кг на SKU, чем в среднем -> потенциал роста через ротацию/акции.
+            if (context.globalAvgSales > 0) {
+                const velocityGap = (context.globalAvgSales - rmData.avgVelocity) / context.globalAvgSales;
+                growthComponents.velocity = Math.max(-5, Math.min(10, velocityGap * 10));
+            }
 
-        // 5. Сборка итогового процента (Формула сводного листа)
-        // Base + ShareAdj + Width + Velocity
-        let rawGrowthPct = context.baseRate + shareAdjustment + widthBonus + velocityBonus;
+        } 
+        // --- 4. Логика "Захвата" (Нулевое или мизерное покрытие) ---
+        else {
+            // Если продаж нет, или их ничтожно мало, стандартные метрики SKU/Velocity не работают или равны 0.
+            // Мы должны начислить план на "Вход в регион" (Acquisition).
+            
+            // Логика: "Накидываем N% точек из ОКБ".
+            // Как определить N? Смотрим на эффективность РМ в ДРУГИХ регионах (rmGlobalVelocity).
+            
+            let acquisitionBonus = 0;
+            
+            // Сравниваем РМ со средним по больнице.
+            // Если РМ крутой (торгует мощно), ставим амбициозную задачу на захват.
+            const rmEfficiencyRatio = context.globalAvgSales > 0 
+                ? rmData.rmGlobalVelocity / context.globalAvgSales 
+                : 1.0;
 
-        // 6. Применение риск-факторов ("Черный день")
+            if (rmEfficiencyRatio > 1.1) {
+                // Сильный менеджер: Ожидаем захват +10-15% к базе
+                acquisitionBonus = 12; 
+            } else if (rmEfficiencyRatio < 0.8) {
+                // Слабый менеджер: Консервативный вход +2-5%
+                acquisitionBonus = 3;
+            } else {
+                // Средний: +7%
+                acquisitionBonus = 7;
+            }
+
+            growthComponents.acquisition = acquisitionBonus;
+            
+            // При нулевом факте база для % роста равна 0. 
+            // В этом случае "План" должен быть не % от 0, а абсолютным значением.
+            // Но архитектура требует вернуть %.
+            // Поэтому мы вернем ОЧЕНЬ ВЫСОКИЙ процент, который при умножении на 
+            // "Виртуальный Факт" (если бы он был) дал бы результат.
+            // В UI мы это обработаем отдельно: если факт 0, план берется из "Потенциала" * acquisitionRate.
+        }
+
+        // 5. Суммируем и применяем лимиты
+        let rawGrowthPct = 
+            growthComponents.base + 
+            growthComponents.share + 
+            growthComponents.width + 
+            growthComponents.velocity + 
+            growthComponents.acquisition;
+
+        // Корректировка на риск
         const riskCoef = Coefs.RISK_FACTORS[context.riskLevel] || 1.0;
-        
-        // Если риск высокий, мы снижаем ожидания роста, но не режем базу.
-        // В Excel это часто делается через умножение итогового плана.
-        // Здесь мы скорректируем процент роста.
         let finalGrowthPct = rawGrowthPct * riskCoef;
 
-        // Hard Limits (Sanity Check из листа "Инструкция")
-        // Нельзя ставить план ниже -10% (удержание) и выше +100% (нереалистично для зрелого рынка)
-        // Однако база может меняться пользователем, поэтому лимиты относительны.
-        const minLimit = Math.max(0, context.baseRate - 20);
-        const maxLimit = context.baseRate + 40;
-        
-        finalGrowthPct = Math.max(minLimit, Math.min(maxLimit, finalGrowthPct));
+        // Жесткие границы (Safety limits)
+        // Мин: 5% (чтобы не было стагнации), Макс: 100% (чтобы не было космоса)
+        // Исключение: если база < 5%, может быть минус.
+        const minLimit = context.baseRate > 5 ? 5 : 0;
+        finalGrowthPct = Math.max(minLimit, Math.min(150, finalGrowthPct));
 
-        // 7. Расчет абсолютного плана
-        const planVolume = rmData.totalFact * (1 + finalGrowthPct / 100);
+        // 6. Расчет Абсолютного Плана
+        let planVolume = 0;
+        
+        if (rmData.totalFact > 0) {
+            // Стандартный рост от достигнутого
+            planVolume = rmData.totalFact * (1 + finalGrowthPct / 100);
+        } else {
+            // Расчет "с нуля" на основе ОКБ
+            // План = (Емкость ОКБ * ЦелеваяДоляЗахвата * СреднийЧекПоКомпании)
+            // ЦелеваяДоляЗахвата ~ 5% для старта
+            const acquisitionTargetShare = 0.05; 
+            // Если емкость ОКБ неизвестна, берем 0
+            if (rmData.totalRegionOkb > 0 && context.globalAvgSales > 0) {
+                 // Эвристика: (Кол-во точек * 5%) * (Средние продажи на точку по компании)
+                 // Средние продажи на точку ~ GlobalAvgSales * GlobalAvgSku
+                 const avgClientVolume = context.globalAvgSales * context.globalAvgSku;
+                 const targetClients = Math.ceil(rmData.totalRegionOkb * acquisitionTargetShare);
+                 planVolume = targetClients * avgClientVolume;
+            }
+        }
 
         return {
             plan: planVolume,
             growthPct: finalGrowthPct,
-            factors: {
-                shareAdjustment,
-                widthBonus,
-                velocityBonus,
-                riskCoef
-            }
+            factors: growthComponents
         };
     }
 
