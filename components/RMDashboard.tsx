@@ -1,12 +1,12 @@
 
-
 import React, { useMemo, useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import MetricsSummary from './MetricsSummary';
 import ClientsListModal from './ClientsListModal';
-import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint } from '../types';
+import RegionDetailsModal from './RegionDetailsModal'; // Import new modal
+import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
@@ -52,6 +52,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const [isAbcModalOpen, setIsAbcModalOpen] = useState(false);
     const [abcClients, setAbcClients] = useState<MapPoint[]>([]);
     const [abcModalTitle, setAbcModalTitle] = useState('');
+
+    // --- Region Details Modal State ---
+    const [isRegionModalOpen, setIsRegionModalOpen] = useState(false);
+    const [selectedRegionDetails, setSelectedRegionDetails] = useState<{
+        rmName: string;
+        regionName: string;
+        activeClients: MapPoint[];
+        potentialClients: PotentialClient[];
+    } | null>(null);
 
     // --- Export Modal State ---
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -204,7 +213,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
                 const sensitivity = 20;
                 let adjustment = (0.4 - effectiveShareForCalc) * sensitivity;
-                // Dynamic boundaries based on baseRate
                 const minRate = Math.max(0, baseRate - 10);
                 const maxRate = baseRate + 15;
 
@@ -214,7 +222,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);
                 rmTotalCalculatedPlan += regionPlan;
 
-                // Calculate brand breakdown SPECIFIC for this region using the region's rate
                 const regionBrands: PlanMetric[] = [];
                 regData.brandFacts.forEach((bFact, bName) => {
                     const bPlan = bFact * (1 + calculatedRate / 100);
@@ -222,10 +229,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         name: bName,
                         fact: bFact,
                         plan: bPlan,
-                        growthPct: calculatedRate // Inherits the region's growth rate
+                        growthPct: calculatedRate 
                     });
 
-                    // Add to global RM Aggregates
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
                     const agg = brandAggregates.get(bName)!;
                     agg.fact += bFact;
@@ -241,7 +247,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
                     activeCount: matchedCount,
                     totalCount: totalRegionOkb,
-                    brands: regionBrands // Added breakdown
+                    brands: regionBrands 
                 });
             });
 
@@ -289,7 +295,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     // --- EXPORT LOGIC ---
 
     const prepareExportData = () => {
-        // 1. Find all unmatched rows
         const activeCoordSet = new Set<string>();
         data.forEach(group => {
             group.clients.forEach(c => {
@@ -308,7 +313,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
         setUncoveredRowsCache(uncovered);
 
-        // 2. Build Hierarchy: Country -> Regions
         const hierarchy: Record<string, Set<string>> = {};
         const countries = new Set<string>();
         const regions = new Set<string>();
@@ -326,21 +330,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         });
 
         setExportHierarchy(hierarchy);
-        setSelectedCountries(countries); // Select all by default
-        setSelectedRegions(regions); // Select all by default
+        setSelectedCountries(countries);
+        setSelectedRegions(regions);
         setRegionSearch('');
         setIsExportModalOpen(true);
     };
 
     const performExport = () => {
-        // Filter rows based on selection
         const rowsToExport = uncoveredRowsCache.filter(row => {
             const country = findValueInRow(row, ['страна', 'country']) || 'Не указана';
             const region = findValueInRow(row, ['субъект', 'регион', 'region', 'область']) || 'Не указан';
             return selectedCountries.has(country) && selectedRegions.has(region);
         });
 
-        // Map to columns
         const worksheetData = rowsToExport.map(row => ({
             'Страна': findValueInRow(row, ['страна', 'country']) || '',
             'Субъект': findValueInRow(row, ['субъект', 'регион', 'region', 'область']),
@@ -374,7 +376,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     });
                 });
             } else {
-                 // Fallback if no brand details (though specific request implies there are)
                  exportData.push({
                     'Регион': reg.name,
                     'Бренд': 'Сводный',
@@ -391,13 +392,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         XLSX.writeFile(workbook, `Plan_Details_${rm.rmName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
-    // Toggles
     const toggleCountry = (country: string) => {
         const newSet = new Set(selectedCountries);
         if (newSet.has(country)) {
             newSet.delete(country);
-            // Optional: Deselect regions of this country? Or keep them in state but filter in UI?
-            // Let's keep them in state to allow re-checking country to restore region selection easily.
         } else {
             newSet.add(country);
         }
@@ -425,7 +423,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => {
         const clients: MapPoint[] = [];
-        // Normalized match to handle potential casing issues, though originalName is usually preserved
         const normalizedTargetRm = normalizeRmNameForMatching(rmName);
 
         data.forEach(group => {
@@ -439,7 +436,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             }
         });
         
-        // Sort by sales (fact) descending
         clients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
 
         setAbcClients(clients);
@@ -447,11 +443,38 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         setIsAbcModalOpen(true);
     };
 
+    // --- LOGIC FOR REGION DETAILS MODAL ---
+    const handleRegionClick = (rmName: string, regionName: string) => {
+        const active: MapPoint[] = [];
+        let potential: PotentialClient[] = [];
+        const normalizedTargetRm = normalizeRmNameForMatching(rmName);
+
+        // Scan data to find all groups matching this RM and Region
+        data.forEach(group => {
+            if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) {
+                active.push(...group.clients);
+                
+                // The worker calculates potential clients PER REGION and attaches them to the group.
+                // We only need to grab it once for this region.
+                if (potential.length === 0 && group.potentialClients && group.potentialClients.length > 0) {
+                    potential = group.potentialClients;
+                }
+            }
+        });
+
+        setSelectedRegionDetails({
+            rmName,
+            regionName,
+            activeClients: active,
+            potentialClients: potential
+        });
+        setIsRegionModalOpen(true);
+    };
+
     const toggleExpand = (rmName: string) => {
         setExpandedRM(prev => prev === rmName ? null : rmName);
     };
 
-    // Derived list for UI
     const availableCountries = Object.keys(exportHierarchy).sort();
     const availableRegions = useMemo(() => {
         const regions = new Set<string>();
@@ -465,7 +488,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     const filteredRegions = availableRegions.filter(r => r.toLowerCase().includes(regionSearch.toLowerCase()));
 
-    // --- Main Content (Extracted for reuse in Page/Modal) ---
+    // --- Main Content ---
     const mainContent = (
         <div className="space-y-4 animate-fade-in">
             <div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400 border border-gray-700 flex flex-wrap gap-4 items-center">
@@ -497,7 +520,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     <span>Высокая доля рынка (Сниженный план)</span>
                 </div>
                 
-                {/* Export Button */}
                 {okbData.length > 0 && (
                     <button 
                         onClick={prepareExportData}
@@ -621,7 +643,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                     {/* Left Column: Region Details */}
                                                     <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/20">
                                                         <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
-                                                            Детализация по Регионам
+                                                            Детализация по Регионам (Нажмите на строку для списка)
                                                         </div>
                                                         <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
                                                             <table className="w-full text-xs text-left">
@@ -640,8 +662,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                         const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                         const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
                                                                         return (
-                                                                            <tr key={reg.name} className="hover:bg-gray-700/20">
-                                                                                <td className="px-3 py-2 font-medium">{reg.name}</td>
+                                                                            <tr 
+                                                                                key={reg.name} 
+                                                                                className="hover:bg-indigo-500/20 cursor-pointer transition-colors"
+                                                                                onClick={() => handleRegionClick(rm.rmName, reg.name)}
+                                                                            >
+                                                                                <td className="px-3 py-2 font-medium flex items-center gap-1">
+                                                                                    {reg.name}
+                                                                                    <span className="text-[10px] text-gray-500 ml-1">↗</span>
+                                                                                </td>
                                                                                 <td className={`px-3 py-2 text-right font-mono`}>
                                                                                     <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
                                                                                     <span className={`ml-2 font-bold ${regShareColor}`}>
@@ -716,6 +745,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     </tbody>
                 </table>
             </div>
+            
+            {/* Modals */}
+            {selectedRegionDetails && (
+                <RegionDetailsModal 
+                    isOpen={isRegionModalOpen}
+                    onClose={() => setIsRegionModalOpen(false)}
+                    rmName={selectedRegionDetails.rmName}
+                    regionName={selectedRegionDetails.regionName}
+                    activeClients={selectedRegionDetails.activeClients}
+                    potentialClients={selectedRegionDetails.potentialClients}
+                />
+            )}
         </div>
     );
 
@@ -746,7 +787,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     rmData={selectedRMForAnalysis}
                     baseRate={baseRate}
                 />
-                {/* ABC Clients List Modal */}
                 <ClientsListModal 
                     isOpen={isAbcModalOpen}
                     onClose={() => setIsAbcModalOpen(false)}
@@ -778,7 +818,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     }
                 >
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
-                        {/* Left Col: Countries */}
                         <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
                             <div className="p-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
                                 <h4 className="font-bold text-gray-300">Страны</h4>
@@ -805,7 +844,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                             </div>
                         </div>
 
-                        {/* Right Col: Regions */}
                         <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
                             <div className="p-3 bg-gray-800 border-b border-gray-700 flex flex-col gap-2">
                                 <div className="flex justify-between items-center">
@@ -864,7 +902,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 rmData={selectedRMForAnalysis}
                 baseRate={baseRate}
             />
-            {/* ABC Clients List Modal */}
             <ClientsListModal 
                 isOpen={isAbcModalOpen}
                 onClose={() => setIsAbcModalOpen(false)}
@@ -874,6 +911,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     if (onEditClient) onEditClient(client);
                 }}
             />
+            {selectedRegionDetails && (
+                <RegionDetailsModal 
+                    isOpen={isRegionModalOpen}
+                    onClose={() => setIsRegionModalOpen(false)}
+                    rmName={selectedRegionDetails.rmName}
+                    regionName={selectedRegionDetails.regionName}
+                    activeClients={selectedRegionDetails.activeClients}
+                    potentialClients={selectedRegionDetails.potentialClients}
+                />
+            )}
+            {/* Reuse Export Modal for 'modal' mode */}
             <Modal 
                 isOpen={isExportModalOpen} 
                 onClose={() => setIsExportModalOpen(false)} 
@@ -895,9 +943,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     </div>
                 }
             >
-                {/* Export Modal Content is same as above, just duplicated logic for the two return paths */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
-                    {/* Left Col: Countries */}
                     <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
                         <div className="p-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
                             <h4 className="font-bold text-gray-300">Страны</h4>
@@ -924,7 +970,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         </div>
                     </div>
 
-                    {/* Right Col: Regions */}
                     <div className="flex flex-col bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
                         <div className="p-3 bg-gray-800 border-b border-gray-700 flex flex-col gap-2">
                             <div className="flex justify-between items-center">
