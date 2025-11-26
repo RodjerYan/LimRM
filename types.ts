@@ -1,5 +1,4 @@
 
-
 export interface AggregatedDataRow {
     key: string;
     rm: string;
@@ -138,7 +137,6 @@ export type WorkerMessage =
 
 
 // Type for the coordinate cache data structure from Google Sheets
-// Updated to include history string for redirect parsing in worker
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
 
 // Sub-metric for detailed Region/Brand planning
@@ -151,6 +149,11 @@ export interface PlanMetric {
     activeCount?: number; // Active clients
     totalCount?: number; // Total potential clients (OKB) - only for regions
     brands?: PlanMetric[]; // Nested brand breakdown for this specific region
+    
+    // New Excel-Logic Specific Fields
+    kpiScore?: number; // Normalized KPI score (0-1)
+    riskFactor?: number; // Applied risk coefficient
+    seasonalCoef?: number; // Seasonal adjustment
 }
 
 // Shared interface for RM Metrics used in Dashboard and Analysis
@@ -173,4 +176,18 @@ export interface RMMetrics {
     // Detailed breakdowns
     regions: PlanMetric[];
     brands: PlanMetric[];
+    
+    // New Analytics Fields from Smart Logic
+    avgSkuPerClient?: number;
+    avgSalesPerSku?: number;
+    globalAvgSku?: number;
+    globalAvgSalesSku?: number;
+}
+
+// Planning Context for the Engine
+export interface PlanningContext {
+    baseRate: number;
+    globalAvgSku: number;
+    globalAvgSales: number;
+    riskLevel: 'low' | 'medium' | 'high'; // Corresponds to "Black Day" scenarios
 }

@@ -6,8 +6,10 @@ import RMAnalysisModal from './RMAnalysisModal';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
+// NEW: Import Planning Engine
+import { PlanningEngine } from '../services/planning/engine';
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -75,8 +77,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
-        // --- STEP 1: Pre-Calculate Global Benchmarks ---
-        let globalTotalListings = 0; // Total SKU/Brand connections
+        // --- STEP 1: Global Benchmarks ---
+        let globalTotalListings = 0; 
         let globalTotalUniqueClients = 0;
         let globalTotalVolume = 0;
         const allUniqueClientKeys = new Set<string>();
@@ -88,10 +90,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         });
         globalTotalUniqueClients = allUniqueClientKeys.size;
 
-        // Global Benchmarks
         const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
         const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
-
 
         // --- STEP 2: Aggregate RM Data ---
         const globalOkbCoordSet = new Set<string>();
@@ -104,6 +104,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             });
         }
 
+        // Helper type for aggregation
         type RegionBucket = {
             fact: number;
             potential: number;
@@ -117,12 +118,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             originalName: string;
             regions: Map<string, RegionBucket>;
             totalFact: number;
-            countA: number;
-            countB: number;
-            countC: number;
-            factA: number;
-            factB: number;
-            factC: number;
+            countA: number; countB: number; countC: number;
+            factA: number; factB: number; factC: number;
             uniqueClientKeys: Set<string>;
             totalListings: number;
         }>();
@@ -152,30 +149,21 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     rmBucket.uniqueClientKeys.add(c.key);
                     const clientFact = c.fact || 0;
                     if (c.abcCategory === 'A') {
-                        rmBucket.countA++;
-                        rmBucket.factA += clientFact;
+                        rmBucket.countA++; rmBucket.factA += clientFact;
                     } else if (c.abcCategory === 'B') {
-                        rmBucket.countB++;
-                        rmBucket.factB += clientFact;
+                        rmBucket.countB++; rmBucket.factB += clientFact;
                     } else {
-                        rmBucket.countC++;
-                        rmBucket.factC += clientFact;
+                        rmBucket.countC++; rmBucket.factC += clientFact;
                     }
                 });
             }
 
             if (!rmBucket.regions.has(regionKey)) {
                 rmBucket.regions.set(regionKey, {
-                    fact: 0,
-                    potential: 0,
-                    activeClients: new Set(),
-                    matchedOkbCoords: new Set(),
-                    brandFacts: new Map(),
-                    originalRegionName: row.region
+                    fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map(), originalRegionName: row.region
                 });
             }
             const regBucket = rmBucket.regions.get(regionKey)!;
-
             regBucket.fact += row.fact;
             regBucket.potential += row.potential || 0;
 
@@ -190,7 +178,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     }
                 });
             }
-
             const brandName = row.brand || 'No Brand';
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
         });
@@ -198,31 +185,24 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const missingRegionNames = new Set<string>();
         const resultMetrics: RMMetrics[] = [];
 
+        // --- STEP 3: Final Calculation using Planning Engine ---
         rmBuckets.forEach((rmData, normRmKey) => {
             const regionMetrics: PlanMetric[] = [];
             const brandAggregates = new Map<string, { fact: number, plan: number }>();
 
             let rmTotalOkbRaw = 0;
             let rmTotalMatched = 0;
+            let rmTotalCalculatedPlan = 0;
+            let rmTotalPotentialFile = 0;
             
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
             const rmAvgSalesPerSku = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
 
-            // --- SMART CALCULATION: Coefficients ---
-            const widthGapPct = globalAvgSkuPerClient > 0 ? (globalAvgSkuPerClient - rmAvgSkuPerClient) / globalAvgSkuPerClient : 0;
-            const widthBonus = Math.max(-5, Math.min(15, widthGapPct * 15));
-
-            const velocityGapPct = globalAvgSalesPerSku > 0 ? (globalAvgSalesPerSku - rmAvgSalesPerSku) / globalAvgSalesPerSku : 0;
-            const velocityBonus = Math.max(-5, Math.min(15, velocityGapPct * 15));
-
-            let rmTotalCalculatedPlan = 0;
-            let rmTotalPotentialFile = 0;
-
+            // Iterate Regions
             rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size;
                 const matchedCount = regData.matchedOkbCoords.size;
-                
                 rmTotalMatched += matchedCount;
                 rmTotalPotentialFile += regData.potential;
 
@@ -230,42 +210,34 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 if (globalOkbRegionCounts && globalOkbRegionCounts[regionKey]) {
                     totalRegionOkb = globalOkbRegionCounts[regionKey];
                 }
-
                 if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') {
                     missingRegionNames.add(regionKey);
                 }
-
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // --- Share Adjustment Logic ---
-                let shareAdjustment = 0;
-                let marketShare = NaN;
+                // --- NEW: USE PLANNING ENGINE ---
+                const calculationResult = PlanningEngine.calculateRMPlan(
+                    {
+                        totalFact: regData.fact,
+                        totalPotential: totalRegionOkb, // Use OKB count as proxy for potential capacity in this context if absolute potential is missing
+                        matchedCount: matchedCount,
+                        totalRegionOkb: totalRegionOkb,
+                        avgSku: rmAvgSkuPerClient, // Using RM avg as proxy for region (can be refined)
+                        avgVelocity: rmAvgSalesPerSku
+                    },
+                    {
+                        baseRate: baseRate,
+                        globalAvgSku: globalAvgSkuPerClient,
+                        globalAvgSales: globalAvgSalesPerSku,
+                        riskLevel: 'low'
+                    }
+                );
 
-                // FIX: Calculate Share if we know total, regardless of okbData array presence
-                if (totalRegionOkb > 0) {
-                    marketShare = (matchedCount / totalRegionOkb);
-                }
-
-                // Calculate Plan Adjustment
-                if (!Number.isNaN(marketShare) && matchedCount > 0) {
-                    // Apply bonus only if we have confirmed matches (valid data)
-                    // Center at 35% share. 
-                    shareAdjustment = (0.35 - marketShare) * 20;
-                } else {
-                    // If 0 matches (0%), do not apply "Low Share Bonus" as it might be a mapping error.
-                    shareAdjustment = 0;
-                }
-                
-                // Combine Factors
-                let calculatedRate = baseRate + shareAdjustment + widthBonus + velocityBonus;
-                
-                const minRate = Math.max(0, baseRate - 15);
-                const maxRate = baseRate + 30; 
-                calculatedRate = Math.max(minRate, Math.min(maxRate, calculatedRate));
-
-                const regionPlan = regData.fact * (1 + calculatedRate / 100);
+                const regionPlan = calculationResult.plan;
+                const calculatedRate = calculationResult.growthPct;
                 rmTotalCalculatedPlan += regionPlan;
 
+                // Brands breakdown
                 const regionBrands: PlanMetric[] = [];
                 regData.brandFacts.forEach((bFact, bName) => {
                     const bPlan = bFact * (1 + calculatedRate / 100);
@@ -275,13 +247,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         plan: bPlan,
                         growthPct: calculatedRate 
                     });
-
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
                     const agg = brandAggregates.get(bName)!;
                     agg.fact += bFact;
                     agg.plan += bPlan;
                 });
                 regionBrands.sort((a, b) => b.fact - a.fact);
+
+                const marketShare = totalRegionOkb > 0 ? (matchedCount / totalRegionOkb) : NaN;
 
                 regionMetrics.push({
                     name: regionKey,
@@ -295,6 +268,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 });
             });
 
+            // Final Aggregations
             const brandMetrics: PlanMetric[] = Array.from(brandAggregates.entries()).map(([name, val]) => ({
                 name,
                 fact: val.fact,
@@ -318,12 +292,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 totalPotential: rmTotalPotentialFile,
                 avgFactPerClient: rmUniqueClientsCount > 0 ? rmData.totalFact / rmUniqueClientsCount : 0,
                 marketShare: weightedShare,
-                countA: rmData.countA,
-                countB: rmData.countB,
-                countC: rmData.countC,
-                factA: rmData.factA,
-                factB: rmData.factB,
-                factC: rmData.factC,
+                countA: rmData.countA, countB: rmData.countB, countC: rmData.countC,
+                factA: rmData.factA, factB: rmData.factB, factC: rmData.factC,
                 recommendedGrowthPct: effectiveGrowthPct,
                 nextYearPlan: rmTotalCalculatedPlan,
                 regions: regionMetrics.sort((a, b) => b.fact - a.fact),
@@ -922,7 +892,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     onClose={() => setIsAbcModalOpen(false)}
                     clients={abcClients}
                     onClientSelect={() => {}} 
-                    onStartEdit={(client) => {
+                    onStartEdit={(client: MapPoint) => {
                         if (onEditClient) onEditClient(client);
                         setIsAbcModalOpen(false);
                     }}
