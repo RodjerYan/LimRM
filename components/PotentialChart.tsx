@@ -150,7 +150,8 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                         position: 'left',
                         grid: { color: 'rgba(255, 255, 255, 0.05)', borderDash: [5, 5] } as any,
                         ticks: { color: '#64748b', font: { size: 10, family: "'Geist Mono', monospace" } },
-                        border: { display: false }
+                        border: { display: false },
+                        grace: '10%' // Adds breathing room above the tallest bar
                     },
                     y1: {
                         type: 'linear',
@@ -158,8 +159,7 @@ const PotentialChart: React.FC<PotentialChartProps> = ({ data }) => {
                         position: 'right',
                         grid: { display: false },
                         min: 0,
-                        // Add some buffer to the top of percentage scale
-                        suggestedMax: 100, 
+                        max: 110, // Explicitly set max > 100 to prevent line from sticking to the top edge
                         ticks: { color: '#fbbf24', callback: (v) => v + '%', font: { size: 10, family: "'Geist Mono', monospace" } },
                         border: { display: false }
                     }
