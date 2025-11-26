@@ -4,7 +4,8 @@ import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import MetricsSummary from './MetricsSummary';
-import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus } from '../types';
+import ClientsListModal from './ClientsListModal';
+import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint } from '../types';
 import { ExportIcon, SearchIcon, CheckIcon, ArrowLeftIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
 
@@ -19,6 +20,7 @@ interface RMDashboardProps {
     metrics?: SummaryMetrics | null;
     okbStatus?: OkbStatus | null;
     onActiveClientsClick?: () => void;
+    onEditClient?: (client: MapPoint) => void;
 }
 
 const BASE_GROWTH_RATE = 13.0; // Base 13%
@@ -39,11 +41,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     mode = 'modal',
     metrics,
     okbStatus,
-    onActiveClientsClick
+    onActiveClientsClick,
+    onEditClient
 }) => {
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
+
+    // --- ABC Modal State ---
+    const [isAbcModalOpen, setIsAbcModalOpen] = useState(false);
+    const [abcClients, setAbcClients] = useState<MapPoint[]>([]);
+    const [abcModalTitle, setAbcModalTitle] = useState('');
 
     // --- Export Modal State ---
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -355,6 +363,30 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         setIsAnalysisModalOpen(true);
     };
 
+    const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => {
+        const clients: MapPoint[] = [];
+        // Normalized match to handle potential casing issues, though originalName is usually preserved
+        const normalizedTargetRm = normalizeRmNameForMatching(rmName);
+
+        data.forEach(group => {
+            const normalizedGroupRm = normalizeRmNameForMatching(group.rm);
+            if (normalizedGroupRm === normalizedTargetRm) {
+                group.clients.forEach(client => {
+                    if (client.abcCategory === category) {
+                        clients.push(client);
+                    }
+                });
+            }
+        });
+        
+        // Sort by sales (fact) descending
+        clients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+
+        setAbcClients(clients);
+        setAbcModalTitle(`${rmName}: Клиенты категории ${category} (${clients.length})`);
+        setIsAbcModalOpen(true);
+    };
+
     const toggleExpand = (rmName: string) => {
         setExpandedRM(prev => prev === rmName ? null : rmName);
     };
@@ -474,9 +506,27 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                 +{formatNum(rm.nextYearPlan - rm.totalFact)}
                                             </div>
                                         </td>
-                                        <td className="px-4 py-3 text-center font-mono text-amber-400">{rm.countA}</td>
-                                        <td className="px-4 py-3 text-center font-mono text-emerald-400">{rm.countB}</td>
-                                        <td className="px-4 py-3 text-center font-mono text-slate-400">{rm.countC}</td>
+                                        <td 
+                                            className="px-4 py-3 text-center font-mono text-amber-400 font-bold hover:bg-amber-500/10 hover:text-white transition-colors cursor-pointer"
+                                            title={`Показать ${rm.countA} клиентов категории A для ${rm.rmName}`}
+                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}
+                                        >
+                                            {rm.countA}
+                                        </td>
+                                        <td 
+                                            className="px-4 py-3 text-center font-mono text-emerald-400 font-bold hover:bg-emerald-500/10 hover:text-white transition-colors cursor-pointer"
+                                            title={`Показать ${rm.countB} клиентов категории B для ${rm.rmName}`}
+                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}
+                                        >
+                                            {rm.countB}
+                                        </td>
+                                        <td 
+                                            className="px-4 py-3 text-center font-mono text-slate-400 font-bold hover:bg-slate-500/10 hover:text-white transition-colors cursor-pointer"
+                                            title={`Показать ${rm.countC} клиентов категории C для ${rm.rmName}`}
+                                            onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}
+                                        >
+                                            {rm.countC}
+                                        </td>
                                     </tr>
 
                                     {isExpanded && (
@@ -585,6 +635,16 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     rmData={selectedRMForAnalysis}
                     baseRate={BASE_GROWTH_RATE}
                 />
+                {/* ABC Clients List Modal */}
+                <ClientsListModal 
+                    isOpen={isAbcModalOpen}
+                    onClose={() => setIsAbcModalOpen(false)}
+                    clients={abcClients}
+                    onClientSelect={() => {}}
+                    onStartEdit={(client) => {
+                        if (onEditClient) onEditClient(client);
+                    }}
+                />
                 <Modal 
                     isOpen={isExportModalOpen} 
                     onClose={() => setIsExportModalOpen(false)} 
@@ -692,6 +752,16 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 onClose={() => setIsAnalysisModalOpen(false)}
                 rmData={selectedRMForAnalysis}
                 baseRate={BASE_GROWTH_RATE}
+            />
+            {/* ABC Clients List Modal */}
+            <ClientsListModal 
+                isOpen={isAbcModalOpen}
+                onClose={() => setIsAbcModalOpen(false)}
+                clients={abcClients}
+                onClientSelect={() => {}}
+                onStartEdit={(client) => {
+                    if (onEditClient) onEditClient(client);
+                }}
             />
             <Modal 
                 isOpen={isExportModalOpen} 
