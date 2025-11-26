@@ -5,6 +5,7 @@ import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
+import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
 import { findValueInRow } from '../utils/dataUtils';
@@ -61,6 +62,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         activeClients: MapPoint[];
         potentialClients: PotentialClient[];
     } | null>(null);
+
+    // --- Growth Explanation Modal State ---
+    const [explanationData, setExplanationData] = useState<PlanMetric | null>(null);
 
     // --- Export Modal State ---
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -276,7 +280,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         name: bName,
                         fact: bFact,
                         plan: bPlan,
-                        growthPct: calculatedRate 
+                        growthPct: calculatedRate,
+                        factors: calculationResult.factors // Pass factors to brand as well
                     });
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
                     const agg = brandAggregates.get(bName)!;
@@ -295,7 +300,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
                     activeCount: matchedCount,
                     totalCount: totalRegionOkb,
-                    brands: regionBrands 
+                    brands: regionBrands,
+                    factors: calculationResult.factors // Pass factors to region
                 });
             });
 
@@ -518,6 +524,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     const toggleExpand = (rmName: string) => {
         setExpandedRM(prev => prev === rmName ? null : rmName);
+    };
+
+    const handleExplanationClick = (e: React.MouseEvent, metric: PlanMetric) => {
+        e.stopPropagation();
+        setExplanationData(metric);
     };
 
     const availableCountries = Object.keys(exportHierarchy).sort();
@@ -780,7 +791,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                 {reg.brands?.map(br => (
                                                                                     <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
                                                                                         <td className="px-3 py-2 pl-6 text-gray-300">{br.name}</td>
-                                                                                        <td className="px-3 py-2 text-right font-mono text-gray-500">+{br.growthPct.toFixed(1)}%</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono">
+                                                                                            <button
+                                                                                                onClick={(e) => handleExplanationClick(e, br)}
+                                                                                                className="hover:underline text-emerald-400 font-bold"
+                                                                                                title="Нажмите для обоснования"
+                                                                                            >
+                                                                                                +{br.growthPct.toFixed(1)}%
+                                                                                            </button>
+                                                                                        </td>
                                                                                         <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
                                                                                         <td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td>
                                                                                     </tr>
@@ -815,6 +834,16 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     potentialClients={selectedRegionDetails.potentialClients}
                 />
             )}
+
+            {explanationData && (
+                <GrowthExplanationModal
+                    isOpen={!!explanationData}
+                    onClose={() => setExplanationData(null)}
+                    data={explanationData}
+                    baseRate={baseRate}
+                />
+            )}
+
             {/* Reuse Export Modal for 'modal' mode */}
             <Modal 
                 isOpen={isExportModalOpen} 

@@ -1,5 +1,5 @@
 
-import { PlanningContext } from '../../types';
+import { PlanningContext, GrowthFactors } from '../../types';
 import * as Formulas from './formulas';
 import * as Coefs from './coefficients';
 
@@ -27,7 +27,7 @@ export class PlanningEngine {
             rmGlobalVelocity: number; 
         },
         context: PlanningContext
-    ): { plan: number; growthPct: number; factors: Record<string, number> } {
+    ): { plan: number; growthPct: number; factors: GrowthFactors } {
         
         // --- 1. Расчет Доли Рынка (Penetration) ---
         let marketShare = 0;
@@ -36,7 +36,7 @@ export class PlanningEngine {
         }
 
         // --- 2. Базовая ставка ---
-        let growthComponents = {
+        let growthComponents: GrowthFactors = {
             base: context.baseRate,
             share: 0,
             width: 0,

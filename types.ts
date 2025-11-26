@@ -139,6 +139,14 @@ export type WorkerMessage =
 // Type for the coordinate cache data structure from Google Sheets
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
 
+export interface GrowthFactors {
+    base: number;
+    share: number;
+    width: number;
+    velocity: number;
+    acquisition: number;
+}
+
 // Sub-metric for detailed Region/Brand planning
 export interface PlanMetric {
     name: string; // Region name or Brand name
@@ -154,6 +162,9 @@ export interface PlanMetric {
     kpiScore?: number; // Normalized KPI score (0-1)
     riskFactor?: number; // Applied risk coefficient
     seasonalCoef?: number; // Seasonal adjustment
+    
+    // Breakdown of the calculation
+    factors?: GrowthFactors;
 }
 
 // Shared interface for RM Metrics used in Dashboard and Analysis
