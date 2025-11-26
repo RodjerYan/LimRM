@@ -405,84 +405,106 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
+        const commonWrapperClass = "max-w-7xl mx-auto"; // Limit width and center content
+
         switch (activeModule) {
             case 'adapta':
                 return (
-                    <Adapta 
-                        onFileProcessed={handleFileProcessed}
-                        onProcessingStateChange={handleProcessingStateChange}
-                        okbData={okbData}
-                        okbStatus={okbStatus}
-                        onOkbStatusChange={handleOkbStatusChange}
-                        onOkbDataChange={setOkbData}
-                        disabled={isControlPanelLocked}
-                        unidentifiedCount={unidentifiedRows.length}
-                        activeClientsCount={allActiveClients.length}
-                        uploadedData={allData} 
-                    />
+                    <div className={commonWrapperClass}>
+                        <Adapta 
+                            onFileProcessed={handleFileProcessed}
+                            onProcessingStateChange={handleProcessingStateChange}
+                            okbData={okbData}
+                            okbStatus={okbStatus}
+                            onOkbStatusChange={handleOkbStatusChange}
+                            onOkbDataChange={setOkbData}
+                            disabled={isControlPanelLocked}
+                            unidentifiedCount={unidentifiedRows.length}
+                            activeClientsCount={allActiveClients.length}
+                            uploadedData={allData} 
+                        />
+                    </div>
                 );
             case 'dashboard':
                 return (
-                    <RMDashboard 
-                        isOpen={true} // Always open when in this view
-                        onClose={() => setActiveModule('amp')} 
-                        data={filteredData}
-                        okbRegionCounts={okbRegionCounts}
-                        okbData={okbData}
-                        mode="page"
-                        metrics={summaryMetrics}
-                        okbStatus={okbStatus}
-                        onActiveClientsClick={() => setIsClientsModalOpen(true)}
-                        onEditClient={(client) => handleStartEdit(client, 'clients')}
-                    />
+                    <div className={commonWrapperClass}>
+                        <RMDashboard 
+                            isOpen={true} // Always open when in this view
+                            onClose={() => setActiveModule('amp')} 
+                            data={filteredData}
+                            okbRegionCounts={okbRegionCounts}
+                            okbData={okbData}
+                            mode="page"
+                            metrics={summaryMetrics}
+                            okbStatus={okbStatus}
+                            onActiveClientsClick={() => setIsClientsModalOpen(true)}
+                            onEditClient={(client) => handleStartEdit(client, 'clients')}
+                        />
+                    </div>
                 );
             case 'prophet':
-                return <Prophet summaryMetrics={summaryMetrics} />;
+                return (
+                    <div className={commonWrapperClass}>
+                        <Prophet summaryMetrics={summaryMetrics} />
+                    </div>
+                );
             case 'agile':
-                return <AgileLearning data={allData} />;
+                return (
+                    <div className={commonWrapperClass}>
+                        <AgileLearning data={allData} />
+                    </div>
+                );
             case 'roi-genome':
-                return <RoiGenome data={allData} />;
+                return (
+                    <div className={commonWrapperClass}>
+                        <RoiGenome data={allData} />
+                    </div>
+                );
             case 'amp':
             default:
                 return (
-                    <div className="grid grid-cols-1 gap-6 items-start animate-fade-in">
-                        <div className="col-span-1 space-y-6">
-                            <div className="flex justify-between items-center border-b border-gray-800 pb-4">
-                                <div>
-                                    <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
-                                    <p className="text-gray-400 text-sm mt-1">Построение многомерных моделей, выявление драйверов роста. Holistic (целостное) моделирование.</p>
-                                </div>
+                    <div className={`space-y-6 animate-fade-in ${commonWrapperClass}`}>
+                        <div className="flex justify-between items-center border-b border-gray-800 pb-4">
+                            <div>
+                                <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
+                                <p className="text-gray-400 text-sm mt-1">Построение многомерных моделей, выявление драйверов роста. Holistic (целостное) моделирование.</p>
                             </div>
+                        </div>
 
-                            {/* Changed order: Map first, then Filters */}
+                        {/* Map occupies full width at the top */}
+                        <InteractiveRegionMap 
+                            data={filteredData} 
+                            selectedRegions={filters.region} 
+                            potentialClients={potentialClients}
+                            activeClients={filteredActiveClients}
+                            flyToClientKey={flyToClientKey}
+                            theme={theme}
+                            onToggleTheme={toggleTheme}
+                            onEditClient={(client) => handleStartEdit(client, 'clients')}
+                        />
+
+                        {/* Split layout: Filters & Chart (Left) vs Results Table (Right) */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div className="flex flex-col gap-6">
+                                <Filters
+                                    options={filterOptions}
+                                    currentFilters={filters}
+                                    onFilterChange={handleFilterChange}
+                                    onReset={resetFilters}
+                                    disabled={!isDataLoaded || isLoading}
+                                />
+                                {filteredData.length > 0 && <PotentialChart data={filteredData} />}
+                            </div>
                             
-                            <InteractiveRegionMap 
-                                data={filteredData} 
-                                selectedRegions={filters.region} 
-                                potentialClients={potentialClients}
-                                activeClients={filteredActiveClients}
-                                flyToClientKey={flyToClientKey}
-                                theme={theme}
-                                onToggleTheme={toggleTheme}
-                                onEditClient={(client) => handleStartEdit(client, 'clients')}
-                            />
-
-                            <Filters
-                                options={filterOptions}
-                                currentFilters={filters}
-                                onFilterChange={handleFilterChange}
-                                onReset={resetFilters}
-                                disabled={!isDataLoaded || isLoading}
-                            />
-
-                            <ResultsTable 
-                                data={filteredData} 
-                                onRowClick={handleRowClick} 
-                                disabled={!isDataLoaded || isLoading}
-                                unidentifiedRowsCount={unidentifiedRows.length}
-                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                            />
-                            {filteredData.length > 0 && <PotentialChart data={filteredData} />}
+                            <div className="h-full min-h-[500px]">
+                                <ResultsTable 
+                                    data={filteredData} 
+                                    onRowClick={handleRowClick} 
+                                    disabled={!isDataLoaded || isLoading}
+                                    unidentifiedRowsCount={unidentifiedRows.length}
+                                    onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
+                                />
+                            </div>
                         </div>
                     </div>
                 );
