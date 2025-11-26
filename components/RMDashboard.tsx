@@ -214,6 +214,25 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 const regionPlan = regData.fact * (1 + calculatedRate / 100);
                 rmTotalCalculatedPlan += regionPlan;
 
+                // Calculate brand breakdown SPECIFIC for this region using the region's rate
+                const regionBrands: PlanMetric[] = [];
+                regData.brandFacts.forEach((bFact, bName) => {
+                    const bPlan = bFact * (1 + calculatedRate / 100);
+                    regionBrands.push({
+                        name: bName,
+                        fact: bFact,
+                        plan: bPlan,
+                        growthPct: calculatedRate // Inherits the region's growth rate
+                    });
+
+                    // Add to global RM Aggregates
+                    if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
+                    const agg = brandAggregates.get(bName)!;
+                    agg.fact += bFact;
+                    agg.plan += bPlan;
+                });
+                regionBrands.sort((a, b) => b.fact - a.fact);
+
                 regionMetrics.push({
                     name: regionKey,
                     fact: regData.fact,
@@ -221,15 +240,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     growthPct: calculatedRate,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
                     activeCount: matchedCount,
-                    totalCount: totalRegionOkb
-                });
-
-                regData.brandFacts.forEach((bFact, bName) => {
-                    const bPlan = bFact * (1 + calculatedRate / 100);
-                    if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
-                    const agg = brandAggregates.get(bName)!;
-                    agg.fact += bFact;
-                    agg.plan += bPlan;
+                    totalCount: totalRegionOkb,
+                    brands: regionBrands // Added breakdown
                 });
             });
 
@@ -542,9 +554,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             title={`Показать клиентов A для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}
                                         >
-                                            <div className="flex flex-col items-center justify-center">
-                                                <span className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</span>
-                                                <span className="font-bold font-mono text-amber-400 text-lg">{rm.countA}</span>
+                                            <div className="flex flex-col items-center justify-center group/cell">
+                                                <div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div>
+                                                <div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div>
                                             </div>
                                         </td>
                                         <td 
@@ -552,9 +564,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             title={`Показать клиентов B для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}
                                         >
-                                            <div className="flex flex-col items-center justify-center">
-                                                <span className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</span>
-                                                <span className="font-bold font-mono text-emerald-400 text-lg">{rm.countB}</span>
+                                            <div className="flex flex-col items-center justify-center group/cell">
+                                                <div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div>
+                                                <div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div>
                                             </div>
                                         </td>
                                         <td 
@@ -562,9 +574,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             title={`Показать клиентов C для ${rm.rmName}`}
                                             onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}
                                         >
-                                            <div className="flex flex-col items-center justify-center">
-                                                <span className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</span>
-                                                <span className="font-bold font-mono text-slate-400 text-lg">{rm.countC}</span>
+                                            <div className="flex flex-col items-center justify-center group/cell">
+                                                <div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div>
+                                                <div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div>
                                             </div>
                                         </td>
                                     </tr>
@@ -573,66 +585,86 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                         <tr>
                                             <td colSpan={11} className="p-0 bg-gray-900/40 border-b border-gray-700 shadow-inner">
                                                 <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
-                                                    <div className="border border-gray-700 rounded-lg overflow-hidden">
-                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">Детализация по Регионам</div>
-                                                        <table className="w-full text-xs text-left">
-                                                            <thead className="bg-gray-800 text-gray-400 font-normal">
-                                                                <tr>
-                                                                    <th className="px-3 py-2">Регион</th>
-                                                                    <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие (Координаты)</th>
-                                                                    <th className="px-3 py-2 text-right">Рост (%)</th>
-                                                                    <th className="px-3 py-2 text-right">Факт</th>
-                                                                    <th className="px-3 py-2 text-right">План {nextYear}</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody className="divide-y divide-gray-700/50 text-gray-300">
-                                                                {rm.regions.map(reg => {
-                                                                    const regShareKnown = !Number.isNaN(reg.marketShare);
-                                                                    const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                                                                    const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
-                                                                    return (
-                                                                        <tr key={reg.name} className="hover:bg-gray-700/20">
-                                                                            <td className="px-3 py-2">{reg.name}</td>
-                                                                            <td className={`px-3 py-2 text-right font-mono`}>
-                                                                                <span className="text-gray-400" title="Совпадений / Всего ОКБ">{reg.activeCount}/{reg.totalCount}</span>
-                                                                                <span className={`ml-2 font-bold ${regShareColor}`}>
-                                                                                    {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(неизв.)'}
-                                                                                </span>
-                                                                            </td>
-                                                                            <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
-                                                                                {reg.growthPct.toFixed(1)}%
-                                                                            </td>
-                                                                            <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
-                                                                            <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
-                                                                        </tr>
-                                                                    );
-                                                                })}
-                                                            </tbody>
-                                                        </table>
+                                                    
+                                                    {/* Left Column: Region Details */}
+                                                    <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/20">
+                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
+                                                            Детализация по Регионам
+                                                        </div>
+                                                        <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                                                            <table className="w-full text-xs text-left">
+                                                                <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
+                                                                    <tr>
+                                                                        <th className="px-3 py-2">Регион</th>
+                                                                        <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие</th>
+                                                                        <th className="px-3 py-2 text-right">Рост</th>
+                                                                        <th className="px-3 py-2 text-right">Факт</th>
+                                                                        <th className="px-3 py-2 text-right">План {nextYear}</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-gray-700/50 text-gray-300">
+                                                                    {rm.regions.map(reg => {
+                                                                        const regShareKnown = !Number.isNaN(reg.marketShare);
+                                                                        const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
+                                                                        const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
+                                                                        return (
+                                                                            <tr key={reg.name} className="hover:bg-gray-700/20">
+                                                                                <td className="px-3 py-2 font-medium">{reg.name}</td>
+                                                                                <td className={`px-3 py-2 text-right font-mono`}>
+                                                                                    <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
+                                                                                    <span className={`ml-2 font-bold ${regShareColor}`}>
+                                                                                        {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(н/д)'}
+                                                                                    </span>
+                                                                                </td>
+                                                                                <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
+                                                                                    {reg.growthPct.toFixed(1)}%
+                                                                                </td>
+                                                                                <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
+                                                                                <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
                                                     </div>
 
-                                                    <div className="border border-gray-700 rounded-lg overflow-hidden h-fit">
-                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider">План по Брендам (Агрегированный)</div>
-                                                        <table className="w-full text-xs text-left">
-                                                            <thead className="bg-gray-800 text-gray-400 font-normal">
-                                                                <tr>
-                                                                    <th className="px-3 py-2">Бренд</th>
-                                                                    <th className="px-3 py-2 text-right">Средний Рост</th>
-                                                                    <th className="px-3 py-2 text-right">Факт</th>
-                                                                    <th className="px-3 py-2 text-right">План {nextYear}</th>
-                                                                </tr>
-                                                            </thead>
-                                                            <tbody className="divide-y divide-gray-700/50 text-gray-300">
-                                                                {rm.brands.map(br => (
-                                                                    <tr key={br.name} className="hover:bg-gray-700/20">
-                                                                        <td className="px-3 py-2">{br.name}</td>
-                                                                        <td className="px-3 py-2 text-right font-mono text-gray-400">~{br.growthPct.toFixed(1)}%</td>
-                                                                        <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
-                                                                        <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(br.plan)}</td>
+                                                    {/* Right Column: Detailed Brand Breakdown Per Region */}
+                                                    <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/20">
+                                                        <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
+                                                            Детализация: Регионы и Бренды
+                                                        </div>
+                                                        <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+                                                            <table className="w-full text-xs text-left">
+                                                                <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
+                                                                    <tr>
+                                                                        <th className="px-3 py-2 pl-6">Бренд</th>
+                                                                        <th className="px-3 py-2 text-right">Инд. Рост</th>
+                                                                        <th className="px-3 py-2 text-right">Факт</th>
+                                                                        <th className="px-3 py-2 text-right">План {nextYear}</th>
                                                                     </tr>
-                                                                ))}
-                                                            </tbody>
-                                                        </table>
+                                                                </thead>
+                                                                <tbody className="text-gray-300">
+                                                                    {rm.regions.map(reg => (
+                                                                        <React.Fragment key={`breakdown-${reg.name}`}>
+                                                                            <tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm">
+                                                                                <td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">
+                                                                                    {reg.name}
+                                                                                </td>
+                                                                            </tr>
+                                                                            {reg.brands?.map(br => (
+                                                                                <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
+                                                                                    <td className="px-3 py-2 pl-6 text-gray-300">{br.name}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-500">+{br.growthPct.toFixed(1)}%</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td>
+                                                                                </tr>
+                                                                            ))}
+                                                                        </React.Fragment>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
                                                     </div>
 
                                                 </div>

@@ -150,6 +150,7 @@ export interface PlanMetric {
     marketShare?: number; // Only applicable for regions
     activeCount?: number; // Active clients
     totalCount?: number; // Total potential clients (OKB) - only for regions
+    brands?: PlanMetric[]; // Nested brand breakdown for this specific region
 }
 
 // Shared interface for RM Metrics used in Dashboard and Analysis
