@@ -531,7 +531,7 @@ const App: React.FC = () => {
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
         // Separate wrapper classes based on content type
-        const limitedWrapperClass = "max-w-7xl mx-auto";
+        const limitedWrapperClass = "w-full max-w-[1600px] mx-auto px-4 lg:px-8";
         const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 
         switch (activeModule) {
