@@ -137,7 +137,7 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     if (!row) return null;
     const rowKeys = Object.keys(row);
     // Prioritized, exact matches first for reliability
-    const prioritizedKeys = ['адрес тт limkorm', 'юридический адрес', 'адрес'];
+    const prioritizedKeys = ['адрес тт limkorm', 'фактический адрес', 'юридический адрес', 'адрес'];
 
     for (const pKey of prioritizedKeys) {
         // Find a key that matches exactly when lowercased and trimmed

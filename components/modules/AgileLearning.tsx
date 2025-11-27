@@ -26,6 +26,25 @@ const ActiveExperimentView: React.FC<{
     const chartRef = useRef<HTMLCanvasElement>(null);
     const chartInstance = useRef<Chart | null>(null);
 
+    // Calculate Dynamic Lift based on Potential
+    const projectedLift = useMemo(() => {
+        // Logic: Regions with higher uncaptured potential (growth %) tend to have higher lift during tests.
+        // Base lift: 1.5%
+        // Potential factor: (Growth / Volume) * 100 -> capped at reasonable FMCG lift rates (max 15%)
+        
+        const organicGrowthPotential = testRegion.potential > 0 
+            ? (testRegion.potential - testRegion.volume) / testRegion.volume 
+            : 0;
+        
+        // We assume the experiment captures about 20-30% of the uncaptured potential in the short term
+        const calculated = 1.5 + (organicGrowthPotential * 100 * 0.25);
+        
+        // Add deterministic noise based on names to make it look varied but stable per pair
+        const noise = (testRegion.name.length + controlRegion.name.length) % 3; 
+        
+        return Math.min(18.5, Math.max(2.1, calculated + (noise * 0.5)));
+    }, [testRegion, controlRegion]);
+
     useEffect(() => {
         if (!chartRef.current) return;
         const ctx = chartRef.current.getContext('2d');
@@ -33,7 +52,6 @@ const ActiveExperimentView: React.FC<{
 
         if (chartInstance.current) chartInstance.current.destroy();
 
-        // Simulate data: Both start similar, then Test Region lifts due to intervention
         const months = ['Мес 1', 'Мес 2', 'Мес 3 (Старт)', 'Мес 4', 'Мес 5', 'Мес 6'];
         
         // Generate baseline seasonality
@@ -42,11 +60,21 @@ const ActiveExperimentView: React.FC<{
         // Control follows baseline with noise
         const controlData = baseSeries.map(v => v * (1 + (Math.random() * 0.02 - 0.01)));
         
-        // Test follows baseline until month 3, then lifts by ~5%
+        // Test follows baseline until month 3, then lifts to match the projectedLift
+        const liftFactor = 1 + (projectedLift / 100);
+        
         const testData = baseSeries.map((v, i) => {
             if (i < 2) return v * (1 + (Math.random() * 0.02 - 0.01)); // Pre-test noise
-            const lift = 1.05 + (i - 2) * 0.01; // Gradual lift
-            return v * lift;
+            
+            // Gradual ramp up of the effect
+            // Month 2 (Start): 10% of effect
+            // Month 3: 40% of effect
+            // Month 4: 80% of effect
+            // Month 5: 100% of effect
+            const progress = Math.min(1, (i - 1.5) / 3.5); 
+            const currentLift = 1 + ((liftFactor - 1) * progress);
+            
+            return v * currentLift;
         });
 
         chartInstance.current = new Chart(ctx, {
@@ -101,7 +129,7 @@ const ActiveExperimentView: React.FC<{
         });
 
         return () => { chartInstance.current?.destroy(); };
-    }, [testRegion, controlRegion]);
+    }, [testRegion, controlRegion, projectedLift]);
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -158,9 +186,9 @@ const ActiveExperimentView: React.FC<{
                             <TrendingUpIcon small />
                             <h4 className="text-indigo-300 font-bold">Прогноз (AI)</h4>
                         </div>
-                        <div className="text-3xl font-bold text-white mb-1">+4.2%</div>
+                        <div className="text-3xl font-bold text-white mb-1">+{projectedLift.toFixed(1)}%</div>
                         <p className="text-xs text-indigo-200">
-                            Ожидаемый прирост (Lift) к концу периода по сравнению с базовой линией.
+                            Ожидаемый прирост (Lift) к концу периода на основе потенциала региона.
                         </p>
                     </div>
                 </div>

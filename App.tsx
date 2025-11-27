@@ -530,13 +530,15 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        // Unified wrapper class for full width
-        const wrapperClass = "w-full px-4 lg:px-8";
+        // Determine wrapper based on active module to allow full width for AMP/Dashboard
+        // while keeping forms (Adapta, Prophet, etc.) contained for better readability
+        const limitedWrapperClass = "max-w-7xl mx-auto";
+        const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 
         switch (activeModule) {
             case 'adapta':
                 return (
-                    <div className={wrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <Adapta 
                             // Pass down the processing state and start handler
                             processingState={processingState}
@@ -557,7 +559,7 @@ const App: React.FC = () => {
                 );
             case 'dashboard':
                 return (
-                    <div className={wrapperClass}>
+                    <div className={fullWidthWrapperClass}>
                         <RMDashboard 
                             isOpen={true} // Always open when in this view
                             onClose={() => setActiveModule('amp')} 
@@ -574,26 +576,26 @@ const App: React.FC = () => {
                 );
             case 'prophet':
                 return (
-                    <div className={wrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <Prophet summaryMetrics={summaryMetrics} />
                     </div>
                 );
             case 'agile':
                 return (
-                    <div className={wrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <AgileLearning data={allData} />
                     </div>
                 );
             case 'roi-genome':
                 return (
-                    <div className={wrapperClass}>
+                    <div className={limitedWrapperClass}>
                         <RoiGenome data={allData} />
                     </div>
                 );
             case 'amp':
             default:
                 return (
-                    <div className={`space-y-6 animate-fade-in ${wrapperClass}`}>
+                    <div className={`space-y-6 animate-fade-in ${fullWidthWrapperClass}`}>
                         <div className="flex justify-between items-center border-b border-gray-800 pb-4">
                             <div>
                                 <h2 className="text-2xl font-bold text-white">AMP <span className="text-gray-500 font-normal text-lg">/ Аналитика</span></h2>
