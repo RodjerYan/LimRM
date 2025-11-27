@@ -77,7 +77,7 @@ const OutlierDetailsModal: React.FC<OutlierDetailsModalProps> = ({ isOpen, onClo
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Разбор аномалии: ${row.clientName}`} 
-            maxWidth="max-w-5xl"
+            maxWidth="max-w-7xl"
         >
             <div className="space-y-6">
                 {/* Header Summary */}

@@ -122,7 +122,7 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                     <span className="text-sm text-indigo-400 font-normal mt-1">Менеджер: {rmName}</span>
                 </div>
             }
-            maxWidth="max-w-6xl"
+            maxWidth="max-w-7xl"
         >
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[70vh]">
                 <ClientTable 

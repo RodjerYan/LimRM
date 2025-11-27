@@ -568,7 +568,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                     max="100"
                                     value={baseRate}
                                     onChange={(e) => setBaseRate(Number(e.target.value))}
-                                    className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none"
+                                    className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none no-spinner"
                                 />
                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
                             </div>

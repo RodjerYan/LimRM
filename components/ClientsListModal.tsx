@@ -189,7 +189,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     }, [isOpen]);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Список активных клиентов (${clients.length})`} maxWidth="max-w-6xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Список активных клиентов (${clients.length})`} maxWidth="max-w-7xl">
             <div className="flex flex-col h-[70vh]">
                 <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700 flex-shrink-0">
                     <div className="relative w-full md:w-auto flex-grow">

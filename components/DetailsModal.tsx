@@ -93,7 +93,7 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
     const okbCoverage = (okbStatus?.rowCount && activeClientsCount > 0) ? (activeClientsCount / okbStatus.rowCount) * 100 : 0;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-5xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-7xl">
             <div className="space-y-6">
                 {/* Top Section: Metrics */}
                 <div className="space-y-4">

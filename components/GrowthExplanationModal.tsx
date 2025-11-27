@@ -46,7 +46,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-4xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-3xl">
             <div className="space-y-8">
                 
                 {/* 1. EXECUTIVE SUMMARY */}

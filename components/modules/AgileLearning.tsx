@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { AggregatedDataRow } from '../../types';
-import { LabIcon, TargetIcon, LoaderIcon, TrendingUpIcon, ArrowLeftIcon, CheckIcon } from '../icons';
-import { calculateSimilarity, generateSeasonalitySeries } from '../../utils/analytics';
+import { LabIcon, TargetIcon, TrendingUpIcon, ArrowLeftIcon, LoaderIcon, SearchIcon } from '../icons';
+import { calculateSimilarity } from '../../utils/analytics';
 import Chart from 'chart.js/auto';
 
 interface AgileLearningProps {
@@ -180,6 +180,7 @@ const ActiveExperimentView: React.FC<{
 
 const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
     const [selectedRegion, setSelectedRegion] = useState<string>('');
+    const [searchTerm, setSearchTerm] = useState('');
     const [isSimulating, setIsSimulating] = useState(false);
     const [activeExperiment, setActiveExperiment] = useState<{ test: RegionMetric, control: RegionMetric } | null>(null);
     
@@ -203,10 +204,16 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
             const growthPct = val.potential > 0 ? (val.growth / val.potential) * 100 : 0;
             result.push({ name: key, volume: val.volume, growth: growthPct, potential: val.potential });
         });
-        return result;
+        
+        // Sort by Volume DESC by default for better visibility of important regions
+        return result.sort((a, b) => b.volume - a.volume);
     }, [data]);
 
     const maxVolume = useMemo(() => regionMetrics.length > 0 ? Math.max(...regionMetrics.map(r => r.volume)) : 0, [regionMetrics]);
+
+    const filteredRegions = useMemo(() => {
+        return regionMetrics.filter(r => r.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    }, [regionMetrics, searchTerm]);
 
     // Find control candidates using Euclidean distance
     const controlCandidates = useMemo(() => {
@@ -281,42 +288,72 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Setup */}
-                <div className="bg-gray-900/50 backdrop-blur-xl border border-gray-700 rounded-2xl p-6 h-fit">
-                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                        <LabIcon small /> Настройка эксперимента
+                {/* Setup - Full List Selector */}
+                <div className="bg-gray-900/50 backdrop-blur-xl border border-gray-700 rounded-2xl p-6 flex flex-col h-[600px]">
+                    <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 flex-shrink-0">
+                        <LabIcon small /> Выберите Тестовый Регион
                     </h3>
                     
-                    <label className="block text-sm text-gray-400 mb-2">Выберите Тестовый Регион (Зона воздействия)</label>
-                    <select 
-                        className="w-full bg-gray-800 border border-gray-600 rounded-xl p-3 text-white focus:ring-2 focus:ring-indigo-500 mb-6"
-                        value={selectedRegion}
-                        onChange={(e) => setSelectedRegion(e.target.value)}
-                        disabled={isSimulating}
-                    >
-                        <option value="">-- Выберите регион --</option>
-                        {regionMetrics.map(r => <option key={r.name} value={r.name}>{r.name}</option>)}
-                    </select>
-
-                    {selectedRegion && (
-                        <div className="p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-xl">
-                            <div className="text-xs text-indigo-300 uppercase font-bold mb-2">Параметры эксперимента</div>
-                            <ul className="space-y-2 text-sm text-gray-300">
-                                <li className="flex justify-between">
-                                    <span>Метрика успеха:</span> <span className="text-white">Прирост продаж (Lift)</span>
-                                </li>
-                                <li className="flex justify-between">
-                                    <span>Min. Detectable Effect (MDE):</span> <span className="text-white">~3.5%</span>
-                                </li>
-                                <li className="flex justify-between">
-                                    <span>Длительность:</span> <span className="text-white">3 Месяца</span>
-                                </li>
-                                <li className="flex justify-between">
-                                    <span>Алгоритм подбора:</span> <span className="text-emerald-400">Euclidean Distance</span>
-                                </li>
-                            </ul>
+                    <div className="relative mb-4 flex-shrink-0">
+                        <input 
+                            type="text" 
+                            placeholder="Поиск региона..." 
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 text-sm text-white placeholder-gray-500"
+                        />
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
+                            <SearchIcon />
                         </div>
-                    )}
+                    </div>
+
+                    <div className="flex-grow overflow-y-auto custom-scrollbar border border-gray-700 rounded-xl bg-gray-800/30">
+                        {filteredRegions.length > 0 ? (
+                            <div className="divide-y divide-gray-700">
+                                {filteredRegions.map((r) => (
+                                    <div 
+                                        key={r.name}
+                                        onClick={() => !isSimulating && setSelectedRegion(r.name)}
+                                        className={`p-4 cursor-pointer transition-all duration-200 flex justify-between items-center ${
+                                            selectedRegion === r.name 
+                                                ? 'bg-indigo-600/20 border-l-4 border-indigo-500' 
+                                                : 'hover:bg-white/5 border-l-4 border-transparent'
+                                        }`}
+                                    >
+                                        <div>
+                                            <div className={`font-medium ${selectedRegion === r.name ? 'text-white' : 'text-gray-300'}`}>{r.name}</div>
+                                            <div className="text-xs text-gray-500">Объем: {new Intl.NumberFormat('ru-RU', { notation: "compact", maximumFractionDigits: 1 }).format(r.volume)}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className={`text-sm font-mono font-bold ${r.growth >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                {r.growth >= 0 ? '+' : ''}{r.growth.toFixed(1)}%
+                                            </div>
+                                            <div className="text-[10px] text-gray-600">рост</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center text-gray-500 p-4">
+                                <p>Ничего не найдено</p>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-gray-700 flex-shrink-0">
+                        <div className="p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-xl">
+                            <div className="text-xs text-indigo-300 uppercase font-bold mb-2">Параметры методики</div>
+                            <div className="flex justify-between text-sm text-gray-300 mb-1">
+                                <span>Метрика успеха:</span> <span className="text-white">Прирост продаж (Lift)</span>
+                            </div>
+                            <div className="flex justify-between text-sm text-gray-300 mb-1">
+                                <span>Min. Detectable Effect:</span> <span className="text-white">~3.5%</span>
+                            </div>
+                            <div className="flex justify-between text-sm text-gray-300">
+                                <span>Алгоритм:</span> <span className="text-emerald-400">Euclidean Distance</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Candidates */}
@@ -350,8 +387,8 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
                             </div>
                         ))
                     ) : (
-                        <div className="text-center py-10 text-gray-600 border-2 border-dashed border-gray-800 rounded-xl">
-                            Выберите тестовый регион слева
+                        <div className="text-center py-10 text-gray-600 border-2 border-dashed border-gray-800 rounded-xl h-[200px] flex items-center justify-center">
+                            Выберите тестовый регион в списке слева
                         </div>
                     )}
 

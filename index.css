@@ -1,3 +1,4 @@
+
 @import "https://geist-font.vercel.app/css/geist.css";
 @import "https://geist-font.vercel.app/css/geist-mono.css";
 
@@ -53,6 +54,16 @@ html {
     );
     background-size: 1000px 100%;
     animation: shimmer 3s infinite linear;
+  }
+
+  /* Hide number input arrows */
+  .no-spinner::-webkit-outer-spin-button,
+  .no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinner {
+    -moz-appearance: textfield;
   }
 }
 
