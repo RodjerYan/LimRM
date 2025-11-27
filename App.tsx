@@ -530,8 +530,7 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        // Determine wrapper based on active module to allow full width for AMP/Dashboard
-        // while keeping forms (Adapta, Prophet, etc.) contained for better readability
+        // Separate wrapper classes based on content type
         const limitedWrapperClass = "max-w-7xl mx-auto";
         const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 

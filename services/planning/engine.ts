@@ -171,3 +171,4 @@ export class PlanningEngine {
             Q4: yearlyPlan * Coefs.SEASONALITY_CURVE.Q4,
         };
     }
+}
