@@ -26,24 +26,9 @@ const ActiveExperimentView: React.FC<{
     const chartRef = useRef<HTMLCanvasElement>(null);
     const chartInstance = useRef<Chart | null>(null);
 
-    // Calculate Dynamic Lift based on Potential
-    const projectedLift = useMemo(() => {
-        // Logic: Regions with higher uncaptured potential (growth %) tend to have higher lift during tests.
-        // Base lift: 1.5%
-        // Potential factor: (Growth / Volume) * 100 -> capped at reasonable FMCG lift rates (max 15%)
-        
-        const organicGrowthPotential = testRegion.potential > 0 
-            ? (testRegion.potential - testRegion.volume) / testRegion.volume 
-            : 0;
-        
-        // We assume the experiment captures about 20-30% of the uncaptured potential in the short term
-        const calculated = 1.5 + (organicGrowthPotential * 100 * 0.25);
-        
-        // Add deterministic noise based on names to make it look varied but stable per pair
-        const noise = (testRegion.name.length + controlRegion.name.length) % 3; 
-        
-        return Math.min(18.5, Math.max(2.1, calculated + (noise * 0.5)));
-    }, [testRegion, controlRegion]);
+    // Use the actual growth percentage from the region analysis directly.
+    // "Duplicate the value" as requested, removing complex projection formulas.
+    const projectedLift = testRegion.growth;
 
     useEffect(() => {
         if (!chartRef.current) return;
@@ -184,11 +169,11 @@ const ActiveExperimentView: React.FC<{
                     <div className="bg-indigo-900/20 border border-indigo-500/20 p-5 rounded-xl">
                         <div className="flex items-center gap-2 mb-2">
                             <TrendingUpIcon small />
-                            <h4 className="text-indigo-300 font-bold">Прогноз (AI)</h4>
+                            <h4 className="text-indigo-300 font-bold">Цель (План)</h4>
                         </div>
                         <div className="text-3xl font-bold text-white mb-1">+{projectedLift.toFixed(1)}%</div>
                         <p className="text-xs text-indigo-200">
-                            Ожидаемый прирост (Lift) к концу периода на основе потенциала региона.
+                            Плановый прирост (Lift) к концу периода.
                         </p>
                     </div>
                 </div>
@@ -229,7 +214,9 @@ const AgileLearning: React.FC<AgileLearningProps> = ({ data }) => {
         // Convert to array and calculate final growth % per region
         const result: RegionMetric[] = [];
         metricsMap.forEach((val, key) => {
-            const growthPct = val.potential > 0 ? (val.growth / val.potential) * 100 : 0;
+            // Calculate growth relative to VOLUME (Fact).
+            // Formula: (Absolute Growth / Fact) * 100
+            const growthPct = val.volume > 0 ? (val.growth / val.volume) * 100 : (val.growth > 0 ? 100 : 0);
             result.push({ name: key, volume: val.volume, growth: growthPct, potential: val.potential });
         });
         

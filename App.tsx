@@ -582,7 +582,8 @@ const App: React.FC = () => {
             case 'agile':
                 return (
                     <div className={limitedWrapperClass}>
-                        <AgileLearning data={allData} />
+                        {/* PASS SMART DATA HERE */}
+                        <AgileLearning data={smartData} />
                     </div>
                 );
             case 'roi-genome':

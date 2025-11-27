@@ -375,6 +375,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
         // Reject only if we know NOTHING about location and have no cached coordinates
+        // Reverted the strict check for cache. Now we allow rows if we at least know the Region/City, 
+        // even if coordinates are missing (they will just not show on map but appear in charts).
         if (!isCityFound && !isRegionFound && !isCached) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
@@ -411,12 +413,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- Map Point Logic ---
         // We rely on normalizedRaw for cache lookup consistency
         
-        // Check Cache for explicitly missing/failed coordinates (Lat/Lon undefined/null but key exists)
-        if (cacheEntry && (cacheEntry.lat === undefined || cacheEntry.lon === undefined)) {
-             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
-             continue; 
-        }
-
         // Use normalizedRaw as key to avoid duplicates if finalAddress varies slightly but means the same
         if (!uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;

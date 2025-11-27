@@ -52,7 +52,8 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                 {/* 1. EXECUTIVE SUMMARY */}
                 <div className="bg-gray-900 p-6 rounded-2xl border border-indigo-500/30 flex flex-col md:flex-row justify-between items-center gap-6">
                     <div className="flex items-center gap-6">
-                        <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold shadow-lg border-4 flex-shrink-0 ${isHighGrowth ? 'bg-emerald-900/50 border-emerald-500 text-emerald-400' : 'bg-indigo-900/50 border-indigo-500 text-indigo-400'}`}>
+                        {/* Increased size to w-32 h-32 and adjusted font size */}
+                        <div className={`w-32 h-32 rounded-full flex items-center justify-center text-xl font-bold shadow-lg border-4 flex-shrink-0 ${isHighGrowth ? 'bg-emerald-900/50 border-emerald-500 text-emerald-400' : 'bg-indigo-900/50 border-indigo-500 text-indigo-400'}`}>
                             {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
                         </div>
                         <div>
