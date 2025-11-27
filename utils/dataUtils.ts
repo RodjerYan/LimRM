@@ -10,6 +10,19 @@ import { REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from './addressMappings';
 import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
+ * Normalizes an RM name for consistent matching.
+ * Removes initials, punctuation, and case differences.
+ * e.g. "Ivanov I.I." -> "ivanov"
+ */
+export const normalizeRmNameForMatching = (str: string): string => {
+    if (!str) return '';
+    let clean = str.toLowerCase().trim();
+    // Split by spaces or dots to get the surname (assuming surname is first)
+    const surname = clean.split(/[\s.]+/)[0];
+    return surname.replace(/[^a-zа-я0-9]/g, '');
+};
+
+/**
  * Applies the current filter state to the aggregated data.
  * @param data The full array of aggregated data rows.
  * @param filters The current filter state from the UI.

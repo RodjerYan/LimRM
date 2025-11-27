@@ -8,7 +8,7 @@ import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
-import { findValueInRow } from '../utils/dataUtils';
+import { findValueInRow, findAddressInRow, normalizeRmNameForMatching } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 
 interface RMDashboardProps {
@@ -23,13 +23,6 @@ interface RMDashboardProps {
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
 }
-
-const normalizeRmNameForMatching = (str: string) => {
-    if (!str) return '';
-    let clean = str.toLowerCase().trim();
-    const surname = clean.split(/[\s.]+/)[0];
-    return surname.replace(/[^a-zа-я0-9]/g, '');
-};
 
 const RMDashboard: React.FC<RMDashboardProps> = ({ 
     isOpen, 

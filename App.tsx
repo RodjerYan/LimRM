@@ -125,11 +125,26 @@ const App: React.FC = () => {
     const isDataLoaded = allData.length > 0;
 
     // --- SMART DATA INTEGRATION ---
+    // Prepare a set of OKB coordinates for exact matching, mimicking Dashboard logic.
+    // This ensures that coverage calculations (and thus growth plans) are consistent across views.
+    const okbCoordSet = useMemo(() => {
+        const set = new Set<string>();
+        if (okbData && okbData.length > 0) {
+            okbData.forEach(row => {
+                if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
+                    const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
+                    set.add(hash);
+                }
+            });
+        }
+        return set;
+    }, [okbData]);
+
     // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard.
     // Using default base rate of 15% for general analytics view.
     const smartData = useMemo(() => {
-        return enrichDataWithSmartPlan(allData, okbRegionCounts, 15);
-    }, [allData, okbRegionCounts]);
+        return enrichDataWithSmartPlan(allData, okbRegionCounts, 15, okbCoordSet);
+    }, [allData, okbRegionCounts, okbCoordSet]);
 
     const filteredActiveClients = useMemo(() => {
         if (!isDataLoaded) return [];

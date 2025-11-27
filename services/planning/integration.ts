@@ -1,6 +1,7 @@
 
 import { AggregatedDataRow } from '../../types';
 import { PlanningEngine } from './engine';
+import { normalizeRmNameForMatching } from '../../utils/dataUtils';
 
 /**
  * Enriches the raw aggregated data with "Smart Plan" calculations.
@@ -9,7 +10,8 @@ import { PlanningEngine } from './engine';
 export function enrichDataWithSmartPlan(
     data: AggregatedDataRow[],
     okbRegionCounts: { [key: string]: number } | null,
-    baseRate: number = 15
+    baseRate: number = 15,
+    okbCoordSet?: Set<string>
 ): AggregatedDataRow[] {
     if (!data || data.length === 0) return data;
 
@@ -46,7 +48,8 @@ export function enrichDataWithSmartPlan(
     const rmStats = new Map<string, { totalFact: number; totalListings: number }>();
 
     data.forEach(row => {
-        const rm = row.rm;
+        // Normalize RM name to match Dashboard grouping logic
+        const rm = normalizeRmNameForMatching(row.rm);
         const region = row.region;
         const regKey = `${rm}|${region}`;
 
@@ -71,15 +74,26 @@ export function enrichDataWithSmartPlan(
         row.clients.forEach(c => {
             if (!ctx.activeUniqueClients.has(c.key)) {
                 ctx.activeUniqueClients.add(c.key);
-                // Approximate matching logic for share calculation
-                if (c.lat && c.lon) ctx.matchedOkbCoords++;
+                
+                // Match logic aligned with RMDashboard: Check intersection with OKB set
+                if (c.lat && c.lon) {
+                    if (okbCoordSet) {
+                        const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
+                        if (okbCoordSet.has(hash)) {
+                            ctx.matchedOkbCoords++;
+                        }
+                    } else {
+                        // Fallback if set not provided (legacy behavior)
+                        ctx.matchedOkbCoords++;
+                    }
+                }
             }
         });
     });
 
     // --- STEP 3: Row (Brand) Level Calculation ---
     return data.map(row => {
-        const rm = row.rm;
+        const rm = normalizeRmNameForMatching(row.rm);
         const region = row.region;
         const regKey = `${rm}|${region}`;
         const ctx = regionContextMap.get(regKey)!;
