@@ -24,7 +24,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 </div>
                 <div>
                     <h1 className="font-bold text-white tracking-tight">GPS-Enterprise</h1>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Коммерческая Аналитика</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Коммерческая аналитика LimKorm</p>
                 </div>
             </div>
             
@@ -53,7 +53,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                         <span className="text-gray-300">Система активна</span>
                     </div>
-                    <div className="text-[10px]">Версия 2.5.0 (GPS-E)</div>
+                    <div className="text-[10px]">Версия 2.5.0 (by RodjerYan)</div>
                 </div>
             </div>
         </nav>

@@ -46,17 +46,17 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-3xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-5xl">
             <div className="space-y-8">
                 
                 {/* 1. EXECUTIVE SUMMARY */}
                 <div className="bg-gray-900 p-6 rounded-2xl border border-indigo-500/30 flex flex-col md:flex-row justify-between items-center gap-6">
-                    <div className="flex items-center gap-4">
-                        <div className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold shadow-lg border-4 ${isHighGrowth ? 'bg-emerald-900/50 border-emerald-500 text-emerald-400' : 'bg-indigo-900/50 border-indigo-500 text-indigo-400'}`}>
+                    <div className="flex items-center gap-6">
+                        <div className={`w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold shadow-lg border-4 flex-shrink-0 ${isHighGrowth ? 'bg-emerald-900/50 border-emerald-500 text-emerald-400' : 'bg-indigo-900/50 border-indigo-500 text-indigo-400'}`}>
                             {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-white">Итоговая цель роста</h3>
+                            <h3 className="text-xl font-bold text-white">Итоговая цель роста</h3>
                             <p className="text-sm text-gray-400 max-w-md">
                                 Рассчитана на основе 4-х факторов эффективности. 
                                 Базовая ставка компании: <span className="text-white font-bold">{baseRate}%</span>
