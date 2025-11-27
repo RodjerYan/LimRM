@@ -194,7 +194,15 @@ function findPotentialClients(
 const findClientNameHeader = (headers: string[]): string | undefined => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
-    const priorityTerms = ['наименование клиента', 'контрагент', 'клиент', 'уникальное наименование товара'];
+    const priorityTerms = [
+        'название магазина limkorm', 
+        'название клиента', 
+        'наименование клиента', 
+        'контрагент', 
+        'клиент', 
+        'уникальное наименование товара'
+    ];
+    
     for (const term of priorityTerms) {
         const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
         if (foundIndex !== -1) return headers[foundIndex];
@@ -386,6 +394,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // --- Map Point Logic ---
         const normalizedFinalAddress = normalizeAddress(finalAddress);
 
+        // Check Cache for explicitly missing/failed coordinates
+        // If the address exists in our cache/DB but lat/lon are null/undefined (e.g. explicitly marked "not found"),
+        // force it to be an unidentified row for manual correction.
+        const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
+        if (cacheEntry && (cacheEntry.lat === undefined || cacheEntry.lon === undefined)) {
+             // Ensure we haven't already added this exact row to unidentified list (unlikely given loop structure but safe)
+             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+             continue; 
+        }
+
         if (!uniquePlottableClients.has(normalizedFinalAddress)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -393,8 +411,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             
             let displayAddress = finalAddress;
 
-            const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
-
+            // We checked for "empty" cache entry above. If we are here, cacheEntry is either valid or undefined.
             if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
