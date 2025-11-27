@@ -338,9 +338,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- REDIRECT & DELETE LOGIC ---
+        let normalizedRaw = clientAddress ? normalizeAddress(clientAddress) : '';
         if (clientAddress) {
-            let normalizedRaw = normalizeAddress(clientAddress);
-
             // 1. Check if explicitly deleted
             if (deletedAddresses.has(normalizedRaw)) continue;
 
@@ -360,16 +359,34 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             }
         }
 
+        // 1. Determine Canonical Region from columns FIRST
+        const regionFromColumns = getCanonicalRegion(row);
+        
+        // 2. Parse Address
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
-        if (parsedAddress.city === 'Город не определен') {
+        // 3. Check Cache availability
+        // We re-use normalizedRaw which is derived from the (potentially redirected) clientAddress
+        const cacheEntry = cacheAddressMap.get(normalizedRaw);
+        
+        // Validation Logic: Accept row if we have City OR Region OR Cache
+        const isCityFound = parsedAddress.city !== 'Город не определен';
+        const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');
+        const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
+
+        // Reject only if we know NOTHING about location and have no cached coordinates
+        if (!isCityFound && !isRegionFound && !isCached) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
-        const finalAddress = parsedAddress.finalAddress;
-        const regionForAggregation = getCanonicalRegion(row);
-        const groupNameForAggregation = (parsedAddress.city !== 'Город не определен') ? parsedAddress.city : regionForAggregation;
+        const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
+        // If city is unknown but we proceed (due to Region or Cache), default group name to Region or generic fallback
+        const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
+        
+        // We use the enriched final address for display if available, otherwise the potentially redirected one
+        const finalAddress = parsedAddress.finalAddress || clientAddress || '';
+        
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
         const brand = findValueInRow(row, ['торговая марка']);
@@ -392,44 +409,41 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        const normalizedFinalAddress = normalizeAddress(finalAddress);
-
-        // Check Cache for explicitly missing/failed coordinates
-        // If the address exists in our cache/DB but lat/lon are null/undefined (e.g. explicitly marked "not found"),
-        // force it to be an unidentified row for manual correction.
-        const cacheEntry = cacheAddressMap.get(normalizedFinalAddress);
+        // We rely on normalizedRaw for cache lookup consistency
+        
+        // Check Cache for explicitly missing/failed coordinates (Lat/Lon undefined/null but key exists)
         if (cacheEntry && (cacheEntry.lat === undefined || cacheEntry.lon === undefined)) {
-             // Ensure we haven't already added this exact row to unidentified list (unlikely given loop structure but safe)
              unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
              continue; 
         }
 
-        if (!uniquePlottableClients.has(normalizedFinalAddress)) {
+        // Use normalizedRaw as key to avoid duplicates if finalAddress varies slightly but means the same
+        if (!uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;
             let lon: number | undefined;
-            let isCached = false;
+            let isCachedFlag = false;
             
             let displayAddress = finalAddress;
 
-            // We checked for "empty" cache entry above. If we are here, cacheEntry is either valid or undefined.
-            if (cacheEntry && cacheEntry.lat && cacheEntry.lon) {
+            if (isCached && cacheEntry) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
-                isCached = true;
+                isCachedFlag = true;
                 if (cacheEntry.originalAddress) {
                     displayAddress = cacheEntry.originalAddress;
                 }
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                // Cache the display address for future consistency
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }
 
-                const okbEntry = okbCoordIndex.get(normalizedFinalAddress);
+                const okbEntry = okbCoordIndex.get(normalizedRaw);
                 if (okbEntry) {
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
-                } else if (finalAddress && !isCached) {
+                } else if (finalAddress && !isCachedFlag) {
                     if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
                     if (!addressesToGeocode[rm].includes(finalAddress)) {
                         addressesToGeocode[rm].push(finalAddress);
@@ -437,13 +451,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             }
             
-            uniquePlottableClients.set(normalizedFinalAddress, {
-                key: normalizedFinalAddress,
-                lat, lon, isCached,
+            uniquePlottableClients.set(normalizedRaw, {
+                key: normalizedRaw,
+                lat, lon, isCached: isCachedFlag,
                 status: 'match',
                 name: clientName,
                 address: displayAddress, 
-                city: parsedAddress.city,
+                city: groupNameForAggregation,
                 region: regionForAggregation, 
                 rm, brand,
                 type: findValueInRow(row, ['канал продаж']),
@@ -452,13 +466,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 fact: weight, 
             });
         } else {
-             const existing = uniquePlottableClients.get(normalizedFinalAddress);
+             const existing = uniquePlottableClients.get(normalizedRaw);
              if (existing) {
                  existing.fact = (existing.fact || 0) + weight;
              }
         }
         
-        const mapPointForGroup = uniquePlottableClients.get(normalizedFinalAddress);
+        const mapPointForGroup = uniquePlottableClients.get(normalizedRaw);
         if (mapPointForGroup) {
             aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
         }
