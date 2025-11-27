@@ -11,6 +11,7 @@ interface ClientsListModalProps {
     clients: MapPoint[];
     onClientSelect: (client: MapPoint) => void;
     onStartEdit: (client: MapPoint) => void;
+    showAbcLegend?: boolean;
 }
 
 // Extracted Row Component to handle local animation state
@@ -84,7 +85,7 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
     );
 };
 
-const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onStartEdit }) => {
+const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onStartEdit, showAbcLegend }) => {
     const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'fact', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
@@ -191,6 +192,23 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Список активных клиентов (${clients.length})`} maxWidth="max-w-7xl">
             <div className="flex flex-col h-[70vh]">
+                {showAbcLegend && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 bg-gray-900/30 border-b border-gray-700 text-xs text-gray-400 flex-shrink-0">
+                        <div className="flex flex-col gap-1">
+                            <strong className="text-amber-400 text-sm">A (Лидеры)</strong>
+                            <span>Немногочисленные клиенты, которые приносят 80% всей выручки. Потеря любого из них критична.</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <strong className="text-emerald-400 text-sm">B (Середняки)</strong>
+                            <span>Клиенты, обеспечивающие следующие 15% выручки. Стабильная база.</span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                            <strong className="text-slate-400 text-sm">C (Аутсайдеры/Длинный хвост)</strong>
+                            <span>Самая многочисленная группа (часто сотни точек), которая дает всего 5% выручки.</span>
+                        </div>
+                    </div>
+                )}
+
                 <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700 flex-shrink-0">
                     <div className="relative w-full md:w-auto flex-grow">
                         <input type="text" placeholder="Поиск по клиентам..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}

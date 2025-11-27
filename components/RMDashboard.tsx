@@ -965,6 +965,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         if (onEditClient) onEditClient(client);
                         setIsAbcModalOpen(false);
                     }}
+                    showAbcLegend={true}
                 />
             )}
         </>
