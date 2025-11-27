@@ -1,5 +1,5 @@
 
-import { AggregatedDataRow } from '../../types';
+import { AggregatedDataRow, MapPoint } from '../../types';
 import { PlanningEngine } from './engine';
 
 /**
