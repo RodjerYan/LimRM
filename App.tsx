@@ -125,7 +125,8 @@ const App: React.FC = () => {
     const isDataLoaded = allData.length > 0;
 
     // --- SMART DATA INTEGRATION ---
-    // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard
+    // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard.
+    // Using default base rate of 15% for general analytics view.
     const smartData = useMemo(() => {
         return enrichDataWithSmartPlan(allData, okbRegionCounts, 15);
     }, [allData, okbRegionCounts]);
@@ -522,7 +523,7 @@ const App: React.FC = () => {
             setIsLoading(false);
         }, 100);
         return () => clearTimeout(timer);
-    }, [smartData, filters]); // Depend on smartData now
+    }, [smartData, filters]);
 
     const isControlPanelLocked = isLoading;
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;

@@ -88,14 +88,12 @@ export function enrichDataWithSmartPlan(
         // Brand Specific Metrics
         const brandFact = row.fact;
         const brandListings = row.clients.length; // Number of clients buying THIS brand
-        const brandUniqueClients = new Set(row.clients.map(c => c.key)).size;
-
+        
         // 3.1 Calculate Brand Velocity (Kg per Point for this brand)
         const brandVelocity = brandListings > 0 ? brandFact / brandListings : 0;
 
         // 3.2 Calculate Brand Width (Saturation within its own clients)
         // If row represents a single brand, AvgSku is typically 1. 
-        // If it's a category row, it might be higher. Assuming 1 for single brand rows.
         const brandAvgSku = 1; 
 
         // 3.3 Calculate RM Global Velocity (Proxy for acquisition potential)
