@@ -1,5 +1,5 @@
 
-import { PlanningContext, GrowthFactors } from '../../types';
+import { PlanningContext, GrowthFactors, GrowthDetails } from '../../types';
 import * as Formulas from './formulas';
 import * as Coefs from './coefficients';
 
@@ -27,7 +27,7 @@ export class PlanningEngine {
             rmGlobalVelocity: number; 
         },
         context: PlanningContext
-    ): { plan: number; growthPct: number; factors: GrowthFactors } {
+    ): { plan: number; growthPct: number; factors: GrowthFactors; details: GrowthDetails } {
         
         // --- 1. Расчет Доли Рынка (Penetration) ---
         let marketShare = 0;
@@ -42,6 +42,16 @@ export class PlanningEngine {
             width: 0,
             velocity: 0,
             acquisition: 0
+        };
+
+        // Context snapshot for explanation
+        const details: GrowthDetails = {
+            mySku: rmData.avgSku,
+            globalSku: context.globalAvgSku,
+            myVelocity: rmData.avgVelocity,
+            globalVelocity: context.globalAvgSales,
+            marketShare: marketShare,
+            rmEfficiencyRatio: context.globalAvgSales > 0 ? rmData.rmGlobalVelocity / context.globalAvgSales : 1.0
         };
 
         // --- 3. Логика для регионов с присутствием (Есть продажи) ---
@@ -87,14 +97,10 @@ export class PlanningEngine {
             
             // Сравниваем РМ со средним по больнице.
             // Если РМ крутой (торгует мощно), ставим амбициозную задачу на захват.
-            const rmEfficiencyRatio = context.globalAvgSales > 0 
-                ? rmData.rmGlobalVelocity / context.globalAvgSales 
-                : 1.0;
-
-            if (rmEfficiencyRatio > 1.1) {
+            if (details.rmEfficiencyRatio > 1.1) {
                 // Сильный менеджер: Ожидаем захват +10-15% к базе
                 acquisitionBonus = 12; 
-            } else if (rmEfficiencyRatio < 0.8) {
+            } else if (details.rmEfficiencyRatio < 0.8) {
                 // Слабый менеджер: Консервативный вход +2-5%
                 acquisitionBonus = 3;
             } else {
@@ -149,7 +155,8 @@ export class PlanningEngine {
         return {
             plan: planVolume,
             growthPct: finalGrowthPct,
-            factors: growthComponents
+            factors: growthComponents,
+            details: details
         };
     }
 

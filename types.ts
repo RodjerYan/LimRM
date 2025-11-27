@@ -149,6 +149,15 @@ export interface GrowthFactors {
     acquisition: number;
 }
 
+export interface GrowthDetails {
+    mySku: number;
+    globalSku: number;
+    myVelocity: number;
+    globalVelocity: number;
+    marketShare: number; // 0.0 - 1.0
+    rmEfficiencyRatio: number; // 1.0 = average
+}
+
 // Sub-metric for detailed Region/Brand planning
 export interface PlanMetric {
     name: string; // Region name or Brand name
@@ -162,6 +171,7 @@ export interface PlanMetric {
     
     // Breakdown of the calculation
     factors?: GrowthFactors;
+    details?: GrowthDetails; // Context for the explanation
 }
 
 // Shared interface for RM Metrics used in Dashboard and Analysis

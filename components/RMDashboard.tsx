@@ -279,7 +279,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         fact: bFact,
                         plan: bPlan,
                         growthPct: bRate,
-                        factors: calculationResult.factors
+                        factors: calculationResult.factors,
+                        details: calculationResult.details // Pass context details for modal
                     });
 
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
