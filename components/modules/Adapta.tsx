@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
+import OutlierDetailsModal from '../OutlierDetailsModal';
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState } from '../../types';
 import { CheckIcon, WarningIcon, AlertIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
@@ -32,6 +33,7 @@ interface OutlierItem {
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
+    const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
 
     // Calculate a mock "Data Quality Score" based on props
     const healthScore = useMemo(() => {
@@ -160,13 +162,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     </div>
                     <div className="lg:col-span-2">
                         <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 h-full overflow-hidden flex flex-col">
-                            <h3 className="text-lg font-bold text-white mb-4">Детализация Аномалий</h3>
+                            <h3 className="text-lg font-bold text-white mb-4">Детализация Аномалий (Нажмите для разбора)</h3>
                             <div className="flex-grow overflow-y-auto custom-scrollbar">
                                 {outliers.length > 0 ? (
                                     <table className="w-full text-left text-sm">
-                                        <thead className="text-gray-500 border-b border-gray-700">
+                                        <thead className="text-gray-500 border-b border-gray-700 sticky top-0 bg-gray-900/90 backdrop-blur">
                                             <tr>
-                                                <th className="pb-2">Клиент/Группа</th>
+                                                <th className="pb-2 pl-2">Клиент/Группа</th>
                                                 <th className="pb-2">Факт</th>
                                                 <th className="pb-2">Z-Score</th>
                                                 <th className="pb-2">Диагноз</th>
@@ -174,8 +176,16 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         </thead>
                                         <tbody className="text-gray-300 divide-y divide-gray-800">
                                             {outliers.map((item: OutlierItem, idx: number) => (
-                                                <tr key={idx} className="hover:bg-white/5">
-                                                    <td className="py-3 font-medium text-white">{item.row.clientName}</td>
+                                                <tr 
+                                                    key={idx} 
+                                                    onClick={() => setSelectedOutlier(item)}
+                                                    className="hover:bg-indigo-500/10 cursor-pointer transition-colors"
+                                                    title="Нажмите, чтобы увидеть список ТТ и причины отклонения"
+                                                >
+                                                    <td className="py-3 pl-2 font-medium text-white flex items-center gap-2">
+                                                        {item.row.clientName}
+                                                        <span className="text-xs text-gray-500">↗</span>
+                                                    </td>
                                                     <td className="py-3 font-mono">{new Intl.NumberFormat('ru-RU').format(item.row.fact)}</td>
                                                     <td className={`py-3 font-mono font-bold ${Math.abs(item.zScore) > 3 ? 'text-red-400' : 'text-amber-400'}`}>
                                                         {item.zScore.toFixed(2)}
@@ -195,6 +205,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Outlier Details Modal */}
+            {selectedOutlier && (
+                <OutlierDetailsModal
+                    isOpen={!!selectedOutlier}
+                    onClose={() => setSelectedOutlier(null)}
+                    item={selectedOutlier}
+                />
             )}
         </div>
     );
