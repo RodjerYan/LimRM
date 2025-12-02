@@ -38,7 +38,7 @@ export function enrichDataWithSmartPlan(
     // This applies to all brands in that region equally.
     type RegionContext = {
         activeUniqueClients: Set<string>;
-        matchedOkbCoordsSet: Set<string>; // Changed to Set to count unique matched locations
+        matchedOkbCoords: number;
         totalOkbCapacity: number;
         rmGlobalListings: number; // For acquisition bonus logic
         rmGlobalFact: number;
@@ -63,7 +63,7 @@ export function enrichDataWithSmartPlan(
         if (!regionContextMap.has(regKey)) {
             regionContextMap.set(regKey, {
                 activeUniqueClients: new Set(),
-                matchedOkbCoordsSet: new Set<string>(),
+                matchedOkbCoords: 0,
                 totalOkbCapacity: globalOkbRegionCounts[region] || 0,
                 rmGlobalListings: 0,
                 rmGlobalFact: 0
@@ -80,12 +80,11 @@ export function enrichDataWithSmartPlan(
                     if (okbCoordSet) {
                         const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
                         if (okbCoordSet.has(hash)) {
-                            ctx.matchedOkbCoordsSet.add(hash);
+                            ctx.matchedOkbCoords++;
                         }
                     } else {
-                        // Fallback behavior: if okbCoordSet is missing, we assume match? 
-                        // No, without OKB data we can't determine coverage correctly. 
-                        // We safely do nothing, leaving matched count at 0.
+                        // Fallback if set not provided (legacy behavior)
+                        ctx.matchedOkbCoords++;
                     }
                 }
             }
@@ -123,7 +122,7 @@ export function enrichDataWithSmartPlan(
                 totalPotential: ctx.totalOkbCapacity, 
                 
                 // REGIONAL Context (Shared)
-                matchedCount: ctx.matchedOkbCoordsSet.size, // Use Size of unique matches
+                matchedCount: ctx.matchedOkbCoords,
                 totalRegionOkb: ctx.totalOkbCapacity,
                 
                 // BRAND Specifics
