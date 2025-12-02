@@ -68,11 +68,11 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             }
         });
 
-        // STRICT COLUMN MAPPING CONFIRMED BY SCREENSHOTS:
-        // OKB Sheet "Base for RM": 
-        // Column L (Index 11) = "Долгота" (Longitude)
-        // Column M (Index 12) = "Широта" (Latitude)
-        // 0-based index: A=0 ... K=10, L=11, M=12
+        // STRICT COLUMN MAPPING UPDATE (Swapped based on user report):
+        // Previous mapping (L=Lon, M=Lat) caused Belarus (52,31) to be mapped as (31,52) -> Iran.
+        // Correct Mapping assuming standard file format seen in logs:
+        // Column L (Index 11) = "Широта" (Latitude)
+        // Column M (Index 12) = "Долгота" (Longitude)
         
         let latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
         let lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
@@ -80,8 +80,8 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         // Force override from specific columns if headers failed or just to be safe
         // We check if the row has enough columns to contain L and M
         if (rowArray.length > 12) {
-             const rawLon = rowArray[11]; // Column L is Longitude (Index 11)
-             const rawLat = rowArray[12]; // Column M is Latitude (Index 12)
+             const rawLat = rowArray[11]; // Column L is Latitude (Index 11)
+             const rawLon = rowArray[12]; // Column M is Longitude (Index 12)
              
              if (rawLat && rawLon) {
                  latVal = rawLat;
