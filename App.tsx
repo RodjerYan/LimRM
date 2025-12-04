@@ -591,7 +591,7 @@ const App: React.FC = () => {
             case 'prophet':
                 return (
                     <div className={limitedWrapperClass}>
-                        <Prophet summaryMetrics={summaryMetrics} />
+                        <Prophet data={smartData} />
                     </div>
                 );
             case 'agile':
