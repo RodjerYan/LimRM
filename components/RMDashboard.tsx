@@ -24,6 +24,81 @@ interface RMDashboardProps {
     onEditClient?: (client: MapPoint) => void;
 }
 
+// Internal Modal for Brand Packaging Breakdown
+const BrandPackagingModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    brandMetric: PlanMetric | null;
+    onExplain: (metric: PlanMetric) => void;
+}> = ({ isOpen, onClose, brandMetric, onExplain }) => {
+    if (!brandMetric || !brandMetric.packagingDetails) return null;
+
+    const rows = brandMetric.packagingDetails;
+    const totalFact = rows.reduce((sum, r) => sum + r.fact, 0);
+    const totalPlan = rows.reduce((sum, r) => sum + (r.planMetric?.plan || 0), 0);
+
+    return (
+        <Modal 
+            isOpen={isOpen} 
+            onClose={onClose} 
+            title={`Детализация: ${brandMetric.name}`} 
+            maxWidth="max-w-4xl"
+        >
+            <div className="space-y-4">
+                <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
+                    <div>Всего фасовок: <span className="text-white font-bold">{rows.length}</span></div>
+                    <div>Общий Факт: <span className="text-emerald-400 font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
+                    <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                </div>
+                
+                <div className="overflow-x-auto rounded-lg border border-gray-700">
+                    <table className="w-full text-sm text-left">
+                        <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0">
+                            <tr>
+                                <th className="px-4 py-3">Фасовка</th>
+                                <th className="px-4 py-3 text-right">Инд. Рост</th>
+                                <th className="px-4 py-3 text-right">Факт</th>
+                                <th className="px-4 py-3 text-right">План 2026</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-700/50 bg-gray-900/30 text-gray-300">
+                            {rows.map((row) => {
+                                const growthPct = row.planMetric?.growthPct || 0;
+                                const plan = row.planMetric?.plan || 0;
+                                return (
+                                    <tr key={row.key} className="hover:bg-indigo-500/10 transition-colors">
+                                        <td className="px-4 py-3 font-medium text-white">{row.packaging}</td>
+                                        <td className="px-4 py-3 text-right font-mono">
+                                            {row.planMetric ? (
+                                                <button
+                                                    onClick={() => onExplain(row.planMetric!)}
+                                                    className={`font-bold hover:underline decoration-dotted underline-offset-2 ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`}
+                                                    title="Нажмите для обоснования процента роста"
+                                                >
+                                                    {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
+                                                </button>
+                                            ) : (
+                                                <span className="text-gray-500">—</span>
+                                            )}
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-mono text-gray-400">
+                                            {new Intl.NumberFormat('ru-RU').format(row.fact)}
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-mono text-white font-bold">
+                                            {new Intl.NumberFormat('ru-RU').format(plan)}
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </Modal>
+    );
+};
+
+
 const RMDashboard: React.FC<RMDashboardProps> = ({ 
     isOpen, 
     onClose, 
@@ -57,6 +132,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     // --- Growth Explanation Modal State ---
     const [explanationData, setExplanationData] = useState<PlanMetric | null>(null);
+
+    // --- Brand Packaging Modal State ---
+    const [selectedBrandForDetails, setSelectedBrandForDetails] = useState<PlanMetric | null>(null);
+    const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
 
     // --- Export Modal State ---
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -109,6 +188,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             // Tracking brand specifics for individual calculation
             brandFacts: Map<string, number>; 
             brandClientCounts: Map<string, number>; // New: Track # of clients per brand
+            brandRows: Map<string, AggregatedDataRow[]>; // New: Store detailed rows for breakdown
             originalRegionName?: string;
             regionListings: number; 
         };
@@ -165,6 +245,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     matchedOkbCoords: new Set(), 
                     brandFacts: new Map(),
                     brandClientCounts: new Map(),
+                    brandRows: new Map(),
                     originalRegionName: row.region,
                     regionListings: 0
                 });
@@ -189,6 +270,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
             // Count clients for this brand in this region
             regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
+            
+            // Collect rows for breakdown
+            if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []);
+            regBucket.brandRows.get(brandName)!.push(row);
         });
 
         const missingRegionNames = new Set<string>();
@@ -273,7 +358,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         plan: bPlan,
                         growthPct: bRate,
                         factors: calculationResult.factors,
-                        details: calculationResult.details // Pass context details for modal
+                        details: calculationResult.details, // Pass context details for modal
+                        packagingDetails: regData.brandRows.get(bName) || [] // Pass breakdown rows
                     });
 
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
@@ -530,6 +616,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const handleExplanationClick = (e: React.MouseEvent, metric: PlanMetric) => {
         e.stopPropagation();
         setExplanationData(metric);
+    };
+
+    const handleBrandClick = (metric: PlanMetric) => {
+        setSelectedBrandForDetails(metric);
+        setIsBrandModalOpen(true);
     };
 
     const availableCountries = Object.keys(exportHierarchy).sort();
@@ -791,12 +882,20 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                 </tr>
                                                                                 {reg.brands?.map(br => (
                                                                                     <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
-                                                                                        <td className="px-3 py-2 pl-6 text-gray-300">{br.name}</td>
+                                                                                        <td className="px-3 py-2 pl-6 text-gray-300">
+                                                                                            <button 
+                                                                                                onClick={() => handleBrandClick(br)}
+                                                                                                className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium"
+                                                                                                title="Нажмите для детализации по фасовке"
+                                                                                            >
+                                                                                                {br.name}
+                                                                                            </button>
+                                                                                        </td>
                                                                                         <td className="px-3 py-2 text-right font-mono">
                                                                                             <button
                                                                                                 onClick={(e) => handleExplanationClick(e, br)}
                                                                                                 className="hover:underline text-emerald-400 font-bold"
-                                                                                                title="Нажмите для обоснования"
+                                                                                                title="Нажмите для обоснования процента роста"
                                                                                             >
                                                                                                 +{br.growthPct.toFixed(1)}%
                                                                                             </button>
@@ -842,6 +941,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     onClose={() => setExplanationData(null)}
                     data={explanationData}
                     baseRate={baseRate}
+                />
+            )}
+
+            {selectedBrandForDetails && (
+                <BrandPackagingModal
+                    isOpen={isBrandModalOpen}
+                    onClose={() => setIsBrandModalOpen(false)}
+                    brandMetric={selectedBrandForDetails}
+                    onExplain={(metric) => setExplanationData(metric)}
                 />
             )}
 
