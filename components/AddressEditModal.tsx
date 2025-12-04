@@ -430,6 +430,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 region: parsed.region,
                 rm: rm,
                 brand: findValueInRow(originalRow, ['торговая марка']),
+                packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
                 type: findValueInRow(originalRow, ['канал продаж']),
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow,

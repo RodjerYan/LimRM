@@ -104,7 +104,7 @@ const App: React.FC = () => {
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     
-    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], region: [] });
+    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], packaging: [], region: [] });
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     
     const processingQueue = useRef<Set<string>>(new Set());
@@ -151,8 +151,9 @@ const App: React.FC = () => {
         return allActiveClients.filter(client => {
             const rmMatch = !filters.rm || client.rm === filters.rm;
             const brandMatch = filters.brand.length === 0 || filters.brand.includes(client.brand);
+            const packagingMatch = filters.packaging.length === 0 || filters.packaging.includes(client.packaging);
             const regionMatch = filters.region.length === 0 || filters.region.includes(client.region);
-            return rmMatch && brandMatch && regionMatch;
+            return rmMatch && brandMatch && packagingMatch && regionMatch;
         });
     }, [allActiveClients, filters, isDataLoaded]);
 
@@ -212,7 +213,7 @@ const App: React.FC = () => {
         setAllActiveClients(data.plottableActiveClients);
         setUnidentifiedRows(data.unidentifiedRows);
         setOkbRegionCounts(data.okbRegionCounts);
-        setFilters({ rm: '', brand: [], region: [] });
+        setFilters({ rm: '', brand: [], packaging: [], region: [] });
         addNotification(`Данные загружены. ${data.aggregatedData.length} групп, ${data.plottableActiveClients.length} активных точек.`, 'success');
         if (data.unidentifiedRows.length > 0) {
             addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
@@ -334,7 +335,7 @@ const App: React.FC = () => {
     }, []);
     
     const resetFilters = useCallback(() => {
-        setFilters({ rm: '', brand: [], region: [] });
+        setFilters({ rm: '', brand: [], packaging: [], region: [] });
     }, []);
 
     const handleRowClick = useCallback((row: AggregatedDataRow) => {
@@ -421,6 +422,7 @@ const App: React.FC = () => {
                         key: `${newPoint.region}-${newPoint.brand}-${newPoint.rm}`.toLowerCase(),
                         rm: newPoint.rm,
                         brand: newPoint.brand,
+                        packaging: newPoint.packaging,
                         region: newPoint.region,
                         city: newPoint.city,
                         clientName: `${newPoint.region} (${newPoint.brand})`,

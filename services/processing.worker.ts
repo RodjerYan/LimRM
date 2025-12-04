@@ -402,14 +402,17 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']);
+        const brand = findValueInRow(row, ['торговая марка']) || 'Бренд не указан';
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
         if (isNaN(weight)) continue;
         
-        const key = `${regionForAggregation}-${brand}-${rm}`.toLowerCase();
+        // Updated Key to include Packaging
+        const key = `${regionForAggregation}-${brand}-${packaging}-${rm}`.toLowerCase();
+        
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand})`, brand, rm, city: groupNameForAggregation,
+                key, clientName: `${regionForAggregation} (${brand} - ${packaging})`, brand, packaging, rm, city: groupNameForAggregation,
                 region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Map<string, MapPoint>(),
             };
@@ -466,7 +469,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 address: displayAddress, 
                 city: groupNameForAggregation,
                 region: regionForAggregation, 
-                rm, brand,
+                rm, brand, packaging,
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
                 originalRow: row,

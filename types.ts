@@ -4,6 +4,7 @@ export interface AggregatedDataRow {
     rm: string;
     clientName: string;
     brand: string;
+    packaging: string; // New field
     city: string; 
     region: string;
     fact: number;
@@ -27,6 +28,7 @@ export interface MapPoint {
     region: string;
     rm: string;
     brand: string;
+    packaging: string; // New field
     type: string;
     contacts?: string;
     isCached?: boolean; // To distinguish between new and cached clients on the map
@@ -74,12 +76,14 @@ export interface UnidentifiedRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
+    packagings: string[]; // New field
     regions: string[];
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
+    packaging: string[]; // New field
     region: string[];
 }
 

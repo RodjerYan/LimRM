@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import { AggregatedDataRow } from '../types';
 import { findAddressInRow } from '../utils/dataUtils';
@@ -21,9 +22,9 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
 
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['Группа', 'РМ', 'Регион', 'Бренд', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
+            ['Группа', 'РМ', 'Регион', 'Бренд', 'Фасовка', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
             ...sortedData.map(row => [
-                row.clientName, row.rm, row.region, row.brand,
+                row.clientName, row.rm, row.region, row.brand, row.packaging,
                 row.fact, row.potential, row.growthPotential, row.growthPercentage.toFixed(2),
             ].join('\t'))
         ].join('\n');
@@ -43,6 +44,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
             if (item.rm.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.region.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.brand.toLowerCase().includes(lowercasedFilter)) return true;
+            if (item.packaging.toLowerCase().includes(lowercasedFilter)) return true;
             
             // Check individual clients within the group
             return item.clients.some(client => {
@@ -148,6 +150,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
                             <SortableHeader sortKey="rm">РМ</SortableHeader>
                             <SortableHeader sortKey="region">Регион</SortableHeader>
                             <SortableHeader sortKey="brand">Бренд</SortableHeader>
+                            <SortableHeader sortKey="packaging">Фасовка</SortableHeader>
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
                             <SortableHeader sortKey="growthPotential">Рост (абс.)</SortableHeader>
@@ -161,6 +164,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
                                 <td className="px-4 py-3">{row.rm}</td>
                                 <td className="px-4 py-3">{row.region}</td>
                                 <td className="px-4 py-3">{row.brand}</td>
+                                <td className="px-4 py-3">{row.packaging}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
                                 <td className="px-4 py-3 text-warning font-bold">{formatNumber(row.growthPotential)}</td>

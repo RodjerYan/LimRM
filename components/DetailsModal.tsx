@@ -98,7 +98,10 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                 {/* Top Section: Metrics */}
                 <div className="space-y-4">
                     <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                            <h4 className="font-bold text-lg mb-3 text-indigo-400">Ключевые показатели группы</h4>
+                            <div className="flex justify-between items-center mb-3">
+                                <h4 className="font-bold text-lg text-indigo-400">Ключевые показатели группы</h4>
+                                <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded border border-gray-600">Фасовка: {data.packaging}</span>
+                            </div>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
                             <MetricCard title="Общий Потенциал" value={formatNumber(data.potential, true)} icon={<PotentialIcon />} color="text-accent" tooltip={`Прогнозируемый объем рынка для группы: ${formatNumber(data.potential, false)} кг/ед`} />

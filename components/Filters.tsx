@@ -89,7 +89,7 @@ const MultiFilterSelect: React.FC<{
             <label className="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wider ml-1">{label}</label>
             <button type="button" onClick={() => setIsOpen(!isOpen)} className={`w-full p-3 bg-gray-800/50 border border-white/10 rounded-xl text-sm text-left flex justify-between items-center transition-all duration-200 shadow-sm hover:bg-gray-800 hover:border-white/20 ${isOpen ? 'ring-2 ring-indigo-500/50 border-indigo-500/50' : ''}`}>
                 <span className={`truncate pr-1 ${selectedOptions.length > 0 ? 'text-indigo-300 font-medium' : 'text-gray-400'}`}>{getDisplayValue()}</span>
-                <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
+                <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg>
             </button>
             {isOpen && (
                 <div className="absolute z-50 w-full mt-2 bg-gray-800/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl animate-fade-in-down origin-top">
@@ -147,6 +147,7 @@ const Filters: React.FC<FiltersProps> = ({ options, currentFilters, onFilterChan
                 <fieldset disabled={disabled} className="space-y-5 flex-grow">
                     <FilterSelect label="Региональный менеджер (РМ)" value={currentFilters.rm} options={options.rms} onChange={(val) => handleFilterUpdate('rm', val)} />
                     <MultiFilterSelect label="Торговая марка (Бренд)" selectedOptions={currentFilters.brand} options={options.brands} onChange={(val) => handleFilterUpdate('brand', val)} />
+                    <MultiFilterSelect label="Фасовка (Упаковка)" selectedOptions={currentFilters.packaging} options={options.packagings} onChange={(val) => handleFilterUpdate('packaging', val)} />
                     <MultiFilterSelect label="Регион" selectedOptions={currentFilters.region} options={options.regions} onChange={(val) => handleFilterUpdate('region', val)} />
                 </fieldset>
                 

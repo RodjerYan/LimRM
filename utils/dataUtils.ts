@@ -32,30 +32,34 @@ export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): A
   return data.filter(row => {
     const rmMatch = !filters.rm || row.rm === filters.rm;
     const brandMatch = filters.brand.length === 0 || filters.brand.includes(row.brand);
+    const packagingMatch = filters.packaging.length === 0 || filters.packaging.includes(row.packaging);
     const regionMatch = filters.region.length === 0 || filters.region.includes(row.region);
-    return rmMatch && brandMatch && regionMatch;
+    return rmMatch && brandMatch && packagingMatch && regionMatch;
   });
 };
 
 /**
  * Extracts all unique values for filter dropdowns from the aggregated data.
  * @param data The full array of aggregated data rows.
- * @returns An object containing arrays of unique RMs, brands, and regions.
+ * @returns An object containing arrays of unique RMs, brands, packagings, and regions.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
   const rms = new Set<string>();
   const brands = new Set<string>();
+  const packagings = new Set<string>();
   const regions = new Set<string>();
 
   data.forEach(row => {
     if (row.rm) rms.add(row.rm);
     if (row.brand) brands.add(row.brand);
+    if (row.packaging) packagings.add(row.packaging);
     if (row.region && row.region !== 'Регион не определен') regions.add(row.region);
   });
 
   return {
     rms: Array.from(rms).sort((a, b) => a.localeCompare(b, 'ru')),
     brands: Array.from(brands).sort((a, b) => a.localeCompare(b, 'ru')),
+    packagings: Array.from(packagings).sort((a, b) => a.localeCompare(b, 'ru')),
     regions: Array.from(regions).sort((a, b) => a.localeCompare(b, 'ru')),
   };
 };
