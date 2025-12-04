@@ -120,11 +120,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
 
-    // --- ABC Modal State ---
-    const [isAbcModalOpen, setIsAbcModalOpen] = useState(false);
-    const [abcClients, setAbcClients] = useState<MapPoint[]>([]);
-    const [abcModalTitle, setAbcModalTitle] = useState('');
-
     // --- Region Details Modal State ---
     const [isRegionModalOpen, setIsRegionModalOpen] = useState(false);
     const [selectedRegionDetails, setSelectedRegionDetails] = useState<{
@@ -145,21 +140,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const [selectedBrandForDetails, setSelectedBrandForDetails] = useState<PlanMetric | null>(null);
     const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
 
-    // --- Export Modal State ---
-    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-    const [uncoveredRowsCache, setUncoveredRowsCache] = useState<OkbDataRow[]>([]);
-    const [exportHierarchy, setExportHierarchy] = useState<Record<string, Set<string>>>({});
-    const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
-    const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
-    const [regionSearch, setRegionSearch] = useState('');
-
-    const currentYear = new Date().getFullYear();
-    const nextYear = currentYear + 1;
-
     const metricsData = useMemo<RMMetrics[]>(() => {
-        // ... (Logic remains identical to previous version, omitted for brevity as it was correct in prev step)
-        // Re-injecting the full logic here to ensure the file is complete.
-        
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
@@ -430,85 +411,126 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     }, [data, okbRegionCounts, okbData, baseRate]);
 
     const handleExplainBrandDetails = (metric: PlanMetric) => {
-        // This is called when clicking a specific packaging in the BrandPackagingModal
         setPackagingExplanationData(metric);
     };
 
-    // ... (Export Logic omitted for brevity, assuming existing) ...
-
-    return (
-        <>
-            {/* Main Dashboard Modal (or Page View) */}
-            {mode === 'modal' ? (
-                <Modal isOpen={isOpen} onClose={onClose} title="Панель Региональных Менеджеров" maxWidth="max-w-[95vw]">
-                    {/* ... (RM List Rendering) ... */}
-                    {/* Assuming existing logic for rendering RM list is here, calling setSelectedBrandForDetails */}
-                    {/* Placeholder for list logic since I am focusing on the modals */}
-                    <div className="space-y-4">
-                        {metricsData.map(rm => (
-                            <div key={rm.rmName} className="bg-gray-900/50 p-4 rounded-xl border border-gray-700">
-                                {/* Simplified view for context */}
-                                <div className="flex justify-between mb-4">
-                                    <h3 className="font-bold text-white">{rm.rmName}</h3>
-                                    <div className="text-right text-xs text-gray-400">План: {new Intl.NumberFormat('ru-RU').format(rm.nextYearPlan)}</div>
+    const renderDashboardContent = () => (
+        <div className="space-y-6">
+            {metricsData.map(rm => (
+                <div key={rm.rmName} className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 shadow-xl transition-all hover:border-gray-600">
+                    {/* RM Card Header */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-700 pb-4 mb-4 gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-gradient-to-br from-indigo-600 to-purple-600 w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-lg">
+                                {rm.rmName.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                                <h3 className="text-2xl font-bold text-white tracking-tight">{rm.rmName}</h3>
+                                <div className="flex items-center gap-3 mt-1 text-sm text-gray-400">
+                                    <span className="flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                        Факт: {new Intl.NumberFormat('ru-RU').format(rm.totalFact)}
+                                    </span>
+                                    <span className="w-px h-3 bg-gray-600"></span>
+                                    <span className="flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                        План: {new Intl.NumberFormat('ru-RU').format(rm.nextYearPlan)}
+                                    </span>
                                 </div>
-                                <div className="space-y-2">
-                                    {rm.regions.map(reg => (
-                                        <div key={reg.name} className="ml-4 border-l-2 border-gray-700 pl-4 py-1">
-                                            <h4 className="text-sm font-bold text-gray-300">{reg.name}</h4>
-                                            <div className="flex flex-wrap gap-2 mt-1">
-                                                {reg.brands?.map(b => (
-                                                    <button 
-                                                        key={b.name}
-                                                        onClick={() => {
-                                                            setSelectedBrandForDetails(b);
-                                                            setIsBrandModalOpen(true);
-                                                        }}
-                                                        className="text-xs bg-gray-800 hover:bg-indigo-600 hover:text-white px-2 py-1 rounded border border-gray-600 transition-colors"
-                                                    >
-                                                        {b.name} <span className={b.growthPct > 0 ? "text-emerald-400" : "text-amber-400"}>{b.growthPct > 0 ? '+' : ''}{b.growthPct.toFixed(0)}%</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
+                            </div>
+                        </div>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => {
+                                    setSelectedRMForAnalysis(rm);
+                                    setIsAnalysisModalOpen(true);
+                                }}
+                                className="px-4 py-2 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                            >
+                                <CalculatorIcon small />
+                                Анализ эффективности
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Regions Detail Table */}
+                    <div className="grid grid-cols-1 gap-6">
+                        {rm.regions.map(region => (
+                            <div key={region.name} className="bg-gray-800/30 rounded-xl border border-gray-700/50 overflow-hidden">
+                                <div className="bg-gray-800/50 px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                                    <h4 className="font-bold text-white flex items-center gap-2">
+                                        {region.name}
+                                        <span className={`text-xs px-2 py-0.5 rounded ${region.growthPct > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                                            {region.growthPct > 0 ? '+' : ''}{region.growthPct.toFixed(1)}%
+                                        </span>
+                                    </h4>
+                                    <div className="text-xs text-gray-400">
+                                        Доля рынка: <span className="text-white font-mono">{region.marketShare ? region.marketShare.toFixed(1) + '%' : 'н/д'}</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="text-xs text-gray-500 uppercase bg-gray-900/30 border-b border-gray-700">
+                                            <tr>
+                                                <th className="px-4 py-3">Бренд</th>
+                                                <th className="px-4 py-3 text-right">Инд. Рост</th>
+                                                <th className="px-4 py-3 text-right">Факт</th>
+                                                <th className="px-4 py-3 text-right">План 2026</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-700/30 text-gray-300">
+                                            {region.brands?.map((brand) => (
+                                                <tr key={brand.name} className="hover:bg-indigo-500/5 transition-colors group">
+                                                    <td className="px-4 py-2.5 font-medium text-white">
+                                                        <button 
+                                                            onClick={() => {
+                                                                setSelectedBrandForDetails(brand);
+                                                                setIsBrandModalOpen(true);
+                                                            }}
+                                                            className="hover:text-accent hover:underline decoration-dotted underline-offset-4 decoration-2 transition-all flex items-center gap-2"
+                                                            title="Нажмите для детализации по фасовке"
+                                                        >
+                                                            {brand.name}
+                                                            <ArrowLeftIcon className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity transform rotate-180 text-accent" />
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right font-mono">
+                                                        <button 
+                                                            onClick={() => setExplanationData(brand)}
+                                                            className={`font-bold hover:underline decoration-dotted underline-offset-4 decoration-2 ${brand.growthPct > 0 ? 'text-emerald-400 decoration-emerald-500/50' : 'text-amber-400 decoration-amber-500/50'} hover:text-white transition-colors cursor-pointer`}
+                                                            title="Нажмите для обоснования процента"
+                                                        >
+                                                            {brand.growthPct > 0 ? '+' : ''}{brand.growthPct.toFixed(1)}%
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right font-mono text-gray-400">
+                                                        {new Intl.NumberFormat('ru-RU').format(brand.fact)}
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right font-mono text-white font-bold">
+                                                        {new Intl.NumberFormat('ru-RU').format(brand.plan)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         ))}
                     </div>
+                </div>
+            ))}
+        </div>
+    );
+
+    return (
+        <>
+            {mode === 'modal' ? (
+                <Modal isOpen={isOpen} onClose={onClose} title="Панель Региональных Менеджеров" maxWidth="max-w-[95vw]">
+                    {renderDashboardContent()}
                 </Modal>
             ) : (
-                /* PAGE MODE View - Similar structure */
-                <div className="space-y-6 pb-20">
-                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {metricsData.map(rm => (
-                            <div key={rm.rmName} className="bg-gray-800/40 border border-gray-700 p-5 rounded-2xl flex flex-col h-full hover:border-gray-600 transition-colors">
-                                 <h3 className="font-bold text-white mb-2">{rm.rmName}</h3>
-                                 <div className="flex-grow space-y-3">
-                                     {rm.regions.slice(0, 3).map(reg => ( // Show top 3 regions
-                                         <div key={reg.name}>
-                                             <div className="text-xs text-gray-400 font-bold mb-1">{reg.name}</div>
-                                             <div className="flex flex-wrap gap-1.5">
-                                                {reg.brands?.map(b => (
-                                                    <span 
-                                                        key={b.name}
-                                                        onClick={() => {
-                                                            setSelectedBrandForDetails(b);
-                                                            setIsBrandModalOpen(true);
-                                                        }}
-                                                        className="cursor-pointer text-[10px] bg-gray-900 border border-gray-700 hover:border-indigo-500 hover:text-indigo-300 px-1.5 py-0.5 rounded text-gray-300 transition-colors"
-                                                    >
-                                                        {b.name}
-                                                    </span>
-                                                ))}
-                                             </div>
-                                         </div>
-                                     ))}
-                                 </div>
-                            </div>
-                        ))}
-                     </div>
-                </div>
+                renderDashboardContent()
             )}
 
             {/* --- MODALS STACK --- */}
@@ -540,6 +562,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     baseRate={baseRate}
                 />
             )}
+            
+            {/* 4. RM Analysis */}
+            <RMAnalysisModal 
+                isOpen={isAnalysisModalOpen}
+                onClose={() => setIsAnalysisModalOpen(false)}
+                rmData={selectedRMForAnalysis}
+                baseRate={baseRate}
+            />
         </>
     );
 };
