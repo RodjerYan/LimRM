@@ -29,6 +29,35 @@ type CommonProcessArgs = {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Normalizes strings to handle common data entry issues:
+ * 1. Trims whitespace.
+ * 2. Replaces common Latin homoglyphs with Cyrillic equivalents to ensure "МФ" (Latin M) and "МФ" (Cyrillic M) merge.
+ */
+const strictNormalize = (str: string): string => {
+    if (!str) return '';
+    let normalized = str.trim();
+    
+    // Replace common Latin chars that look like Cyrillic with Cyrillic
+    // This is safe for short codes like "КФ", "МФ", "ЖБ" often used in packaging
+    const map: Record<string, string> = {
+        'A': 'А', 'a': 'а',
+        'B': 'В', // Latin B -> Cyrillic Ve
+        'E': 'Е', 'e': 'е',
+        'K': 'К', 'k': 'к',
+        'M': 'М', 'm': 'м',
+        'H': 'Н', // Latin H -> Cyrillic En
+        'O': 'О', 'o': 'о',
+        'P': 'Р', 'p': 'р',
+        'C': 'С', 'c': 'с',
+        'T': 'Т', 
+        'X': 'Х', 'x': 'х',
+        'y': 'у'
+    };
+
+    return normalized.split('').map(char => map[char] || char).join('');
+};
+
+/**
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
  */
 const getCanonicalRegion = (row: any): string => {
@@ -385,29 +414,29 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // Reject only if we know NOTHING about location and have no cached coordinates
-        // Reverted the strict check for cache. Now we allow rows if we at least know the Region/City, 
-        // even if coordinates are missing (they will just not show on map but appear in charts).
         if (!isCityFound && !isRegionFound && !isCached) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
         const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
-        // If city is unknown but we proceed (due to Region or Cache), default group name to Region or generic fallback
         const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
         
-        // We use the enriched final address for display if available, otherwise the potentially redirected one
         const finalAddress = parsedAddress.finalAddress || clientAddress || '';
         
         const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']) || 'Бренд не указан';
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        
+        // STRICT NORMALIZATION APPLIED HERE
+        const brandRaw = findValueInRow(row, ['торговая марка']) || 'Бренд не указан';
+        const brand = strictNormalize(brandRaw);
+        
+        const packagingRaw = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        const packaging = strictNormalize(packagingRaw);
 
         if (isNaN(weight)) continue;
         
-        // Updated Key to include Packaging
+        // Updated Key to include Normalized Packaging and Brand
         const key = `${regionForAggregation}-${brand}-${packaging}-${rm}`.toLowerCase();
         
         if (!aggregatedData[key]) {
@@ -425,9 +454,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // We rely on normalizedRaw for cache lookup consistency
         
-        // Use normalizedRaw as key to avoid duplicates if finalAddress varies slightly but means the same
         if (!uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -444,7 +471,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 }
             } else {
                 if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
-                // Cache the display address for future consistency
                 if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
                     newAddressesToCache[rm].push({ address: finalAddress });
                 }

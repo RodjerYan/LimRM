@@ -8,28 +8,35 @@ interface ModalProps {
     children: React.ReactNode;
     footer?: React.ReactNode;
     maxWidth?: string;
+    zIndex?: string; // New prop to control stacking context
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl' }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl', zIndex = 'z-50' }) => {
 
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {
             if (event.key === 'Escape') {
+                // Only close if it's the top-most modal (simple heuristic: stop propagation if handled)
+                // However, for simplicity here, relying on UI overlay clicks/buttons is safer for nested modals.
+                // We'll keep basic behavior but ensuring parent handles state correctly.
                 onClose();
             }
         };
-        window.addEventListener('keydown', handleEsc);
+        // Add listener only when open
+        if (isOpen) {
+            window.addEventListener('keydown', handleEsc);
+        }
 
         return () => {
             window.removeEventListener('keydown', handleEsc);
         };
-    }, [onClose]);
+    }, [isOpen, onClose]);
 
     if (!isOpen) return null;
 
     return (
         <div 
-            className="fixed inset-0 bg-black/80 z-50 flex justify-center items-center p-4 animate-fade-in"
+            className={`fixed inset-0 bg-black/80 ${zIndex} flex justify-center items-center p-4 animate-fade-in`}
             onClick={onClose}
             role="dialog"
             aria-modal="true"
