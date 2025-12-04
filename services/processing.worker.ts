@@ -267,7 +267,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     }
 
     // --- CACHE INITIALIZATION with Redirects ---
-    const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string }>();
+    const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean }>();
     const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
     const deletedAddresses = new Set<string>();
 
@@ -285,7 +285,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
                 // Store canonical entry
                 if (!cacheAddressMap.has(normalizedTarget)) {
-                    cacheAddressMap.set(normalizedTarget, { lat: item.lat, lon: item.lon, originalAddress: item.address });
+                    cacheAddressMap.set(normalizedTarget, { 
+                        lat: item.lat, 
+                        lon: item.lon, 
+                        originalAddress: item.address,
+                        isInvalid: item.isInvalid
+                    });
                 }
 
                 // Parse history for redirects
@@ -369,6 +374,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // We re-use normalizedRaw which is derived from the (potentially redirected) clientAddress
         const cacheEntry = cacheAddressMap.get(normalizedRaw);
         
+        // Check if the cached entry is explicitly invalid (e.g. "Не найдено" in sheet)
+        if (cacheEntry && cacheEntry.isInvalid) {
+             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+             continue;
+        }
+
         // Validation Logic: Accept row if we have City OR Region OR Cache
         const isCityFound = parsedAddress.city !== 'Город не определен';
         const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');

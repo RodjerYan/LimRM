@@ -137,7 +137,7 @@ export type WorkerMessage =
 
 
 // Type for the coordinate cache data structure from Google Sheets
-export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>;
+export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean }[]>;
 
 // --- PLANNING ENGINE TYPES ---
 

@@ -1,3 +1,4 @@
+
 import { google, sheets_v4 } from 'googleapis';
 import { OkbDataRow } from '../../types';
 
@@ -180,7 +181,7 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
  * Fetches all data from the coordinate cache spreadsheet.
  * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
  */
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]>> {
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await sheets.spreadsheets.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
@@ -196,7 +197,9 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         ranges,
     });
     
-    const cache: Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean }[]> = {};
+    const cache: Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean }[]> = {};
+    const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
+
     response.data.valueRanges?.forEach((valueRange) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) {
@@ -213,12 +216,17 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                 
                 const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
+                const latStrLower = latStr.toLowerCase();
+                const lonStrLower = lonStr.toLowerCase();
                 
                 // Check for soft delete flag
                 const isDeleted = latStr === 'DELETED' || lonStr === 'DELETED';
+                
+                // Check for explicit error statuses in the cache sheet
+                const isInvalid = BAD_STATUSES.some(status => latStrLower.includes(status) || lonStrLower.includes(status));
 
-                const lat = (!isDeleted && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
-                const lon = (!isDeleted && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
+                const lat = (!isDeleted && !isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
+                const lon = (!isDeleted && !isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
                 
                 // Return raw history string. The worker will parse it to build the redirect map.
                 const history = row[3] ? String(row[3]).trim() : undefined;
@@ -228,7 +236,8 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                     lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
                     lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
                     history: history, 
-                    isDeleted: isDeleted
+                    isDeleted: isDeleted,
+                    isInvalid: isInvalid
                 };
             }).filter(item => item.address); // Only include items with an address
         }
