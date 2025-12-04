@@ -67,12 +67,12 @@ const ScopeSelector: React.FC<{
     data: AggregatedDataRow[];
     selectedRMs: Set<string>;
     selectedRegions: Set<string>;
-    selectedBrands: Set<string>;
+    selectedPackagings: Set<string>;
     onToggleRM: (rm: string) => void;
     onToggleRegion: (region: string) => void;
-    onToggleBrand: (brand: string) => void;
+    onTogglePackaging: (pack: string) => void;
     onReset: () => void;
-}> = ({ data, selectedRMs, selectedRegions, selectedBrands, onToggleRM, onToggleRegion, onToggleBrand, onReset }) => {
+}> = ({ data, selectedRMs, selectedRegions, selectedPackagings, onToggleRM, onToggleRegion, onTogglePackaging, onReset }) => {
     
     // Derived Options
     const rms = useMemo(() => Array.from(new Set(data.map(d => d.rm))).sort(), [data]);
@@ -84,12 +84,12 @@ const ScopeSelector: React.FC<{
         )).sort();
     }, [data, selectedRMs]);
 
-    const availableBrands = useMemo(() => {
+    const availablePackagings = useMemo(() => {
         return Array.from(new Set(
             data.filter(d => 
                 (selectedRMs.size === 0 || selectedRMs.has(d.rm)) &&
                 (selectedRegions.size === 0 || selectedRegions.has(d.region))
-            ).map(d => d.brand)
+            ).map(d => d.packaging)
         )).sort();
     }, [data, selectedRMs, selectedRegions]);
 
@@ -141,19 +141,19 @@ const ScopeSelector: React.FC<{
                     </div>
                 </div>
 
-                {/* Brands Section */}
+                {/* Packagings Section */}
                 <div>
-                    <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Бренды ({availableBrands.length})</h4>
+                    <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Фасовки ({availablePackagings.length})</h4>
                     <div className="space-y-1">
-                        {availableBrands.map(br => (
-                            <label key={br} className="flex items-center p-2 rounded hover:bg-gray-800 cursor-pointer transition-colors group">
+                        {availablePackagings.map(pack => (
+                            <label key={pack} className="flex items-center p-2 rounded hover:bg-gray-800 cursor-pointer transition-colors group">
                                 <input 
                                     type="checkbox" 
-                                    checked={selectedBrands.has(br)} 
-                                    onChange={() => onToggleBrand(br)}
+                                    checked={selectedPackagings.has(pack)} 
+                                    onChange={() => onTogglePackaging(pack)}
                                     className="rounded border-gray-600 bg-gray-900 text-amber-500 focus:ring-offset-0 focus:ring-1 focus:ring-amber-500" 
                                 />
-                                <span className={`ml-2 text-sm ${selectedBrands.has(br) ? 'text-white font-medium' : 'text-gray-400 group-hover:text-gray-300'}`}>{br}</span>
+                                <span className={`ml-2 text-sm ${selectedPackagings.has(pack) ? 'text-white font-medium' : 'text-gray-400 group-hover:text-gray-300'}`}>{pack}</span>
                             </label>
                         ))}
                     </div>
@@ -172,7 +172,7 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
 
     const [selectedRMs, setSelectedRMs] = useState<Set<string>>(new Set());
     const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
-    const [selectedBrands, setSelectedBrands] = useState<Set<string>>(new Set());
+    const [selectedPackagings, setSelectedPackagings] = useState<Set<string>>(new Set());
 
     const waterfallRef = useRef<HTMLCanvasElement>(null);
     const timeSeriesRef = useRef<HTMLCanvasElement>(null);
@@ -186,10 +186,10 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
         return data.filter(item => {
             const rmOk = selectedRMs.size === 0 || selectedRMs.has(item.rm);
             const regOk = selectedRegions.size === 0 || selectedRegions.has(item.region);
-            const brandOk = selectedBrands.size === 0 || selectedBrands.has(item.brand);
-            return rmOk && regOk && brandOk;
+            const packOk = selectedPackagings.size === 0 || selectedPackagings.has(item.packaging);
+            return rmOk && regOk && packOk;
         });
-    }, [data, selectedRMs, selectedRegions, selectedBrands]);
+    }, [data, selectedRMs, selectedRegions, selectedPackagings]);
 
     const baseRevenue = useMemo(() => activeData.reduce((sum, item) => sum + item.fact, 0), [activeData]);
     const totalCompanyRevenue = useMemo(() => data.reduce((sum, item) => sum + item.fact, 0), [data]);
@@ -339,7 +339,7 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
     const handleReset = () => {
         setSelectedRMs(new Set());
         setSelectedRegions(new Set());
-        setSelectedBrands(new Set());
+        setSelectedPackagings(new Set());
         setPriceChange(0);
         setMarketingSpend(0);
         setDistributionGrowth(5);
@@ -347,7 +347,7 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
 
     if (data.length === 0) return <div className="text-center text-gray-500 mt-20">Нет данных для моделирования.</div>;
 
-    const noSelection = selectedRMs.size === 0 && selectedRegions.size === 0 && selectedBrands.size === 0;
+    const noSelection = selectedRMs.size === 0 && selectedRegions.size === 0 && selectedPackagings.size === 0;
 
     return (
         <div className="space-y-6 animate-fade-in pb-10">
@@ -370,10 +370,10 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
                         data={data}
                         selectedRMs={selectedRMs}
                         selectedRegions={selectedRegions}
-                        selectedBrands={selectedBrands}
+                        selectedPackagings={selectedPackagings}
                         onToggleRM={(val) => toggleSet(selectedRMs, val, setSelectedRMs)}
                         onToggleRegion={(val) => toggleSet(selectedRegions, val, setSelectedRegions)}
-                        onToggleBrand={(val) => toggleSet(selectedBrands, val, setSelectedBrands)}
+                        onTogglePackaging={(val) => toggleSet(selectedPackagings, val, setSelectedPackagings)}
                         onReset={handleReset}
                     />
                 </div>
@@ -452,7 +452,7 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
                             <div className="text-indigo-400 mb-2"><InfoIcon /></div>
                             <h4 className="text-gray-200 font-bold mb-1">Данные не выбраны</h4>
                             <p className="text-gray-500 text-sm max-w-md">
-                                Используйте меню слева, чтобы выбрать Регионального Менеджера, Регион или Бренд для моделирования.
+                                Используйте меню слева, чтобы выбрать Регионального Менеджера, Регион или Фасовку для моделирования.
                             </p>
                          </div>
                     ) : (
