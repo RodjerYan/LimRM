@@ -30,13 +30,19 @@ const DriverCard: React.FC<{
     formulaDescription: string;
     metricLabel: string;
     colorClass: string;
-}> = ({ title, value, min, max, step, onChange, impact, formulaDescription, metricLabel, colorClass }) => (
+    tooltip: string;
+}> = ({ title, value, min, max, step, onChange, impact, formulaDescription, metricLabel, colorClass, tooltip }) => (
     <div className="bg-gray-800/40 border border-gray-700 p-4 rounded-xl flex flex-col h-full relative overflow-hidden group">
         <div className={`absolute top-0 left-0 w-1 h-full ${colorClass} opacity-50`}></div>
         <div className="flex justify-between items-start mb-3">
             <div>
-                <h4 className="font-bold text-gray-200 text-xs uppercase tracking-wide">{title}</h4>
-                <p className="text-[9px] text-gray-500 mt-1 leading-tight max-w-[150px]">{formulaDescription}</p>
+                <div className="flex items-center gap-2">
+                    <h4 className="font-bold text-gray-200 text-xs uppercase tracking-wide">{title}</h4>
+                    <div className="text-gray-500 cursor-help" title={tooltip}>
+                        <InfoIcon small />
+                    </div>
+                </div>
+                <p className="text-[10px] text-gray-500 mt-1 leading-tight max-w-[150px]">{formulaDescription}</p>
             </div>
             <div className={`text-right font-mono font-bold text-sm ${impact >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {impact > 0 ? '+' : ''}{new Intl.NumberFormat('ru-RU', { notation: "compact", maximumFractionDigits: 1 }).format(impact)}
@@ -235,7 +241,19 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
                 indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                plugins: { 
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                        padding: 10,
+                        callbacks: {
+                            label: (ctx) => {
+                                let val = ctx.raw as number;
+                                return `${ctx.label}: ${val > 0 && ctx.dataIndex !==0 && ctx.dataIndex !==4 ? '+' : ''}${new Intl.NumberFormat('ru-RU').format(Math.round(val))}`;
+                            }
+                        }
+                    } 
+                },
                 scales: {
                     x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', callback: (v) => new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(Number(v)) } },
                     y: { grid: { display: false }, ticks: { color: '#e5e7eb', font: { size: 10 } } }
@@ -251,7 +269,8 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
         if (!ctx) return;
         if (timeSeriesInstance.current) timeSeriesInstance.current.destroy();
 
-        const labels = [...Array(12).fill('').map((_, i) => `M${i+1}`), ...Array(12).fill('').map((_, i) => `M${i+1}`)];
+        const monthNames = ['Янв', 'Фев', 'Март', 'Апр', 'Май', 'Июнь', 'Июль', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+        const labels = [...monthNames, ...monthNames];
         const d1 = [...historicalData, ...Array(12).fill(null)];
         const d2 = [...Array(12).fill(null), ...forecastData];
 
@@ -260,17 +279,50 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
             data: {
                 labels,
                 datasets: [
-                    { label: 'Факт 2025', data: d1, borderColor: '#9ca3af', backgroundColor: 'rgba(156, 163, 175, 0.1)', fill: true, tension: 0.4, pointRadius: 0 },
-                    { label: 'Прогноз 2026', data: d2, borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)', fill: true, tension: 0.4, pointRadius: 0, borderDash: [5, 5] }
+                    { label: 'Факт 2025', data: d1, borderColor: '#9ca3af', backgroundColor: 'rgba(156, 163, 175, 0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 5 },
+                    { label: 'Прогноз 2026', data: d2, borderColor: '#818cf8', backgroundColor: 'rgba(129, 140, 248, 0.1)', fill: true, tension: 0.4, pointRadius: 3, pointHoverRadius: 5, borderDash: [5, 5] }
                 ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                plugins: { 
+                    legend: { display: true, labels: { color: '#9ca3af', font: { size: 10 } } },
+                    tooltip: {
+                        enabled: true,
+                        backgroundColor: 'rgba(17, 24, 39, 0.95)',
+                        titleColor: '#fff',
+                        bodyColor: '#cbd5e1',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        padding: 10,
+                        callbacks: {
+                            label: (context) => {
+                                const val = context.raw as number;
+                                if (val === null || val === undefined) return '';
+                                return `${context.dataset.label}: ${new Intl.NumberFormat('ru-RU').format(Math.round(val))}`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     y: { display: false },
-                    x: { grid: { display: false }, ticks: { display: false } } // Simplified x-axis
+                    x: { 
+                        grid: { display: false }, 
+                        ticks: { 
+                            color: '#6b7280', 
+                            font: { size: 10 },
+                            maxRotation: 0,
+                            callback: function(val, index) {
+                                // Show only every 3rd label to avoid clutter
+                                return index % 3 === 0 ? this.getLabelForValue(Number(val)) : '';
+                            }
+                        } 
+                    }
                 }
             }
         });
@@ -294,6 +346,8 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
     };
 
     if (data.length === 0) return <div className="text-center text-gray-500 mt-20">Нет данных для моделирования.</div>;
+
+    const noSelection = selectedRMs.size === 0 && selectedRegions.size === 0 && selectedBrands.size === 0;
 
     return (
         <div className="space-y-6 animate-fade-in pb-10">
@@ -357,29 +411,69 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
 
                     {/* Drivers Controls */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <DriverCard title="Цена" metricLabel="%" min={-20} max={20} step={1} value={priceChange} onChange={setPriceChange} impact={priceEffectAbs} formulaDescription="Elast: -1.2" colorClass="bg-amber-500" />
-                        <DriverCard title="Маркетинг" metricLabel="%" min={-50} max={50} step={5} value={marketingSpend} onChange={setMarketingSpend} impact={marketingEffectAbs} formulaDescription="ROI: 0.6" colorClass="bg-blue-500" />
-                        <DriverCard title="Дистрибуция" metricLabel="%" min={0} max={20} step={1} value={distributionGrowth} onChange={setDistributionGrowth} impact={distEffectAbs} formulaDescription="Factor: 0.8" colorClass="bg-emerald-500" />
+                        <DriverCard 
+                            title="Цена" 
+                            metricLabel="%" 
+                            min={-20} max={20} step={1} 
+                            value={priceChange} 
+                            onChange={setPriceChange} 
+                            impact={priceEffectAbs} 
+                            formulaDescription="Эластичность: -1.2" 
+                            colorClass="bg-amber-500" 
+                            tooltip="Изменение цены на 1% меняет объем продаж на -1.2% (обратная зависимость)."
+                        />
+                        <DriverCard 
+                            title="Маркетинг" 
+                            metricLabel="%" 
+                            min={-50} max={50} step={5} 
+                            value={marketingSpend} 
+                            onChange={setMarketingSpend} 
+                            impact={marketingEffectAbs} 
+                            formulaDescription="ROI: 0.6" 
+                            colorClass="bg-blue-500" 
+                            tooltip="Каждые 10% бюджета дают 6% прироста выручки."
+                        />
+                        <DriverCard 
+                            title="Дистрибуция" 
+                            metricLabel="%" 
+                            min={0} max={20} step={1} 
+                            value={distributionGrowth} 
+                            onChange={setDistributionGrowth} 
+                            impact={distEffectAbs} 
+                            formulaDescription="Конверсия: 0.8" 
+                            colorClass="bg-emerald-500" 
+                            tooltip="Расширение покрытия на 1% дает 0.8% к продажам."
+                        />
                     </div>
 
                     {/* Charts */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[320px]">
-                        <div className="bg-gray-900/50 border border-gray-700 rounded-2xl p-4 flex flex-col">
-                            <h4 className="text-xs font-bold text-gray-300 mb-2 flex gap-2"><WaterfallIcon small /> Факторный анализ</h4>
-                            <div className="relative w-full flex-grow"><canvas ref={waterfallRef} /></div>
+                    {baseRevenue === 0 && noSelection ? (
+                         <div className="bg-gray-800/30 border border-gray-700/50 rounded-2xl p-10 flex flex-col items-center justify-center text-center h-[320px]">
+                            <div className="text-indigo-400 mb-2"><InfoIcon /></div>
+                            <h4 className="text-gray-200 font-bold mb-1">Данные не выбраны</h4>
+                            <p className="text-gray-500 text-sm max-w-md">
+                                Используйте меню слева, чтобы выбрать Регионального Менеджера, Регион или Бренд для моделирования.
+                            </p>
+                         </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[320px]">
+                            <div className="bg-gray-900/50 border border-gray-700 rounded-2xl p-4 flex flex-col">
+                                <h4 className="text-xs font-bold text-gray-300 mb-2 flex gap-2"><WaterfallIcon small /> Факторный анализ</h4>
+                                <div className="relative w-full flex-grow"><canvas ref={waterfallRef} /></div>
+                            </div>
+                            <div className="bg-gray-900/50 border border-gray-700 rounded-2xl p-4 flex flex-col">
+                                <h4 className="text-xs font-bold text-gray-300 mb-2 flex gap-2"><TrendingUpIcon small /> Тренд (Сезонность)</h4>
+                                <div className="relative w-full flex-grow"><canvas ref={timeSeriesRef} /></div>
+                            </div>
                         </div>
-                        <div className="bg-gray-900/50 border border-gray-700 rounded-2xl p-4 flex flex-col">
-                            <h4 className="text-xs font-bold text-gray-300 mb-2 flex gap-2"><TrendingUpIcon small /> Тренд (Сезонность)</h4>
-                            <div className="relative w-full flex-grow"><canvas ref={timeSeriesRef} /></div>
-                        </div>
-                    </div>
+                    )}
 
                     {/* Info Footer */}
                     <div className="bg-indigo-900/10 border border-indigo-500/20 p-3 rounded-xl flex items-start gap-3">
-                        <div className="mt-0.5 text-indigo-400 w-4 h-4"><InfoIcon /></div>
+                        <div className="mt-0.5 text-indigo-400 w-4 h-4 flex-shrink-0"><InfoIcon /></div>
                         <div className="text-[10px] text-indigo-300 leading-relaxed">
                             <strong>Методология:</strong> Расчет ведется только по выбранному сегменту ({selectedRMs.size || 'Все'} РМ, {selectedRegions.size || 'Все'} Регионы). 
-                            Используйте этот режим для подготовки индивидуальных планов развития территории (IDP) или защиты бюджета по конкретному бренду.
+                            Наведите на значок (i) в карточках управления, чтобы узнать подробности расчета формул.
                         </div>
                     </div>
 
