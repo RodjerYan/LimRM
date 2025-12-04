@@ -13,6 +13,7 @@ export interface AggregatedDataRow {
     growthPercentage: number;
     potentialClients?: PotentialClient[];
     clients: MapPoint[]; // List of individual client objects in the group
+    planMetric?: PlanMetric; // Stores the detailed plan calculation for this specific row
 }
 
 export type MapPointStatus = 'match' | 'potential';

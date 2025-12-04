@@ -21,6 +21,7 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import RMDashboard from './components/RMDashboard'; 
 import RMAnalysisModal from './components/RMAnalysisModal'; 
+import GrowthExplanationModal from './components/GrowthExplanationModal';
 
 import { 
     AggregatedDataRow, 
@@ -36,7 +37,8 @@ import {
     RMMetrics,
     FileProcessingState,
     WorkerMessage,
-    CoordsCache
+    CoordsCache,
+    PlanMetric
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { TargetIcon } from './components/icons';
@@ -95,6 +97,9 @@ const App: React.FC = () => {
     
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+    
+    // State for individual plan explanation modal in AMP view
+    const [planExplanationData, setPlanExplanationData] = useState<PlanMetric | null>(null);
 
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
@@ -342,6 +347,14 @@ const App: React.FC = () => {
         setSelectedDetailsRow(row);
         setIsDetailsModalOpen(true);
     }, []);
+    
+    const handleOpenPlan = useCallback((row: AggregatedDataRow) => {
+        if (row.planMetric) {
+            setPlanExplanationData(row.planMetric);
+        } else {
+            addNotification('Детали плана недоступны для этой строки.', 'info');
+        }
+    }, [addNotification]);
     
     const flyToClient = useCallback((client: MapPoint) => {
         setTimeout(() => {
@@ -659,6 +672,7 @@ const App: React.FC = () => {
                             <ResultsTable 
                                 data={filteredData} 
                                 onRowClick={handleRowClick} 
+                                onPlanClick={handleOpenPlan}
                                 disabled={!isDataLoaded || isLoading}
                                 unidentifiedRowsCount={unidentifiedRows.length}
                                 onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
@@ -720,6 +734,16 @@ const App: React.FC = () => {
                 onDelete={handleClientDelete}
                 globalTheme={theme}
             />
+            
+            {/* New Modal for specific brand plan explanation */}
+            {planExplanationData && (
+                <GrowthExplanationModal
+                    isOpen={!!planExplanationData}
+                    onClose={() => setPlanExplanationData(null)}
+                    data={planExplanationData}
+                    baseRate={15} // Default base rate for general view context
+                />
+            )}
             
             {/* Retain Modal version if needed, but main access is via sidebar now */}
             <RMDashboard 

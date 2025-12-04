@@ -153,7 +153,15 @@ export function enrichDataWithSmartPlan(
             ...row,
             potential: newPlan,
             growthPotential: Math.max(0, growthAbs),
-            growthPercentage: rate
+            growthPercentage: rate,
+            planMetric: {
+                name: `${row.brand} (${row.packaging})`,
+                fact: brandFact,
+                plan: newPlan,
+                growthPct: rate,
+                factors: result.factors,
+                details: result.details
+            }
         };
     });
 }

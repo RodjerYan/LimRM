@@ -7,13 +7,14 @@ import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, CopyIcon, CheckIcon, Wa
 interface ResultsTableProps {
     data: AggregatedDataRow[];
     onRowClick: (row: AggregatedDataRow) => void;
+    onPlanClick?: (row: AggregatedDataRow) => void;
     disabled: boolean;
     unidentifiedRowsCount: number;
     onUnidentifiedClick: () => void;
 }
 
 
-const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled, unidentifiedRowsCount, onUnidentifiedClick }) => {
+const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanClick, disabled, unidentifiedRowsCount, onUnidentifiedClick }) => {
     const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
@@ -163,7 +164,18 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, disabled,
                                 <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
                                 <td className="px-4 py-3">{row.rm}</td>
                                 <td className="px-4 py-3">{row.region}</td>
-                                <td className="px-4 py-3">{row.brand}</td>
+                                <td 
+                                    className="px-4 py-3 text-accent cursor-pointer hover:text-white hover:underline transition-colors font-medium"
+                                    onClick={(e) => {
+                                        if (onPlanClick) {
+                                            e.stopPropagation();
+                                            onPlanClick(row);
+                                        }
+                                    }}
+                                    title="Нажмите, чтобы увидеть расчет плана"
+                                >
+                                    {row.brand}
+                                </td>
                                 <td className="px-4 py-3">{row.packaging}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
