@@ -89,7 +89,7 @@ const ScopeSelector: React.FC<{
             data.filter(d => 
                 (selectedRMs.size === 0 || selectedRMs.has(d.rm)) &&
                 (selectedRegions.size === 0 || selectedRegions.has(d.region))
-            ).map(d => d.packaging)
+            ).map(d => `${d.brand} ${d.packaging}`) // Composite Key: Brand + Packaging
         )).sort();
     }, [data, selectedRMs, selectedRegions]);
 
@@ -186,7 +186,11 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
         return data.filter(item => {
             const rmOk = selectedRMs.size === 0 || selectedRMs.has(item.rm);
             const regOk = selectedRegions.size === 0 || selectedRegions.has(item.region);
-            const packOk = selectedPackagings.size === 0 || selectedPackagings.has(item.packaging);
+            
+            // Comparison based on composite key (Brand + Packaging)
+            const itemComposite = `${item.brand} ${item.packaging}`;
+            const packOk = selectedPackagings.size === 0 || selectedPackagings.has(itemComposite);
+            
             return rmOk && regOk && packOk;
         });
     }, [data, selectedRMs, selectedRegions, selectedPackagings]);
