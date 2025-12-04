@@ -360,7 +360,7 @@ const Prophet: React.FC<ProphetProps> = ({ summaryMetrics }) => {
                 <div className="mt-1 text-indigo-400 w-5 h-5"><InfoIcon /></div>
                 <div className="text-xs text-indigo-300">
                     <strong>Методология:</strong> Модель использует линейную аппроксимацию эластичности. 
-                    В реальных условиях коэффициенты (ROI, Elasticity) могут меняться нелинейно при экстремальных значениях (>30% изменений). 
+                    В реальных условиях коэффициенты (ROI, Elasticity) могут меняться нелинейно при экстремальных значениях (&gt;30% изменений). 
                     Используйте данный инструмент для стратегической оценки "Что-если" (What-If Analysis).
                 </div>
             </div>
