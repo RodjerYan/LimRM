@@ -143,7 +143,7 @@ const ScopeSelector: React.FC<{
 
                 {/* Packagings Section - Replacing Brand */}
                 <div>
-                    <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Фасовки ({availablePackagings.length})</h4>
+                    <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Фасовки (SKU) ({availablePackagings.length})</h4>
                     <div className="space-y-1">
                         {availablePackagings.map(pack => (
                             <label key={pack} className="flex items-center p-2 rounded hover:bg-gray-800 cursor-pointer transition-colors group">
@@ -187,7 +187,7 @@ const Prophet: React.FC<ProphetProps> = ({ data }) => {
             const rmOk = selectedRMs.size === 0 || selectedRMs.has(item.rm);
             const regOk = selectedRegions.size === 0 || selectedRegions.has(item.region);
             
-            // Comparison based on composite key (Brand + Packaging)
+            // Comparison based on composite key (Brand + Packaging) to ensure uniqueness
             const itemComposite = `${item.brand} ${item.packaging}`;
             const packOk = selectedPackagings.size === 0 || selectedPackagings.has(itemComposite);
             

@@ -29,24 +29,74 @@ const BrandPackagingModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     brandMetric: PlanMetric | null;
+    regionName: string;
     onExplain: (metric: PlanMetric) => void;
-}> = ({ isOpen, onClose, brandMetric, onExplain }) => {
+}> = ({ isOpen, onClose, brandMetric, regionName, onExplain }) => {
     if (!brandMetric || !brandMetric.packagingDetails) return null;
 
-    const rows = brandMetric.packagingDetails;
-    const totalFact = rows.reduce((sum, r) => sum + r.fact, 0);
-    const totalPlan = rows.reduce((sum, r) => sum + (r.planMetric?.plan || 0), 0);
+    const rawRows = brandMetric.packagingDetails;
+
+    // Aggregate rows by packaging name to remove duplicates
+    const aggregatedRows = useMemo(() => {
+        const groups = new Map<string, {
+            packaging: string;
+            fact: number;
+            plan: number;
+            rows: AggregatedDataRow[];
+        }>();
+
+        rawRows.forEach(r => {
+            const key = r.packaging || 'Не указана';
+            if (!groups.has(key)) {
+                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [] });
+            }
+            const g = groups.get(key)!;
+            g.fact += r.fact;
+            g.plan += (r.planMetric?.plan || 0);
+            g.rows.push(r);
+        });
+
+        return Array.from(groups.values()).map(g => {
+            // Recalculate weighted growth for the aggregated packaging
+            const growth = g.fact > 0 ? ((g.plan - g.fact) / g.fact) * 100 : (g.plan > 0 ? 100 : 0);
+            
+            // Find representative row (max fact) to use its factors for explanation context
+            // This ensures the explanation makes sense for the dominant part of this packaging group
+            const representativeRow = g.rows.reduce((prev, curr) => (prev.fact > curr.fact) ? prev : curr);
+            
+            // Clone metric and override totals with aggregated values
+            const metric: PlanMetric = {
+                ...representativeRow.planMetric!, // Base structure
+                name: `${representativeRow.brand} (${g.packaging})`, // Specific name for modal title
+                fact: g.fact,
+                plan: g.plan,
+                growthPct: growth
+            };
+
+            return {
+                key: g.packaging,
+                packaging: g.packaging,
+                fact: g.fact,
+                plan: g.plan,
+                growthPct: growth,
+                planMetric: metric
+            };
+        }).sort((a, b) => b.fact - a.fact);
+    }, [rawRows]);
+
+    const totalFact = aggregatedRows.reduce((sum, r) => sum + r.fact, 0);
+    const totalPlan = aggregatedRows.reduce((sum, r) => sum + r.plan, 0);
 
     return (
         <Modal 
             isOpen={isOpen} 
             onClose={onClose} 
-            title={`Детализация: ${brandMetric.name}`} 
+            title={`Детализация ${regionName}: ${brandMetric.name}`} 
             maxWidth="max-w-4xl"
         >
             <div className="space-y-4">
                 <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
-                    <div>Всего фасовок: <span className="text-white font-bold">{rows.length}</span></div>
+                    <div>Всего фасовок: <span className="text-white font-bold">{aggregatedRows.length}</span></div>
                     <div>Общий Факт: <span className="text-emerald-400 font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
                     <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
                 </div>
@@ -62,9 +112,8 @@ const BrandPackagingModal: React.FC<{
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700/50 bg-gray-900/30 text-gray-300">
-                            {rows.map((row) => {
-                                const growthPct = row.planMetric?.growthPct || 0;
-                                const plan = row.planMetric?.plan || 0;
+                            {aggregatedRows.map((row) => {
+                                const growthPct = row.growthPct;
                                 return (
                                     <tr key={row.key} className="hover:bg-indigo-500/10 transition-colors">
                                         <td className="px-4 py-3 font-medium text-white">{row.packaging}</td>
@@ -85,7 +134,7 @@ const BrandPackagingModal: React.FC<{
                                             {new Intl.NumberFormat('ru-RU').format(row.fact)}
                                         </td>
                                         <td className="px-4 py-3 text-right font-mono text-white font-bold">
-                                            {new Intl.NumberFormat('ru-RU').format(plan)}
+                                            {new Intl.NumberFormat('ru-RU').format(row.plan)}
                                         </td>
                                     </tr>
                                 );
@@ -135,6 +184,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     // --- Brand Packaging Modal State ---
     const [selectedBrandForDetails, setSelectedBrandForDetails] = useState<PlanMetric | null>(null);
+    const [selectedBrandRegion, setSelectedBrandRegion] = useState<string>('');
     const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
 
     // --- Export Modal State ---
@@ -618,8 +668,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         setExplanationData(metric);
     };
 
-    const handleBrandClick = (metric: PlanMetric) => {
+    const handleBrandClick = (metric: PlanMetric, region: string) => {
         setSelectedBrandForDetails(metric);
+        setSelectedBrandRegion(region);
         setIsBrandModalOpen(true);
     };
 
@@ -884,7 +935,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                     <tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0">
                                                                                         <td className="px-3 py-2 pl-6 text-gray-300">
                                                                                             <button 
-                                                                                                onClick={() => handleBrandClick(br)}
+                                                                                                onClick={() => handleBrandClick(br, reg.name)}
                                                                                                 className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium"
                                                                                                 title="Нажмите для детализации по фасовке"
                                                                                             >
@@ -965,6 +1016,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     isOpen={isBrandModalOpen}
                     onClose={() => setIsBrandModalOpen(false)}
                     brandMetric={selectedBrandForDetails}
+                    regionName={selectedBrandRegion}
                     onExplain={(metric) => setExplanationData(metric)}
                 />
             )}
