@@ -141,7 +141,7 @@ const ScopeSelector: React.FC<{
                     </div>
                 </div>
 
-                {/* Packagings Section */}
+                {/* Packagings Section - Replacing Brand */}
                 <div>
                     <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Фасовки ({availablePackagings.length})</h4>
                     <div className="space-y-1">
