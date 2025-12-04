@@ -8,9 +8,10 @@ interface ModalProps {
     children: React.ReactNode;
     footer?: React.ReactNode;
     maxWidth?: string;
+    zIndex?: string; // New prop for stacking control
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl' }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl', zIndex = 'z-50' }) => {
 
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {
@@ -29,7 +30,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer,
 
     return (
         <div 
-            className="fixed inset-0 bg-black/80 z-50 flex justify-center items-center p-4 animate-fade-in"
+            className={`fixed inset-0 bg-black/80 ${zIndex} flex justify-center items-center p-4 animate-fade-in`}
             onClick={onClose}
             role="dialog"
             aria-modal="true"

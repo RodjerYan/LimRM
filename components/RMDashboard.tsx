@@ -73,7 +73,7 @@ const BrandPackagingModal: React.FC<{
                                                 <button
                                                     onClick={() => onExplain(row.planMetric!)}
                                                     className={`font-bold hover:underline decoration-dotted underline-offset-2 ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`}
-                                                    title="Нажмите для обоснования процента роста"
+                                                    title="Нажмите для обоснования процента роста именно этой фасовки"
                                                 >
                                                     {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
                                                 </button>
@@ -935,12 +935,28 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 />
             )}
 
-            {explanationData && (
-                <GrowthExplanationModal
-                    isOpen={!!explanationData}
-                    onClose={() => setExplanationData(null)}
-                    data={explanationData}
+            {/* Analysis Modal */}
+            {selectedRMForAnalysis && (
+                <RMAnalysisModal
+                    isOpen={isAnalysisModalOpen}
+                    onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }}
+                    rmData={selectedRMForAnalysis}
                     baseRate={baseRate}
+                />
+            )}
+
+            {/* ABC Modal */}
+            {isAbcModalOpen && (
+                <ClientsListModal
+                    isOpen={isAbcModalOpen}
+                    onClose={() => setIsAbcModalOpen(false)}
+                    clients={abcClients}
+                    onClientSelect={() => {}} 
+                    onStartEdit={(client) => {
+                        if (onEditClient) onEditClient(client);
+                        setIsAbcModalOpen(false);
+                    }}
+                    showAbcLegend={true}
                 />
             )}
 
@@ -950,6 +966,17 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     onClose={() => setIsBrandModalOpen(false)}
                     brandMetric={selectedBrandForDetails}
                     onExplain={(metric) => setExplanationData(metric)}
+                />
+            )}
+
+            {/* Render Explanation Modal LAST to ensure it appears on top of BrandPackagingModal */}
+            {explanationData && (
+                <GrowthExplanationModal
+                    isOpen={!!explanationData}
+                    onClose={() => setExplanationData(null)}
+                    data={explanationData}
+                    baseRate={baseRate}
+                    zIndex="z-[60]" // Higher Z-Index to float above other modals
                 />
             )}
 
@@ -1044,31 +1071,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     </div>
                 </div>
             </Modal>
-
-            {/* Analysis Modal */}
-            {selectedRMForAnalysis && (
-                <RMAnalysisModal
-                    isOpen={isAnalysisModalOpen}
-                    onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }}
-                    rmData={selectedRMForAnalysis}
-                    baseRate={baseRate}
-                />
-            )}
-
-            {/* ABC Modal */}
-            {isAbcModalOpen && (
-                <ClientsListModal
-                    isOpen={isAbcModalOpen}
-                    onClose={() => setIsAbcModalOpen(false)}
-                    clients={abcClients}
-                    onClientSelect={() => {}} 
-                    onStartEdit={(client) => {
-                        if (onEditClient) onEditClient(client);
-                        setIsAbcModalOpen(false);
-                    }}
-                    showAbcLegend={true}
-                />
-            )}
         </>
     );
 

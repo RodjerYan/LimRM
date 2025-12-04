@@ -9,12 +9,13 @@ interface GrowthExplanationModalProps {
     onClose: () => void;
     data: PlanMetric | null;
     baseRate: number;
+    zIndex?: string;
 }
 
 // Helper to format large numbers
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(n);
 
-const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen, onClose, data, baseRate }) => {
+const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen, onClose, data, baseRate, zIndex }) => {
     if (!data || !data.factors || !data.details) return null;
 
     const { factors, details, growthPct, name } = data;
@@ -46,7 +47,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-5xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-5xl" zIndex={zIndex}>
             <div className="space-y-8">
                 
                 {/* 1. EXECUTIVE SUMMARY */}
