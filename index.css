@@ -24,6 +24,22 @@ html {
   font-size: 12px;
 }
 
+/* GLOBAL SCROLLBAR STYLING (Dark & Sleek) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #111827; /* primary-dark */
+}
+::-webkit-scrollbar-thumb {
+  background: #374151; /* gray-700 */
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563; /* gray-600 */
+}
+
 .light-mode {
   /* Light Mode */
   --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) */
@@ -39,6 +55,15 @@ html {
 }
 
 @layer utilities {
+  /* Utility to completely hide scrollbar while keeping functionality */
+  .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+  }
+  .scrollbar-hide {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+  }
+
   .shimmer-effect::after {
     content: '';
     position: absolute;

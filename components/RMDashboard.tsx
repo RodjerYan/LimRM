@@ -354,7 +354,7 @@ const BrandPackagingModal: React.FC<{
                             <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
                                 <tr>
                                     {/* Fixed narrow width for Packaging to save space, but enough for text */}
-                                    <th className="px-6 py-4 w-28 text-gray-300">Фасовка</th>
+                                    <th className="px-6 py-4 w-24 text-gray-300">Фасовка</th>
                                     
                                     {/* Flexible width for SKU - takes all remaining space */}
                                     <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
@@ -1079,7 +1079,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     )}
                 </div>
 
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto scrollbar-hide">
                     <table className="w-full text-left text-sm text-gray-300 border-separate border-spacing-y-0">
                         <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 z-10">
                             <tr>
