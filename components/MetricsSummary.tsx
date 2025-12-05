@@ -20,15 +20,15 @@ const MetricCard: React.FC<MetricCardProps> = ({ title, value, icon, color, tool
         onClick={onClick}
         className={`bg-card-bg/50 backdrop-blur-sm p-5 rounded-xl shadow-lg border border-indigo-500/10 flex items-start space-x-4 transition-transform hover:scale-105 hover:shadow-indigo-500/20 ${isClickable ? 'cursor-pointer' : ''}`}
     >
-        <div className={`p-3 rounded-lg ${color} bg-opacity-20`}>
+        <div className={`p-3 rounded-lg ${color} bg-opacity-20 flex-shrink-0`}>
            {icon}
         </div>
-        <div>
-            <p className="text-sm text-gray-400 flex items-center gap-1">
+        <div className="min-w-0 overflow-hidden">
+            <p className="text-sm text-gray-400 flex items-center gap-1 truncate">
                 {title}
-                {isClickable && <span className="w-4 h-4 opacity-50"><InfoIcon /></span>}
+                {isClickable && <span className="w-4 h-4 opacity-50 flex-shrink-0"><InfoIcon /></span>}
             </p>
-            <p className="text-2xl font-bold text-white">{value}</p>
+            <p className="text-2xl font-bold text-white truncate" title={value}>{value}</p>
         </div>
     </div>
 );
@@ -150,7 +150,7 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     if (disabled || !metrics) {
         // Render placeholders
         return (
-            <div className={`grid grid-cols-2 md:grid-cols-4 gap-4 ${disabled ? 'opacity-50' : ''}`}>
+            <div className={`grid grid-cols-2 lg:grid-cols-4 gap-4 ${disabled ? 'opacity-50' : ''}`}>
                 {Array.from({ length: 8 }).map((_, index) => (
                     <div key={index} className="bg-card-bg/50 p-5 rounded-xl animate-pulse">
                         <div className="h-6 bg-gray-700 rounded w-3/4 mb-2"></div>
@@ -163,25 +163,8 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     
     const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
     
-    // Coverage Formula: Active / (Active + Uncovered)
-    // We approximate matched count here if granular data isn't available, but generally OKB Coords count is good proxy for total OKB
-    // If coordsCount is missing, coverage is 0.
     const active = metrics.totalActiveClients;
     const okbTotal = okbStatus?.rowCount || 0;
-    // Assume matched count roughly proportional to active for summary if not passed explicitly (simplified)
-    // Or assume Matched <= OKB.
-    // Let's assume Worst Case: No matches? No, that breaks logic.
-    // Let's assume Best Case: All Active are Matched (capped at OKB)?
-    // A better approximation for the summary card without recalculating everything:
-    // If we don't have matched count here, we can use a safe estimate or simple ratio, 
-    // BUT consistent with the dashboard is better.
-    // Since metrics doesn't carry matched count, let's use a standard ratio but bounded.
-    // Actually, let's assume `active` is `active` and `uncovered` is `okbTotal - (active that matched)`.
-    // Without match data, let's fallback to `active / (active + okbTotal)` which is safe but conservative.
-    // Actually, let's use the Dashboard logic if possible. Since we can't easily, let's use the simple capacity ratio but properly labelled.
-    // Wait, let's stick to the requested formula: Active / (Active + Uncovered).
-    // If we assume Uncovered = OKB - Active (if Active < OKB), then Active / OKB.
-    // If Active > OKB, Uncovered = 0, then 100%.
     
     const uncoveredEstimate = Math.max(0, okbTotal - active);
     const totalUniverseEstimate = active + uncoveredEstimate;
@@ -190,7 +173,7 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
 
     return (
         <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard 
                     title="Общий Факт" 
                     value={formatNumber(metrics.totalFact)} 

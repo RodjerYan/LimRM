@@ -341,12 +341,12 @@ const BrandPackagingModal: React.FC<{
                         <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0 z-10 shadow-sm">
                             <tr>
                                 {/* Reduced width for Packaging to expand SKU column leftwards */}
-                                <th className="px-4 py-3 w-[8%]">Фасовка</th>
+                                <th className="px-4 py-3 w-[10%] whitespace-nowrap">Фасовка</th>
                                 {/* Increased width for SKU */}
-                                <th className="px-4 py-3 w-[60%]">SKU (Ассортимент)</th>
-                                <th className="px-4 py-3 text-right">Инд. Рост</th>
-                                <th className="px-4 py-3 text-right">Факт</th>
-                                <th className="px-4 py-3 text-right">План 2026</th>
+                                <th className="px-4 py-3 w-[55%]">SKU (Ассортимент)</th>
+                                <th className="px-4 py-3 text-right whitespace-nowrap">Инд. Рост</th>
+                                <th className="px-4 py-3 text-right whitespace-nowrap">Факт</th>
+                                <th className="px-4 py-3 text-right whitespace-nowrap">План 2026</th>
                                 <th className="px-4 py-3 text-center w-24">Анализ</th>
                             </tr>
                         </thead>
@@ -1061,14 +1061,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                             <tr>
                                 <th className="px-4 py-3 w-8"></th>
                                 <th className="px-4 py-3">РМ</th>
-                                <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
-                                <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от всей известной базы (Active + Uncovered).">Покрытие</th>
-                                <th className="px-4 py-3 text-center text-emerald-300" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
-                                <th className="px-4 py-3 text-center text-cyan-300" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
-                                <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
+                                <th className="px-4 py-3 text-center whitespace-nowrap">Факт {currentYear} (кг)</th>
+                                <th className="px-4 py-3 text-center whitespace-nowrap" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
+                                <th className="px-4 py-3 text-center text-indigo-300 whitespace-nowrap" title="Доля активных клиентов от всей известной базы (Active + Uncovered).">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-emerald-300 whitespace-nowrap" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
+                                <th className="px-4 py-3 text-center text-cyan-300 whitespace-nowrap" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
+                                <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30 whitespace-nowrap">Рек. План (%)</th>
                                 <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
-                                <th className="px-4 py-3 text-center font-bold bg-gray-800/30">План {nextYear} (кг)</th>
+                                <th className="px-4 py-3 text-center font-bold bg-gray-800/30 whitespace-nowrap">План {nextYear} (кг)</th>
                                 <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
                                 <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
                                 <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
@@ -1121,9 +1121,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             <td className="px-4 py-3 text-gray-500">
                                                 {isExpanded ? '▲' : '▼'}
                                             </td>
-                                            <td className="px-4 py-3 font-medium text-white">{rm.rmName}</td>
-                                            <td className="px-4 py-3 text-center font-mono text-white">{formatNum(rm.totalFact)}</td>
-                                            <td className="px-4 py-3 text-center font-mono text-gray-400">
+                                            <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]" title={rm.rmName}>{rm.rmName}</td>
+                                            <td className="px-4 py-3 text-center font-mono text-white whitespace-nowrap">{formatNum(rm.totalFact)}</td>
+                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap">
                                                 <span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span>
                                                 <span className="mx-1">/</span>
                                                 <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
@@ -1137,13 +1137,13 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                         {shareValue === null ? '—' : `${covered.toFixed(0)}%`}
                                                     </div>
                                                     {shareValue !== null && (
-                                                        <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden flex">
+                                                        <div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex">
                                                             <div 
                                                                 className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
                                                                 style={{ width: `${covered}%` }}
                                                             ></div>
-                                                            {/* Explicitly visualizing the gap */}
-                                                            <div className="h-full bg-gray-600/50 flex-grow"></div>
+                                                            {/* Explicitly visualizing the gap with darker background */}
+                                                            <div className="h-full bg-gray-700 flex-grow"></div>
                                                         </div>
                                                     )}
                                                 </div>
@@ -1167,7 +1167,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                     Анализ
                                                 </button>
                                             </td>
-                                            <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20">
+                                            <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20 whitespace-nowrap">
                                                 {formatNum(rm.nextYearPlan)}
                                                 <div className="text-[10px] text-gray-500 font-normal">
                                                     +{formatNum(rm.nextYearPlan - rm.totalFact)}
@@ -1251,7 +1251,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                         <div className="flex flex-col items-end">
                                                                                             <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${regShareColor}`}>({regShareKnown ? `${regCovered.toFixed(0)}%` : '0%'})</span></div>
                                                                                             {regShareKnown && (
-                                                                                                <div className="w-20 h-1 bg-gray-700 rounded-full overflow-hidden flex">
+                                                                                                <div className="w-20 h-1 bg-gray-700/50 rounded-full overflow-hidden flex">
                                                                                                     <div 
                                                                                                         className={`h-full ${reg.marketShare! >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
                                                                                                         style={{ width: `${Math.min(100, reg.marketShare!)}%` }}
@@ -1263,8 +1263,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                     <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
                                                                                         {reg.growthPct.toFixed(1)}%
                                                                                     </td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(reg.fact)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium whitespace-nowrap">{formatNum(reg.plan)}</td>
                                                                                 </tr>
                                                                             );
                                                                         })}
@@ -1307,7 +1307,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                         <td className="px-3 py-2 pl-6 text-gray-300">
                                                                                             <button 
                                                                                                 onClick={() => handleBrandClick(br, reg.name)}
-                                                                                                className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium"
+                                                                                                className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium truncate max-w-[150px]"
                                                                                                 title="Нажмите для детализации по фасовке"
                                                                                             >
                                                                                                 {br.name}
@@ -1322,8 +1322,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                                 +{br.growthPct.toFixed(1)}%
                                                                                             </button>
                                                                                         </td>
-                                                                                        <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td>
-                                                                                        <td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(br.fact)}</td>
+                                                                                        <td className="px-3 py-2 text-right font-mono text-white font-bold whitespace-nowrap">{formatNum(br.plan)}</td>
                                                                                     </tr>
                                                                                 ))}
                                                                             </React.Fragment>

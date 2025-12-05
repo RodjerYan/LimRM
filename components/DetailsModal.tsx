@@ -25,13 +25,13 @@ const formatNumber = (num: number, short = false) => {
 
 // Local MetricCard component for modal-specific display
 const MetricCard: React.FC<{ title: string; value: string; icon: React.ReactNode; color: string; tooltip: string }> = ({ title, value, icon, color, tooltip }) => (
-    <div title={tooltip} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 flex items-start space-x-3">
-        <div className={`p-2 rounded-md ${color} bg-opacity-10`}>
+    <div title={tooltip} className="bg-gray-900/50 p-4 rounded-lg border border-gray-700/50 flex items-start space-x-3 overflow-hidden">
+        <div className={`p-2 rounded-md ${color} bg-opacity-10 flex-shrink-0`}>
            {React.cloneElement(icon as React.ReactElement<{ small?: boolean }>, { small: true })}
         </div>
-        <div>
-            <p className="text-xs text-gray-400">{title}</p>
-            <p className="text-lg font-bold text-white">{value}</p>
+        <div className="min-w-0 flex-1">
+            <p className="text-xs text-gray-400 truncate">{title}</p>
+            <p className="text-lg font-bold text-white truncate">{value}</p>
         </div>
     </div>
 );
@@ -102,17 +102,19 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
     const uncoveredApprox = Math.max(0, okbTotal - activeClientsCount);
     const totalUniverse = activeClientsCount + uncoveredApprox;
     
-    const okbCoverage = totalUniverse > 0 ? (activeClientsCount / totalUniverse) * 100 : 0;
+    // Cap at 100% explicitly
+    const rawCoverage = totalUniverse > 0 ? (activeClientsCount / totalUniverse) * 100 : 0;
+    const okbCoverage = Math.min(100, rawCoverage);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-[95vw]">
             <div className="space-y-6">
                 {/* Top Section: Metrics */}
                 <div className="space-y-4">
-                    <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                            <div className="flex justify-between items-center mb-3">
+                    <div className="bg-gray-900/50 p-5 rounded-lg border border-gray-700">
+                            <div className="flex justify-between items-center mb-4">
                                 <h4 className="font-bold text-lg text-indigo-400">Ключевые показатели группы</h4>
-                                <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded border border-gray-600">Фасовка: {data.packaging}</span>
+                                <span className="text-xs bg-gray-800 text-gray-300 px-2 py-1 rounded border border-gray-600 truncate max-w-[200px]">Фасовка: {data.packaging}</span>
                             </div>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <MetricCard title="Общий Факт" value={formatNumber(data.fact, true)} icon={<FactIcon />} color="text-success" tooltip={`Текущий объем продаж по группе: ${formatNumber(data.fact, false)} кг/ед`} />
