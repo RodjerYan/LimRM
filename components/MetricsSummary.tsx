@@ -124,9 +124,10 @@ const METRIC_EXPLANATIONS: Record<MetricType, { title: string; description: Reac
                 <div className="bg-gray-800 p-2 rounded border border-gray-700 font-mono text-xs">
                     Формула: (Кол-во Активных Клиентов / Общее кол-во строк в ОКБ) × 100%
                 </div>
-                <ul className="list-disc list-inside space-y-1 text-sm mt-2">
-                    <li><strong>Низкое покрытие:</strong> Означает наличие большого числа "холодных" клиентов в базе, с которыми еще не ведется работа (Blue Ocean).</li>
-                    <li><strong>Высокое покрытие:</strong> Означает высокую насыщенность, рост возможен только за счет увеличения среднего чека (качественная дистрибуция).</li>
+                <p className="text-sm mt-2 font-bold text-emerald-400">Важно: Максимальное значение — 100%.</p>
+                <ul className="list-disc list-inside space-y-1 text-sm mt-1">
+                    <li><strong>100%</strong> означает, что мы работаем со всеми точками из базы (или их количество совпадает).</li>
+                    <li><strong>Низкое покрытие:</strong> Означает наличие "холодных" клиентов в базе (Blue Ocean).</li>
                 </ul>
             </div>
         )
@@ -161,9 +162,12 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     }
     
     const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
-    const okbCoverage = (okbStatus?.rowCount && metrics.totalActiveClients > 0) 
+    
+    // Strict Cap at 100%. Even if we have more active clients than the old OKB file, we can't capture more than 100% of the market defined by that file.
+    const rawCoverage = (okbStatus?.rowCount && metrics.totalActiveClients > 0) 
         ? (metrics.totalActiveClients / okbStatus.rowCount) * 100 
         : 0;
+    const okbCoverage = Math.min(100, rawCoverage);
 
     return (
         <>

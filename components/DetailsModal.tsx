@@ -90,7 +90,10 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
 
     const activeClientsCount = data.clients?.length || 0;
     const avgFactPerClient = activeClientsCount > 0 ? data.fact / activeClientsCount : 0;
-    const okbCoverage = (okbStatus?.rowCount && activeClientsCount > 0) ? (activeClientsCount / okbStatus.rowCount) * 100 : 0;
+    
+    // Strict Cap at 100%
+    const rawCoverage = (okbStatus?.rowCount && activeClientsCount > 0) ? (activeClientsCount / okbStatus.rowCount) * 100 : 0;
+    const okbCoverage = Math.min(100, rawCoverage);
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-7xl">
@@ -109,7 +112,7 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                             <MetricCard title="Средний Рост" value={`${data.growthPercentage.toFixed(1)}%`} icon={<TrendingUpIcon />} color="text-yellow-400" tooltip="Средний процент неосвоенного потенциала по клиентам в группе" />
                             <MetricCard title="Активных Клиентов" value={formatNumber(activeClientsCount, false)} icon={<UsersIcon />} color="text-cyan-400" tooltip="Количество уникальных ТТ в группе" />
                             <MetricCard title="Средний Факт (Клиент)" value={formatNumber(avgFactPerClient, false)} icon={<CalculatorIcon />} color="text-indigo-400" tooltip={`Средние продажи на одну ТТ в группе: ${formatNumber(avgFactPerClient, false)} кг/ед`} />
-                            <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClientsCount} из ${okbStatus?.rowCount || 0})`} />
+                            <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов из общей базы (${activeClientsCount} из ${okbStatus?.rowCount || 0}). Макс 100%.`} />
                             </div>
                     </div>
                     <GroupedClientsList clients={data.clients} onStartEdit={onStartEdit} />

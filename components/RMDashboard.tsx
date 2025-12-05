@@ -1032,7 +1032,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 <th className="px-4 py-3">РМ</th>
                                 <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
                                 <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов (Penetration)">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от базы ОКБ (Максимум 100%, если число активных >= ОКБ)">Покрытие</th>
                                 <th className="px-4 py-3 text-center text-emerald-300" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
                                 <th className="px-4 py-3 text-center text-cyan-300" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
                                 <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
