@@ -228,13 +228,20 @@ const App: React.FC = () => {
         setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
 
-    const handleStartFileProcessing = useCallback(async (file: File) => {
+    // --- WORKER SETUP & COMMUNICATION ---
+    
+    // Initialize Worker logic (abstracted to be reused by both file and cloud flow)
+    const initWorker = useCallback(async (
+        payload: { file?: File, rawSheetData?: any[][] },
+        messageStart: string, 
+        fileNameForState: string
+    ) => {
         // Reset State
         setProcessingState({
             isProcessing: true,
             progress: 0,
-            message: 'Загрузка кэша координат...',
-            fileName: file.name,
+            message: messageStart,
+            fileName: fileNameForState,
             backgroundMessage: null,
             startTime: Date.now()
         });
@@ -313,9 +320,48 @@ const App: React.FC = () => {
         };
         
         // Start Worker
-        workerRef.current.postMessage({ file, okbData, cacheData });
+        workerRef.current.postMessage({ ...payload, okbData, cacheData });
 
     }, [okbData, handleFileProcessed, addNotification]);
+
+
+    const handleStartFileProcessing = useCallback((file: File) => {
+        initWorker({ file }, 'Загрузка кэша координат...', file.name);
+    }, [initWorker]);
+
+    const handleStartCloudProcessing = useCallback(async () => {
+        setProcessingState({
+            isProcessing: true,
+            progress: 5,
+            message: 'Подключение к Google Sheets (АКБ)...',
+            fileName: 'Cloud: AKB Sheet',
+            backgroundMessage: null,
+            startTime: Date.now()
+        });
+
+        try {
+            const response = await fetch('/api/get-akb');
+            if (!response.ok) throw new Error('Failed to fetch AKB data from cloud');
+            const rawSheetData = await response.json();
+            
+            if (!Array.isArray(rawSheetData) || rawSheetData.length === 0) {
+                throw new Error('Cloud sheet is empty');
+            }
+
+            // Hand over to worker
+            initWorker({ rawSheetData }, 'Данные получены, запуск обработки...', 'Cloud: AKB Sheet');
+
+        } catch (error) {
+            console.error("Cloud load error:", error);
+            setProcessingState(prev => ({ 
+                ...prev, 
+                isProcessing: false, 
+                message: `Ошибка загрузки из облака: ${(error as Error).message}` 
+            }));
+            addNotification('Не удалось загрузить данные из Google Sheets', 'error');
+        }
+    }, [initWorker, addNotification]);
+
 
     // Cleanup worker on unmount of App (page close)
     useEffect(() => {
@@ -572,6 +618,7 @@ const App: React.FC = () => {
                             // Pass down the processing state and start handler
                             processingState={processingState}
                             onStartProcessing={handleStartFileProcessing}
+                            onStartCloudProcessing={handleStartCloudProcessing}
                             // Legacy props (some might be deprecated in FileUpload but kept for compatibility if needed)
                             onFileProcessed={handleFileProcessed} // Redundant if handled via state but good for clear interface
                             onProcessingStateChange={handleProcessingStateChange} // Legacy, could be removed

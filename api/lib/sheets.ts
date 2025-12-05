@@ -4,6 +4,8 @@ import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
+const AKB_SPREADSHEET_ID = '1AirnUDv3IiVWnwoNN0OmIVLLWSDsFmMNbEcA709j6EU';
+const AKB_SHEET_GID = 1604990825;
 const SHEET_NAME = 'Base';
 
 /**
@@ -144,6 +146,38 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
             data: data,
         },
     });
+}
+
+
+/**
+ * Fetches the Active Client Base (AKB) from the specific Google Sheet provided by user.
+ * It automatically resolves the Sheet Name (Title) based on the hardcoded GID.
+ */
+export async function getAkbData(): Promise<any[][]> {
+    const sheets = await getGoogleSheetsClient();
+    
+    // 1. Get Spreadsheet Metadata to find the sheet name by GID
+    const meta = await sheets.spreadsheets.get({
+        spreadsheetId: AKB_SPREADSHEET_ID,
+        fields: 'sheets.properties',
+    });
+
+    const sheet = meta.data.sheets?.find(s => s.properties?.sheetId === AKB_SHEET_GID);
+    
+    if (!sheet || !sheet.properties?.title) {
+        throw new Error(`Could not find sheet with GID ${AKB_SHEET_GID} in the provided spreadsheet.`);
+    }
+
+    const sheetTitle = sheet.properties.title;
+
+    // 2. Fetch all values from that sheet
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: AKB_SPREADSHEET_ID,
+        range: `'${sheetTitle}'!A:Z`, // Fetch sufficiently wide range
+        valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
+    });
+
+    return res.data.values || [];
 }
 
 

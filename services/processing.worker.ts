@@ -221,16 +221,40 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
 };
 
 
-self.onmessage = async (e: MessageEvent<{ file: File, okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
-    const { file, okbData, cacheData } = e.data;
+self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
+    const { file, rawSheetData, okbData, cacheData } = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
     try {
         const commonArgs = { okbData, cacheData, postMessage };
-        if (file.name.toLowerCase().endsWith('.csv')) {
-            await processCsv(file, commonArgs);
+        
+        // Mode 1: Processing raw data from Google Sheet
+        if (rawSheetData && rawSheetData.length > 0) {
+            postMessage({ type: 'progress', payload: { percentage: 5, message: 'Обработка данных из облака...' } });
+            
+            const headers = rawSheetData[0].map(h => String(h || ''));
+            const rows = rawSheetData.slice(1);
+            
+            // Convert 2D array to Array of Objects
+            const jsonData = rows.map(rowArray => {
+                const obj: any = {};
+                headers.forEach((h, i) => {
+                    if (h) obj[h] = rowArray[i];
+                });
+                return obj;
+            });
+            
+            await processFile(jsonData, headers, commonArgs);
+        } 
+        // Mode 2: Processing uploaded file
+        else if (file) {
+            if (file.name.toLowerCase().endsWith('.csv')) {
+                await processCsv(file, commonArgs);
+            } else {
+                await processXlsx(file, commonArgs);
+            }
         } else {
-            await processXlsx(file, commonArgs);
+            throw new Error('No data provided for processing.');
         }
     } catch (error) {
         console.error("Worker Error:", error);

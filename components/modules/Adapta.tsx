@@ -11,6 +11,7 @@ interface AdaptaProps {
     // Global Processing Props
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
+    onStartCloudProcessing?: () => void;
 
     // Legacy/Data Props
     onFileProcessed: (data: WorkerResultPayload) => void;
@@ -89,6 +90,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             // New props for global state
                             processingState={props.processingState}
                             onStartProcessing={props.onStartProcessing}
+                            onStartCloudProcessing={props.onStartCloudProcessing}
                             
                             // Data dependencies
                             okbStatus={props.okbStatus}

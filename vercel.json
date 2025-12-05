@@ -1,3 +1,4 @@
+
 {
   "rewrites": [
     {
@@ -7,6 +8,10 @@
     {
       "source": "/api/get-okb",
       "destination": "/api/get-okb"
+    },
+    {
+      "source": "/api/get-akb",
+      "destination": "/api/get-akb"
     },
     {
       "source": "/api/get-okb-status",
