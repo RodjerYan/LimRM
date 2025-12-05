@@ -701,10 +701,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
-                // STRICT COVERAGE CALCULATION: Matched / Total OKB
-                // This highlights the "Gap" or "Uncovered Potential" clearly.
-                // If 0 matches, coverage is 0%, even if Active Count is high.
-                const marketShare = totalRegionOkb > 0 ? Math.min(1.0, matchedCount / totalRegionOkb) : NaN;
+                // STRICT COVERAGE CALCULATION: Active / (Active + Uncovered)
+                // Uncovered = Total Region OKB - Matched.
+                // Formula effectively: Active / (Active + OKB - Matched)
+                // This represents "Share of Total Known Potential" (Union of Active and OKB).
+                const uncoveredCount = Math.max(0, totalRegionOkb - matchedCount);
+                const totalUniverse = activeCount + uncoveredCount;
+                
+                const marketShare = totalUniverse > 0 ? (activeCount / totalUniverse) : NaN;
 
                 regionMetrics.push({
                     name: regionKey,
@@ -729,9 +733,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
-            // Strict Weighted Share for RM (Matched / Total OKB)
-            const weightedShare = (rmTotalOkbRaw > 0) 
-                ? (Math.min(1.0, rmTotalMatched / rmTotalOkbRaw) * 100)
+            // Strict Weighted Share for RM (Active / Total Universe)
+            const rmUncovered = Math.max(0, rmTotalOkbRaw - rmTotalMatched);
+            const rmTotalUniverse = rmTotalActive + rmUncovered;
+            const weightedShare = (rmTotalUniverse > 0) 
+                ? (rmTotalActive / rmTotalUniverse) * 100
                 : NaN;
 
             const extendedMetrics = {
@@ -1055,7 +1061,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 <th className="px-4 py-3">РМ</th>
                                 <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
                                 <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от базы ОКБ (Максимум 100%). Считается строго по совпадениям (координаты/адрес).">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от всей известной базы (Active + Uncovered).">Покрытие</th>
                                 <th className="px-4 py-3 text-center text-emerald-300" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
                                 <th className="px-4 py-3 text-center text-cyan-300" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
                                 <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
@@ -1100,7 +1106,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 }
 
                                 const covered = shareValue ? Math.min(100, shareValue) : 0;
-                                const uncoveredCount = Math.max(0, rm.totalOkbCount - (rm.totalOkbCount * (covered / 100)));
+                                const totalActive = rm.totalClients || 0;
+                                const totalOkbMatched = Math.round(rm.totalOkbCount * (covered / 100)); // Approx matched count for tooltip
+                                const totalUncovered = Math.max(0, rm.totalOkbCount - totalOkbMatched);
 
                                 return (
                                     <React.Fragment key={rm.rmName}>
@@ -1120,11 +1128,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                             </td>
                                             <td 
                                                 className="px-4 py-3 text-center align-middle"
-                                                title={`Свободно в базе: ${uncoveredCount.toFixed(0)} ТТ (${(100 - covered).toFixed(1)}%)`}
+                                                title={`Покрытие: ${covered.toFixed(1)}%\nАктивные (Файл): ${totalActive}\nСовпадений (Matched): ${totalOkbMatched}\nСвободно в базе (Potential): ${totalUncovered}`}
                                             >
                                                 <div className="flex flex-col items-center justify-center w-full">
                                                     <div className={`text-xs font-bold font-mono mb-1 ${shareColor}`}>
-                                                        {shareValue === null ? '—' : `100%`}
+                                                        {shareValue === null ? '—' : `${covered.toFixed(0)}%`}
                                                     </div>
                                                     {shareValue !== null && (
                                                         <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden flex">
@@ -1209,7 +1217,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                     <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10">
                                                                         <tr>
                                                                             <th className="px-3 py-2">Регион</th>
-                                                                            <th className="px-3 py-2 text-right" title="Кол-во совпадений с ОКБ / Всего в ОКБ">Покрытие</th>
+                                                                            <th className="px-3 py-2 text-right" title="Доля рынка (Active / (Active + Uncovered))">Покрытие</th>
                                                                             <th className="px-3 py-2 text-right">Рост</th>
                                                                             <th className="px-3 py-2 text-right">Факт</th>
                                                                             <th className="px-3 py-2 text-right">План {nextYear}</th>
@@ -1219,7 +1227,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                         {rm.regions.map(reg => {
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare);
                                                                             const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
-                                                                            const regUncoveredCount = Math.max(0, (reg.totalCount || 0) - ((reg.totalCount || 0) * (regCovered / 100)));
+                                                                            const regUncoveredCount = Math.max(0, (reg.totalCount || 0) - ((reg.totalCount || 0) * (regCovered / 100))); // Rough estimate for tooltip
                                                                             
                                                                             const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
@@ -1236,10 +1244,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                     </td>
                                                                                     <td 
                                                                                         className={`px-3 py-2 text-right font-mono`}
-                                                                                        title={regShareKnown ? `Свободно в базе: ${regUncoveredCount.toFixed(0)} ТТ (${(100 - regCovered).toFixed(1)}%)` : ''}
+                                                                                        title={regShareKnown ? `АКБ: ${reg.activeCount}\nОКБ: ${reg.totalCount}\nПокрытие: ${regCovered.toFixed(1)}%` : ''}
                                                                                     >
                                                                                         <div className="flex flex-col items-end">
-                                                                                            <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${regShareColor}`}>({regShareKnown ? `100%` : '0%'})</span></div>
+                                                                                            <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${regShareColor}`}>({regShareKnown ? `${regCovered.toFixed(0)}%` : '0%'})</span></div>
                                                                                             {regShareKnown && (
                                                                                                 <div className="w-20 h-1 bg-gray-700 rounded-full overflow-hidden flex">
                                                                                                     <div 

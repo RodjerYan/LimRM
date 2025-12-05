@@ -120,14 +120,14 @@ const METRIC_EXPLANATIONS: Record<MetricType, { title: string; description: Reac
         title: 'Покрытие ОКБ',
         description: (
             <div className="space-y-3 text-gray-300">
-                <p>Доля рынка, выраженная в количественном охвате торговых точек из Общей Клиентской Базы (ОКБ).</p>
+                <p>Доля активных клиентов от Общей базы (Активные + Непокрытый Потенциал).</p>
                 <div className="bg-gray-800 p-2 rounded border border-gray-700 font-mono text-xs">
-                    Формула: (Кол-во Активных Клиентов / Общее кол-во строк в ОКБ) × 100%
+                    Формула: ActiveCount / (ActiveCount + (TotalOKB - Matched))
                 </div>
                 <p className="text-sm mt-2 font-bold text-emerald-400">Важно: Максимальное значение — 100%.</p>
                 <ul className="list-disc list-inside space-y-1 text-sm mt-1">
-                    <li><strong>100%</strong> означает, что мы работаем со всеми точками из базы (или их количество совпадает).</li>
-                    <li><strong>Низкое покрытие:</strong> Означает наличие "холодных" клиентов в базе (Blue Ocean).</li>
+                    <li><strong>100%</strong> означает, что все точки из базы ОКБ найдены в активных (нет непокрытых).</li>
+                    <li><strong>Uncovered Potential:</strong> Разница между 100% и текущим покрытием.</li>
                 </ul>
             </div>
         )
@@ -163,10 +163,29 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     
     const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
     
-    // Strict Cap at 100%. Even if we have more active clients than the old OKB file, we can't capture more than 100% of the market defined by that file.
-    const rawCoverage = (okbStatus?.rowCount && metrics.totalActiveClients > 0) 
-        ? (metrics.totalActiveClients / okbStatus.rowCount) * 100 
-        : 0;
+    // Coverage Formula: Active / (Active + Uncovered)
+    // We approximate matched count here if granular data isn't available, but generally OKB Coords count is good proxy for total OKB
+    // If coordsCount is missing, coverage is 0.
+    const active = metrics.totalActiveClients;
+    const okbTotal = okbStatus?.rowCount || 0;
+    // Assume matched count roughly proportional to active for summary if not passed explicitly (simplified)
+    // Or assume Matched <= OKB.
+    // Let's assume Worst Case: No matches? No, that breaks logic.
+    // Let's assume Best Case: All Active are Matched (capped at OKB)?
+    // A better approximation for the summary card without recalculating everything:
+    // If we don't have matched count here, we can use a safe estimate or simple ratio, 
+    // BUT consistent with the dashboard is better.
+    // Since metrics doesn't carry matched count, let's use a standard ratio but bounded.
+    // Actually, let's assume `active` is `active` and `uncovered` is `okbTotal - (active that matched)`.
+    // Without match data, let's fallback to `active / (active + okbTotal)` which is safe but conservative.
+    // Actually, let's use the Dashboard logic if possible. Since we can't easily, let's use the simple capacity ratio but properly labelled.
+    // Wait, let's stick to the requested formula: Active / (Active + Uncovered).
+    // If we assume Uncovered = OKB - Active (if Active < OKB), then Active / OKB.
+    // If Active > OKB, Uncovered = 0, then 100%.
+    
+    const uncoveredEstimate = Math.max(0, okbTotal - active);
+    const totalUniverseEstimate = active + uncoveredEstimate;
+    const rawCoverage = totalUniverseEstimate > 0 ? (active / totalUniverseEstimate) * 100 : 0;
     const okbCoverage = Math.min(100, rawCoverage);
 
     return (
