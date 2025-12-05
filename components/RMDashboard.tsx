@@ -104,7 +104,7 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
     // Chart 2: Doughnut Data (Execution / Gap)
     // Clarification: This shows how much of the Future Plan is already covered by Current Fact.
     const doughnutData = {
-        labels: ['Выполнено (База)', 'Потенциал Роста'],
+        labels: ['Текущая База (Факт)', 'Цель Роста (Gap)'],
         datasets: [
             {
                 data: [fact, gap],
@@ -143,16 +143,16 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[320px] flex flex-col justify-center shadow-inner">
+            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[300px] flex flex-col justify-center shadow-inner">
                 <div className="flex-grow w-full">
                     <Bar data={barData} options={barOptions} />
                 </div>
             </div>
-            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[320px] flex flex-col items-center justify-center relative shadow-inner">
+            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[300px] flex flex-col items-center justify-center relative shadow-inner">
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none pb-8">
                     <div className="text-center">
                         <div className="text-4xl font-bold text-white tracking-tight">{percentage.toFixed(0)}%</div>
-                        <div className="text-xs text-gray-400 font-medium uppercase tracking-wider mt-1">от плана</div>
+                        <div className="text-xs text-gray-400 font-medium uppercase tracking-wider mt-1">база</div>
                     </div>
                 </div>
                 <div className="w-full h-full flex items-center justify-center">
@@ -465,10 +465,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
-    // ... (metricsData calculation logic remains unchanged) ...
-    // ... Copying the huge metricsData useMemo block is risky for size, so assuming it stays as is 
-    // unless explicitly needed. I will keep the existing calculation logic identical.
-    
     // RE-INSERTING THE METRICSDATA CALCULATION TO ENSURE FILE INTEGRITY
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
@@ -601,6 +597,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             let rmTotalOkbRaw = 0;
             let rmTotalMatched = 0;
+            let rmTotalActive = 0; // New: Total active clients in RM's regions
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
             
@@ -612,6 +609,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 const activeCount = regData.activeClients.size;
                 const matchedCount = regData.matchedOkbCoords.size;
                 rmTotalMatched += matchedCount;
+                rmTotalActive += activeCount; // Accumulate active clients for coverage calc
                 rmTotalPotentialFile += regData.potential;
 
                 let totalRegionOkb = 0;
@@ -707,8 +705,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
+            // FIX: Use total active clients (from file) as the numerator, not just the ones that matched geo-coords.
+            // This aligns with user expectations (AKB / OKB).
             const weightedShare = (rmTotalOkbRaw > 0) 
-                ? (rmTotalMatched / rmTotalOkbRaw) * 100 
+                ? (Math.min(1.0, rmTotalActive / rmTotalOkbRaw) * 100)
                 : NaN;
 
             const extendedMetrics = {
@@ -772,9 +772,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         });
     };
 
-    // ... (Rest of component functions like export, filters etc. remain same) ...
-    // Re-implementing prepareExportData and others to keep file complete
-    
     const prepareExportData = () => {
         const activeCoordSet = new Set<string>();
         data.forEach(group => {

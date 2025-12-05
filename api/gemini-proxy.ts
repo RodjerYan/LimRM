@@ -58,7 +58,7 @@ export default async function handler(req: Request) {
     const model = 'gemini-2.5-flash';
 
     // Call the Gemini API to generate content as a stream.
-    // FIX: Ensure contents is an array of objects with parts
+    // FIX: Ensure contents is STRICTLY an array of objects with parts to avoid 500 errors on strict endpoints
     const responseStream = await ai.models.generateContentStream({
         model,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -81,6 +81,10 @@ export default async function handler(req: Request) {
             controller.close();
         } catch (streamError) {
             console.error('Stream processing error:', streamError);
+            const errorMessage = streamError instanceof Error ? streamError.message : 'Unknown stream error';
+            // If the stream hasn't started sending data, we might be able to send an error message
+            // But usually once streaming starts, we can't change headers. 
+            // We log it and close.
             controller.error(streamError);
         }
       },
@@ -98,7 +102,7 @@ export default async function handler(req: Request) {
     
     if (error instanceof Error) {
         errorMessage = error.message;
-        // Check if it is a GoogleGenAI specific error structure
+        // Check if it is a GoogleGenAI specific error structure or HTTP error
         if ((error as any).status) {
              statusCode = (error as any).status;
         }
