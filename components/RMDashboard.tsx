@@ -1,5 +1,5 @@
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import RMAnalysisModal from './RMAnalysisModal';
@@ -7,9 +7,12 @@ import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
+import { streamPackagingInsights } from '../services/aiService';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -24,6 +27,41 @@ interface RMDashboardProps {
     onEditClient?: (client: MapPoint) => void;
 }
 
+// Simple modal to show Markdown content for Packaging Analysis
+const PackagingAnalysisModal: React.FC<{
+    isOpen: boolean;
+    onClose: () => void;
+    title: string;
+    content: string;
+    isLoading: boolean;
+}> = ({ isOpen, onClose, title, content, isLoading }) => {
+    const sanitizedHtml = DOMPurify.sanitize(marked.parse(content) as string);
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-3xl" zIndex="z-[70]">
+            <div className="space-y-4">
+                <div className="bg-gray-900/50 p-6 rounded-xl border border-indigo-500/20 min-h-[150px]">
+                    {isLoading && !content ? (
+                        <div className="flex flex-col items-center justify-center h-32 text-cyan-400 gap-3 animate-pulse">
+                            <LoaderIcon />
+                            <span className="text-sm font-medium">Джемини анализирует фасовку...</span>
+                        </div>
+                    ) : (
+                        <div className="prose prose-invert prose-sm max-w-none text-gray-300 leading-relaxed">
+                            <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+                        </div>
+                    )}
+                </div>
+                <div className="flex justify-end">
+                    <button onClick={onClose} className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
+                        Закрыть
+                    </button>
+                </div>
+            </div>
+        </Modal>
+    );
+};
+
 // Internal Modal for Brand Packaging Breakdown
 const BrandPackagingModal: React.FC<{
     isOpen: boolean;
@@ -31,7 +69,8 @@ const BrandPackagingModal: React.FC<{
     brandMetric: PlanMetric | null;
     regionName: string;
     onExplain: (metric: PlanMetric) => void;
-}> = ({ isOpen, onClose, brandMetric, regionName, onExplain }) => {
+    onAnalyze: (row: any) => void; // New callback for AI analysis
+}> = ({ isOpen, onClose, brandMetric, regionName, onExplain, onAnalyze }) => {
     if (!brandMetric || !brandMetric.packagingDetails) return null;
 
     const rawRows = brandMetric.packagingDetails;
@@ -107,18 +146,46 @@ const BrandPackagingModal: React.FC<{
     const totalFact = aggregatedRows.reduce((sum, r) => sum + r.fact, 0);
     const totalPlan = aggregatedRows.reduce((sum, r) => sum + r.plan, 0);
 
+    const handleExportXLSX = () => {
+        const exportData = aggregatedRows.map(row => ({
+            'Фасовка': row.packaging,
+            'Ассортимент (SKU)': row.skuList.join(', '),
+            'Инд. Рост (%)': row.growthPct.toFixed(2),
+            'Факт (кг)': row.fact,
+            'План 2026 (кг)': row.plan.toFixed(0)
+        }));
+
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Детализация');
+        
+        // Sanitize filename
+        const safeRegion = regionName.replace(/[^a-zа-я0-9]/gi, '_');
+        const safeBrand = brandMetric.name.replace(/[^a-zа-я0-9]/gi, '_');
+        XLSX.writeFile(workbook, `Detail_${safeRegion}_${safeBrand}.xlsx`);
+    };
+
     return (
         <Modal 
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Детализация ${regionName}: ${brandMetric.name}`} 
-            maxWidth="max-w-7xl" 
+            maxWidth="max-w-[95vw]" 
         >
             <div className="space-y-4">
                 <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
-                    <div>Всего фасовок: <span className="text-white font-bold">{aggregatedRows.length}</span></div>
-                    <div>Общий Факт: <span className="text-emerald-400 font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
-                    <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                    <div className="flex gap-6">
+                        <div>Всего фасовок: <span className="text-white font-bold">{aggregatedRows.length}</span></div>
+                        <div>Общий Факт: <span className="text-emerald-400 font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
+                        <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                    </div>
+                    <button 
+                        onClick={handleExportXLSX}
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors border border-emerald-500/50 shadow-lg"
+                    >
+                        <ExportIcon />
+                        Выгрузить в XLSX
+                    </button>
                 </div>
                 
                 <div className="overflow-x-auto rounded-lg border border-gray-700 max-h-[60vh] custom-scrollbar">
@@ -130,6 +197,7 @@ const BrandPackagingModal: React.FC<{
                                 <th className="px-4 py-3 text-right">Инд. Рост</th>
                                 <th className="px-4 py-3 text-right">Факт</th>
                                 <th className="px-4 py-3 text-right">План 2026</th>
+                                <th className="px-4 py-3 text-center w-24">Анализ</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700/50 bg-gray-900/30 text-gray-300">
@@ -169,6 +237,15 @@ const BrandPackagingModal: React.FC<{
                                         </td>
                                         <td className="px-4 py-3 text-right font-mono text-white font-bold whitespace-nowrap">
                                             {new Intl.NumberFormat('ru-RU').format(row.plan)}
+                                        </td>
+                                        <td className="px-4 py-3 text-center">
+                                            <button
+                                                onClick={() => onAnalyze(row)}
+                                                className="p-2 bg-indigo-600/30 hover:bg-indigo-500 text-indigo-300 hover:text-white rounded-lg transition-all border border-indigo-500/30 hover:border-indigo-400 shadow-sm"
+                                                title="Получить анализ от Gemini для этой фасовки"
+                                            >
+                                                <BrainIcon small />
+                                            </button>
                                         </td>
                                     </tr>
                                 );
@@ -221,6 +298,13 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const [selectedBrandRegion, setSelectedBrandRegion] = useState<string>('');
     const [isBrandModalOpen, setIsBrandModalOpen] = useState(false);
 
+    // --- Packaging Analysis State ---
+    const [packagingAnalysisContent, setPackagingAnalysisContent] = useState('');
+    const [packagingAnalysisTitle, setPackagingAnalysisTitle] = useState('');
+    const [isPackagingAnalysisOpen, setIsPackagingAnalysisOpen] = useState(false);
+    const [isPackagingAnalysisLoading, setIsPackagingAnalysisLoading] = useState(false);
+    const packagingAbortController = useRef<AbortController | null>(null);
+
     // --- Export Modal State ---
     const [isExportModalOpen, setIsExportModalOpen] = useState(false);
     const [uncoveredRowsCache, setUncoveredRowsCache] = useState<OkbDataRow[]>([]);
@@ -232,11 +316,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
+    // ... (metricsData calculation logic remains unchanged) ...
+    // ... Copying the huge metricsData useMemo block is risky for size, so assuming it stays as is 
+    // unless explicitly needed. I will keep the existing calculation logic identical.
+    
+    // RE-INSERTING THE METRICSDATA CALCULATION TO ENSURE FILE INTEGRITY
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
         const isOkbLoaded = okbRegionCounts !== null && okbData.length > 0;
 
-        // --- STEP 1: Global Benchmarks ---
         let globalTotalListings = 0; 
         let globalTotalUniqueClients = 0;
         let globalTotalVolume = 0;
@@ -252,7 +340,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
         const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
 
-        // --- STEP 2: Aggregate RM Data ---
         const globalOkbCoordSet = new Set<string>();
         if (isOkbLoaded) {
             okbData.forEach(row => {
@@ -263,16 +350,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             });
         }
 
-        // Helper type for aggregation
         type RegionBucket = {
             fact: number;
             potential: number;
             activeClients: Set<string>;
             matchedOkbCoords: Set<string>;
-            // Tracking brand specifics for individual calculation
             brandFacts: Map<string, number>; 
-            brandClientCounts: Map<string, number>; // New: Track # of clients per brand
-            brandRows: Map<string, AggregatedDataRow[]>; // New: Store detailed rows for breakdown
+            brandClientCounts: Map<string, number>;
+            brandRows: Map<string, AggregatedDataRow[]>;
             originalRegionName?: string;
             regionListings: number; 
         };
@@ -352,10 +437,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             }
             const brandName = row.brand || 'No Brand';
             regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact);
-            // Count clients for this brand in this region
             regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
             
-            // Collect rows for breakdown
             if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []);
             regBucket.brandRows.get(brandName)!.push(row);
         });
@@ -363,7 +446,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const missingRegionNames = new Set<string>();
         const resultMetrics: RMMetrics[] = [];
 
-        // --- STEP 3: Final Calculation using Planning Engine ---
         rmBuckets.forEach((rmData, normRmKey) => {
             const regionMetrics: PlanMetric[] = [];
             const brandAggregates = new Map<string, { fact: number, plan: number }>();
@@ -373,12 +455,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
             
-            // RM Global Metrics (Proxy for empty regions)
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
             const rmGlobalAvgVelocity = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
 
-            // Iterate Regions
             rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size;
                 const matchedCount = regData.matchedOkbCoords.size;
@@ -394,30 +474,23 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 }
                 rmTotalOkbRaw += totalRegionOkb;
 
-                // --- NEW: Calculate Plan PER BRAND to differentiate growth ---
                 let regionCalculatedPlan = 0;
                 const regionBrands: PlanMetric[] = [];
 
                 regData.brandFacts.forEach((bFact, bName) => {
                     const bClientCount = regData.brandClientCounts.get(bName) || 0;
                     const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
-                    // Single brand width assumed as 1 unless aggregations change
                     const bWidth = 1; 
 
-                    // Call Engine for THIS brand specifically
                     const calculationResult = PlanningEngine.calculateRMPlan(
                         {
                             totalFact: bFact,
-                            totalPotential: totalRegionOkb, // Share context is Region
-                            matchedCount: matchedCount,     // Share context is Region
-                            activeCount: activeCount,       // PASS TOTAL ACTIVE CLIENTS
+                            totalPotential: totalRegionOkb, 
+                            matchedCount: matchedCount,
+                            activeCount: activeCount,
                             totalRegionOkb: totalRegionOkb,
-                            
-                            // Brand Specifics
                             avgSku: bWidth, 
                             avgVelocity: bVelocity,
-                            
-                            // Fallback
                             rmGlobalVelocity: rmGlobalAvgVelocity
                         },
                         {
@@ -429,7 +502,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     );
 
                     let bRate = calculationResult.growthPct;
-                    // New entry logic
                     if (bFact === 0 && calculationResult.plan > 0) {
                         bRate = 100;
                     }
@@ -443,8 +515,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         plan: bPlan,
                         growthPct: bRate,
                         factors: calculationResult.factors,
-                        details: calculationResult.details, // Pass context details for modal
-                        packagingDetails: regData.brandRows.get(bName) || [] // Pass breakdown rows
+                        details: calculationResult.details, 
+                        packagingDetails: regData.brandRows.get(bName) || []
                     });
 
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 });
@@ -456,12 +528,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 regionBrands.sort((a, b) => b.fact - a.fact);
                 rmTotalCalculatedPlan += regionCalculatedPlan;
 
-                // Calculate weighted growth for the whole region
                 const regionGrowthPct = regData.fact > 0 
                     ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
-                // Recalculate market share using activeCount if available, mirroring engine logic
                 const numerator = activeCount > 0 ? activeCount : matchedCount;
                 const marketShare = totalRegionOkb > 0 ? Math.min(1.0, numerator / totalRegionOkb) : NaN;
 
@@ -471,15 +541,12 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     plan: regionCalculatedPlan,
                     growthPct: regionGrowthPct,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
-                    activeCount: activeCount, // Show real active count, not just matched
+                    activeCount: activeCount,
                     totalCount: totalRegionOkb,
                     brands: regionBrands,
-                    // Factors for the region row are approximate (weighted average could be done, but taking top brand or simplified factors is easier for UI)
-                    // Here we leave factors undefined for the summary row to avoid confusion, or use the "weighted" concept in future.
                 });
             });
 
-            // Final Aggregations
             const brandMetrics: PlanMetric[] = Array.from(brandAggregates.entries()).map(([name, val]) => ({
                 name,
                 fact: val.fact,
@@ -523,7 +590,41 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
     }, [data, okbRegionCounts, okbData, baseRate]);
 
-    // ... (Export Logic remains same) ...
+    const handleAnalyzePackaging = (row: any) => {
+        // row contains: key, packaging, fact, plan, growthPct, skuList
+        if (packagingAbortController.current) {
+            packagingAbortController.current.abort();
+        }
+        packagingAbortController.current = new AbortController();
+
+        setPackagingAnalysisTitle(`Анализ фасовки: ${row.packaging}`);
+        setPackagingAnalysisContent('');
+        setIsPackagingAnalysisOpen(true);
+        setIsPackagingAnalysisLoading(true);
+
+        streamPackagingInsights(
+            row.packaging,
+            row.skuList,
+            row.fact,
+            row.plan,
+            row.growthPct,
+            selectedBrandRegion, // Context from parent selection
+            (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
+            (err) => {
+                if (err.name !== 'AbortError') {
+                    setPackagingAnalysisContent(`**Ошибка:** ${err.message}`);
+                }
+                setIsPackagingAnalysisLoading(false);
+            },
+            packagingAbortController.current.signal
+        ).finally(() => {
+            setIsPackagingAnalysisLoading(false);
+        });
+    };
+
+    // ... (Rest of component functions like export, filters etc. remain same) ...
+    // Re-implementing prepareExportData and others to keep file complete
+    
     const prepareExportData = () => {
         const activeCoordSet = new Set<string>();
         data.forEach(group => {
@@ -727,6 +828,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const mainContent = (
         <>
             <div className="space-y-4 animate-fade-in">
+                {/* ... (Status bar with baseRate input remains the same) ... */}
                 <div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400 border border-gray-700 flex flex-wrap gap-4 items-center">
                     <div className="flex items-center gap-2 bg-gray-900/50 p-1 pr-3 rounded-lg border border-indigo-500/30 shadow-sm">
                         <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2"></span>
@@ -1055,8 +1157,18 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     brandMetric={selectedBrandForDetails}
                     regionName={selectedBrandRegion}
                     onExplain={(metric) => setExplanationData(metric)}
+                    onAnalyze={handleAnalyzePackaging}
                 />
             )}
+
+            {/* Packaging Analysis Modal */}
+            <PackagingAnalysisModal
+                isOpen={isPackagingAnalysisOpen}
+                onClose={() => setIsPackagingAnalysisOpen(false)}
+                title={packagingAnalysisTitle}
+                content={packagingAnalysisContent}
+                isLoading={isPackagingAnalysisLoading}
+            />
 
             {/* Render Explanation Modal LAST to ensure it appears on top of BrandPackagingModal */}
             {explanationData && (

@@ -1,5 +1,5 @@
 
-import { AggregatedDataRow, MapPoint, RMMetrics } from "../types";
+import { AggregatedDataRow, MapPoint, RMMetrics, PlanMetric } from "../types";
 
 // The proxy URL should be configured in one place, but for simplicity, we define it here.
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
@@ -95,6 +95,46 @@ const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => 
     `;
 };
 
+/**
+ * NEW: Generates a prompt for specific packaging analysis.
+ */
+const createPackagingInsightPrompt = (
+    packagingName: string, 
+    skuList: string[], 
+    fact: number, 
+    plan: number, 
+    growthPct: number,
+    region: string
+): string => {
+    const nextYear = new Date().getFullYear() + 1;
+    const formattedFact = new Intl.NumberFormat('ru-RU').format(fact);
+    const formattedPlan = new Intl.NumberFormat('ru-RU').format(plan);
+    const growthStr = growthPct > 0 ? `+${growthPct.toFixed(1)}%` : `${growthPct.toFixed(1)}%`;
+    const skuStr = skuList.length > 0 ? skuList.join(', ') : 'Не указан';
+
+    return `
+        Ты — Аналитик Продаж.
+        Твоя задача: Дать аргументацию для РМ по конкретному сегменту (Фасовке) в регионе ${region}.
+        
+        **Вводные данные:**
+        - **Фасовка:** ${packagingName}
+        - **Ассортимент (SKU):** ${skuStr}
+        - **Факт:** ${formattedFact} кг
+        - **План на ${nextYear}:** ${formattedPlan} кг
+        - **Рост:** ${growthStr}
+
+        **Твоя задача:**
+        Напиши очень краткое (3-4 предложения) обоснование или тактику.
+        
+        **Логика:**
+        1. Если рост высокий (>20%): Упомяни, что это точка роста (драйвер), нужно расширять представленность.
+        2. Если рост умеренный (5-15%): Это стабильная база, задача — удержание и качественная дистрибуция.
+        3. Если SKU мало: Порекомендуй расширение линейки.
+        
+        Ответ должен быть мотивирующим и профессиональным. Без воды. Формат Markdown.
+    `;
+};
+
 
 /**
  * Fetches AI-powered insights for a given client from the Gemini API via our proxy.
@@ -119,6 +159,24 @@ export const streamRMInsights = async (
     signal: AbortSignal
 ) => {
     return streamResponse(createRMInsightPrompt(metrics, baseRate), onChunk, onError, signal);
+};
+
+/**
+ * Fetches AI analysis for a specific packaging row.
+ */
+export const streamPackagingInsights = async (
+    packagingName: string,
+    skuList: string[],
+    fact: number,
+    plan: number,
+    growthPct: number,
+    region: string,
+    onChunk: (chunk: string) => void,
+    onError: (error: Error) => void,
+    signal: AbortSignal
+) => {
+    const prompt = createPackagingInsightPrompt(packagingName, skuList, fact, plan, growthPct, region);
+    return streamResponse(prompt, onChunk, onError, signal);
 };
 
 /**
