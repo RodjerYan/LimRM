@@ -52,11 +52,6 @@ const PackagingAnalysisModal: React.FC<{
                         </div>
                     )}
                 </div>
-                <div className="flex justify-end">
-                    <button onClick={onClose} className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">
-                        Закрыть
-                    </button>
-                </div>
             </div>
         </Modal>
     );
@@ -170,7 +165,7 @@ const BrandPackagingModal: React.FC<{
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Детализация ${regionName}: ${brandMetric.name}`} 
-            maxWidth="max-w-[95vw]" 
+            maxWidth="max-w-7xl" 
         >
             <div className="space-y-4">
                 <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
