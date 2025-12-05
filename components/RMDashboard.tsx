@@ -8,7 +8,7 @@ import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon } from './icons';
-import { findValueInRow, findAddressInRow, normalizeRmNameForMatching } from '../utils/dataUtils';
+import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
 import { marked } from 'marked';
@@ -485,12 +485,20 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
         const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
 
+        // Build Set for Coordinate Matching
         const globalOkbCoordSet = new Set<string>();
+        // Build Set for Address String Matching (Normalization)
+        const globalOkbAddressSet = new Set<string>();
+
         if (isOkbLoaded) {
             okbData.forEach(row => {
                 if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
                     const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
                     globalOkbCoordSet.add(hash);
+                }
+                const addr = findAddressInRow(row);
+                if (addr) {
+                    globalOkbAddressSet.add(normalizeAddress(addr));
                 }
             });
         }
@@ -572,11 +580,25 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             if (row.clients) {
                 row.clients.forEach(c => {
                     regBucket.activeClients.add(c.key);
+                    
+                    // Enhanced Matching Logic: Check Geo OR String
+                    let isMatch = false;
                     if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) {
                         const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
                         if (globalOkbCoordSet.has(hash)) {
-                            regBucket.matchedOkbCoords.add(hash);
+                            isMatch = true;
                         }
+                    }
+                    if (!isMatch) {
+                        const normAddr = normalizeAddress(c.address);
+                        if (globalOkbAddressSet.has(normAddr)) {
+                            isMatch = true;
+                        }
+                    }
+
+                    if (isMatch) {
+                        // Use a key to track matches. String based since coords might be missing.
+                        regBucket.matchedOkbCoords.add(c.key); 
                     }
                 });
             }
@@ -597,7 +619,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
 
             let rmTotalOkbRaw = 0;
             let rmTotalMatched = 0;
-            let rmTotalActive = 0; // New: Total active clients in RM's regions
+            let rmTotalActive = 0; 
             let rmTotalCalculatedPlan = 0;
             let rmTotalPotentialFile = 0;
             
@@ -609,7 +631,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 const activeCount = regData.activeClients.size;
                 const matchedCount = regData.matchedOkbCoords.size;
                 rmTotalMatched += matchedCount;
-                rmTotalActive += activeCount; // Accumulate active clients for coverage calc
+                rmTotalActive += activeCount; 
                 rmTotalPotentialFile += regData.potential;
 
                 let totalRegionOkb = 0;
@@ -679,8 +701,10 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
-                const numerator = activeCount > 0 ? activeCount : matchedCount;
-                const marketShare = totalRegionOkb > 0 ? Math.min(1.0, numerator / totalRegionOkb) : NaN;
+                // STRICT COVERAGE CALCULATION: Matched / Total OKB
+                // This highlights the "Gap" or "Uncovered Potential" clearly.
+                // If 0 matches, coverage is 0%, even if Active Count is high.
+                const marketShare = totalRegionOkb > 0 ? Math.min(1.0, matchedCount / totalRegionOkb) : NaN;
 
                 regionMetrics.push({
                     name: regionKey,
@@ -705,10 +729,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
-            // FIX: Use total active clients (from file) as the numerator, not just the ones that matched geo-coords.
-            // This aligns with user expectations (AKB / OKB).
+            // Strict Weighted Share for RM (Matched / Total OKB)
             const weightedShare = (rmTotalOkbRaw > 0) 
-                ? (Math.min(1.0, rmTotalActive / rmTotalOkbRaw) * 100)
+                ? (Math.min(1.0, rmTotalMatched / rmTotalOkbRaw) * 100)
                 : NaN;
 
             const extendedMetrics = {
@@ -1032,7 +1055,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 <th className="px-4 py-3">РМ</th>
                                 <th className="px-4 py-3 text-center">Факт {currentYear} (кг)</th>
                                 <th className="px-4 py-3 text-center" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от базы ОКБ (Максимум 100%, если число активных >= ОКБ)">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-indigo-300" title="Доля активных клиентов от базы ОКБ (Максимум 100%). Считается строго по совпадениям (координаты/адрес).">Покрытие</th>
                                 <th className="px-4 py-3 text-center text-emerald-300" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
                                 <th className="px-4 py-3 text-center text-cyan-300" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
                                 <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30">Рек. План (%)</th>
@@ -1076,6 +1099,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                     rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 ";
                                 }
 
+                                const covered = shareValue ? Math.min(100, shareValue) : 0;
+                                const uncoveredCount = Math.max(0, rm.totalOkbCount - (rm.totalOkbCount * (covered / 100)));
+
                                 return (
                                     <React.Fragment key={rm.rmName}>
                                         <tr 
@@ -1093,19 +1119,24 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                 <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
                                             </td>
                                             <td 
-                                                className={`px-4 py-3 text-center font-bold font-mono ${shareColor} relative group/coverage`}
-                                                title={`Охвачено: ${shareValue?.toFixed(1)}% | Свободно в базе: ${(100 - (shareValue || 0)).toFixed(1)}%`}
+                                                className="px-4 py-3 text-center align-middle"
+                                                title={`Свободно в базе: ${uncoveredCount.toFixed(0)} ТТ (${(100 - covered).toFixed(1)}%)`}
                                             >
-                                                {shareValue === null ? '—' : `${shareValue.toFixed(0)}%`}
-                                                {/* Visual Coverage Bar */}
-                                                {shareValue !== null && (
-                                                    <div className="w-full h-1 bg-gray-700 rounded-full mt-1 overflow-hidden">
-                                                        <div 
-                                                            className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-indigo-500'}`} 
-                                                            style={{ width: `${Math.min(100, shareValue)}%` }}
-                                                        ></div>
+                                                <div className="flex flex-col items-center justify-center w-full">
+                                                    <div className={`text-xs font-bold font-mono mb-1 ${shareColor}`}>
+                                                        {shareValue === null ? '—' : `100%`}
                                                     </div>
-                                                )}
+                                                    {shareValue !== null && (
+                                                        <div className="w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden flex">
+                                                            <div 
+                                                                className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
+                                                                style={{ width: `${covered}%` }}
+                                                            ></div>
+                                                            {/* Explicitly visualizing the gap */}
+                                                            <div className="h-full bg-gray-600/50 flex-grow"></div>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </td>
                                             
                                             <td className={`px-4 py-3 text-center font-mono ${skuColor}`} title={`В среднем ${skuMetric.toFixed(2)} SKU на точку. Среднее по компании: ${globalSku.toFixed(2)}`}>
@@ -1187,8 +1218,12 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
                                                                         {rm.regions.map(reg => {
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare);
+                                                                            const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
+                                                                            const regUncoveredCount = Math.max(0, (reg.totalCount || 0) - ((reg.totalCount || 0) * (regCovered / 100)));
+                                                                            
                                                                             const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
+                                                                            
                                                                             return (
                                                                                 <tr 
                                                                                     key={reg.name} 
@@ -1201,20 +1236,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                     </td>
                                                                                     <td 
                                                                                         className={`px-3 py-2 text-right font-mono`}
-                                                                                        title={regShareKnown ? `Свободно: ${(100 - (reg.marketShare || 0)).toFixed(0)}%` : ''}
+                                                                                        title={regShareKnown ? `Свободно в базе: ${regUncoveredCount.toFixed(0)} ТТ (${(100 - regCovered).toFixed(1)}%)` : ''}
                                                                                     >
-                                                                                        <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
-                                                                                        <span className={`ml-2 font-bold ${regShareColor}`}>
-                                                                                            {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(0%)'}
-                                                                                        </span>
-                                                                                        {regShareKnown && (
-                                                                                            <div className="w-full h-0.5 bg-gray-700 rounded-full mt-0.5 overflow-hidden">
-                                                                                                <div 
-                                                                                                    className={`h-full ${reg.marketShare! >= 90 ? 'bg-emerald-500' : 'bg-indigo-500'}`} 
-                                                                                                    style={{ width: `${Math.min(100, reg.marketShare!)}%` }}
-                                                                                                ></div>
-                                                                                            </div>
-                                                                                        )}
+                                                                                        <div className="flex flex-col items-end">
+                                                                                            <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${regShareColor}`}>({regShareKnown ? `100%` : '0%'})</span></div>
+                                                                                            {regShareKnown && (
+                                                                                                <div className="w-20 h-1 bg-gray-700 rounded-full overflow-hidden flex">
+                                                                                                    <div 
+                                                                                                        className={`h-full ${reg.marketShare! >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
+                                                                                                        style={{ width: `${Math.min(100, reg.marketShare!)}%` }}
+                                                                                                    ></div>
+                                                                                                </div>
+                                                                                            )}
+                                                                                        </div>
                                                                                     </td>
                                                                                     <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
                                                                                         {reg.growthPct.toFixed(1)}%
