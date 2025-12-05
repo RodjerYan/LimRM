@@ -7,12 +7,34 @@ import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  ArcElement,
+} from 'chart.js';
+import { Bar, Doughnut } from 'react-chartjs-2';
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+  ArcElement
+);
 
 interface RMDashboardProps {
     isOpen: boolean;
@@ -27,24 +49,117 @@ interface RMDashboardProps {
     onEditClient?: (client: MapPoint) => void;
 }
 
-// Simple modal to show Markdown content for Packaging Analysis
+// --- VISUALIZATION COMPONENT FOR AI MODAL ---
+const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
+    // Gap Calculation
+    const gap = Math.max(0, plan - fact);
+    const percentage = plan > 0 ? (fact / plan) * 100 : 0;
+    
+    // Chart 1: Bar Data (Fact vs Plan)
+    const barData = {
+        labels: ['Факт', 'План 2026'],
+        datasets: [
+            {
+                label: 'Объем (кг)',
+                data: [fact, plan],
+                backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(99, 102, 241, 0.7)'],
+                borderColor: ['#10b981', '#6366f1'],
+                borderWidth: 1,
+                borderRadius: 4,
+            },
+        ],
+    };
+
+    const barOptions = {
+        responsive: true,
+        plugins: {
+            legend: { display: false },
+            title: { display: true, text: 'Динамика Роста', color: '#9ca3af' },
+        },
+        scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#9ca3af' } },
+            x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
+        }
+    };
+
+    // Chart 2: Doughnut Data (Execution / Gap)
+    const doughnutData = {
+        labels: ['Выполнено (База)', 'Потенциал Роста'],
+        datasets: [
+            {
+                data: [fact, gap],
+                backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(251, 191, 36, 0.8)'], // Green / Amber
+                borderColor: ['#064e3b', '#78350f'],
+                borderWidth: 0,
+                hoverOffset: 4
+            },
+        ],
+    };
+
+    const doughnutOptions = {
+        responsive: true,
+        cutout: '70%',
+        plugins: {
+            legend: { display: true, position: 'bottom' as const, labels: { color: '#9ca3af', font: { size: 10 } } },
+            title: { display: true, text: 'Структура Плана', color: '#9ca3af' },
+        },
+    };
+
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 h-64 flex flex-col justify-center">
+                <Bar data={barData} options={barOptions} />
+            </div>
+            <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 h-64 flex flex-col items-center justify-center relative">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div className="text-center mt-6">
+                        <div className="text-2xl font-bold text-white">{percentage.toFixed(0)}%</div>
+                        <div className="text-[10px] text-gray-400">от плана</div>
+                    </div>
+                </div>
+                <div className="w-full h-full">
+                    <Doughnut data={doughnutData} options={doughnutOptions} />
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// Updated modal to show Charts + Markdown content
 const PackagingAnalysisModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     title: string;
     content: string;
     isLoading: boolean;
-}> = ({ isOpen, onClose, title, content, isLoading }) => {
+    chartData?: { fact: number; plan: number; growthPct: number } | null;
+}> = ({ isOpen, onClose, title, content, isLoading, chartData }) => {
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(content) as string);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-3xl" zIndex="z-[70]">
-            <div className="space-y-4">
+        <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-4xl" zIndex="z-[70]">
+            <div className="space-y-6">
+                
+                {/* Visual Analytics Section */}
+                {chartData && (
+                    <PackagingCharts 
+                        fact={chartData.fact} 
+                        plan={chartData.plan} 
+                        growthPct={chartData.growthPct} 
+                    />
+                )}
+
+                {/* AI Text Content */}
                 <div className="bg-gray-900/50 p-6 rounded-xl border border-indigo-500/20 min-h-[150px]">
+                    <h3 className="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <BrainIcon small /> Экспертное заключение
+                    </h3>
+                    
                     {isLoading && !content ? (
                         <div className="flex flex-col items-center justify-center h-32 text-cyan-400 gap-3 animate-pulse">
                             <LoaderIcon />
-                            <span className="text-sm font-medium">Джемини анализирует фасовку...</span>
+                            <span className="text-sm font-medium">Джемини моделирует сценарии...</span>
                         </div>
                     ) : (
                         <div className="prose prose-invert prose-sm max-w-none text-gray-300 leading-relaxed">
@@ -237,7 +352,7 @@ const BrandPackagingModal: React.FC<{
                                             <button
                                                 onClick={() => onAnalyze(row)}
                                                 className="p-2 bg-indigo-600/30 hover:bg-indigo-500 text-indigo-300 hover:text-white rounded-lg transition-all border border-indigo-500/30 hover:border-indigo-400 shadow-sm"
-                                                title="Получить анализ от Gemini для этой фасовки"
+                                                title="Получить анализ от Джемини для этой фасовки"
                                             >
                                                 <BrainIcon small />
                                             </button>
@@ -298,6 +413,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     const [packagingAnalysisTitle, setPackagingAnalysisTitle] = useState('');
     const [isPackagingAnalysisOpen, setIsPackagingAnalysisOpen] = useState(false);
     const [isPackagingAnalysisLoading, setIsPackagingAnalysisLoading] = useState(false);
+    const [packagingChartData, setPackagingChartData] = useState<{ fact: number; plan: number; growthPct: number } | null>(null);
     const packagingAbortController = useRef<AbortController | null>(null);
 
     // --- Export Modal State ---
@@ -593,6 +709,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
         packagingAbortController.current = new AbortController();
 
         setPackagingAnalysisTitle(`Анализ фасовки: ${row.packaging}`);
+        setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct }); // Set chart data
         setPackagingAnalysisContent('');
         setIsPackagingAnalysisOpen(true);
         setIsPackagingAnalysisLoading(true);
@@ -873,7 +990,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 </div>
 
                 <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm text-gray-300">
+                    <table className="w-full text-left text-sm text-gray-300 border-separate border-spacing-y-0">
                         <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 z-10">
                             <tr>
                                 <th className="px-4 py-3 w-8"></th>
@@ -894,6 +1011,8 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                         <tbody className="divide-y divide-gray-700">
                             {metricsData.map(rm => {
                                 const isExpanded = expandedRM === rm.rmName;
+                                const isAnyExpanded = expandedRM !== null;
+                                
                                 const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
                                 const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                 const growthColor = rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300');
@@ -906,10 +1025,26 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 const skuColor = skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300');
                                 const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
 
+                                // Dynamic classes for row focus effect
+                                let rowClasses = "transition-all duration-300 cursor-pointer ";
+                                
+                                if (isAnyExpanded) {
+                                    if (isExpanded) {
+                                        // Active row: Highlight, slightly larger, shadow
+                                        rowClasses += "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30 ";
+                                    } else {
+                                        // Inactive rows: Dimmed, blurred, grayscale
+                                        rowClasses += "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none border-b border-gray-800 ";
+                                    }
+                                } else {
+                                    // Normal state
+                                    rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 ";
+                                }
+
                                 return (
                                     <React.Fragment key={rm.rmName}>
                                         <tr 
-                                            className={`hover:bg-gray-800/50 transition-colors cursor-pointer ${isExpanded ? 'bg-gray-800/30' : ''}`}
+                                            className={rowClasses}
                                             onClick={() => toggleExpand(rm.rmName)}
                                         >
                                             <td className="px-4 py-3 text-gray-500">
@@ -983,11 +1118,11 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                         </tr>
 
                                         {isExpanded && (
-                                            <tr>
-                                                <td colSpan={13} className="p-0 bg-gray-900/40 border-b border-gray-700 shadow-inner">
+                                            <tr className="z-20 relative shadow-2xl scale-[1.005]">
+                                                <td colSpan={13} className="p-0 bg-gray-900/95 border-b border-x border-indigo-500/30 rounded-b-lg shadow-inner">
                                                     <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
                                                         
-                                                        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/20">
+                                                        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/40">
                                                             <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">
                                                                 Детализация по Регионам (Нажмите на строку для списка)
                                                             </div>
@@ -1036,7 +1171,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                             </div>
                                                         </div>
 
-                                                        <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/20">
+                                                        <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/40">
                                                             <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center">
                                                                 <span>Детализация: Регионы и Бренды</span>
                                                                 <button
@@ -1163,6 +1298,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 title={packagingAnalysisTitle}
                 content={packagingAnalysisContent}
                 isLoading={isPackagingAnalysisLoading}
+                chartData={packagingChartData} // Pass chart data to the modal
             />
 
             {/* Render Explanation Modal LAST to ensure it appears on top of BrandPackagingModal */}

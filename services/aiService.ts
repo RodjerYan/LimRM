@@ -96,7 +96,8 @@ const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => 
 };
 
 /**
- * NEW: Generates a prompt for specific packaging analysis.
+ * NEW: Generates a prompt for specific packaging analysis with Forecast Tables.
+ * Uses a rigorous "Commercial Director" persona.
  */
 const createPackagingInsightPrompt = (
     packagingName: string, 
@@ -110,28 +111,35 @@ const createPackagingInsightPrompt = (
     const formattedFact = new Intl.NumberFormat('ru-RU').format(fact);
     const formattedPlan = new Intl.NumberFormat('ru-RU').format(plan);
     const growthStr = growthPct > 0 ? `+${growthPct.toFixed(1)}%` : `${growthPct.toFixed(1)}%`;
-    const skuStr = skuList.length > 0 ? skuList.join(', ') : 'Не указан';
+    const skuStr = skuList.length > 0 ? skuList.join(', ') : 'SKU не указаны';
 
     return `
-        Ты — Аналитик Продаж.
-        Твоя задача: Дать аргументацию для РМ по конкретному сегменту (Фасовке) в регионе ${region}.
-        
+        Ты — Коммерческий Директор федеральной компании.
+        Твоя задача: Дать профессиональное заключение и СЦЕНАРНЫЙ ПРОГНОЗ продаж по сегменту **${packagingName}** в регионе **${region}**.
+        Тон: Деловой, аналитический, жесткий.
+
         **Вводные данные:**
-        - **Фасовка:** ${packagingName}
-        - **Ассортимент (SKU):** ${skuStr}
+        - **Сегмент:** ${packagingName}
+        - **Ассортимент:** ${skuStr}
         - **Факт:** ${formattedFact} кг
         - **План на ${nextYear}:** ${formattedPlan} кг
-        - **Рост:** ${growthStr}
+        - **Целевой Рост:** ${growthStr}
 
-        **Твоя задача:**
-        Напиши очень краткое (3-4 предложения) обоснование или тактику.
+        **Структура твоего ответа (Markdown):**
         
-        **Логика:**
-        1. Если рост высокий (>20%): Упомяни, что это точка роста (драйвер), нужно расширять представленность.
-        2. Если рост умеренный (5-15%): Это стабильная база, задача — удержание и качественная дистрибуция.
-        3. Если SKU мало: Порекомендуй расширение линейки.
-        
-        Ответ должен быть мотивирующим и профессиональным. Без воды. Формат Markdown.
+        ### 1. Вердикт
+        (Краткая оценка: "Драйвер роста", "Стабильная база", "Проблемная зона" и т.д. Оцени реалистичность роста ${growthStr} с учетом объема.)
+
+        ### 2. Сценарное моделирование ${nextYear}
+        (Создай Markdown таблицу с тремя сценариями. Рассчитай цифры приблизительно на основе Факта.)
+        | Сценарий | Прогноз (кг) | Описание условий |
+        | :--- | :--- | :--- |
+        | **Пессимистичный** | (Факт + 0-5%) | (Опиши риски: потеря ключевых SKU, активность конкурентов) |
+        | **Реалистичный** | (Факт + ${growthPct}%) | (Текущий утвержденный план. Условие: выполнение задач по дистрибуции) |
+        | **Оптимистичный** | (Факт + ${(growthPct * 1.5).toFixed(0)}%) | (Условие: ввод новинок, удачные акции, перехват клиентов) |
+
+        ### 3. Фокусные задачи
+        (Дай 3 конкретных шага по работе с SKU из списка выше для достижения "Оптимистичного" сценария).
     `;
 };
 
