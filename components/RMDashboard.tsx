@@ -43,17 +43,36 @@ const BrandPackagingModal: React.FC<{
             fact: number;
             plan: number;
             rows: AggregatedDataRow[];
+            skus: Set<string>; // Set to store unique SKU names
         }>();
 
         rawRows.forEach(r => {
             const key = r.packaging || 'Не указана';
             if (!groups.has(key)) {
-                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [] });
+                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set() });
             }
             const g = groups.get(key)!;
             g.fact += r.fact;
             g.plan += (r.planMetric?.plan || 0);
             g.rows.push(r);
+
+            // Extract SKUs from all clients in this row
+            if (r.clients) {
+                r.clients.forEach(client => {
+                    if (client.originalRow) {
+                        // Look for "Unique Product Name" or fallbacks
+                        const skuName = findValueInRow(client.originalRow, [
+                            'уникальное наименование товара', 
+                            'номенклатура', 
+                            'наименование', 
+                            'товар'
+                        ]);
+                        if (skuName) {
+                            g.skus.add(skuName);
+                        }
+                    }
+                });
+            }
         });
 
         return Array.from(groups.values()).map(g => {
@@ -79,7 +98,8 @@ const BrandPackagingModal: React.FC<{
                 fact: g.fact,
                 plan: g.plan,
                 growthPct: growth,
-                planMetric: metric
+                planMetric: metric,
+                skuList: Array.from(g.skus).sort() // Convert Set to sorted Array
             };
         }).sort((a, b) => b.fact - a.fact);
     }, [rawRows]);
@@ -92,7 +112,7 @@ const BrandPackagingModal: React.FC<{
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Детализация ${regionName}: ${brandMetric.name}`} 
-            maxWidth="max-w-4xl"
+            maxWidth="max-w-5xl" // Increased width to accommodate SKU column
         >
             <div className="space-y-4">
                 <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
@@ -101,11 +121,12 @@ const BrandPackagingModal: React.FC<{
                     <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
                 </div>
                 
-                <div className="overflow-x-auto rounded-lg border border-gray-700">
-                    <table className="w-full text-sm text-left">
-                        <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0">
+                <div className="overflow-x-auto rounded-lg border border-gray-700 max-h-[60vh] custom-scrollbar">
+                    <table className="w-full text-sm text-left relative">
+                        <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0 z-10 shadow-sm">
                             <tr>
-                                <th className="px-4 py-3">Фасовка</th>
+                                <th className="px-4 py-3 w-1/6">Фасовка</th>
+                                <th className="px-4 py-3 w-1/2">SKU (Ассортимент)</th>
                                 <th className="px-4 py-3 text-right">Инд. Рост</th>
                                 <th className="px-4 py-3 text-right">Факт</th>
                                 <th className="px-4 py-3 text-right">План 2026</th>
@@ -115,9 +136,22 @@ const BrandPackagingModal: React.FC<{
                             {aggregatedRows.map((row) => {
                                 const growthPct = row.growthPct;
                                 return (
-                                    <tr key={row.key} className="hover:bg-indigo-500/10 transition-colors">
-                                        <td className="px-4 py-3 font-medium text-white">{row.packaging}</td>
-                                        <td className="px-4 py-3 text-right font-mono">
+                                    <tr key={row.key} className="hover:bg-indigo-500/10 transition-colors align-top">
+                                        <td className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.packaging}</td>
+                                        <td className="px-4 py-3">
+                                            <div className="max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                                                {row.skuList.length > 0 ? (
+                                                    <ul className="text-xs text-gray-400 list-disc list-inside space-y-0.5">
+                                                        {row.skuList.map((sku, idx) => (
+                                                            <li key={idx} className="break-words leading-tight">{sku}</li>
+                                                        ))}
+                                                    </ul>
+                                                ) : (
+                                                    <span className="text-xs text-gray-600 italic">Не указано</span>
+                                                )}
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
                                             {row.planMetric ? (
                                                 <button
                                                     onClick={() => onExplain(row.planMetric!)}
@@ -130,10 +164,10 @@ const BrandPackagingModal: React.FC<{
                                                 <span className="text-gray-500">—</span>
                                             )}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-gray-400">
+                                        <td className="px-4 py-3 text-right font-mono text-gray-400 whitespace-nowrap">
                                             {new Intl.NumberFormat('ru-RU').format(row.fact)}
                                         </td>
-                                        <td className="px-4 py-3 text-right font-mono text-white font-bold">
+                                        <td className="px-4 py-3 text-right font-mono text-white font-bold whitespace-nowrap">
                                             {new Intl.NumberFormat('ru-RU').format(row.plan)}
                                         </td>
                                     </tr>
