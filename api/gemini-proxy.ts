@@ -1,8 +1,4 @@
-// FIX: This entire file's content is a fix. The original file contained placeholder text
-// which caused compilation errors like "Cannot find name 'full'". This implementation
-// creates a serverless function that acts as a secure proxy to the Google Gemini API.
-// It handles POST requests, retrieves the API key from server-side environment variables,
-// calls the Gemini streaming API, and pipes the response back to the client, following all SDK guidelines.
+
 import { GoogleGenAI } from "@google/genai";
 
 // Configure for Vercel Edge runtime for optimal streaming performance.
@@ -43,21 +39,10 @@ export default async function handler(req: Request) {
       process.env.API_KEY_4,
     ].filter(Boolean) as string[];
 
-    // --- ENHANCED DEBUGGING ---
-    // This logic provides detailed error information if keys are missing.
     if (apiKeys.length === 0) {
-        // We can't log the full process.env for security, but we can check for the keys we expect.
-        const keyCheck = {
-            API_KEY_1_exists: !!process.env.API_KEY_1,
-            API_KEY_2_exists: !!process.env.API_KEY_2,
-            API_KEY_3_exists: !!process.env.API_KEY_3,
-            API_KEY_4_exists: !!process.env.API_KEY_4,
-        };
-        const detailedErrorMessage = `Server configuration error: No Gemini API keys found. The server function could not access 'API_KEY_1', 'API_KEY_2', etc. from the environment variables. Please check your Vercel project settings under 'Environment Variables' and ensure they are correctly set for the deployment environment. After adding/checking, you must redeploy the project. Key presence: ${JSON.stringify(keyCheck)}`;
-        
+        const detailedErrorMessage = `Server configuration error: No Gemini API keys found in environment variables (API_KEY_1, etc.).`;
         console.error(detailedErrorMessage);
-
-        return new Response(JSON.stringify({ error: "API key is not configured on the server. Please check Vercel settings and redeploy." , details: detailedErrorMessage }), {
+        return new Response(JSON.stringify({ error: detailedErrorMessage }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
         });
@@ -66,30 +51,38 @@ export default async function handler(req: Request) {
     // Select a random API key from the available pool for each request.
     const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
     
-    // Initialize the GoogleGenAI client with the randomly selected API key.
+    // Initialize the GoogleGenAI client
     const ai = new GoogleGenAI({ apiKey });
 
-    // Select a suitable and cost-effective model for the text generation task.
+    // Select a suitable and cost-effective model
     const model = 'gemini-2.5-flash';
 
     // Call the Gemini API to generate content as a stream.
+    // FIX: Ensure contents is an array of objects with parts
     const responseStream = await ai.models.generateContentStream({
         model,
-        contents: prompt,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+            temperature: 0.7,
+            candidateCount: 1,
+        }
     });
     
     // Create a new ReadableStream to pipe the response from Gemini back to the client.
     const stream = new ReadableStream({
       async start(controller) {
-        for await (const chunk of responseStream) {
-          // Extract the text part of the chunk.
-          const chunkText = chunk.text;
-          if (chunkText) {
-            // Encode the text chunk and enqueue it to the stream.
-            controller.enqueue(new TextEncoder().encode(chunkText));
-          }
+        try {
+            for await (const chunk of responseStream) {
+              const chunkText = chunk.text;
+              if (chunkText) {
+                controller.enqueue(new TextEncoder().encode(chunkText));
+              }
+            }
+            controller.close();
+        } catch (streamError) {
+            console.error('Stream processing error:', streamError);
+            controller.error(streamError);
         }
-        controller.close();
       },
     });
 
@@ -105,6 +98,10 @@ export default async function handler(req: Request) {
     
     if (error instanceof Error) {
         errorMessage = error.message;
+        // Check if it is a GoogleGenAI specific error structure
+        if ((error as any).status) {
+             statusCode = (error as any).status;
+        }
     }
     
     // Return a structured error response if something goes wrong.

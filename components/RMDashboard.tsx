@@ -53,11 +53,12 @@ interface RMDashboardProps {
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
     // Gap Calculation
     const gap = Math.max(0, plan - fact);
+    // Percentage of the 2026 Plan covered by existing 2025 Fact
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
     
     // Chart 1: Bar Data (Fact vs Plan)
     const barData = {
-        labels: ['Факт', 'План 2026'],
+        labels: ['Факт 2025', 'План 2026'],
         datasets: [
             {
                 label: 'Объем (кг)',
@@ -65,24 +66,43 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
                 backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(99, 102, 241, 0.7)'],
                 borderColor: ['#10b981', '#6366f1'],
                 borderWidth: 1,
-                borderRadius: 4,
+                borderRadius: 6,
+                barPercentage: 0.6,
             },
         ],
     };
 
     const barOptions = {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
             legend: { display: false },
-            title: { display: true, text: 'Динамика Роста', color: '#9ca3af' },
+            title: { display: true, text: 'Динамика Роста', color: '#9ca3af', font: { size: 14 } },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                titleColor: '#fff',
+                bodyColor: '#cbd5e1',
+                padding: 10,
+                callbacks: {
+                    label: (ctx: any) => `${ctx.dataset.label}: ${new Intl.NumberFormat('ru-RU').format(ctx.raw)}`
+                }
+            }
         },
         scales: {
-            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#9ca3af' } },
-            x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
+            y: { 
+                beginAtZero: true, 
+                grid: { color: 'rgba(255,255,255,0.05)' }, 
+                ticks: { color: '#9ca3af', font: { size: 10 }, callback: (v: any) => new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(v) } 
+            },
+            x: { 
+                grid: { display: false }, 
+                ticks: { color: '#e5e7eb', font: { size: 12 } } 
+            }
         }
     };
 
     // Chart 2: Doughnut Data (Execution / Gap)
+    // Clarification: This shows how much of the Future Plan is already covered by Current Fact.
     const doughnutData = {
         labels: ['Выполнено (База)', 'Потенциал Роста'],
         datasets: [
@@ -98,26 +118,44 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
 
     const doughnutOptions = {
         responsive: true,
+        maintainAspectRatio: false,
         cutout: '70%',
         plugins: {
-            legend: { display: true, position: 'bottom' as const, labels: { color: '#9ca3af', font: { size: 10 } } },
-            title: { display: true, text: 'Структура Плана', color: '#9ca3af' },
+            legend: { 
+                display: true, 
+                position: 'bottom' as const, 
+                labels: { color: '#d1d5db', font: { size: 11 }, padding: 20, usePointStyle: true } 
+            },
+            title: { display: true, text: 'Структура Плана', color: '#9ca3af', font: { size: 14 } },
+            tooltip: {
+                backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                callbacks: {
+                    label: function(context: any) {
+                        const val = context.raw;
+                        const total = context.chart._metasets[context.datasetIndex].total;
+                        const pct = total > 0 ? ((val / total) * 100).toFixed(1) + '%' : '0%';
+                        return `${context.label}: ${pct}`;
+                    }
+                }
+            }
         },
     };
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 h-64 flex flex-col justify-center">
-                <Bar data={barData} options={barOptions} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[320px] flex flex-col justify-center shadow-inner">
+                <div className="flex-grow w-full">
+                    <Bar data={barData} options={barOptions} />
+                </div>
             </div>
-            <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 h-64 flex flex-col items-center justify-center relative">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="text-center mt-6">
-                        <div className="text-2xl font-bold text-white">{percentage.toFixed(0)}%</div>
-                        <div className="text-[10px] text-gray-400">от плана</div>
+            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[320px] flex flex-col items-center justify-center relative shadow-inner">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none pb-8">
+                    <div className="text-center">
+                        <div className="text-4xl font-bold text-white tracking-tight">{percentage.toFixed(0)}%</div>
+                        <div className="text-xs text-gray-400 font-medium uppercase tracking-wider mt-1">от плана</div>
                     </div>
                 </div>
-                <div className="w-full h-full">
+                <div className="w-full h-full flex items-center justify-center">
                     <Doughnut data={doughnutData} options={doughnutOptions} />
                 </div>
             </div>
