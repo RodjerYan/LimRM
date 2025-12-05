@@ -1092,8 +1092,20 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                 <span className="mx-1">/</span>
                                                 <span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span>
                                             </td>
-                                            <td className={`px-4 py-3 text-center font-bold font-mono ${shareColor}`}>
-                                                {shareValue === null ? '—' : `${shareValue.toFixed(1)}%`}
+                                            <td 
+                                                className={`px-4 py-3 text-center font-bold font-mono ${shareColor} relative group/coverage`}
+                                                title={`Охвачено: ${shareValue?.toFixed(1)}% | Свободно в базе: ${(100 - (shareValue || 0)).toFixed(1)}%`}
+                                            >
+                                                {shareValue === null ? '—' : `${shareValue.toFixed(0)}%`}
+                                                {/* Visual Coverage Bar */}
+                                                {shareValue !== null && (
+                                                    <div className="w-full h-1 bg-gray-700 rounded-full mt-1 overflow-hidden">
+                                                        <div 
+                                                            className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-indigo-500'}`} 
+                                                            style={{ width: `${Math.min(100, shareValue)}%` }}
+                                                        ></div>
+                                                    </div>
+                                                )}
                                             </td>
                                             
                                             <td className={`px-4 py-3 text-center font-mono ${skuColor}`} title={`В среднем ${skuMetric.toFixed(2)} SKU на точку. Среднее по компании: ${globalSku.toFixed(2)}`}>
@@ -1187,11 +1199,22 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                                         {reg.name}
                                                                                         <span className="text-[10px] text-gray-500 ml-1">↗</span>
                                                                                     </td>
-                                                                                    <td className={`px-3 py-2 text-right font-mono`}>
+                                                                                    <td 
+                                                                                        className={`px-3 py-2 text-right font-mono`}
+                                                                                        title={regShareKnown ? `Свободно: ${(100 - (reg.marketShare || 0)).toFixed(0)}%` : ''}
+                                                                                    >
                                                                                         <span className="text-gray-500 text-[10px]">{reg.activeCount}/{reg.totalCount}</span>
                                                                                         <span className={`ml-2 font-bold ${regShareColor}`}>
                                                                                             {regShareKnown ? `(${reg.marketShare?.toFixed(0)}%)` : '(0%)'}
                                                                                         </span>
+                                                                                        {regShareKnown && (
+                                                                                            <div className="w-full h-0.5 bg-gray-700 rounded-full mt-0.5 overflow-hidden">
+                                                                                                <div 
+                                                                                                    className={`h-full ${reg.marketShare! >= 90 ? 'bg-emerald-500' : 'bg-indigo-500'}`} 
+                                                                                                    style={{ width: `${Math.min(100, reg.marketShare!)}%` }}
+                                                                                                ></div>
+                                                                                            </div>
+                                                                                        )}
                                                                                     </td>
                                                                                     <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>
                                                                                         {reg.growthPct.toFixed(1)}%
