@@ -16,8 +16,8 @@ export class PlanningEngine {
         rmData: {
             totalFact: number;
             totalPotential: number; // Емкость из файла или суррогат
-            matchedCount: number;   // АКБ (совпадения)
-            activeCount?: number;   // NEW: Общее кол-во активных клиентов (включая несовпавшие)
+            matchedCount: number;   // АКБ (совпадения с ОКБ)
+            activeCount?: number;   // NEW: Общее кол-во активных клиентов (включая тех, что не совпали)
             totalRegionOkb: number; // ОКБ (емкость базы)
             
             // Локальные метрики региона
@@ -32,12 +32,21 @@ export class PlanningEngine {
         
         // --- 1. Расчет Доли Рынка (Penetration) ---
         let marketShare = 0;
-        if (rmData.totalRegionOkb > 0) {
-            // FIX: Use activeCount if provided and greater than matched.
-            // If active clients > OKB capacity, we assume 100% saturation (or OKB is incomplete).
-            // This prevents "Blue Ocean" diagnosis when we actually have hundreds of clients but few matches.
-            const numerator = rmData.activeCount && rmData.activeCount > 0 ? rmData.activeCount : rmData.matchedCount;
-            marketShare = Math.min(1.0, numerator / rmData.totalRegionOkb);
+        
+        const activeCount = rmData.activeCount && rmData.activeCount > 0 ? rmData.activeCount : rmData.matchedCount;
+        
+        // STRICT COVERAGE CALCULATION: Active / (Active + Uncovered)
+        // 100% достижимо ТОЛЬКО если MatchedCount == TotalRegionOkb (то есть мы закрыли все точки из базы).
+        // Если MatchedCount < TotalRegionOkb, значит есть "Uncovered" (потенциал), который увеличивает знаменатель.
+        
+        // Uncovered = Сколько точек из ОКБ мы еще НЕ обслуживаем.
+        const uncoveredCount = Math.max(0, rmData.totalRegionOkb - rmData.matchedCount);
+        
+        // TotalUniverse = Наш текущий мир (Active) + То, что мы еще не захватили (Uncovered).
+        const totalUniverse = activeCount + uncoveredCount;
+        
+        if (totalUniverse > 0) {
+            marketShare = activeCount / totalUniverse;
         }
 
         // --- 2. Базовая ставка ---
