@@ -321,87 +321,111 @@ const BrandPackagingModal: React.FC<{
             maxWidth="max-w-7xl" 
         >
             <div className="space-y-4">
-                <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700 flex justify-between items-center text-sm text-gray-300">
-                    <div className="flex gap-6">
-                        <div>Всего фасовок: <span className="text-white font-bold">{aggregatedRows.length}</span></div>
-                        <div>Общий Факт: <span className="text-emerald-400 font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
-                        <div>Общий План: <span className="text-white font-mono font-bold">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                {/* Stats Header */}
+                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 flex justify-between items-center text-sm shadow-sm backdrop-blur-sm">
+                    <div className="flex gap-8 items-center">
+                        <div className="flex flex-col">
+                            <span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Фасовок</span>
+                            <span className="text-white font-bold text-lg">{aggregatedRows.length}</span>
+                        </div>
+                        <div className="h-8 w-px bg-gray-700"></div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий Факт</span>
+                            <span className="text-emerald-400 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий План</span>
+                            <span className="text-white font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span>
+                        </div>
                     </div>
                     <button 
                         onClick={handleExportXLSX}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors border border-emerald-500/50 shadow-lg"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-4 rounded-lg transition-all border border-emerald-500/50 shadow-lg hover:shadow-emerald-500/20"
                     >
                         <ExportIcon />
                         Выгрузить в XLSX
                     </button>
                 </div>
                 
-                <div className="overflow-x-auto rounded-lg border border-gray-700 max-h-[60vh] custom-scrollbar">
-                    <table className="w-full text-sm text-left relative">
-                        <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0 z-10 shadow-sm">
-                            <tr>
-                                {/* Reduced width for Packaging to expand SKU column leftwards */}
-                                <th className="px-4 py-3 w-[10%] whitespace-nowrap">Фасовка</th>
-                                {/* Increased width for SKU */}
-                                <th className="px-4 py-3 w-[55%]">SKU (Ассортимент)</th>
-                                <th className="px-4 py-3 text-right whitespace-nowrap">Инд. Рост</th>
-                                <th className="px-4 py-3 text-right whitespace-nowrap">Факт</th>
-                                <th className="px-4 py-3 text-right whitespace-nowrap">План 2026</th>
-                                <th className="px-4 py-3 text-center w-24">Анализ</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-700/50 bg-gray-900/30 text-gray-300">
-                            {aggregatedRows.map((row) => {
-                                const growthPct = row.growthPct;
-                                return (
-                                    <tr key={row.key} className="hover:bg-indigo-500/10 transition-colors align-top">
-                                        <td className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.packaging}</td>
-                                        <td className="px-4 py-3">
-                                            <div className="max-h-32 overflow-y-auto custom-scrollbar pr-2">
-                                                {row.skuList.length > 0 ? (
-                                                    <ul className="text-xs text-gray-400 list-disc list-inside space-y-0.5">
-                                                        {row.skuList.map((sku, idx) => (
-                                                            <li key={idx} className="break-words leading-tight">{sku}</li>
-                                                        ))}
-                                                    </ul>
+                {/* Main Data Table */}
+                <div className="overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 shadow-inner">
+                    <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                        <table className="min-w-full text-sm text-left table-fixed">
+                            <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
+                                <tr>
+                                    {/* Fixed narrow width for Packaging to save space, but enough for text */}
+                                    <th className="px-6 py-4 w-28 text-gray-300">Фасовка</th>
+                                    
+                                    {/* Flexible width for SKU - takes all remaining space */}
+                                    <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
+                                    
+                                    {/* Fixed widths for numeric metrics to align perfectly */}
+                                    <th className="px-6 py-4 w-32 text-right">Инд. Рост</th>
+                                    <th className="px-6 py-4 w-32 text-right">Факт</th>
+                                    <th className="px-6 py-4 w-32 text-right">План 2026</th>
+                                    
+                                    {/* Fixed width for action button */}
+                                    <th className="px-6 py-4 w-24 text-center">Анализ</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-800 text-gray-300">
+                                {aggregatedRows.map((row) => {
+                                    const growthPct = row.growthPct;
+                                    return (
+                                        <tr key={row.key} className="hover:bg-gray-800/60 transition-colors group align-top">
+                                            <td className="px-6 py-4 font-bold text-white whitespace-nowrap bg-gray-900/30">
+                                                {row.packaging}
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                                                    {row.skuList.length > 0 ? (
+                                                        <ul className="text-xs text-gray-400 space-y-1.5">
+                                                            {row.skuList.map((sku, idx) => (
+                                                                <li key={idx} className="leading-relaxed flex items-start gap-2">
+                                                                    <span className="w-1.5 h-1.5 rounded-full bg-gray-600 mt-1.5 flex-shrink-0 group-hover:bg-indigo-500 transition-colors"></span>
+                                                                    <span className="group-hover:text-gray-200 transition-colors">{sku}</span>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-600 italic">Не указано</span>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-mono whitespace-nowrap">
+                                                {row.planMetric ? (
+                                                    <button
+                                                        onClick={() => onExplain(row.planMetric!)}
+                                                        className={`font-bold py-1 px-2 rounded hover:bg-gray-700 transition-colors ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`}
+                                                        title="Нажмите для обоснования процента роста"
+                                                    >
+                                                        {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
+                                                    </button>
                                                 ) : (
-                                                    <span className="text-xs text-gray-600 italic">Не указано</span>
+                                                    <span className="text-gray-500">—</span>
                                                 )}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
-                                            {row.planMetric ? (
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-mono text-gray-300 whitespace-nowrap">
+                                                {new Intl.NumberFormat('ru-RU').format(row.fact)}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-mono text-white font-bold whitespace-nowrap bg-gray-800/10">
+                                                {new Intl.NumberFormat('ru-RU').format(row.plan)}
+                                            </td>
+                                            <td className="px-6 py-4 text-center">
                                                 <button
-                                                    onClick={() => onExplain(row.planMetric!)}
-                                                    className={`font-bold hover:underline decoration-dotted underline-offset-2 ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`}
-                                                    title="Нажмите для обоснования процента роста именно этой фасовки"
+                                                    onClick={() => onAnalyze(row)}
+                                                    className="p-2 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg transition-all border border-indigo-500/20 hover:border-indigo-500 shadow-sm hover:shadow-indigo-500/40 active:scale-95"
+                                                    title="Получить анализ от Джемини для этой фасовки"
                                                 >
-                                                    {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
+                                                    <BrainIcon small />
                                                 </button>
-                                            ) : (
-                                                <span className="text-gray-500">—</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-3 text-right font-mono text-gray-400 whitespace-nowrap">
-                                            {new Intl.NumberFormat('ru-RU').format(row.fact)}
-                                        </td>
-                                        <td className="px-4 py-3 text-right font-mono text-white font-bold whitespace-nowrap">
-                                            {new Intl.NumberFormat('ru-RU').format(row.plan)}
-                                        </td>
-                                        <td className="px-4 py-3 text-center">
-                                            <button
-                                                onClick={() => onAnalyze(row)}
-                                                className="p-2 bg-indigo-600/30 hover:bg-indigo-500 text-indigo-300 hover:text-white rounded-lg transition-all border border-indigo-500/30 hover:border-indigo-400 shadow-sm"
-                                                title="Получить анализ от Джемини для этой фасовки"
-                                            >
-                                                <BrainIcon small />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </Modal>
