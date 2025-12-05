@@ -91,7 +91,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                             </button>
                             <button 
                                 onClick={() => setMode('cloud')}
-                                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${mode === 'cloud' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${mode === 'cloud' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
                             >
                                 Облако
                             </button>
@@ -143,34 +143,45 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </label>
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center w-full h-40 border border-gray-700 bg-gray-800/30 rounded-xl p-6">
+                    <div className="flex flex-col items-center justify-center w-full min-h-[10rem] border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-6 relative overflow-hidden transition-all">
+                        {/* Background decoration */}
+                        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+                        <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+
                         {isProcessing ? (
-                            <div className="flex flex-col items-center animate-pulse">
-                                <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mb-3"></div>
-                                <p className="text-sm font-medium text-white">Загрузка из облака...</p>
+                            <div className="flex flex-col items-center animate-pulse z-10">
+                                <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
+                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком...</p>
                             </div>
                         ) : (
-                            <div className="text-center">
-                                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-3 border border-emerald-500/30">
+                            <div className="text-center z-10 flex flex-col items-center gap-4">
+                                <div className="w-12 h-12 bg-emerald-500/10 text-emerald-400 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-lg shadow-emerald-900/20">
                                     <DataIcon />
                                 </div>
-                                <p className="text-sm text-gray-300 mb-4 max-w-xs mx-auto">
-                                    Загрузить актуальную базу АКБ (Active Client Base) напрямую из подключенной Google Таблицы.
-                                </p>
+                                
+                                <div className="space-y-1">
+                                    <h3 className="text-sm font-bold text-emerald-100">Google Sheets Источник</h3>
+                                    <p className="text-xs text-gray-400 max-w-[280px] mx-auto leading-relaxed">
+                                        Прямая загрузка актуальной базы АКБ из подключенной корпоративной таблицы.
+                                    </p>
+                                </div>
+
                                 <button 
                                     onClick={onStartCloudProcessing}
                                     disabled={disabled}
-                                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg transition-colors flex items-center gap-2 mx-auto disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-900/20"
+                                    className="group bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-2.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-emerald-900/30 hover:shadow-emerald-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
                                 >
-                                    Загрузить АКБ из Google Sheets
+                                    <span>Загрузить таблицу</span>
+                                    <svg className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                                 </button>
                             </div>
                         )}
+                        
                         {/* Progress Background for Cloud */}
                         {progress > 0 && (
-                            <div className="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden mt-auto">
+                            <div className="absolute bottom-0 left-0 w-full h-1 bg-gray-700/50">
                                 <div 
-                                    className="bg-gradient-to-r from-emerald-400 to-teal-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
+                                    className="bg-gradient-to-r from-emerald-400 to-teal-400 h-full transition-all duration-300 ease-linear shadow-[0_0_10px_rgba(52,211,153,0.5)]"
                                     style={{ width: `${progress}%` }}
                                 ></div>
                             </div>
@@ -190,7 +201,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         
                         <div className="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
                             <div 
-                                className="bg-gradient-to-r from-indigo-400 to-purple-500 h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect"
+                                className={`h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect ${mode === 'cloud' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-indigo-400 to-purple-500'}`}
                                 style={{ width: `${progress}%` }}
                             ></div>
                         </div>
