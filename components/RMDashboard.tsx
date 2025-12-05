@@ -376,6 +376,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                             totalFact: bFact,
                             totalPotential: totalRegionOkb, // Share context is Region
                             matchedCount: matchedCount,     // Share context is Region
+                            activeCount: activeCount,       // PASS TOTAL ACTIVE CLIENTS
                             totalRegionOkb: totalRegionOkb,
                             
                             // Brand Specifics
@@ -426,7 +427,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
-                const marketShare = totalRegionOkb > 0 ? (matchedCount / totalRegionOkb) : NaN;
+                // Recalculate market share using activeCount if available, mirroring engine logic
+                const numerator = activeCount > 0 ? activeCount : matchedCount;
+                const marketShare = totalRegionOkb > 0 ? Math.min(1.0, numerator / totalRegionOkb) : NaN;
 
                 regionMetrics.push({
                     name: regionKey,
@@ -434,7 +437,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     plan: regionCalculatedPlan,
                     growthPct: regionGrowthPct,
                     marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN,
-                    activeCount: matchedCount,
+                    activeCount: activeCount, // Show real active count, not just matched
                     totalCount: totalRegionOkb,
                     brands: regionBrands,
                     // Factors for the region row are approximate (weighted average could be done, but taking top brand or simplified factors is easier for UI)

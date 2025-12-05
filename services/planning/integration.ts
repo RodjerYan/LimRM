@@ -123,6 +123,7 @@ export function enrichDataWithSmartPlan(
                 
                 // REGIONAL Context (Shared)
                 matchedCount: ctx.matchedOkbCoords,
+                activeCount: ctx.activeUniqueClients.size, // PASS TOTAL ACTIVE CLIENTS
                 totalRegionOkb: ctx.totalOkbCapacity,
                 
                 // BRAND Specifics
