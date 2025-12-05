@@ -340,8 +340,10 @@ const BrandPackagingModal: React.FC<{
                     <table className="w-full text-sm text-left relative">
                         <thead className="bg-gray-800 text-gray-400 font-semibold sticky top-0 z-10 shadow-sm">
                             <tr>
-                                <th className="px-4 py-3 w-1/6">Фасовка</th>
-                                <th className="px-4 py-3 w-1/2">SKU (Ассортимент)</th>
+                                {/* Reduced width for Packaging to expand SKU column leftwards */}
+                                <th className="px-4 py-3 w-[8%]">Фасовка</th>
+                                {/* Increased width for SKU */}
+                                <th className="px-4 py-3 w-[60%]">SKU (Ассортимент)</th>
                                 <th className="px-4 py-3 text-right">Инд. Рост</th>
                                 <th className="px-4 py-3 text-right">Факт</th>
                                 <th className="px-4 py-3 text-right">План 2026</th>
