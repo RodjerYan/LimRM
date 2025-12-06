@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo } from 'react';
 import Modal from './Modal';
 import { MapPoint, PotentialClient } from '../types';
@@ -72,7 +73,6 @@ const ClientTable: React.FC<{
                         <tr>
                             <th className="px-4 py-2">Наименование</th>
                             <th className="px-4 py-2">Адрес</th>
-                            {/* Explicitly adding Sales Channel column for active clients */}
                             {isGreen && <th className="px-4 py-2 text-center">Канал продаж</th>}
                             <th className="px-4 py-2 text-right">{isGreen ? 'Факт (кг)' : 'Тип'}</th>
                         </tr>
@@ -134,7 +134,7 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                     <span className="text-sm text-indigo-400 font-normal mt-1">Менеджер: {rmName}</span>
                 </div>
             }
-            maxWidth="max-w-[90vw]"
+            maxWidth="max-w-[96vw]"
         >
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[70vh]">
                 <ClientTable 

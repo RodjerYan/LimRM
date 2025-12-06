@@ -9,6 +9,7 @@ import RoiGenome from './components/modules/RoiGenome';
 
 // Existing components needed for AMP module
 import Filters from './components/Filters';
+import MetricsSummary from './components/MetricsSummary';
 import ResultsTable from './components/ResultsTable';
 import PotentialChart from './components/PotentialChart';
 import DetailsModal from './components/DetailsModal';
@@ -40,6 +41,7 @@ import {
     PlanMetric
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
+import { TargetIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -128,6 +130,8 @@ const App: React.FC = () => {
     const isDataLoaded = allData.length > 0;
 
     // --- SMART DATA INTEGRATION ---
+    // Prepare a set of OKB coordinates for exact matching, mimicking Dashboard logic.
+    // This ensures that coverage calculations (and thus growth plans) are consistent across views.
     const okbCoordSet = useMemo(() => {
         const set = new Set<string>();
         if (okbData && okbData.length > 0) {
@@ -141,6 +145,8 @@ const App: React.FC = () => {
         return set;
     }, [okbData]);
 
+    // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard.
+    // Using default base rate of 15% for general analytics view.
     const smartData = useMemo(() => {
         return enrichDataWithSmartPlan(allData, okbRegionCounts, 15, okbCoordSet);
     }, [allData, okbRegionCounts, okbCoordSet]);
@@ -205,7 +211,7 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
-    // --- FILE PROCESSING LOGIC ---
+    // --- FILE PROCESSING LOGIC (Moved from FileUpload.tsx) ---
     
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
@@ -218,12 +224,13 @@ const App: React.FC = () => {
             addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
         
-        // Auto-switch to Analytics
+        // Auto-switch to Analytics if data loaded, but give a small delay so user sees 100% progress
         setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
 
     // --- WORKER SETUP & COMMUNICATION ---
     
+    // Initialize Worker logic (abstracted to be reused by both file and cloud flow)
     const initWorker = useCallback(async (
         payload: { file?: File, rawSheetData?: any[][] },
         messageStart: string, 
@@ -242,8 +249,7 @@ const App: React.FC = () => {
         // Pre-load cache
         let cacheData: CoordsCache = {};
         try {
-            // UPDATED: Use unified cache endpoint
-            const response = await fetch(`/api/cache?action=get-all&t=${Date.now()}`, { cache: 'no-store' });
+            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`, { cache: 'no-store' });
             if (response.ok) {
                 cacheData = await response.json();
                 setProcessingState(prev => ({ ...prev, message: 'Кэш загружен, инициализация...' }));
@@ -284,7 +290,7 @@ const App: React.FC = () => {
                     handleFileProcessed(payload);
                     setProcessingState(prev => ({ 
                         ...prev, 
-                        isProcessing: false, 
+                        isProcessing: false, // Keep file name but stop processing flag
                         progress: 100, 
                         message: 'Обработка завершена!' 
                     }));
@@ -334,8 +340,7 @@ const App: React.FC = () => {
         });
 
         try {
-            // UPDATED: Use consolidated API endpoint
-            const response = await fetch('/api/get-okb?source=akb');
+            const response = await fetch('/api/get-akb');
             if (!response.ok) throw new Error('Failed to fetch AKB data from cloud');
             const rawSheetData = await response.json();
             
@@ -511,19 +516,14 @@ const App: React.FC = () => {
 
         const startTime = Date.now();
 
-        // Trigger Nominatim proxy and then update cache if found
         fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
             .then(res => res.ok ? res.json() : null)
             .then(coords => {
                 if (coords) {
-                     fetch('/api/update-address', { // Consolidated API
+                     fetch('/api/update-coords', {
                          method: 'POST',
                          headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify({ 
-                             rmName, 
-                             action: 'update-coords',
-                             updates: [{ address, lat: coords.lat, lon: coords.lon }] 
-                         })
+                         body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
                     }).catch(console.error);
                 }
             }).catch(console.error);
@@ -531,8 +531,7 @@ const App: React.FC = () => {
         const check = async () => {
             try {
                 if (Date.now() - startTime > MAX_POLL_TIME) throw new Error('Timeout waiting for coordinates');
-                // UPDATED: Use unified cache endpoint
-                const res = await fetch(`/api/cache?action=get-one&rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data.lat && data.lon) {
@@ -594,6 +593,7 @@ const App: React.FC = () => {
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
+            // Apply filters to the SMART (enriched) data, not the raw data
             const result = applyFilters(smartData, filters);
             setFilteredData(result);
             setIsLoading(false);
@@ -606,6 +606,7 @@ const App: React.FC = () => {
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
+        // Separate wrapper classes based on content type
         const limitedWrapperClass = "w-full max-w-[1600px] mx-auto px-4 lg:px-8";
         const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 
@@ -614,11 +615,13 @@ const App: React.FC = () => {
                 return (
                     <div className={limitedWrapperClass}>
                         <Adapta 
+                            // Pass down the processing state and start handler
                             processingState={processingState}
                             onStartProcessing={handleStartFileProcessing}
                             onStartCloudProcessing={handleStartCloudProcessing}
-                            onFileProcessed={handleFileProcessed}
-                            onProcessingStateChange={handleProcessingStateChange}
+                            // Legacy props (some might be deprecated in FileUpload but kept for compatibility if needed)
+                            onFileProcessed={handleFileProcessed} // Redundant if handled via state but good for clear interface
+                            onProcessingStateChange={handleProcessingStateChange} // Legacy, could be removed
                             okbData={okbData}
                             okbStatus={okbStatus}
                             onOkbStatusChange={handleOkbStatusChange}
@@ -636,7 +639,7 @@ const App: React.FC = () => {
                         <RMDashboard 
                             isOpen={true} // Always open when in this view
                             onClose={() => setActiveModule('amp')} 
-                            data={filteredData}
+                            data={filteredData} // Passing enriched data to Dashboard is redundant but safe (dashboard recalcs anyway)
                             okbRegionCounts={okbRegionCounts}
                             okbData={okbData}
                             mode="page"
@@ -656,6 +659,7 @@ const App: React.FC = () => {
             case 'agile':
                 return (
                     <div className={limitedWrapperClass}>
+                        {/* PASS SMART DATA HERE */}
                         <AgileLearning data={smartData} />
                     </div>
                 );
@@ -676,6 +680,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
 
+                        {/* Map occupies full width at the top */}
                         <InteractiveRegionMap 
                             data={filteredData} 
                             selectedRegions={filters.region} 
@@ -687,6 +692,7 @@ const App: React.FC = () => {
                             onEditClient={(client) => handleStartEdit(client, 'clients')}
                         />
 
+                        {/* Split layout: Filters (Left) | Chart (Right) - Unequal Width (25% / 75%) */}
                         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                             <div className="h-full lg:col-span-1">
                                 <Filters
@@ -708,6 +714,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
+                        {/* Results Table - Full Width at Bottom */}
                         <div className="w-full">
                             <ResultsTable 
                                 data={filteredData} 
@@ -725,7 +732,10 @@ const App: React.FC = () => {
 
     return (
         <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300 flex">
+            {/* SIDEBAR NAVIGATION */}
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
+
+            {/* MAIN CONTENT AREA - Shifted right due to fixed sidebar */}
             <main className={`flex-1 ml-0 lg:ml-64 p-4 lg:p-8 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
                 {renderContent()}
             </main>
@@ -772,15 +782,17 @@ const App: React.FC = () => {
                 globalTheme={theme}
             />
             
+            {/* New Modal for specific brand plan explanation */}
             {planExplanationData && (
                 <GrowthExplanationModal
                     isOpen={!!planExplanationData}
                     onClose={() => setPlanExplanationData(null)}
                     data={planExplanationData}
-                    baseRate={15} 
+                    baseRate={15} // Default base rate for general view context
                 />
             )}
             
+            {/* Retain Modal version if needed, but main access is via sidebar now */}
             <RMDashboard 
                 isOpen={isRMDashboardOpen} 
                 onClose={() => setIsRMDashboardOpen(false)} 

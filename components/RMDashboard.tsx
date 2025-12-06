@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
@@ -50,9 +51,12 @@ interface RMDashboardProps {
 
 // --- VISUALIZATION COMPONENT FOR AI MODAL ---
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
+    // Gap Calculation
     const gap = Math.max(0, plan - fact);
+    // Percentage of the 2026 Plan covered by existing 2025 Fact
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
     
+    // Chart 1: Bar Data (Fact vs Plan)
     const barData = {
         labels: ['Факт 2025', 'План 2026'],
         datasets: [
@@ -97,6 +101,8 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         }
     };
 
+    // Chart 2: Doughnut Data (Execution / Gap)
+    // Clarification: This shows how much of the Future Plan is already covered by Current Fact.
     const doughnutData = {
         labels: ['Текущая База (Факт)', 'Цель Роста (Gap)'],
         datasets: [
@@ -225,20 +231,19 @@ const BrandPackagingModal: React.FC<{
             plan: number;
             rows: AggregatedDataRow[];
             skus: Set<string>; // Set to store unique SKU names
-            channels: Set<string>; // Set to store unique channels
         }>();
 
         rawRows.forEach(r => {
             const key = r.packaging || 'Не указана';
             if (!groups.has(key)) {
-                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set(), channels: new Set() });
+                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set() });
             }
             const g = groups.get(key)!;
             g.fact += r.fact;
             g.plan += (r.planMetric?.plan || 0);
             g.rows.push(r);
 
-            // Extract SKUs and Channels from all clients in this row
+            // Extract SKUs from all clients in this row
             if (r.clients) {
                 r.clients.forEach(client => {
                     if (client.originalRow) {
@@ -253,20 +258,22 @@ const BrandPackagingModal: React.FC<{
                             g.skus.add(skuName);
                         }
                     }
-                    if (client.type) {
-                        g.channels.add(client.type);
-                    }
                 });
             }
         });
 
         return Array.from(groups.values()).map(g => {
+            // Recalculate weighted growth for the aggregated packaging
             const growth = g.fact > 0 ? ((g.plan - g.fact) / g.fact) * 100 : (g.plan > 0 ? 100 : 0);
+            
+            // Find representative row (max fact) to use its factors for explanation context
+            // This ensures the explanation makes sense for the dominant part of this packaging group
             const representativeRow = g.rows.reduce((prev, curr) => (prev.fact > curr.fact) ? prev : curr);
             
+            // Clone metric and override totals with aggregated values
             const metric: PlanMetric = {
-                ...representativeRow.planMetric!, 
-                name: `${representativeRow.brand} (${g.packaging})`, 
+                ...representativeRow.planMetric!, // Base structure
+                name: `${representativeRow.brand} (${g.packaging})`, // Specific name for modal title
                 fact: g.fact,
                 plan: g.plan,
                 growthPct: growth
@@ -279,8 +286,7 @@ const BrandPackagingModal: React.FC<{
                 plan: g.plan,
                 growthPct: growth,
                 planMetric: metric,
-                skuList: Array.from(g.skus).sort(),
-                channelsList: Array.from(g.channels).sort()
+                skuList: Array.from(g.skus).sort() // Convert Set to sorted Array
             };
         }).sort((a, b) => b.fact - a.fact);
     }, [rawRows]);
@@ -292,7 +298,6 @@ const BrandPackagingModal: React.FC<{
         const exportData = aggregatedRows.map(row => ({
             'Фасовка': row.packaging,
             'Ассортимент (SKU)': row.skuList.join(', '),
-            'Канал продаж': row.channelsList.join(', '),
             'Инд. Рост (%)': row.growthPct.toFixed(2),
             'Факт (кг)': row.fact,
             'План 2026 (кг)': row.plan.toFixed(0)
@@ -302,6 +307,7 @@ const BrandPackagingModal: React.FC<{
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Детализация');
         
+        // Sanitize filename
         const safeRegion = regionName.replace(/[^a-zа-я0-9]/gi, '_');
         const safeBrand = brandMetric.name.replace(/[^a-zа-я0-9]/gi, '_');
         XLSX.writeFile(workbook, `Detail_${safeRegion}_${safeBrand}.xlsx`);
@@ -312,7 +318,7 @@ const BrandPackagingModal: React.FC<{
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Детализация ${regionName}: ${brandMetric.name}`} 
-            maxWidth="max-w-[96vw]" 
+            maxWidth="max-w-7xl" 
         >
             <div className="space-y-4">
                 {/* Stats Header */}
@@ -347,13 +353,18 @@ const BrandPackagingModal: React.FC<{
                         <table className="min-w-full text-sm text-left table-fixed">
                             <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
                                 <tr>
+                                    {/* Fixed narrow width for Packaging to save space, but enough for text */}
                                     <th className="px-6 py-4 w-24 text-gray-300">Фасовка</th>
+                                    
+                                    {/* Flexible width for SKU - takes all remaining space */}
                                     <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
-                                    {/* Added Sales Channel Column */}
-                                    <th className="px-6 py-4 w-40">Канал</th>
+                                    
+                                    {/* Fixed widths for numeric metrics to align perfectly */}
                                     <th className="px-6 py-4 w-32 text-right">Инд. Рост</th>
                                     <th className="px-6 py-4 w-32 text-right">Факт</th>
                                     <th className="px-6 py-4 w-32 text-right">План 2026</th>
+                                    
+                                    {/* Fixed width for action button */}
                                     <th className="px-6 py-4 w-24 text-center">Анализ</th>
                                 </tr>
                             </thead>
@@ -380,9 +391,6 @@ const BrandPackagingModal: React.FC<{
                                                         <span className="text-xs text-gray-600 italic">Не указано</span>
                                                     )}
                                                 </div>
-                                            </td>
-                                            <td className="px-6 py-4 text-xs text-gray-400 break-words">
-                                                {row.channelsList.length > 0 ? row.channelsList.join(', ') : '—'}
                                             </td>
                                             <td className="px-6 py-4 text-right font-mono whitespace-nowrap">
                                                 {row.planMetric ? (
@@ -720,6 +728,9 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
                 // STRICT COVERAGE CALCULATION: Active / (Active + Uncovered)
+                // Uncovered = Total Region OKB - Matched.
+                // Formula effectively: Active / (Active + OKB - Matched)
+                // This represents "Share of Total Known Potential" (Union of Active and OKB).
                 const uncoveredCount = Math.max(0, totalRegionOkb - matchedCount);
                 const totalUniverse = activeCount + uncoveredCount;
                 
@@ -748,6 +759,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
+            // Strict Weighted Share for RM (Active / Total Universe)
             const rmUncovered = Math.max(0, rmTotalOkbRaw - rmTotalMatched);
             const rmTotalUniverse = rmTotalActive + rmUncovered;
             const weightedShare = (rmTotalUniverse > 0) 
@@ -783,13 +795,14 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     }, [data, okbRegionCounts, okbData, baseRate]);
 
     const handleAnalyzePackaging = (row: any) => {
+        // row contains: key, packaging, fact, plan, growthPct, skuList
         if (packagingAbortController.current) {
             packagingAbortController.current.abort();
         }
         packagingAbortController.current = new AbortController();
 
         setPackagingAnalysisTitle(`Анализ фасовки: ${row.packaging}`);
-        setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct });
+        setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct }); // Set chart data
         setPackagingAnalysisContent('');
         setIsPackagingAnalysisOpen(true);
         setIsPackagingAnalysisLoading(true);
@@ -800,7 +813,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             row.fact,
             row.plan,
             row.growthPct,
-            selectedBrandRegion, 
+            selectedBrandRegion, // Context from parent selection
             (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
             (err) => {
                 if (err.name !== 'AbortError') {
@@ -1102,15 +1115,19 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 const skuColor = skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300');
                                 const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
 
+                                // Dynamic classes for row focus effect
                                 let rowClasses = "transition-all duration-300 cursor-pointer ";
                                 
                                 if (isAnyExpanded) {
                                     if (isExpanded) {
+                                        // Active row: Highlight, slightly larger, shadow
                                         rowClasses += "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30 ";
                                     } else {
+                                        // Inactive rows: Dimmed, blurred, grayscale
                                         rowClasses += "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none border-b border-gray-800 ";
                                     }
                                 } else {
+                                    // Normal state
                                     rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 ";
                                 }
 
@@ -1149,6 +1166,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                 className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
                                                                 style={{ width: `${covered}%` }}
                                                             ></div>
+                                                            {/* Explicitly visualizing the gap with darker background */}
                                                             <div className="h-full bg-gray-700 flex-grow"></div>
                                                         </div>
                                                     )}
@@ -1235,6 +1253,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                         {rm.regions.map(reg => {
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare);
                                                                             const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
+                                                                            const regUncoveredCount = Math.max(0, (reg.totalCount || 0) - ((reg.totalCount || 0) * (regCovered / 100))); // Rough estimate for tooltip
                                                                             
                                                                             const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
