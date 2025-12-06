@@ -646,7 +646,7 @@ const App: React.FC = () => {
                             metrics={summaryMetrics}
                             okbStatus={okbStatus}
                             onActiveClientsClick={() => setIsClientsModalOpen(true)}
-                            onEditClient={(client) => handleStartEdit(client, 'clients')}
+                            onEditClient={(client: MapPoint) => handleStartEdit(client, 'clients')}
                         />
                     </div>
                 );
