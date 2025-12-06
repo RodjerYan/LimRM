@@ -73,7 +73,7 @@ const ClientTable: React.FC<{
                         <tr>
                             <th className="px-4 py-2">Наименование</th>
                             <th className="px-4 py-2">Адрес</th>
-                            {isGreen && <th className="px-4 py-2 text-center">Канал</th>}
+                            {isGreen && <th className="px-4 py-2 text-center">Канал продаж</th>}
                             <th className="px-4 py-2 text-right">{isGreen ? 'Факт (кг)' : 'Тип'}</th>
                         </tr>
                     </thead>
@@ -85,14 +85,14 @@ const ClientTable: React.FC<{
                                     className={`hover:bg-white/5 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
                                     onClick={() => onRowClick && onRowClick(item)}
                                 >
-                                    <td className="px-4 py-2 font-medium text-gray-300 max-w-[150px] truncate" title={item.name}>
+                                    <td className="px-4 py-2 font-medium text-gray-300 max-w-[220px] truncate" title={item.name}>
                                         {item.name}
                                     </td>
-                                    <td className="px-4 py-2 text-gray-500 max-w-[200px] truncate" title={item.address}>
+                                    <td className="px-4 py-2 text-gray-500 max-w-[350px] truncate" title={item.address}>
                                         {item.address}
                                     </td>
                                     {isGreen && (
-                                        <td className="px-4 py-2 text-center text-gray-400 text-[10px] uppercase tracking-wider truncate max-w-[100px]" title={item.type}>
+                                        <td className="px-4 py-2 text-center text-gray-400 text-[10px] uppercase tracking-wider truncate max-w-[150px]" title={item.type}>
                                             {item.type || '—'}
                                         </td>
                                     )}
@@ -134,7 +134,7 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                     <span className="text-sm text-indigo-400 font-normal mt-1">Менеджер: {rmName}</span>
                 </div>
             }
-            maxWidth="max-w-7xl"
+            maxWidth="max-w-[96vw]"
         >
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[70vh]">
                 <ClientTable 

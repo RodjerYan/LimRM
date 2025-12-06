@@ -397,12 +397,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 }
                 
                 // Optimistic history update - Visual only
+                const timestamp = new Date().toLocaleString('ru-RU', {
+                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                });
+
                 if (isAddressChanged) {
-                    const timestamp = new Date().toLocaleString('ru-RU', {
-                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                    });
                     const newHistoryEntry = `${oldAddress} [${timestamp}]`;
                     setHistory(prev => [newHistoryEntry, ...prev]);
+                } else if (isCommentChanged) {
+                    // Just show the entered comment in history as requested
+                    const commentEntry = `Комментарий: "${comment}" [${timestamp}]`;
+                    setHistory(prev => [commentEntry, ...prev]);
                 }
                 justSaved.current = true;
             }
@@ -459,6 +464,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
             // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)
+            // If only comment changed, we skip this block and go straight to idle
             if (!manualCoords && isAddressChanged) {
                 setStatus('geocoding');
                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
