@@ -19,7 +19,7 @@ import AddressEditModal from './components/AddressEditModal';
 import Notification from './components/Notification';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
-import RMDashboard from './components/RMDashboard'; 
+import { RMDashboard } from './components/RMDashboard'; 
 import RMAnalysisModal from './components/RMAnalysisModal'; 
 import GrowthExplanationModal from './components/GrowthExplanationModal';
 
