@@ -231,21 +231,23 @@ const BrandPackagingModal: React.FC<{
             plan: number;
             rows: AggregatedDataRow[];
             skus: Set<string>; // Set to store unique SKU names
+            channels: Set<string>; // Set to store unique Sales Channels
         }>();
 
         rawRows.forEach(r => {
             const key = r.packaging || 'Не указана';
             if (!groups.has(key)) {
-                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set() });
+                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set(), channels: new Set() });
             }
             const g = groups.get(key)!;
             g.fact += r.fact;
             g.plan += (r.planMetric?.plan || 0);
             g.rows.push(r);
 
-            // Extract SKUs from all clients in this row
+            // Extract SKUs and Channels from all clients in this row
             if (r.clients) {
                 r.clients.forEach(client => {
+                    // SKU logic
                     if (client.originalRow) {
                         // Look for "Unique Product Name" or fallbacks
                         const skuName = findValueInRow(client.originalRow, [
@@ -257,6 +259,10 @@ const BrandPackagingModal: React.FC<{
                         if (skuName) {
                             g.skus.add(skuName);
                         }
+                    }
+                    // Channel logic
+                    if (client.type) {
+                        g.channels.add(client.type);
                     }
                 });
             }
@@ -286,7 +292,8 @@ const BrandPackagingModal: React.FC<{
                 plan: g.plan,
                 growthPct: growth,
                 planMetric: metric,
-                skuList: Array.from(g.skus).sort() // Convert Set to sorted Array
+                skuList: Array.from(g.skus).sort(), // Convert Set to sorted Array
+                channelList: Array.from(g.channels).sort() // Convert Set to sorted Array
             };
         }).sort((a, b) => b.fact - a.fact);
     }, [rawRows]);
@@ -298,6 +305,7 @@ const BrandPackagingModal: React.FC<{
         const exportData = aggregatedRows.map(row => ({
             'Фасовка': row.packaging,
             'Ассортимент (SKU)': row.skuList.join(', '),
+            'Канал продаж': row.channelList.join(', '), // Added to export
             'Инд. Рост (%)': row.growthPct.toFixed(2),
             'Факт (кг)': row.fact,
             'План 2026 (кг)': row.plan.toFixed(0)
@@ -353,18 +361,21 @@ const BrandPackagingModal: React.FC<{
                         <table className="min-w-full text-sm text-left table-fixed">
                             <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
                                 <tr>
-                                    {/* Fixed narrow width for Packaging to save space, but enough for text */}
+                                    {/* Fixed narrow width for Packaging */}
                                     <th className="px-6 py-4 w-24 text-gray-300">Фасовка</th>
                                     
-                                    {/* Flexible width for SKU - takes all remaining space */}
+                                    {/* Flexible width for SKU */}
                                     <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
+
+                                    {/* New Column: Channel */}
+                                    <th className="px-6 py-4 w-32 text-gray-300">Канал</th>
                                     
-                                    {/* Fixed widths for numeric metrics to align perfectly */}
+                                    {/* Fixed widths for metrics */}
                                     <th className="px-6 py-4 w-32 text-right">Инд. Рост</th>
                                     <th className="px-6 py-4 w-32 text-right">Факт</th>
                                     <th className="px-6 py-4 w-32 text-right">План 2026</th>
                                     
-                                    {/* Fixed width for action button */}
+                                    {/* Action button */}
                                     <th className="px-6 py-4 w-24 text-center">Анализ</th>
                                 </tr>
                             </thead>
@@ -391,6 +402,13 @@ const BrandPackagingModal: React.FC<{
                                                         <span className="text-xs text-gray-600 italic">Не указано</span>
                                                     )}
                                                 </div>
+                                            </td>
+                                            {/* Channel Data */}
+                                            <td className="px-6 py-4 text-xs text-indigo-300 font-medium whitespace-normal">
+                                                {row.channelList.length > 0 
+                                                    ? row.channelList.join(', ') 
+                                                    : <span className="text-gray-600">—</span>
+                                                }
                                             </td>
                                             <td className="px-6 py-4 text-right font-mono whitespace-nowrap">
                                                 {row.planMetric ? (
