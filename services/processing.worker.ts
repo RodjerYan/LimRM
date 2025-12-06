@@ -611,7 +611,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (updates.length > 0) {
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
                 try {
-                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
+                     // UPDATED: Use consolidated API endpoint with action
+                     await fetch('/api/update-address', { 
+                         method: 'POST', 
+                         headers: { 'Content-Type': 'application/json' }, 
+                         body: JSON.stringify({ 
+                             rmName, 
+                             action: 'update-coords', // Specify action
+                             updates 
+                         }) 
+                    });
                 } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
             }
         }

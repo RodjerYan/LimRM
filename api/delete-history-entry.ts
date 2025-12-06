@@ -1,2 +1,2 @@
 export {}; 
-// This endpoint has been merged into /api/delete-address.ts to conserve serverless function limits on Vercel Hobby plan.
+// This endpoint has been merged into /api/delete-address.ts to conserve serverless function limits.

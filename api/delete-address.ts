@@ -15,7 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Scenario 1: Delete a specific history entry
-        if (action === 'delete-history') {
+        if (action === 'delete-history' || entryIndex !== undefined) {
             if (!currentAddress || entryIndex === undefined) {
                 return res.status(400).json({ error: 'currentAddress and entryIndex are required for history deletion.' });
             }
