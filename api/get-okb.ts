@@ -25,7 +25,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(200).json(okbData);
 
     } catch (error) {
-        // --- Enhanced Error Logging ---
         console.error('--- Full Error Object from Google Sheets API ---');
         console.error(JSON.stringify(error, null, 2));
 

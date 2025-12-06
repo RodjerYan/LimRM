@@ -261,7 +261,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setIsLoadingHistory(true);
         setHistory([]);
         try {
-            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+            // UPDATED: Use unified cache endpoint
+            const res = await fetch(`/api/cache?action=get-one&rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {

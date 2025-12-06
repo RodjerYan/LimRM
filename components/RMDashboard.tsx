@@ -50,12 +50,9 @@ interface RMDashboardProps {
 
 // --- VISUALIZATION COMPONENT FOR AI MODAL ---
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
-    // Gap Calculation
     const gap = Math.max(0, plan - fact);
-    // Percentage of the 2026 Plan covered by existing 2025 Fact
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
     
-    // Chart 1: Bar Data (Fact vs Plan)
     const barData = {
         labels: ['Факт 2025', 'План 2026'],
         datasets: [
@@ -100,8 +97,6 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         }
     };
 
-    // Chart 2: Doughnut Data (Execution / Gap)
-    // Clarification: This shows how much of the Future Plan is already covered by Current Fact.
     const doughnutData = {
         labels: ['Текущая База (Факт)', 'Цель Роста (Gap)'],
         datasets: [
@@ -266,17 +261,12 @@ const BrandPackagingModal: React.FC<{
         });
 
         return Array.from(groups.values()).map(g => {
-            // Recalculate weighted growth for the aggregated packaging
             const growth = g.fact > 0 ? ((g.plan - g.fact) / g.fact) * 100 : (g.plan > 0 ? 100 : 0);
-            
-            // Find representative row (max fact) to use its factors for explanation context
-            // This ensures the explanation makes sense for the dominant part of this packaging group
             const representativeRow = g.rows.reduce((prev, curr) => (prev.fact > curr.fact) ? prev : curr);
             
-            // Clone metric and override totals with aggregated values
             const metric: PlanMetric = {
-                ...representativeRow.planMetric!, // Base structure
-                name: `${representativeRow.brand} (${g.packaging})`, // Specific name for modal title
+                ...representativeRow.planMetric!, 
+                name: `${representativeRow.brand} (${g.packaging})`, 
                 fact: g.fact,
                 plan: g.plan,
                 growthPct: growth
@@ -289,8 +279,8 @@ const BrandPackagingModal: React.FC<{
                 plan: g.plan,
                 growthPct: growth,
                 planMetric: metric,
-                skuList: Array.from(g.skus).sort(), // Convert Set to sorted Array
-                channelsList: Array.from(g.channels).sort() // Convert Set to sorted Array
+                skuList: Array.from(g.skus).sort(),
+                channelsList: Array.from(g.channels).sort()
             };
         }).sort((a, b) => b.fact - a.fact);
     }, [rawRows]);
@@ -312,7 +302,6 @@ const BrandPackagingModal: React.FC<{
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'Детализация');
         
-        // Sanitize filename
         const safeRegion = regionName.replace(/[^a-zа-я0-9]/gi, '_');
         const safeBrand = brandMetric.name.replace(/[^a-zа-я0-9]/gi, '_');
         XLSX.writeFile(workbook, `Detail_${safeRegion}_${safeBrand}.xlsx`);
@@ -358,21 +347,13 @@ const BrandPackagingModal: React.FC<{
                         <table className="min-w-full text-sm text-left table-fixed">
                             <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
                                 <tr>
-                                    {/* Fixed narrow width for Packaging to save space, but enough for text */}
                                     <th className="px-6 py-4 w-24 text-gray-300">Фасовка</th>
-                                    
-                                    {/* Flexible width for SKU - takes all remaining space */}
                                     <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
-
-                                    {/* New Sales Channel Column */}
+                                    {/* Added Sales Channel Column */}
                                     <th className="px-6 py-4 w-40">Канал</th>
-                                    
-                                    {/* Fixed widths for numeric metrics to align perfectly */}
                                     <th className="px-6 py-4 w-32 text-right">Инд. Рост</th>
                                     <th className="px-6 py-4 w-32 text-right">Факт</th>
                                     <th className="px-6 py-4 w-32 text-right">План 2026</th>
-                                    
-                                    {/* Fixed width for action button */}
                                     <th className="px-6 py-4 w-24 text-center">Анализ</th>
                                 </tr>
                             </thead>
@@ -739,9 +720,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     : (regionCalculatedPlan > 0 ? 100 : 0);
 
                 // STRICT COVERAGE CALCULATION: Active / (Active + Uncovered)
-                // Uncovered = Total Region OKB - Matched.
-                // Formula effectively: Active / (Active + OKB - Matched)
-                // This represents "Share of Total Known Potential" (Union of Active and OKB).
                 const uncoveredCount = Math.max(0, totalRegionOkb - matchedCount);
                 const totalUniverse = activeCount + uncoveredCount;
                 
@@ -770,7 +748,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100
                 : baseRate;
 
-            // Strict Weighted Share for RM (Active / Total Universe)
             const rmUncovered = Math.max(0, rmTotalOkbRaw - rmTotalMatched);
             const rmTotalUniverse = rmTotalActive + rmUncovered;
             const weightedShare = (rmTotalUniverse > 0) 
@@ -806,14 +783,13 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
     }, [data, okbRegionCounts, okbData, baseRate]);
 
     const handleAnalyzePackaging = (row: any) => {
-        // row contains: key, packaging, fact, plan, growthPct, skuList
         if (packagingAbortController.current) {
             packagingAbortController.current.abort();
         }
         packagingAbortController.current = new AbortController();
 
         setPackagingAnalysisTitle(`Анализ фасовки: ${row.packaging}`);
-        setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct }); // Set chart data
+        setPackagingChartData({ fact: row.fact, plan: row.plan, growthPct: row.growthPct });
         setPackagingAnalysisContent('');
         setIsPackagingAnalysisOpen(true);
         setIsPackagingAnalysisLoading(true);
@@ -824,7 +800,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
             row.fact,
             row.plan,
             row.growthPct,
-            selectedBrandRegion, // Context from parent selection
+            selectedBrandRegion, 
             (chunk) => setPackagingAnalysisContent(prev => prev + chunk),
             (err) => {
                 if (err.name !== 'AbortError') {
