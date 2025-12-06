@@ -9,7 +9,7 @@ import { parseRussianAddress } from '../services/addressParser';
 import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
+type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding' | 'deleting_history';
 type Theme = 'dark' | 'light';
 
 const greenIcon = new L.Icon({
@@ -259,6 +259,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [deletingHistoryIndex, setDeletingHistoryIndex] = useState<number | null>(null);
     
     // State for manually selected coordinates
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -284,7 +285,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
-                    const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
+                    // Backend sends history string separated by newlines or pipes.
+                    // Newest is usually appended to the end in Sheets if using push, BUT `updateAddressInCache` prepends: `${entry}\n${newHistory}`.
+                    // So index 0 in the split array is the Newest.
+                    const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean);
                     setHistory(historyArray);
                 }
                 // Refresh comment from cache if needed (though local state might be newer)
@@ -310,6 +314,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // Reset manual coords on open
             setManualCoords(null);
             setIsMapExpanded(false);
+            setDeletingHistoryIndex(null);
             
             if ((data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
@@ -347,9 +352,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         
         // CRITICAL: Derive oldAddress from the CURRENT data state.
-        // If 'data' was updated by parent after last save, (data as MapPoint).address holds the NEW value.
-        // We use this new value as the 'oldAddress' for the NEXT save.
-        // Fallback to originalRow only for the very first edit.
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
         
@@ -417,7 +419,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
-            let isGeocodingState = true;
+            
+            // Determine if we need to enter geocoding state
+            // We only geocode if the address changed AND we haven't manually set coordinates.
+            // If only comment changed, this remains false.
+            let isGeocodingState = isAddressChanged && !manualCoords;
 
             // 2. Handle Manual Coordinates Update
             if (manualCoords) {
@@ -513,6 +519,82 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setError((e as Error).message);
         }
     };
+
+    const handleDeleteHistory = async (index: number, content: string) => {
+        if (!data) return;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const originalIndex = (data as UnidentifiedRow).originalIndex;
+        // Use the displayed/current address as the key to find the row in backend
+        const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const rm = findValueInRow(originalRow, ['рм']);
+        const oldKey = (data as MapPoint).key || normalizeAddress(currentAddress);
+
+        setDeletingHistoryIndex(index);
+        setError(null);
+
+        try {
+            const res = await fetch('/api/delete-history-entry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    rmName: rm, 
+                    currentAddress, 
+                    entryIndex: index,
+                    entryContent: content 
+                }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.details || 'Ошибка при удалении записи истории.');
+            }
+
+            const result = await res.json();
+            
+            // Remove item from local history
+            setHistory(prev => prev.filter((_, i) => i !== index));
+
+            // Determine updates needed based on server response
+            let updates: Partial<MapPoint> = {};
+            let requiresDataUpdate = false;
+
+            if (result.restoredAddress) {
+                // Address was reverted
+                setEditedAddress(result.restoredAddress);
+                updates.address = result.restoredAddress;
+                // Reverting address usually clears coordinates on backend, so we should start polling or clear them locally
+                updates.lat = undefined;
+                updates.lon = undefined;
+                updates.isGeocoding = true; 
+                updates.key = normalizeAddress(result.restoredAddress);
+                requiresDataUpdate = true;
+            }
+
+            if (result.restoredComment !== undefined) {
+                // Comment was deleted/reverted
+                setComment(result.restoredComment);
+                updates.comment = result.restoredComment;
+                requiresDataUpdate = true;
+            }
+
+            if (requiresDataUpdate) {
+                const newPoint = { ...(data as MapPoint), ...updates };
+                const finalKey = updates.key || oldKey; // Use new key if address changed
+                onDataUpdate(oldKey, newPoint, originalIndex);
+                
+                // If address reverted, start polling
+                if (result.restoredAddress) {
+                    setStatus('geocoding');
+                    onStartPolling(rm, result.restoredAddress, finalKey, newPoint, originalIndex);
+                }
+            }
+
+        } catch (e) {
+            setError((e as Error).message);
+        } finally {
+            setDeletingHistoryIndex(null);
+        }
+    };
     
     const handleRetryGeocode = () => {
        handleSave();
@@ -522,8 +604,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-    // Display current address from map point state to reflect recent edits
-    const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
     const currentComment = (data as MapPoint).comment || '';
@@ -541,7 +621,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
     // Determine save button text
-    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
+    const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== ((data as MapPoint).address || '').trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
     
@@ -610,12 +690,22 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             {history.length > 0 ? (
                                 <ul className="space-y-2">
                                     {history.map((item, idx) => (
-                                        <li key={idx} className="p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex flex-col gap-1 hover:bg-gray-700/80 transition-colors">
-                                            <div className="flex items-center gap-2 text-accent text-xs font-bold">
-                                                <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
-                                                <span>Изменение #{history.length - idx}</span>
+                                        <li key={idx} className="p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex justify-between items-start gap-2 hover:bg-gray-700/80 transition-colors group">
+                                            <div className="flex flex-col gap-1 w-full">
+                                                <div className="flex items-center gap-2 text-accent text-xs font-bold">
+                                                    <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                                                    <span>Изменение #{history.length - idx}</span>
+                                                </div>
+                                                <span className="pl-4 break-words whitespace-pre-wrap">{item}</span>
                                             </div>
-                                            <span className="pl-4 break-words whitespace-pre-wrap">{item}</span>
+                                            <button 
+                                                onClick={() => handleDeleteHistory(idx, item)}
+                                                disabled={deletingHistoryIndex !== null}
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-500 hover:text-danger p-1 rounded hover:bg-gray-600 disabled:opacity-50"
+                                                title="Удалить запись (вернуть предыдущее состояние)"
+                                            >
+                                                {deletingHistoryIndex === idx ? <div className="w-4 h-4"><LoaderIcon /></div> : <div className="w-4 h-4"><TrashIcon /></div>}
+                                            </button>
                                         </li>
                                     ))}
                                 </ul>
@@ -724,7 +814,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 </div>
                             )}
 
-                             {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
+                             {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting' || error) && (
                                 <div className="text-center text-danger space-y-2">
                                     <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
                                     {status !== 'error_deleting' && (

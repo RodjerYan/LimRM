@@ -231,19 +231,20 @@ const BrandPackagingModal: React.FC<{
             plan: number;
             rows: AggregatedDataRow[];
             skus: Set<string>; // Set to store unique SKU names
+            channels: Set<string>; // Set to store unique channels
         }>();
 
         rawRows.forEach(r => {
             const key = r.packaging || 'Не указана';
             if (!groups.has(key)) {
-                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set() });
+                groups.set(key, { packaging: key, fact: 0, plan: 0, rows: [], skus: new Set(), channels: new Set() });
             }
             const g = groups.get(key)!;
             g.fact += r.fact;
             g.plan += (r.planMetric?.plan || 0);
             g.rows.push(r);
 
-            // Extract SKUs from all clients in this row
+            // Extract SKUs and Channels from all clients in this row
             if (r.clients) {
                 r.clients.forEach(client => {
                     if (client.originalRow) {
@@ -257,6 +258,9 @@ const BrandPackagingModal: React.FC<{
                         if (skuName) {
                             g.skus.add(skuName);
                         }
+                    }
+                    if (client.type) {
+                        g.channels.add(client.type);
                     }
                 });
             }
@@ -286,7 +290,8 @@ const BrandPackagingModal: React.FC<{
                 plan: g.plan,
                 growthPct: growth,
                 planMetric: metric,
-                skuList: Array.from(g.skus).sort() // Convert Set to sorted Array
+                skuList: Array.from(g.skus).sort(), // Convert Set to sorted Array
+                channelsList: Array.from(g.channels).sort() // Convert Set to sorted Array
             };
         }).sort((a, b) => b.fact - a.fact);
     }, [rawRows]);
@@ -298,6 +303,7 @@ const BrandPackagingModal: React.FC<{
         const exportData = aggregatedRows.map(row => ({
             'Фасовка': row.packaging,
             'Ассортимент (SKU)': row.skuList.join(', '),
+            'Канал продаж': row.channelsList.join(', '),
             'Инд. Рост (%)': row.growthPct.toFixed(2),
             'Факт (кг)': row.fact,
             'План 2026 (кг)': row.plan.toFixed(0)
@@ -318,7 +324,7 @@ const BrandPackagingModal: React.FC<{
             isOpen={isOpen} 
             onClose={onClose} 
             title={`Детализация ${regionName}: ${brandMetric.name}`} 
-            maxWidth="max-w-7xl" 
+            maxWidth="max-w-[96vw]" 
         >
             <div className="space-y-4">
                 {/* Stats Header */}
@@ -358,6 +364,9 @@ const BrandPackagingModal: React.FC<{
                                     
                                     {/* Flexible width for SKU - takes all remaining space */}
                                     <th className="px-6 py-4 w-auto">SKU (Ассортимент)</th>
+
+                                    {/* New Sales Channel Column */}
+                                    <th className="px-6 py-4 w-40">Канал</th>
                                     
                                     {/* Fixed widths for numeric metrics to align perfectly */}
                                     <th className="px-6 py-4 w-32 text-right">Инд. Рост</th>
@@ -391,6 +400,9 @@ const BrandPackagingModal: React.FC<{
                                                         <span className="text-xs text-gray-600 italic">Не указано</span>
                                                     )}
                                                 </div>
+                                            </td>
+                                            <td className="px-6 py-4 text-xs text-gray-400 break-words">
+                                                {row.channelsList.length > 0 ? row.channelsList.join(', ') : '—'}
                                             </td>
                                             <td className="px-6 py-4 text-right font-mono whitespace-nowrap">
                                                 {row.planMetric ? (

@@ -197,7 +197,7 @@ function normalizeForComparison(str: string): string {
 }
 
 /**
- * Helper function to check if a specific address exists in a history string.
+ * Helper to check if a specific address exists in a history string.
  * Handles timestamp stripping and various separators using robust normalization.
  */
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
@@ -205,6 +205,7 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
     // Split by newline (new format) or double pipe (old format)
     const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
     return entries.some(entry => {
+        if (entry.startsWith("Комментарий:")) return false;
         // Remove the timestamp part: " [DD.MM.YYYY HH:mm]"
         const addrPart = entry.split('[')[0];
         return normalizeForComparison(addrPart) === targetAddressNorm;
@@ -242,13 +243,6 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
         const values = valueRange.values || [];
         if (values.length > 1) { // Skip header
             cache[title] = values.slice(1).map(row => {
-                // AKB CACHE MAPPING CONFIRMED BY SCREENSHOTS "AKB base active":
-                // Column A (Index 0): Address
-                // Column B (Index 1): Latitude (lat)
-                // Column C (Index 2): Longitude (lon)
-                // Column D (Index 3): History/Old address
-                // Column E (Index 4): Comments (New)
-                
                 const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
                 const latStrLower = latStr.toLowerCase();
@@ -288,9 +282,6 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
  * Ensures a sheet exists for a given RM name (case-insensitively).
  * If it exists, returns the actual sheet title with its original casing.
  * If not, it creates a new sheet with the provided RM name and headers.
- * @param sheets The authenticated Google Sheets API client.
- * @param rmName The name of the sheet (RM name) to find or create.
- * @returns The actual title of the existing or newly created sheet.
  */
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
@@ -309,7 +300,6 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
         },
     });
     // Add headers to the new sheet
-    // Updated headers to include 'Комментарии' column
     await sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${rmName}'!A1`,
@@ -324,9 +314,6 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
 
 /**
  * Appends new rows to a specific RM's sheet in the cache. Creates the sheet if it doesn't exist.
- * This version performs a case-insensitive check to avoid adding duplicate addresses.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param rowsToAppend An array of rows to add, where each row is an array of strings/numbers.
  */
 export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
     if (rowsToAppend.length === 0) return;
@@ -364,8 +351,6 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
 
 /**
  * Updates coordinates for existing addresses in a specific RM's sheet.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param updates An array of objects containing the address and new coordinates.
  */
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
     if (updates.length === 0) return;
@@ -407,13 +392,8 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 /**
  * Replaces an old address with a new one in the cache by updating the existing row.
  * Optionally updates the comment in Column E.
- * KEEPS HISTORY: Appends the old address to Column D (History).
+ * KEEPS HISTORY: Appends the old address OR new comment to Column D (History).
  * CRITICAL: Preserves existing B (lat) and C (lon) columns to prevent data loss during rename unless renaming.
- * 
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced (from the file or current UI state).
- * @param newAddress The new, corrected address.
- * @param comment Optional comment to save in Column E.
  */
 export async function updateAddressInCache(
     rmName: string,
@@ -425,7 +405,6 @@ export async function updateAddressInCache(
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
     // Fetch A:E to check current addresses, coordinates, history, and comments
-    // We must include header check or skip it. Assuming row 1 is header.
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:E`,
@@ -438,12 +417,8 @@ export async function updateAddressInCache(
 
     let rowIndex = -1;
 
-    // 1) First, find the row by looking for the Old Address in Column A (Current Address)
-    // This covers the most common case: renaming the current active entry.
+    // 1) Find the row
     rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === oldNorm);
-
-    // 2) If not found in A, search in History (Column D)
-    // This covers cases where the UI might be stale, or we are correcting an address that was already renamed once.
     if (rowIndex === -1) {
         rowIndex = rows.findIndex(r => isAddressInHistory(String(r[3] || ''), oldNorm));
     }
@@ -453,9 +428,7 @@ export async function updateAddressInCache(
     });
 
     if (rowIndex === -1) {
-        console.log(`[updateAddressInCache] Row not found for "${oldAddress}" (norm: ${oldNorm}). Appending new row.`);
-        // Case: The row doesn't exist at all (neither current nor history).
-        // Treat as a new entry.
+        // New entry
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
@@ -468,69 +441,174 @@ export async function updateAddressInCache(
         return;
     }
 
-    // Row found. Get current data to preserve it.
     const row = rows[rowIndex];
     const currentAddress = String(row[0] || '');
-    // Preserve coordinates!
-    const currentLat = row[1] ?? ''; 
-    const currentLon = row[2] ?? '';
-    // Handle history: check if row[3] exists, otherwise empty string.
     const currentHistory = row[3] ? String(row[3]) : '';
-    // Handle current comment
     const currentComment = row[4] ? String(row[4]) : '';
-
     const rowNumber = rowIndex + 1;
 
-    // 3) Check if address actually changed
-    if (normalizeForComparison(currentAddress) === newNorm) {
-        // Address matches. Check if we need to update comment.
-        if (comment !== undefined && comment !== currentComment) {
-             console.log(`[updateAddressInCache] Updating comment for "${currentAddress}".`);
-             // Only update Column E
-             await sheets.spreadsheets.values.update({
-                spreadsheetId: CACHE_SPREADSHEET_ID,
-                range: `'${actualSheetTitle}'!E${rowNumber}`,
-                valueInputOption: 'USER_ENTERED',
-                requestBody: {
-                    values: [[comment]], 
-                },
-            });
-        }
-        return;
+    let newHistory = currentHistory;
+    let finalComment = currentComment;
+    let finalAddress = currentAddress;
+    let finalLat = row[1] ?? "";
+    let finalLon = row[2] ?? "";
+
+    const isAddressChanged = normalizeForComparison(currentAddress) !== newNorm;
+    const isCommentChanged = comment !== undefined && comment !== currentComment;
+
+    if (isAddressChanged) {
+        // If address changed, append old address to history and clear coordinates
+        const entry = `${currentAddress || oldAddress} [${timestamp}]`;
+        newHistory = newHistory ? `${entry}\n${newHistory}` : entry;
+        finalAddress = newAddress;
+        finalLat = ""; // Reset coords
+        finalLon = "";
     }
 
-    // 4) Address Changed: Construct new history
-    const valueToArchive = currentAddress || oldAddress;
-    const historyEntry = `${valueToArchive} [${timestamp}]`;
-    
-    const newHistory = currentHistory
-        ? `${currentHistory}\n${historyEntry}`
-        : historyEntry;
+    if (isCommentChanged) {
+        // If comment changed, append comment to history
+        // The *content* of the comment is stored in Col E (latest), 
+        // but we want to log that it changed in history.
+        // Or better: store the NEW comment in the history log as well so we can revert.
+        const entry = `Комментарий: "${comment}" [${timestamp}]`;
+        newHistory = newHistory ? `${entry}\n${newHistory}` : entry;
+        finalComment = comment!;
+    }
 
-    // 5) Update the row (A, B, C, D, E). 
-    // CRITICAL UPDATE: Clear existing coordinates (Col B, C) when the address (Col A) changes.
-    // Update Comment (Col E).
-    
-    console.log(`[updateAddressInCache] Updating Row ${rowNumber}. Old: "${currentAddress}" -> New: "${newAddress}". Clearing Coords. Updating Comment.`);
+    if (!isAddressChanged && !isCommentChanged) return;
 
     await sheets.spreadsheets.values.update({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
-            // Set Col B (Lat) and Col C (Lon) to empty strings. Update History and Comment.
-            // Use fallback to currentComment if comment param is undefined.
-            values: [[newAddress, "", "", newHistory, comment !== undefined ? comment : currentComment]], 
+            values: [[finalAddress, finalLat, finalLon, newHistory, finalComment]], 
         },
     });
 }
 
 /**
+ * Deletes a specific history entry from a row and performs reversion logic.
+ * 
+ * Logic:
+ * 1. If an ADDRESS entry is deleted (e.g., "Old St [date]"), it restores "Old St" to Column A (Current Address).
+ *    It clears B/C to trigger geocoding.
+ * 2. If a COMMENT entry is deleted, it removes it from history.
+ *    It sets Column E (Current Comment) to the *next most recent* comment found in the remaining history, or empty.
+ */
+export async function deleteHistoryEntry(
+    rmName: string,
+    currentAddress: string,
+    historyIndex: number,
+    historyContent: string // Pass content for verification safety
+): Promise<{ restoredAddress?: string, restoredComment?: string } | null> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+
+    // Fetch the row
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A:E`,
+    });
+
+    const rows = response.data.values || [];
+    const normAddr = normalizeForComparison(currentAddress);
+    
+    // Find Row
+    let rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === normAddr);
+    if (rowIndex === -1) return null;
+
+    const row = rows[rowIndex];
+    const currentHistoryRaw = row[3] ? String(row[3]) : '';
+    
+    // Split history (newest first)
+    let historyEntries = currentHistoryRaw.split(/\r?\n|\s*\|\|\s*/).filter(Boolean);
+    
+    // Verify index and content match to prevent race conditions
+    // The history entries in the sheet are separated by newlines. The frontend sends the index.
+    // However, the frontend might have a reversed array or processed array.
+    // The most robust way is to rely on index if we assume strict order, or match content.
+    // Since we pass index from the frontend which parses the same string, we trust the index.
+    // Frontend history is: result.history.split...filter(Boolean).reverse() usually?
+    // Wait, AddressEditModal does: `result.history.split(...).filter(Boolean).reverse()`.
+    // So Index 0 on frontend = Last element in backend string (Oldest)? 
+    // NO. AddressEditModal displays: `history.map((item, idx) => ... Change #{history.length - idx}`.
+    // The backend `updateAddressInCache` prepends new history: `${entry}\n${newHistory}`.
+    // So index 0 in the string IS the newest.
+    // AddressEditModal does `setHistory(prev => [newEntry, ...prev])` - this matches backend.
+    
+    if (historyIndex < 0 || historyIndex >= historyEntries.length) {
+        throw new Error("History index out of bounds");
+    }
+
+    const entryToRemove = historyEntries[historyIndex];
+    // Simple safety check: check if content roughly matches (ignoring timestamp variations if parsed differently)
+    // If needed, we can just trust the index.
+
+    // Determine type
+    const isCommentEntry = entryToRemove.startsWith("Комментарий:");
+    
+    // Remove the entry
+    historyEntries.splice(historyIndex, 1);
+    const newHistoryString = historyEntries.join('\n');
+    
+    const rowNumber = rowIndex + 1;
+    const result: { restoredAddress?: string, restoredComment?: string } = {};
+
+    let newColA = row[0]; // Address
+    let newColB = row[1]; // Lat
+    let newColC = row[2]; // Lon
+    let newColE = row[4]; // Comment
+
+    if (isCommentEntry) {
+        // Deleted a comment log.
+        // We need to restore Col E to the "current" valid comment.
+        // The "current" comment is defined as the content of the *new* first comment entry in history.
+        // If no comment entries remain in history, comment is empty.
+        const nextLatestCommentEntry = historyEntries.find(e => e.startsWith("Комментарий:"));
+        if (nextLatestCommentEntry) {
+            // Extract text: "Комментарий: "text" [date]" -> "text"
+            // Regex: Комментарий: "(.*)" \[
+            const match = nextLatestCommentEntry.match(/Комментарий: "(.*)" \[/);
+            if (match && match[1]) {
+                newColE = match[1];
+            } else {
+                // Fallback for simple format
+                newColE = nextLatestCommentEntry.replace("Комментарий: ", "").split('[')[0].trim().replace(/^"|"$/g, '');
+            }
+        } else {
+            newColE = ""; // No comments left in history
+        }
+        result.restoredComment = newColE;
+    } else {
+        // Deleted an Address change log.
+        // The user wants to "Revert" to this address.
+        // Extract address from the deleted entry.
+        const restoredAddress = entryToRemove.split('[')[0].trim();
+        if (restoredAddress) {
+            newColA = restoredAddress;
+            newColB = ""; // Clear coords to force re-geocode
+            newColC = "";
+            result.restoredAddress = restoredAddress;
+        }
+    }
+
+    // Update the row
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+            values: [[newColA, newColB, newColC, newHistoryString, newColE]], 
+        },
+    });
+
+    return result;
+}
+
+/**
  * Deletes an address row from the cache.
  * Performs a "Soft Delete" by writing 'DELETED' to the coordinate columns.
- * This preserves the address in Col A (and potentially history in Col D) but marks it as ignored.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param address The address to be deleted.
  */
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
@@ -568,11 +646,6 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 
 /**
  * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
- * Returns the full object including history from Column D and comment from Column E.
- * Supports finding the row even if the requested 'address' is in the history (renamed).
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param address The address to search for.
- * @returns An object with address, lat, lon, history, and comment, or null if not found.
  */
 export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string; comment?: string } | null> {
     const sheets = await getGoogleSheetsClient();
