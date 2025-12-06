@@ -1,62 +1,20 @@
-
 {
   "rewrites": [
-    {
-      "source": "/api/gemini-proxy",
-      "destination": "/api/gemini-proxy"
-    },
-    {
-      "source": "/api/get-okb",
-      "destination": "/api/get-okb"
-    },
-    {
-      "source": "/api/get-akb",
-      "destination": "/api/get-akb"
-    },
-    {
-      "source": "/api/get-okb-status",
-      "destination": "/api/get-okb-status"
-    },
-    {
-      "source": "/api/get-conflict-zones",
-      "destination": "/api/get-conflict-zones"
-    },
-    {
-      "source": "/api/get-full-cache",
-      "destination": "/api/get-full-cache"
-    },
-    {
-      "source": "/api/add-to-cache",
-      "destination": "/api/add-to-cache"
-    },
-    {
-      "source": "/api/update-coords",
-      "destination": "/api/update-coords"
-    },
-    {
-      "source": "/api/update-address",
-      "destination": "/api/update-address"
-    },
-    {
-      "source": "/api/delete-address",
-      "destination": "/api/delete-address"
-    },
-    {
-      "source": "/api/get-cached-address",
-      "destination": "/api/get-cached-address"
-    },
-    {
-      "source": "/api/geocode",
-      "destination": "/api/geocode"
-    },
-    {
-      "source": "/:path*",
-      "destination": "/index.html"
-    }
+    { "source": "/api/gemini-proxy", "destination": "/api/gemini-proxy" },
+    { "source": "/api/get-okb", "destination": "/api/gateway?type=get-okb" },
+    { "source": "/api/get-akb", "destination": "/api/gateway?type=get-okb&source=akb" },
+    { "source": "/api/get-okb-status", "destination": "/api/gateway?type=get-okb-status" },
+    { "source": "/api/get-conflict-zones", "destination": "/api/gateway?type=get-conflict-zones" },
+    { "source": "/api/geocode", "destination": "/api/gateway?type=geocode" },
+    { "source": "/api/cache", "destination": "/api/gateway?type=cache" },
+    { "source": "/api/get-cached-address", "destination": "/api/gateway?type=cache" },
+    { "source": "/api/update-address", "destination": "/api/gateway?type=update-address" },
+    { "source": "/api/delete-address", "destination": "/api/gateway?type=delete-address" },
+    { "source": "/:path*", "destination": "/index.html" }
   ],
   "crons": [
     {
-      "path": "/api/get-conflict-zones",
+      "path": "/api/gateway?type=get-conflict-zones",
       "schedule": "0 6 * * *"
     }
   ]
