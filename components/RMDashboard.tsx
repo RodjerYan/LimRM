@@ -1378,6 +1378,7 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                     regionName={selectedRegionDetails.regionName}
                     activeClients={selectedRegionDetails.activeClients}
                     potentialClients={selectedRegionDetails.potentialClients}
+                    onEditClient={onEditClient}
                 />
             )}
 

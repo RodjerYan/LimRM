@@ -38,6 +38,7 @@ export interface MapPoint {
     fact?: number; // Sales volume for this specific point
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
     lastUpdated?: number; // Timestamp of the last edit
+    comment?: string; // User comments from Column E
 }
 
 export interface EnrichedParsedAddress {
@@ -142,7 +143,7 @@ export type WorkerMessage =
 
 
 // Type for the coordinate cache data structure from Google Sheets
-export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean }[]>;
+export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;
 
 // --- PLANNING ENGINE TYPES ---
 

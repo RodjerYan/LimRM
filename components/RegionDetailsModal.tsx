@@ -11,6 +11,7 @@ interface RegionDetailsModalProps {
     regionName: string;
     activeClients: MapPoint[];
     potentialClients: PotentialClient[];
+    onEditClient?: (client: MapPoint) => void;
 }
 
 const ClientTable: React.FC<{ 
@@ -19,7 +20,8 @@ const ClientTable: React.FC<{
     title: string; 
     count: number;
     totalVolume?: number; 
-}> = ({ data, type, title, count, totalVolume }) => {
+    onRowClick?: (item: any) => void;
+}> = ({ data, type, title, count, totalVolume, onRowClick }) => {
     const [search, setSearch] = useState('');
 
     const filteredData = useMemo(() => {
@@ -78,7 +80,11 @@ const ClientTable: React.FC<{
                     <tbody className="divide-y divide-gray-800">
                         {filteredData.length > 0 ? (
                             filteredData.map((item, idx) => (
-                                <tr key={idx} className="hover:bg-white/5 transition-colors">
+                                <tr 
+                                    key={idx} 
+                                    className={`hover:bg-white/5 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}
+                                    onClick={() => onRowClick && onRowClick(item)}
+                                >
                                     <td className="px-4 py-2 font-medium text-gray-300 max-w-[150px] truncate" title={item.name}>
                                         {item.name}
                                     </td>
@@ -109,7 +115,7 @@ const ClientTable: React.FC<{
     );
 };
 
-const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose, rmName, regionName, activeClients, potentialClients }) => {
+const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose, rmName, regionName, activeClients, potentialClients, onEditClient }) => {
     
     const totalActiveVolume = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
@@ -137,6 +143,7 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
                     data={sortedActive} 
                     count={sortedActive.length}
                     totalVolume={totalActiveVolume}
+                    onRowClick={onEditClient ? (item) => onEditClient(item as MapPoint) : undefined}
                 />
                 <ClientTable 
                     type="potential" 

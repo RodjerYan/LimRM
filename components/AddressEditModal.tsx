@@ -251,6 +251,7 @@ const SinglePointMap: React.FC<{
 
 const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme }) => {
     const [editedAddress, setEditedAddress] = useState('');
+    const [comment, setComment] = useState(''); // New state for comment
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -286,6 +287,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
+                // Refresh comment from cache if needed (though local state might be newer)
+                if (result.comment && !comment) {
+                    setComment(result.comment);
+                }
             }
         } catch (e) {
             console.error("Failed to fetch history", e);
@@ -300,6 +305,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // Use data.address directly if available (for edited points), otherwise fall back to raw parsing
             const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
             setEditedAddress(currentAddress);
+            setComment((data as MapPoint).comment || ''); // Initialize comment
             
             // Reset manual coords on open
             setManualCoords(null);
@@ -345,6 +351,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         // We use this new value as the 'oldAddress' for the NEXT save.
         // Fallback to originalRow only for the very first edit.
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const currentComment = (data as MapPoint).comment || '';
         
         let oldKey = '';
         if ((data as MapPoint).key) {
@@ -356,11 +363,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         // Determine what changed
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
+        const isCommentChanged = comment.trim() !== currentComment.trim();
 
-        if (!isAddressChanged && !isCoordsChanged) {
+        if (!isAddressChanged && !isCoordsChanged && !isCommentChanged) {
             if (typeof originalIndex !== 'number') { 
                  setStatus('error_saving');
-                 setError('Адрес не был изменен, и маркер не был перемещен.');
+                 setError('Нет изменений для сохранения.');
                  return;
             }
         }
@@ -371,24 +379,31 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         try {
             const rm = findValueInRow(originalRow, ['рм']);
             
-            // 1. Update Address Text if changed
-            if (isAddressChanged) {
+            // 1. Update Address / Comment
+            if (isAddressChanged || isCommentChanged) {
                 const res = await fetch('/api/update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress }),
+                    body: JSON.stringify({ 
+                        rmName: rm, 
+                        oldAddress, 
+                        newAddress: editedAddress,
+                        comment: comment // Pass comment
+                    }),
                 });
                 if (!res.ok) {
                     const err = await res.json();
-                    throw new Error(err.details || 'Ошибка при сохранении адреса в кэше.');
+                    throw new Error(err.details || 'Ошибка при сохранении адреса/комментария.');
                 }
                 
                 // Optimistic history update - Visual only
-                const timestamp = new Date().toLocaleString('ru-RU', {
-                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                });
-                const newHistoryEntry = `${oldAddress} [${timestamp}]`;
-                setHistory(prev => [newHistoryEntry, ...prev]);
+                if (isAddressChanged) {
+                    const timestamp = new Date().toLocaleString('ru-RU', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                    });
+                    const newHistoryEntry = `${oldAddress} [${timestamp}]`;
+                    setHistory(prev => [newHistoryEntry, ...prev]);
+                }
                 justSaved.current = true;
             }
 
@@ -436,7 +451,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 originalRow: originalRow,
                 fact: (data as MapPoint).fact,
                 isGeocoding: isGeocodingState,
-                lastUpdated: updateTimestamp
+                lastUpdated: updateTimestamp,
+                comment: comment // Update comment in local state
             };
             
             // Update parent state immediately so 'data' prop updates for next edit
@@ -504,6 +520,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
+    const currentComment = (data as MapPoint).comment || '';
 
     const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({
         key: String(key).trim(),
@@ -520,14 +537,20 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     // Determine save button text
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
+    const isCommentChanged = comment.trim() !== currentComment.trim();
     
-    let saveButtonText = "Сохранить и найти координаты";
-    if (isCoordsChanged && !isAddressChanged) {
-        saveButtonText = "Сохранить новые координаты";
-    } else if (isAddressChanged && !isCoordsChanged) {
+    let saveButtonText = "Сохранить изменения";
+    if (isAddressChanged) {
         saveButtonText = "Сохранить новый адрес";
-    } else if (isAddressChanged && isCoordsChanged) {
-        saveButtonText = "Сохранить все изменения";
+    }
+    if (isCoordsChanged) {
+        saveButtonText = "Сохранить новые координаты";
+    }
+    if (isAddressChanged && isCoordsChanged) {
+        saveButtonText = "Сохранить адрес и координаты";
+    }
+    if (isCommentChanged && !isAddressChanged && !isCoordsChanged) {
+        saveButtonText = "Сохранить комментарий";
     }
 
     const customFooter = (
@@ -616,7 +639,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700">
                         <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-bold text-lg text-accent">Адрес для геокодирования</h4>
+                            <h4 className="font-bold text-lg text-accent">Редактирование данных</h4>
                             {!showDeleteConfirm ? (
                                 <button 
                                     onClick={() => setShowDeleteConfirm(true)}
@@ -638,7 +661,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
                                 <textarea
                                     id="address-input"
-                                    rows={3}
+                                    rows={2}
                                     value={editedAddress}
                                     onChange={e => setEditedAddress(e.target.value)}
                                     disabled={isProcessing || status === 'geocoding'}
@@ -649,6 +672,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                         <CheckIcon />
                                     </div>
                                 )}
+                            </div>
+
+                            <div className="relative">
+                                <label htmlFor="comment-input" className="block text-sm font-medium text-text-muted mb-1">Комментарий</label>
+                                <textarea
+                                    id="comment-input"
+                                    rows={2}
+                                    value={comment}
+                                    onChange={e => setComment(e.target.value)}
+                                    disabled={isProcessing || status === 'geocoding'}
+                                    placeholder="Введите комментарий..."
+                                    className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main"
+                                />
                             </div>
                             
                             {lastUpdatedStr && (

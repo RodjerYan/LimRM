@@ -290,8 +290,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    // --- CACHE INITIALIZATION with Redirects ---
-    const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean }>();
+    // --- CACHE INITIALIZATION with Redirects & Comments ---
+    const cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
     const cacheRedirectMap = new Map<string, string>(); // normalizedOld -> normalizedTarget
     const deletedAddresses = new Set<string>();
 
@@ -313,7 +313,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                         lat: item.lat, 
                         lon: item.lon, 
                         originalAddress: item.address,
-                        isInvalid: item.isInvalid
+                        isInvalid: item.isInvalid,
+                        comment: item.comment // Store comment
                     });
                 }
 
@@ -456,12 +457,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             let lat: number | undefined;
             let lon: number | undefined;
             let isCachedFlag = false;
+            let comment: string | undefined; // For comment
             
             let displayAddress = finalAddress;
 
             if (isCached && cacheEntry) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
+                comment = cacheEntry.comment; // Get comment from cache
                 isCachedFlag = true;
                 if (cacheEntry.originalAddress) {
                     displayAddress = cacheEntry.originalAddress;
@@ -497,7 +500,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты']),
                 originalRow: row,
-                fact: weight, 
+                fact: weight,
+                comment: comment, // Set comment
             });
         } else {
              const existing = uniquePlottableClients.get(normalizedRaw);
