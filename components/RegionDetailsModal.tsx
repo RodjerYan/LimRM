@@ -71,6 +71,7 @@ const ClientTable: React.FC<{
                         <tr>
                             <th className="px-4 py-2">Наименование</th>
                             <th className="px-4 py-2">Адрес</th>
+                            {isGreen && <th className="px-4 py-2 text-center">Канал</th>}
                             <th className="px-4 py-2 text-right">{isGreen ? 'Факт (кг)' : 'Тип'}</th>
                         </tr>
                     </thead>
@@ -84,6 +85,11 @@ const ClientTable: React.FC<{
                                     <td className="px-4 py-2 text-gray-500 max-w-[200px] truncate" title={item.address}>
                                         {item.address}
                                     </td>
+                                    {isGreen && (
+                                        <td className="px-4 py-2 text-center text-gray-400 text-[10px] uppercase tracking-wider truncate max-w-[100px]" title={item.type}>
+                                            {item.type || '—'}
+                                        </td>
+                                    )}
                                     <td className={`px-4 py-2 text-right font-mono ${isGreen ? 'text-emerald-300' : 'text-gray-400'}`}>
                                         {isGreen ? new Intl.NumberFormat('ru-RU').format(item.fact || 0) : (item.type || 'н/д')}
                                     </td>
@@ -91,7 +97,7 @@ const ClientTable: React.FC<{
                             ))
                         ) : (
                             <tr>
-                                <td colSpan={3} className="text-center py-8 text-gray-500">
+                                <td colSpan={isGreen ? 4 : 3} className="text-center py-8 text-gray-500">
                                     Нет данных
                                 </td>
                             </tr>
