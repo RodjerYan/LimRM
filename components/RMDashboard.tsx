@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import Modal from './Modal';
-import { AggregatedDataRow, MapPoint } from '../types';
+import { AggregatedDataRow, MapPoint, SummaryMetrics, OkbStatus, OkbDataRow } from '../types';
 import * as XLSX from 'xlsx';
 import { ExportIcon, BrainIcon, SearchIcon } from './icons';
 
@@ -126,31 +126,31 @@ const BrandPackagingModal = ({ isOpen, onClose, regionName, brandName, rows, onA
                                                     )}
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-xs text-indigo-300 font-medium align-middle">
+                                            <td className="px-6 py-4 text-xs text-indigo-300 font-medium">
                                                 {channels.length > 0 ? (
-                                                    <div className="flex flex-col space-y-2">
+                                                    <div className="flex flex-col gap-2">
                                                         {channels.map((ch, idx) => (
-                                                            <span key={idx} className="block border-b border-indigo-500/10 last:border-0 pb-1 last:pb-0">
+                                                            <div key={idx} className="border-b border-indigo-500/10 last:border-0 pb-1 last:pb-0 break-words whitespace-normal">
                                                                 {ch}
-                                                            </span>
+                                                            </div>
                                                         ))}
                                                     </div>
                                                 ) : (
                                                     <span className="text-gray-600">—</span>
                                                 )}
                                             </td>
-                                            <td className="px-6 py-4 text-right font-mono whitespace-nowrap">
+                                            <td className="px-6 py-4 text-right font-mono whitespace-nowrap align-middle">
                                                 <span className={`font-bold ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
                                                     {growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%
                                                 </span>
                                             </td>
-                                            <td className="px-6 py-4 text-right font-mono text-gray-300 whitespace-nowrap">
+                                            <td className="px-6 py-4 text-right font-mono text-gray-300 whitespace-nowrap align-middle">
                                                 {new Intl.NumberFormat('ru-RU').format(row.fact)}
                                             </td>
-                                            <td className="px-6 py-4 text-right font-mono text-white font-bold whitespace-nowrap bg-gray-800/10">
+                                            <td className="px-6 py-4 text-right font-mono text-white font-bold whitespace-nowrap bg-gray-800/10 align-middle">
                                                 {new Intl.NumberFormat('ru-RU').format(row.potential)}
                                             </td>
-                                            <td className="px-6 py-4 text-center">
+                                            <td className="px-6 py-4 text-center align-middle">
                                                 <button
                                                     onClick={() => onAnalyze(row)}
                                                     className="p-2 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg transition-all border border-indigo-500/20 hover:border-indigo-500 shadow-sm hover:shadow-indigo-500/40 active:scale-95"
@@ -171,7 +171,20 @@ const BrandPackagingModal = ({ isOpen, onClose, regionName, brandName, rows, onA
     );
 };
 
-export const RMDashboard = ({ isOpen, onClose, data, mode }: any) => {
+interface RMDashboardProps {
+    isOpen: boolean;
+    onClose: () => void;
+    data: AggregatedDataRow[];
+    mode?: 'modal' | 'page';
+    okbRegionCounts?: { [key: string]: number } | null;
+    okbData?: OkbDataRow[];
+    metrics?: SummaryMetrics | null;
+    okbStatus?: OkbStatus | null;
+    onActiveClientsClick?: () => void;
+    onEditClient?: (client: MapPoint) => void;
+}
+
+export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, mode = 'modal' }) => {
     const [selectedBrand, setSelectedBrand] = useState<{region: string, brand: string} | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
