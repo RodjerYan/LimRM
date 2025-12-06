@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -533,14 +532,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setError(null);
 
         try {
-            const res = await fetch('/api/delete-history-entry', {
+            // Using the consolidated endpoint
+            const res = await fetch('/api/delete-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
                     rmName: rm, 
                     currentAddress, 
                     entryIndex: index,
-                    entryContent: content 
+                    entryContent: content,
+                    action: 'delete-history' // Use flag for history deletion
                 }),
             });
 

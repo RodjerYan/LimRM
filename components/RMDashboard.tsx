@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import Modal from './Modal';
@@ -1127,19 +1126,15 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                 const skuColor = skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300');
                                 const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
 
-                                // Dynamic classes for row focus effect
                                 let rowClasses = "transition-all duration-300 cursor-pointer ";
                                 
                                 if (isAnyExpanded) {
                                     if (isExpanded) {
-                                        // Active row: Highlight, slightly larger, shadow
                                         rowClasses += "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30 ";
                                     } else {
-                                        // Inactive rows: Dimmed, blurred, grayscale
                                         rowClasses += "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none border-b border-gray-800 ";
                                     }
                                 } else {
-                                    // Normal state
                                     rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 ";
                                 }
 
@@ -1178,7 +1173,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                 className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} 
                                                                 style={{ width: `${covered}%` }}
                                                             ></div>
-                                                            {/* Explicitly visualizing the gap with darker background */}
                                                             <div className="h-full bg-gray-700 flex-grow"></div>
                                                         </div>
                                                     )}
@@ -1265,7 +1259,6 @@ const RMDashboard: React.FC<RMDashboardProps> = ({
                                                                         {rm.regions.map(reg => {
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare);
                                                                             const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
-                                                                            const regUncoveredCount = Math.max(0, (reg.totalCount || 0) - ((reg.totalCount || 0) * (regCovered / 100))); // Rough estimate for tooltip
                                                                             
                                                                             const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
