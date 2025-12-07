@@ -5,9 +5,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon, ErrorIcon, RetryIcon } from './icons';
-import type { FeatureCollection, Feature, Geometry } from 'geojson';
-import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson'; // Import hardcoded add-ons
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
+import type { FeatureCollection } from 'geojson';
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -18,7 +17,7 @@ interface InteractiveRegionMapProps {
     potentialClients: OkbDataRow[];
     activeClients: MapPoint[];
     flyToClientKey: string | null;
-    theme?: Theme;
+    theme?: Theme; // Global theme (initial state)
     onToggleTheme?: () => void;
     onEditClient: (client: MapPoint) => void;
 }
@@ -37,98 +36,6 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
         }
     }
     return '';
-};
-
-// Dictionary to map English GeoJSON names to Russian Data names
-const GEO_NAME_MAPPING: Record<string, string> = {
-    'Moscow': 'Москва',
-    'Saint Petersburg': 'Санкт-Петербург',
-    'Moscow Region': 'Московская область',
-    'Leningrad Region': 'Ленинградская область',
-    'Adygey Republic': 'Республика Адыгея',
-    'Altai Republic': 'Республика Алтай',
-    'Altai Krai': 'Алтайский край',
-    'Amur Region': 'Амурская область',
-    'Arkhangelsk Region': 'Архангельская область',
-    'Astrakhan Region': 'Астраханская область',
-    'Republic of Bashkortostan': 'Республика Башкортостан',
-    'Belgorod Region': 'Белгородская область',
-    'Bryansk Region': 'Брянская область',
-    'Republic of Buryatia': 'Республика Бурятия',
-    'Vladimir Region': 'Владимирская область',
-    'Volgograd Region': 'Волгоградская область',
-    'Vologda Region': 'Вологодская область',
-    'Voronezh Region': 'Воронежская область',
-    'Republic of Dagestan': 'Республика Дагестан',
-    'Jewish Autonomous Region': 'Еврейская автономная область',
-    'Zabaykalsky Krai': 'Забайкальский край',
-    'Ivanovo Region': 'Ивановская область',
-    'Republic of Ingushetia': 'Республика Ингушетия',
-    'Irkutsk Region': 'Иркутская область',
-    'Kabardino-Balkar Republic': 'Кабардино-Балкарская Республика',
-    'Kaliningrad Region': 'Калининградская область',
-    'Republic of Kalmykia': 'Республика Калмыкия',
-    'Kaluga Region': 'Калужская область',
-    'Kamchatka Krai': 'Камчатский край',
-    'Karachay-Cherkess Republic': 'Карачаево-Черкесская Республика',
-    'Republic of Karelia': 'Республика Карелия',
-    'Kemerovo Region': 'Кемеровская область',
-    'Kirov Region': 'Кировская область',
-    'Komi Republic': 'Республика Коми',
-    'Kostroma Region': 'Костромская область',
-    'Krasnodar Krai': 'Краснодарский край',
-    'Krasnoyarsk Krai': 'Красноярский край',
-    'Kurgan Region': 'Курганская область',
-    'Kursk Region': 'Курская область',
-    'Lipetsk Region': 'Липецкая область',
-    'Magadan Region': 'Магаданская область',
-    'Mari El Republic': 'Республика Марий Эл',
-    'Republic of Mordovia': 'Республика Мордовия',
-    'Murmansk Region': 'Мурманская область',
-    'Nenets Autonomous Okrug': 'Ненецкий автономный округ',
-    'Nizhny Novgorod Region': 'Нижегородская область',
-    'Novgorod Region': 'Новгородская область',
-    'Novosibirsk Region': 'Новосибирская область',
-    'Omsk Region': 'Омская область',
-    'Orenburg Region': 'Оренбургская область',
-    'Oryol Region': 'Орловская область',
-    'Penza Region': 'Пензенская область',
-    'Perm Krai': 'Пермский край',
-    'Primorsky Krai': 'Приморский край',
-    'Pskov Region': 'Псковская область',
-    'Rostov Region': 'Ростовская область',
-    'Ryazan Region': 'Рязанская область',
-    'Samara Region': 'Самарская область',
-    'Saratov Region': 'Саратовская область',
-    'Sakha Republic': 'Республика Саха (Якутия)',
-    'Sakhalin Region': 'Сахалинская область',
-    'Sverdlovsk Region': 'Свердловская область',
-    'Republic of North Ossetia-Alania': 'Республика Северная Осетия — Алания',
-    'Smolensk Region': 'Смоленская область',
-    'Stavropol Krai': 'Ставропольский край',
-    'Tambov Region': 'Тамбовская область',
-    'Republic of Tatarstan': 'Республика Татарстан',
-    'Tver Region': 'Тверская область',
-    'Tomsk Region': 'Томская область',
-    'Tula Region': 'Тульская область',
-    'Tyva Republic': 'Республика Тыва',
-    'Tyumen Region': 'Тюменская область',
-    'Udmurt Republic': 'Удмуртская Республика',
-    'Ulyanovsk Region': 'Ульяновская область',
-    'Khabarovsk Krai': 'Хабаровский край',
-    'Republic of Khakassia': 'Республика Хакасия',
-    'Khanty-Mansi Autonomous Okrug': 'Ханты-Мансийский автономный округ — Югра',
-    'Chelyabinsk Region': 'Челябинская область',
-    'Chechen Republic': 'Чеченская Республика',
-    'Chuvash Republic': 'Чувашская Республика',
-    'Chukotka Autonomous Okrug': 'Чукотский автономный округ',
-    'Yamalo-Nenets Autonomous Okrug': 'Ямало-Ненецкий автономный округ',
-    'Yaroslavl Region': 'Ярославская область'
-};
-
-const normalizeGeoName = (name: string): string => {
-    if (!name) return '';
-    return GEO_NAME_MAPPING[name] || name;
 };
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -220,150 +127,100 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
     const [isFromCache, setIsFromCache] = useState(false);
-    const [geoError, setGeoError] = useState<string | null>(null);
     
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-    // Fetch High-Quality GeoJSONs with Caching and Fault Tolerance
-    const fetchGeoData = useCallback(async () => {
-        const CACHE_NAME = 'limkorm-geo-v3'; 
-        
-        // Sources
-        const SOURCES = {
-            RUSSIA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson',
-            WORLD: 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json',
-        };
+    // Fetch High-Quality GeoJSONs with Caching
+    useEffect(() => {
+        const fetchGeoData = async () => {
+            const CACHE_NAME = 'limkorm-geo-v1';
+            const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+            const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
 
-        try {
-            setIsLoadingGeo(true);
-            setGeoError(null);
-            
-            const results: Record<string, any> = {};
-            let usedCache = false;
+            try {
+                setIsLoadingGeo(true);
+                let russiaData, worldData;
+                let usedCache = false;
 
-            // 1. Try Cache API
-            if ('caches' in window) {
-                try {
-                    const cache = await caches.open(CACHE_NAME);
-                    const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
-                    const cachedResponses = await Promise.all(keys.map(k => cache.match(SOURCES[k])));
-                    
-                    if (cachedResponses.every(r => r)) {
-                        for (let i = 0; i < keys.length; i++) {
-                            results[keys[i]] = await cachedResponses[i]?.json();
+                // 1. Try Cache API
+                if ('caches' in window) {
+                    try {
+                        const cache = await caches.open(CACHE_NAME);
+                        const [russiaRes, worldRes] = await Promise.all([
+                            cache.match(RUSSIA_URL),
+                            cache.match(WORLD_URL)
+                        ]);
+
+                        if (russiaRes && worldRes) {
+                            russiaData = await russiaRes.json();
+                            worldData = await worldRes.json();
+                            usedCache = true;
+                            setIsFromCache(true);
+                        } else {
+                            // Fetch and Cache
+                            const [rNetwork, wNetwork] = await Promise.all([
+                                fetch(RUSSIA_URL),
+                                fetch(WORLD_URL)
+                            ]);
+                            
+                            if (rNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json();
+                                worldData = await wNetwork.json();
+                            }
                         }
-                        usedCache = true;
-                        setIsFromCache(true);
+                    } catch (e) {
+                        console.warn('Cache API error:', e);
                     }
-                } catch (e) {
-                    console.warn('Cache API access failed:', e);
                 }
-            }
 
-            // 2. Fetch from Network if not fully cached
-            if (!usedCache) {
-                const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
-                
-                const fetchPromises = keys.map(key => 
-                    fetch(SOURCES[key])
-                        .then(r => {
-                            if (!r.ok) throw new Error(`${r.status}`);
-                            return r.json();
-                        })
-                        .then(data => ({ key, status: 'fulfilled', value: data }))
-                        .catch(err => ({ key, status: 'rejected', reason: err }))
-                );
+                // Fallback if cache failed or data missing
+                if (!russiaData || !worldData) {
+                    const [rRes, wRes] = await Promise.all([
+                        fetch(RUSSIA_URL),
+                        fetch(WORLD_URL)
+                    ]);
+                    russiaData = await rRes.json();
+                    worldData = await wRes.json();
+                }
 
-                const settled = await Promise.allSettled(fetchPromises);
-                
-                settled.forEach((res, index) => {
-                    const result = res as any; 
-                    if (result.value && result.value.status === 'fulfilled') {
-                        results[result.value.key] = result.value.value;
-                        if ('caches' in window) {
-                            caches.open(CACHE_NAME).then(cache => {
-                                const jsonStr = JSON.stringify(result.value.value);
-                                const response = new Response(jsonStr, { headers: { 'Content-Type': 'application/json' } });
-                                cache.put(SOURCES[keys[index]], response);
-                            }).catch(() => {});
-                        }
-                    } else {
-                        console.warn(`Failed to load ${keys[index]}:`, result.value?.reason || result.reason);
-                    }
-                });
-            }
+                // Filter & Translate CIS Countries
+                const cisCountriesMap: Record<string, string> = {
+                    'Belarus': 'Республика Беларусь',
+                    'Kazakhstan': 'Республика Казахстан',
+                    'Kyrgyzstan': 'Кыргызская Республика',
+                    'Uzbekistan': 'Республика Узбекистан',
+                    'Tajikistan': 'Республика Таджикистан',
+                    'Turkmenistan': 'Туркменистан',
+                    'Armenia': 'Армения',
+                    'Azerbaijan': 'Азербайджан',
+                    'Georgia': 'Грузия',
+                    'Moldova': 'Республика Молдова'
+                };
 
-            if (!results.RUSSIA) {
-                throw new Error("Не удалось загрузить карту РФ. Проверьте интернет-соединение.");
-            }
-
-            // --- DATA PROCESSING & MERGING ---
-
-            const features: Feature[] = [];
-
-            // 1. Process Russia (Base)
-            if (results.RUSSIA && results.RUSSIA.features) {
-                results.RUSSIA.features.forEach((f: any) => {
-                    if (f.properties?.name) {
-                        f.properties.name = normalizeGeoName(f.properties.name);
-                    }
-                    features.push(f);
-                });
-            }
-
-            // 2. FORCE ADD Local Missing Territories (Crimea, DNR, LNR, Unrecognized)
-            // This ensures they appear regardless of network status or external map versions.
-            if (russiaRegionsGeoJSON && russiaRegionsGeoJSON.features) {
-                const existingNames = new Set(features.map(f => f.properties?.name));
-                russiaRegionsGeoJSON.features.forEach((f: any) => {
-                    // Only add if not already present (prevents duplicates if base map updates)
-                    const name = f.properties?.name;
-                    if (!existingNames.has(name)) {
-                        features.push(f);
-                    }
-                });
-            }
-
-            // 3. Process CIS Countries (Parent Shapes)
-            const cisCountriesMap: Record<string, string> = {
-                'Belarus': 'Республика Беларусь',
-                'Kazakhstan': 'Республика Казахстан',
-                'Kyrgyzstan': 'Кыргызская Республика',
-                'Uzbekistan': 'Республика Узбекистан',
-                'Tajikistan': 'Республика Таджикистан',
-                'Turkmenistan': 'Туркменистан',
-                'Armenia': 'Армения',
-                'Azerbaijan': 'Азербайджан',
-                'Georgia': 'Грузия', // Main Georgia body
-                'Moldova': 'Республика Молдова' // Main Moldova body
-            };
-
-            if (results.WORLD && results.WORLD.features) {
-                const cisFeatures = results.WORLD.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
                 cisFeatures.forEach((f: any) => {
                     f.properties.name = cisCountriesMap[f.properties.name];
                 });
-                features.push(...cisFeatures);
+
+                // Merge collections
+                setGeoJsonData({
+                    type: 'FeatureCollection',
+                    features: [...russiaData.features, ...cisFeatures]
+                });
+
+            } catch (error) {
+                console.error("Error fetching map geometry:", error);
+            } finally {
+                setIsLoadingGeo(false);
             }
+        };
 
-            setGeoJsonData({
-                type: 'FeatureCollection',
-                features: features as Feature<Geometry, { [name: string]: any; }>[]
-            });
-
-        } catch (error) {
-            console.error("Error fetching map geometry:", error);
-            setGeoError((error as Error).message);
-        } finally {
-            setIsLoadingGeo(false);
-        }
-    }, []);
-
-    useEffect(() => {
         fetchGeoData();
-    }, [fetchGeoData]);
+    }, []);
 
     // Sync refs with props
     useEffect(() => {
@@ -418,21 +275,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             className: isSelected ? 'selected-region-layer' : ''
         };
 
-        // Custom Highlight for disputed/new territories to make them distinct but integrated
-        const isNewTerritory = ['Донецкая Народная Республика', 'Луганская Народная Республика', 'Запорожская область', 'Херсонская область', 'Республика Крым', 'Севастополь', 'Республика Абхазия', 'Южная Осетия', 'Приднестровье'].includes(regionName);
-        
-        if (isNewTerritory) {
-             baseBorder.color = isSelected ? '#818cf8' : (localTheme === 'dark' ? '#9ca3af' : '#6b7280'); 
-             baseBorder.weight = isSelected ? 2.5 : 1.5; // Slightly thicker borders for new territories to ensure visibility
-        }
-
         // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
                 fillColor: isSelected ? '#818cf8' : '#374151', 
-                // Increased opacity for new territories so they look like solid regions, not just outlines
-                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.15 : 0), 
+                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
                 interactive: true
             };
         }
@@ -546,7 +394,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 zoom: 3, 
                 minZoom: 2, 
                 scrollWheelZoom: true, 
-                preferCanvas: true, 
+                preferCanvas: true, // IMPORTANT for performance
                 worldCopyJump: true,
                 zoomControl: false, 
                 attributionControl: false 
@@ -639,6 +487,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
+    // ... createPopupContent helper remains same ...
     const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
         <div class="popup-inner-content">
             <b>${name}</b><br>
@@ -710,7 +559,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer
+    // Region Layer - OSM Source
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
@@ -774,15 +623,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     </h2>
                     {isLoadingGeo ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
-                            <LoaderIcon /> Загрузка геометрии РФ и СНГ...
-                        </div>
-                    ) : geoError ? (
-                        <div className="flex items-center gap-2 px-3 py-1 bg-red-600/80 rounded-lg text-white text-xs shadow-lg backdrop-blur-md cursor-pointer hover:bg-red-500" onClick={fetchGeoData} title="Нажмите, чтобы повторить">
-                            <ErrorIcon /> Ошибка загрузки (Повторить)
+                            <LoaderIcon /> Загрузка геометрии...
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Данные активны
+                            <CheckIcon /> Из кэша
                         </div>
                     ) : null}
                 </div>
