@@ -7,7 +7,7 @@ import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
 import { getMarketData } from '../utils/marketData';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, UsersIcon, AlertIcon, TargetIcon } from './icons';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -45,11 +45,22 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2"><TargetIcon small/> Плотность питомцев</h4>
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+                    <span className="text-lg">🐶</span> Плотность питомцев
+                </h4>
                 <div className="space-y-1">
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#10b981]"></span><span className="text-xs">Высокая (&gt;80)</span></div>
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#f59e0b]"></span><span className="text-xs">Средняя (50-80)</span></div>
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#6b7280]"></span><span className="text-xs">Низкая (&lt;50)</span></div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
+                        <span className="text-xs">Высокая (&gt;80)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
+                        <span className="text-xs">Средняя (50-80)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#6b7280', opacity: 0.3}}></span>
+                        <span className="text-xs">Низкая (&lt;50)</span>
+                    </div>
                 </div>
             </div>
         );
@@ -57,11 +68,22 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'competitors') {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2"><AlertIcon small/> Конкуренция</h4>
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+                    <span className="text-lg">⚔️</span> Конкуренция
+                </h4>
                 <div className="space-y-1">
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#ef4444]"></span><span className="text-xs">Агрессивная</span></div>
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#f97316]"></span><span className="text-xs">Умеренная</span></div>
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#3b82f6]"></span><span className="text-xs">Слабая</span></div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#ef4444', opacity: 0.7}}></span>
+                        <span className="text-xs">Агрессивная (&gt;80)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.5}}></span>
+                        <span className="text-xs">Умеренная (50-80)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#3b82f6', opacity: 0.3}}></span>
+                        <span className="text-xs">Слабая (&lt;50)</span>
+                    </div>
                 </div>
             </div>
         );
@@ -70,7 +92,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
             <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
             <div className="flex items-center mb-1.5">
-                <span className="inline-block w-3 h-3 rounded-full mr-2 border border-emerald-500"></span>
+                <span className="inline-block w-3 h-3 mr-2 border border-gray-500 bg-transparent"></span>
                 <span className="text-xs font-medium">Граница региона</span>
             </div>
             <div className="flex items-center mb-1.5">
@@ -97,6 +119,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
+    const gridLayerRef = useRef<L.Layer | null>(null);
     
     // Refs to hold latest props to avoid stale closures in event listeners without triggering re-init
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
@@ -164,55 +187,88 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [searchTerm, searchableLocations]);
 
     // --- STYLING LOGIC ---
-    // Updated to be clean, sharp, and transparent by default to show the high-quality base map
+    
+    const GRID_OPTIONS = {
+        weight: 0.5,
+        opacity: 0.2, // Subtle grid
+        color: localTheme === 'dark' ? '#9ca3af' : '#6b7280',
+        dashArray: '4, 4',
+        fill: false,
+        interactive: false
+    };
+
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
+        const isSelected = selectedRegions.includes(regionName);
         
-        // Base style for border only
-        const baseStyle = {
-            weight: 1, // Thin, crisp border
-            opacity: 0.6, // Semi-transparent border
-            color: '#6b7280', // Neutral gray border
-            fillOpacity: 0, // Transparent fill by default! Let the base map show.
-            fillColor: 'transparent',
-            interactive: true // Ensure it can still be clicked/hovered
+        // Base border style (Sharp & Clean)
+        const baseBorder = {
+            weight: isSelected ? 3 : 1.5,
+            opacity: 1,
+            className: isSelected ? 'selected-region-layer' : ''
         };
 
+        // Mode 1: Sales (Clean) - Default
+        // Logic: No fill by default to show base map. Only fill if selected.
+        if (overlayMode === 'sales') {
+            return {
+                ...baseBorder,
+                color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'),
+                fillColor: isSelected ? '#818cf8' : 'transparent',
+                fillOpacity: isSelected ? 0.15 : 0,
+                interactive: true
+            };
+        }
+
+        // Mode 2: Pets (Heat map)
         if (overlayMode === 'pets') {
             const density = marketData.petDensityIndex;
+            let fillColor = '#6b7280'; // Low
+            let fillOpacity = 0.3;
+            
+            if (density > 80) {
+                fillColor = '#10b981'; // High
+                fillOpacity = 0.6;
+            } else if (density > 50) {
+                fillColor = '#f59e0b'; // Medium
+                fillOpacity = 0.5;
+            }
+            
             return {
-                ...baseStyle,
-                color: '#10b981', // Green tint for border
-                fillColor: density > 80 ? '#10b981' : density > 50 ? '#f59e0b' : '#374151',
-                fillOpacity: density > 80 ? 0.3 : density > 50 ? 0.2 : 0.05, // Very light fill
+                ...baseBorder,
+                // Contrasting border for filled regions
+                color: isSelected ? '#ffffff' : (localTheme === 'dark' ? '#1f2937' : '#374151'),
+                fillColor: fillColor,
+                fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity,
+                interactive: true
             };
-        }
+        } 
         
+        // Mode 3: Competitors
         if (overlayMode === 'competitors') {
             const comp = marketData.competitorDensityIndex;
+            let fillColor = '#3b82f6'; // Low
+            let fillOpacity = 0.3;
+            
+            if (comp > 80) {
+                fillColor = '#ef4444'; // High
+                fillOpacity = 0.6;
+            } else if (comp > 50) {
+                fillColor = '#f97316'; // Medium
+                fillOpacity = 0.5;
+            }
+
             return {
-                ...baseStyle,
-                color: '#ef4444', // Red tint for border
-                fillColor: comp > 80 ? '#ef4444' : comp > 50 ? '#f97316' : '#3b82f6',
-                fillOpacity: comp > 80 ? 0.3 : comp > 50 ? 0.2 : 0.05,
+                ...baseBorder,
+                color: isSelected ? '#ffffff' : (localTheme === 'dark' ? '#1f2937' : '#374151'),
+                fillColor: fillColor,
+                fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity,
+                interactive: true
             };
         }
 
-        // Default 'sales' mode: Just the border, maybe highlighted if selected
-        const isSelected = selectedRegions.includes(regionName);
-        if (isSelected) {
-            return {
-                ...baseStyle,
-                weight: 2,
-                color: '#818cf8', // Indigo border for selected
-                opacity: 1,
-                fillColor: '#818cf8',
-                fillOpacity: 0.1
-            };
-        }
-
-        return baseStyle;
+        return baseBorder;
     };
 
     const resetHighlight = useCallback(() => {
@@ -221,18 +277,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
         highlightedLayer.current = null;
-    }, [overlayMode]);
+    }, [overlayMode, localTheme]); 
 
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
              // Sharp highlight style
              layer.setStyle({ 
-                 weight: 2, 
-                 color: '#f59e0b', // Amber highlight
+                 weight: 3, 
+                 color: '#fbbf24', // Amber-400 Highlight
                  opacity: 1, 
-                 fillColor: '#f59e0b', 
-                 fillOpacity: 0.15 // Light fill to indicate selection but keep map visible
+                 // If in sales mode, keep fill transparent-ish. If in overlay mode, keep color but brighten.
+                 fillOpacity: 0.2,
+                 dashArray: '' 
              }).bringToFront();
              highlightedLayer.current = layer;
         }
@@ -459,6 +516,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (!map) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
+        
+        // Remove old grid if exists
+        if (gridLayerRef.current) {
+            map.removeLayer(gridLayerRef.current);
+            gridLayerRef.current = null;
+        }
+
         if (capitalsLayer.current) {
             if (layerControl.current) layerControl.current.removeLayer(capitalsLayer.current);
             map.removeLayer(capitalsLayer.current);
@@ -521,6 +585,34 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
         }
 
+        // --- GRID IMPLEMENTATION ---
+        const addGridLayer = () => {
+            const gridLayer = L.layerGroup();
+            
+            // Vertical lines every 10 deg
+            for (let lng = -180; lng <= 180; lng += 10) {
+                const line = L.polyline(
+                    [[-90, lng], [90, lng]], 
+                    GRID_OPTIONS
+                );
+                gridLayer.addLayer(line);
+            }
+            
+            // Horizontal lines every 10 deg
+            for (let lat = -90; lat <= 90; lat += 10) {
+                const line = L.polyline(
+                    [[lat, -180], [lat, 180]], 
+                    GRID_OPTIONS
+                );
+                gridLayer.addLayer(line);
+            }
+            
+            gridLayer.addTo(map);
+            return gridLayer;
+        };
+        
+        gridLayerRef.current = addGridLayer();
+
         // Apply style based on current mode
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
             style: getStyleForRegion, // Use the dynamic style function
@@ -543,10 +635,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         const layer = e.target;
                         if (layer !== highlightedLayer.current && overlayMode === 'sales') {
                             layer.setStyle({
-                                weight: 2,
-                                color: '#9ca3af',
+                                weight: 2.5,
+                                color: '#a5b4fc', // Light Indigo
                                 opacity: 1,
-                                fillOpacity: 0.1
+                                fillOpacity: 0.1,
+                                dashArray: ''
                             });
                             layer.bringToFront();
                         }
@@ -561,7 +654,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         }).addTo(map);
 
-    }, [selectedRegions, overlayMode]); // Re-run when mode changes
+    }, [selectedRegions, overlayMode, localTheme]); // Re-run when mode changes
     
     const typeToLabel: Record<SearchableLocation['type'], string> = {
         region: 'Регион',
