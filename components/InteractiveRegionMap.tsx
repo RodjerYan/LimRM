@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon, ErrorIcon, RetryIcon } from './icons';
 import type { FeatureCollection, Feature, Geometry } from 'geojson';
 
 type Theme = 'dark' | 'light';
@@ -36,6 +36,98 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
         }
     }
     return '';
+};
+
+// Dictionary to map English GeoJSON names to Russian Data names
+const GEO_NAME_MAPPING: Record<string, string> = {
+    'Moscow': 'Москва',
+    'Saint Petersburg': 'Санкт-Петербург',
+    'Moscow Region': 'Московская область',
+    'Leningrad Region': 'Ленинградская область',
+    'Adygey Republic': 'Республика Адыгея',
+    'Altai Republic': 'Республика Алтай',
+    'Altai Krai': 'Алтайский край',
+    'Amur Region': 'Амурская область',
+    'Arkhangelsk Region': 'Архангельская область',
+    'Astrakhan Region': 'Астраханская область',
+    'Republic of Bashkortostan': 'Республика Башкортостан',
+    'Belgorod Region': 'Белгородская область',
+    'Bryansk Region': 'Брянская область',
+    'Republic of Buryatia': 'Республика Бурятия',
+    'Vladimir Region': 'Владимирская область',
+    'Volgograd Region': 'Волгоградская область',
+    'Vologda Region': 'Вологодская область',
+    'Voronezh Region': 'Воронежская область',
+    'Republic of Dagestan': 'Республика Дагестан',
+    'Jewish Autonomous Region': 'Еврейская автономная область',
+    'Zabaykalsky Krai': 'Забайкальский край',
+    'Ivanovo Region': 'Ивановская область',
+    'Republic of Ingushetia': 'Республика Ингушетия',
+    'Irkutsk Region': 'Иркутская область',
+    'Kabardino-Balkar Republic': 'Кабардино-Балкарская Республика',
+    'Kaliningrad Region': 'Калининградская область',
+    'Republic of Kalmykia': 'Республика Калмыкия',
+    'Kaluga Region': 'Калужская область',
+    'Kamchatka Krai': 'Камчатский край',
+    'Karachay-Cherkess Republic': 'Карачаево-Черкесская Республика',
+    'Republic of Karelia': 'Республика Карелия',
+    'Kemerovo Region': 'Кемеровская область',
+    'Kirov Region': 'Кировская область',
+    'Komi Republic': 'Республика Коми',
+    'Kostroma Region': 'Костромская область',
+    'Krasnodar Krai': 'Краснодарский край',
+    'Krasnoyarsk Krai': 'Красноярский край',
+    'Kurgan Region': 'Курганская область',
+    'Kursk Region': 'Курская область',
+    'Lipetsk Region': 'Липецкая область',
+    'Magadan Region': 'Магаданская область',
+    'Mari El Republic': 'Республика Марий Эл',
+    'Republic of Mordovia': 'Республика Мордовия',
+    'Murmansk Region': 'Мурманская область',
+    'Nenets Autonomous Okrug': 'Ненецкий автономный округ',
+    'Nizhny Novgorod Region': 'Нижегородская область',
+    'Novgorod Region': 'Новгородская область',
+    'Novosibirsk Region': 'Новосибирская область',
+    'Omsk Region': 'Омская область',
+    'Orenburg Region': 'Оренбургская область',
+    'Oryol Region': 'Орловская область',
+    'Penza Region': 'Пензенская область',
+    'Perm Krai': 'Пермский край',
+    'Primorsky Krai': 'Приморский край',
+    'Pskov Region': 'Псковская область',
+    'Rostov Region': 'Ростовская область',
+    'Ryazan Region': 'Рязанская область',
+    'Samara Region': 'Самарская область',
+    'Saratov Region': 'Саратовская область',
+    'Sakha Republic': 'Республика Саха (Якутия)',
+    'Sakhalin Region': 'Сахалинская область',
+    'Sverdlovsk Region': 'Свердловская область',
+    'Republic of North Ossetia-Alania': 'Республика Северная Осетия — Алания',
+    'Smolensk Region': 'Смоленская область',
+    'Stavropol Krai': 'Ставропольский край',
+    'Tambov Region': 'Тамбовская область',
+    'Republic of Tatarstan': 'Республика Татарстан',
+    'Tver Region': 'Тверская область',
+    'Tomsk Region': 'Томская область',
+    'Tula Region': 'Тульская область',
+    'Tyva Republic': 'Республика Тыва',
+    'Tyumen Region': 'Тюменская область',
+    'Udmurt Republic': 'Удмуртская Республика',
+    'Ulyanovsk Region': 'Ульяновская область',
+    'Khabarovsk Krai': 'Хабаровский край',
+    'Republic of Khakassia': 'Республика Хакасия',
+    'Khanty-Mansi Autonomous Okrug': 'Ханты-Мансийский автономный округ — Югра',
+    'Chelyabinsk Region': 'Челябинская область',
+    'Chechen Republic': 'Чеченская Республика',
+    'Chuvash Republic': 'Чувашская Республика',
+    'Chukotka Autonomous Okrug': 'Чукотский автономный округ',
+    'Yamalo-Nenets Autonomous Okrug': 'Ямало-Ненецкий автономный округ',
+    'Yaroslavl Region': 'Ярославская область'
+};
+
+const normalizeGeoName = (name: string): string => {
+    if (!name) return '';
+    return GEO_NAME_MAPPING[name] || name;
 };
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -127,241 +219,232 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
     const [isFromCache, setIsFromCache] = useState(false);
+    const [geoError, setGeoError] = useState<string | null>(null);
     
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-    // Fetch High-Quality GeoJSONs with Caching
-    useEffect(() => {
-        const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; // Bumped version for new territories
-            
-            // Sources
-            const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            // Ukraine source to extract new territories
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/org-scn-design-studio-community/shapes/master/geojson/700_UA_region.json';
-            const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
-            
-            // New Sources for Unrecognized Republics
-            const GEORGIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson';
-            const MOLDOVA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson';
-
-            try {
-                setIsLoadingGeo(true);
-                let russiaData, ukraineData, worldData, georgiaData, moldovaData;
-                let usedCache = false;
-
-                // 1. Try Cache API
-                if ('caches' in window) {
-                    try {
-                        const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, ukraineRes, worldRes, georgiaRes, moldovaRes] = await Promise.all([
-                            cache.match(RUSSIA_URL),
-                            cache.match(UKRAINE_URL),
-                            cache.match(WORLD_URL),
-                            cache.match(GEORGIA_URL),
-                            cache.match(MOLDOVA_URL)
-                        ]);
-
-                        if (russiaRes && ukraineRes && worldRes && georgiaRes && moldovaRes) {
-                            russiaData = await russiaRes.json();
-                            ukraineData = await ukraineRes.json();
-                            worldData = await worldRes.json();
-                            georgiaData = await georgiaRes.json();
-                            moldovaData = await moldovaRes.json();
-                            usedCache = true;
-                            setIsFromCache(true);
-                        } else {
-                            // Fetch and Cache
-                            const responses = await Promise.all([
-                                fetch(RUSSIA_URL),
-                                fetch(UKRAINE_URL),
-                                fetch(WORLD_URL),
-                                fetch(GEORGIA_URL),
-                                fetch(MOLDOVA_URL)
-                            ]);
-                            
-                            if (responses.every(r => r.ok)) {
-                                cache.put(RUSSIA_URL, responses[0].clone());
-                                cache.put(UKRAINE_URL, responses[1].clone());
-                                cache.put(WORLD_URL, responses[2].clone());
-                                cache.put(GEORGIA_URL, responses[3].clone());
-                                cache.put(MOLDOVA_URL, responses[4].clone());
-                                
-                                russiaData = await responses[0].json();
-                                ukraineData = await responses[1].json();
-                                worldData = await responses[2].json();
-                                georgiaData = await responses[3].json();
-                                moldovaData = await responses[4].json();
-                            }
-                        }
-                    } catch (e) {
-                        console.warn('Cache API error:', e);
-                    }
-                }
-
-                // Fallback (if cache failed or missed)
-                if (!russiaData) {
-                    const responses = await Promise.all([
-                        fetch(RUSSIA_URL),
-                        fetch(UKRAINE_URL),
-                        fetch(WORLD_URL),
-                        fetch(GEORGIA_URL),
-                        fetch(MOLDOVA_URL)
-                    ]);
-                    russiaData = await responses[0].json();
-                    ukraineData = await responses[1].json();
-                    worldData = await responses[2].json();
-                    georgiaData = await responses[3].json();
-                    moldovaData = await responses[4].json();
-                }
-
-                // --- DATA PROCESSING & MERGING ---
-
-                const features: Feature[] = [];
-
-                // 1. Process Russia (Base)
-                if (russiaData && russiaData.features) {
-                    features.push(...russiaData.features);
-                }
-
-                // 2. Process New Territories (from Ukraine source)
-                const annexMap: Record<string, string> = {
-                    'Donetska': 'Донецкая Народная Республика',
-                    'Luhanska': 'Луганская Народная Республика',
-                    'Zaporizka': 'Запорожская область',
-                    'Khersonska': 'Херсонская область',
-                    'Krym': 'Республика Крым',
-                    'Sevastopol': 'Севастополь'
-                };
-
-                if (ukraineData && ukraineData.features) {
-                    ukraineData.features.forEach((f: any) => {
-                        const nameEn = f.properties?.name || f.properties?.NAME_1;
-                        if (nameEn) {
-                            const targetName = Object.keys(annexMap).find(key => nameEn.includes(key));
-                            if (targetName) {
-                                const ruName = annexMap[targetName];
-                                const exists = features.some((rf: any) => rf.properties?.name === ruName);
-                                if (!exists) {
-                                    const newFeature = JSON.parse(JSON.stringify(f));
-                                    newFeature.properties.name = ruName;
-                                    features.push(newFeature);
-                                }
-                            }
-                        }
-                    });
-                }
-
-                // 3. Process CIS Countries (Parent Shapes)
-                const cisCountriesMap: Record<string, string> = {
-                    'Belarus': 'Республика Беларусь',
-                    'Kazakhstan': 'Республика Казахстан',
-                    'Kyrgyzstan': 'Кыргызская Республика',
-                    'Uzbekistan': 'Республика Узбекистан',
-                    'Tajikistan': 'Республика Таджикистан',
-                    'Turkmenistan': 'Туркменистан',
-                    'Armenia': 'Армения',
-                    'Azerbaijan': 'Азербайджан',
-                    // 'Georgia' and 'Moldova' handled separately below for finer granularity
-                };
-
-                if (worldData && worldData.features) {
-                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
-                    cisFeatures.forEach((f: any) => {
-                        f.properties.name = cisCountriesMap[f.properties.name];
-                    });
-                    features.push(...cisFeatures);
-                }
-
-                // 4. Process Georgia & Unrecognized Republics (Abkhazia, South Ossetia)
-                if (georgiaData && georgiaData.features) {
-                    // Extract Abkhazia
-                    const abkhaziaFeature = georgiaData.features.find((f: any) => 
-                        f.properties?.name?.toLowerCase().includes('abkhazia') || 
-                        f.properties?.name?.toLowerCase().includes('apkhazeti')
-                    );
-                    
-                    // Extract South Ossetia (often named 'Shida Kartli' in Admin1 maps, or separate if Admin0 variant)
-                    // In ClickThatHood 'georgia.geojson' typically contains regions. 
-                    // We look for 'Shida Kartli' as a proxy or specific if available. 
-                    // NOTE: Borders of South Ossetia often overlap with Shida Kartli but aren't identical. 
-                    // Using 'South Ossetia' if found, otherwise map specific region.
-                    const southOssetiaFeature = georgiaData.features.find((f: any) => 
-                        f.properties?.name?.toLowerCase().includes('ossetia')
-                    );
-
-                    // Add Georgia main body (Excluding Abkhazia if possible, but overlaying is safer visually)
-                    const georgiaBase = {
-                        type: 'Feature',
-                        properties: { name: 'Грузия' },
-                        geometry: worldData?.features?.find((f: any) => f.properties?.name === 'Georgia')?.geometry
-                    };
-                    if (georgiaBase.geometry) features.push(georgiaBase as any);
-
-                    // Add Abkhazia
-                    if (abkhaziaFeature) {
-                        const abkhazia = JSON.parse(JSON.stringify(abkhaziaFeature));
-                        abkhazia.properties.name = 'Республика Абхазия';
-                        features.push(abkhazia);
-                    } else {
-                        // Fallback: Check if available in standard world map as separate entity
-                        const abkhaziaWorld = worldData?.features?.find((f: any) => f.properties?.name === 'Abkhazia');
-                        if (abkhaziaWorld) {
-                             const abkhazia = JSON.parse(JSON.stringify(abkhaziaWorld));
-                             abkhazia.properties.name = 'Республика Абхазия';
-                             features.push(abkhazia);
-                        }
-                    }
-
-                    // Add South Ossetia
-                    if (southOssetiaFeature) {
-                        const ossetia = JSON.parse(JSON.stringify(southOssetiaFeature));
-                        ossetia.properties.name = 'Южная Осетия';
-                        features.push(ossetia);
-                    }
-                }
-
-                // 5. Process Moldova & Transnistria
-                if (moldovaData && moldovaData.features) {
-                    // Moldova Base
-                    const moldovaBase = {
-                        type: 'Feature',
-                        properties: { name: 'Республика Молдова' },
-                        geometry: worldData?.features?.find((f: any) => f.properties?.name === 'Moldova')?.geometry
-                    };
-                    if (moldovaBase.geometry) features.push(moldovaBase as any);
-
-                    // Transnistria (Stânga Nistrului)
-                    const transnistriaFeature = moldovaData.features.find((f: any) => 
-                        f.properties?.name?.toLowerCase().includes('transnistria') || 
-                        f.properties?.name?.toLowerCase().includes('stanga nistrului') ||
-                        f.properties?.name?.toLowerCase().includes('stînga nistrului')
-                    );
-
-                    if (transnistriaFeature) {
-                        const transnistria = JSON.parse(JSON.stringify(transnistriaFeature));
-                        transnistria.properties.name = 'Приднестровье'; // Or "Приднестровская Молдавская Республика"
-                        features.push(transnistria);
-                    }
-                }
-
-                // Merge collections
-                setGeoJsonData({
-                    type: 'FeatureCollection',
-                    features: features as Feature<Geometry, { [name: string]: any; }>[]
-                });
-
-            } catch (error) {
-                console.error("Error fetching map geometry:", error);
-            } finally {
-                setIsLoadingGeo(false);
-            }
+    // Fetch High-Quality GeoJSONs with Caching and Fault Tolerance
+    const fetchGeoData = useCallback(async () => {
+        const CACHE_NAME = 'limkorm-geo-v3'; 
+        
+        // Sources - Using raw.githubusercontent.com which is generally reliable
+        // Fallbacks could be added if needed
+        const SOURCES = {
+            RUSSIA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson',
+            UKRAINE: 'https://raw.githubusercontent.com/org-scn-design-studio-community/shapes/master/geojson/700_UA_region.json',
+            WORLD: 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json',
+            GEORGIA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson',
+            MOLDOVA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson'
         };
 
-        fetchGeoData();
+        try {
+            setIsLoadingGeo(true);
+            setGeoError(null);
+            
+            const results: Record<string, any> = {};
+            let usedCache = false;
+
+            // 1. Try Cache API (Fail-safe)
+            if ('caches' in window) {
+                try {
+                    const cache = await caches.open(CACHE_NAME);
+                    const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
+                    const cachedResponses = await Promise.all(keys.map(k => cache.match(SOURCES[k])));
+                    
+                    if (cachedResponses.every(r => r)) {
+                        for (let i = 0; i < keys.length; i++) {
+                            results[keys[i]] = await cachedResponses[i]?.json();
+                        }
+                        usedCache = true;
+                        setIsFromCache(true);
+                    }
+                } catch (e) {
+                    console.warn('Cache API access failed:', e);
+                }
+            }
+
+            // 2. Fetch from Network if not fully cached
+            if (!usedCache) {
+                const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
+                
+                // Use Promise.allSettled to allow partial failures
+                const fetchPromises = keys.map(key => 
+                    fetch(SOURCES[key])
+                        .then(r => {
+                            if (!r.ok) throw new Error(`${r.status}`);
+                            return r.json();
+                        })
+                        .then(data => ({ key, status: 'fulfilled', value: data }))
+                        .catch(err => ({ key, status: 'rejected', reason: err }))
+                );
+
+                const settled = await Promise.allSettled(fetchPromises);
+                
+                // Process results
+                settled.forEach((res, index) => {
+                    // This casting is a bit tricky with Promise.allSettled return types in TS, simplify:
+                    const result = res as any; 
+                    if (result.value && result.value.status === 'fulfilled') {
+                        results[result.value.key] = result.value.value;
+                        // Attempt to cache success
+                        if ('caches' in window) {
+                            caches.open(CACHE_NAME).then(cache => {
+                                // Re-create response to cache
+                                const jsonStr = JSON.stringify(result.value.value);
+                                const response = new Response(jsonStr, { headers: { 'Content-Type': 'application/json' } });
+                                cache.put(SOURCES[keys[index]], response);
+                            }).catch(() => {});
+                        }
+                    } else {
+                        console.warn(`Failed to load ${keys[index]}:`, result.value?.reason || result.reason);
+                    }
+                });
+            }
+
+            // If Russia failed, we have a problem.
+            if (!results.RUSSIA) {
+                throw new Error("Не удалось загрузить карту РФ. Проверьте интернет-соединение.");
+            }
+
+            // --- DATA PROCESSING & MERGING ---
+
+            const features: Feature[] = [];
+
+            // 1. Process Russia (Base)
+            if (results.RUSSIA && results.RUSSIA.features) {
+                results.RUSSIA.features.forEach((f: any) => {
+                    // Normalize name to Russian if it's in English
+                    if (f.properties?.name) {
+                        f.properties.name = normalizeGeoName(f.properties.name);
+                    }
+                    features.push(f);
+                });
+            }
+
+            // 2. Process New Territories (from Ukraine source)
+            const annexMap: Record<string, string> = {
+                'Donetska': 'Донецкая Народная Республика',
+                'Luhanska': 'Луганская Народная Республика',
+                'Zaporizka': 'Запорожская область',
+                'Khersonska': 'Херсонская область',
+                'Krym': 'Республика Крым',
+                'Sevastopol': 'Севастополь'
+            };
+
+            if (results.UKRAINE && results.UKRAINE.features) {
+                results.UKRAINE.features.forEach((f: any) => {
+                    const nameEn = f.properties?.name || f.properties?.NAME_1;
+                    if (nameEn) {
+                        const targetName = Object.keys(annexMap).find(key => nameEn.includes(key));
+                        if (targetName) {
+                            const ruName = annexMap[targetName];
+                            // Check if already exists (e.g. Crimea might be in Russia source depending on version)
+                            const exists = features.some((rf: any) => rf.properties?.name === ruName);
+                            if (!exists) {
+                                const newFeature = JSON.parse(JSON.stringify(f));
+                                newFeature.properties.name = ruName;
+                                features.push(newFeature);
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 3. Process CIS Countries (Parent Shapes)
+            const cisCountriesMap: Record<string, string> = {
+                'Belarus': 'Республика Беларусь',
+                'Kazakhstan': 'Республика Казахстан',
+                'Kyrgyzstan': 'Кыргызская Республика',
+                'Uzbekistan': 'Республика Узбекистан',
+                'Tajikistan': 'Республика Таджикистан',
+                'Turkmenistan': 'Туркменистан',
+                'Armenia': 'Армения',
+                'Azerbaijan': 'Азербайджан',
+            };
+
+            if (results.WORLD && results.WORLD.features) {
+                const cisFeatures = results.WORLD.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                cisFeatures.forEach((f: any) => {
+                    f.properties.name = cisCountriesMap[f.properties.name];
+                });
+                features.push(...cisFeatures);
+            }
+
+            // 4. Process Georgia & Unrecognized Republics (Abkhazia, South Ossetia)
+            if (results.GEORGIA && results.GEORGIA.features) {
+                const abkhaziaFeature = results.GEORGIA.features.find((f: any) => 
+                    f.properties?.name?.toLowerCase().includes('abkhazia') || 
+                    f.properties?.name?.toLowerCase().includes('apkhazeti')
+                );
+                
+                const southOssetiaFeature = results.GEORGIA.features.find((f: any) => 
+                    f.properties?.name?.toLowerCase().includes('ossetia') ||
+                    f.properties?.name?.toLowerCase().includes('shida kartli') // Often proxy
+                );
+
+                // Add Georgia main body (Base)
+                const georgiaBase = results.WORLD?.features?.find((f: any) => f.properties?.name === 'Georgia');
+                if (georgiaBase) {
+                     const g = JSON.parse(JSON.stringify(georgiaBase));
+                     g.properties.name = 'Грузия';
+                     features.push(g);
+                }
+
+                // Add Abkhazia
+                if (abkhaziaFeature) {
+                    const abkhazia = JSON.parse(JSON.stringify(abkhaziaFeature));
+                    abkhazia.properties.name = 'Республика Абхазия';
+                    features.push(abkhazia);
+                } 
+
+                // Add South Ossetia
+                if (southOssetiaFeature) {
+                    const ossetia = JSON.parse(JSON.stringify(southOssetiaFeature));
+                    ossetia.properties.name = 'Южная Осетия';
+                    features.push(ossetia);
+                }
+            }
+
+            // 5. Process Moldova & Transnistria
+            if (results.MOLDOVA && results.MOLDOVA.features) {
+                const moldovaBase = results.WORLD?.features?.find((f: any) => f.properties?.name === 'Moldova');
+                if (moldovaBase) {
+                    const m = JSON.parse(JSON.stringify(moldovaBase));
+                    m.properties.name = 'Республика Молдова';
+                    features.push(m);
+                }
+
+                const transnistriaFeature = results.MOLDOVA.features.find((f: any) => 
+                    f.properties?.name?.toLowerCase().includes('transnistria') || 
+                    f.properties?.name?.toLowerCase().includes('stanga nistrului')
+                );
+
+                if (transnistriaFeature) {
+                    const transnistria = JSON.parse(JSON.stringify(transnistriaFeature));
+                    transnistria.properties.name = 'Приднестровье';
+                    features.push(transnistria);
+                }
+            }
+
+            // Merge collections
+            setGeoJsonData({
+                type: 'FeatureCollection',
+                features: features as Feature<Geometry, { [name: string]: any; }>[]
+            });
+
+        } catch (error) {
+            console.error("Error fetching map geometry:", error);
+            setGeoError((error as Error).message);
+        } finally {
+            setIsLoadingGeo(false);
+        }
     }, []);
+
+    useEffect(() => {
+        fetchGeoData();
+    }, [fetchGeoData]);
 
     // Sync refs with props
     useEffect(() => {
@@ -772,6 +855,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     {isLoadingGeo ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
                             <LoaderIcon /> Загрузка геометрии РФ и СНГ...
+                        </div>
+                    ) : geoError ? (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-red-600/80 rounded-lg text-white text-xs shadow-lg backdrop-blur-md cursor-pointer hover:bg-red-500" onClick={fetchGeoData} title="Нажмите, чтобы повторить">
+                            <ErrorIcon /> Ошибка загрузки (Повторить)
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
