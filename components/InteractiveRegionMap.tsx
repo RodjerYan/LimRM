@@ -47,7 +47,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2"><TargetIcon small/> Плотность питомцев</h4>
                 <div className="space-y-1">
-                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#10b981]"></span><span className="text-xs">Высокая (>80)</span></div>
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#10b981]"></span><span className="text-xs">Высокая (&gt;80)</span></div>
                     <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#f59e0b]"></span><span className="text-xs">Средняя (50-80)</span></div>
                     <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#6b7280]"></span><span className="text-xs">Низкая (&lt;50)</span></div>
                 </div>

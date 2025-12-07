@@ -188,7 +188,7 @@ export interface PlanMetric {
     details?: GrowthDetails; // Context for the explanation
 }
 
-// Shared interface for RM Metrics used in Dashboard and Analysis
+// Shared interface for RMMetrics used in Dashboard and Analysis
 export interface RMMetrics {
     rmName: string;
     totalClients: number;
