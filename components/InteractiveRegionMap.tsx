@@ -319,14 +319,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 const existingNames = new Set(features.map(f => f.properties?.name));
                 russiaRegionsGeoJSON.features.forEach((f: any) => {
                     // Only add if not already present (prevents duplicates if base map updates)
-                    // Note: We prioritize our local definitions for these specific regions as they likely align better with user expectations.
                     const name = f.properties?.name;
-                    // For disputed territories, we overwrite or add.
-                    // Simple check: if not in set, push. 
-                    // Actually, let's force push them and rely on Z-index or filtering if needed, 
-                    // but standard GeoJSON render usually handles overlapping okay (last one might cover).
-                    // Best approach: Filter out potentially conflicting simplified shapes from base map if any.
-                    
                     if (!existingNames.has(name)) {
                         features.push(f);
                     }
@@ -429,8 +422,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const isNewTerritory = ['Донецкая Народная Республика', 'Луганская Народная Республика', 'Запорожская область', 'Херсонская область', 'Республика Крым', 'Севастополь', 'Республика Абхазия', 'Южная Осетия', 'Приднестровье'].includes(regionName);
         
         if (isNewTerritory) {
-             baseBorder.color = isSelected ? '#818cf8' : (localTheme === 'dark' ? '#9ca3af' : '#6b7280'); // Same as standard to look native
-             // Optional: Subtle difference if needed, but usually users want them to look "normal"
+             baseBorder.color = isSelected ? '#818cf8' : (localTheme === 'dark' ? '#9ca3af' : '#6b7280'); 
+             baseBorder.weight = isSelected ? 2.5 : 1.5; // Slightly thicker borders for new territories to ensure visibility
         }
 
         // Mode 1: Sales (Clean) - Default
@@ -438,7 +431,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             return {
                 ...baseBorder,
                 fillColor: isSelected ? '#818cf8' : '#374151', 
-                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.1 : 0), // Slight fill for new territories to show they exist physically
+                // Increased opacity for new territories so they look like solid regions, not just outlines
+                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.15 : 0), 
                 interactive: true
             };
         }
