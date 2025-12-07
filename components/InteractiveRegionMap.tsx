@@ -4,9 +4,9 @@ import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
-import { russiaRegionsGeoJSON as localGeoJSON } from '../data/russia_regions_geojson';
 import { getMarketData } from '../utils/marketData';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon } from './icons';
+import type { FeatureCollection } from 'geojson';
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -123,13 +123,61 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
     
-    // Use LOCAL GeoJSON directly. No external fetching.
-    // This ensures we show exactly what we have defined in our data file (RF + CIS Polygons).
-    const geoJsonData = localGeoJSON;
+    // Remote GeoJSON Data State
+    const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
+    const [isLoadingGeo, setIsLoadingGeo] = useState(true);
     
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
+
+    // Fetch High-Quality GeoJSONs
+    useEffect(() => {
+        const fetchGeoData = async () => {
+            try {
+                setIsLoadingGeo(true);
+                // 1. Fetch Russia Regions (High Quality)
+                const russiaRes = await fetch('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson');
+                const russiaData = await russiaRes.json();
+
+                // 2. Fetch World Countries for CIS
+                const worldRes = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json');
+                const worldData = await worldRes.json();
+
+                // Filter & Translate CIS Countries
+                const cisCountriesMap: Record<string, string> = {
+                    'Belarus': 'Республика Беларусь',
+                    'Kazakhstan': 'Республика Казахстан',
+                    'Kyrgyzstan': 'Кыргызская Республика',
+                    'Uzbekistan': 'Республика Узбекистан',
+                    'Tajikistan': 'Республика Таджикистан',
+                    'Turkmenistan': 'Туркменистан',
+                    'Armenia': 'Армения',
+                    'Azerbaijan': 'Азербайджан',
+                    'Georgia': 'Грузия',
+                    'Moldova': 'Республика Молдова'
+                };
+
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                cisFeatures.forEach((f: any) => {
+                    f.properties.name = cisCountriesMap[f.properties.name];
+                });
+
+                // Merge collections
+                setGeoJsonData({
+                    type: 'FeatureCollection',
+                    features: [...russiaData.features, ...cisFeatures]
+                });
+
+            } catch (error) {
+                console.error("Error fetching map geometry:", error);
+            } finally {
+                setIsLoadingGeo(false);
+            }
+        };
+
+        fetchGeoData();
+    }, []);
 
     // Sync refs with props
     useEffect(() => {
@@ -176,9 +224,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         
         // Base border style - SHARPER and more visible
         const baseBorder = {
-            weight: isSelected ? 3 : 1.5, // Thicker borders
+            weight: isSelected ? 2 : 1, // Thinner, crisper borders
             opacity: 1,
-            color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), // Distinct Gray
+            color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
             fillColor: 'transparent',
             fillOpacity: 0,
             className: isSelected ? 'selected-region-layer' : ''
@@ -188,8 +236,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : '#374151', // Very slight fill for unselected to show clickability
-                fillOpacity: isSelected ? 0.2 : 0.05,
+                fillColor: isSelected ? '#818cf8' : '#374151', 
+                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
                 interactive: true
             };
         }
@@ -254,7 +302,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         resetHighlight();
         if (layer instanceof L.Path) {
              layer.setStyle({ 
-                 weight: 3, 
+                 weight: 2, 
                  color: '#fbbf24', // Amber-400 Highlight
                  opacity: 1, 
                  fillOpacity: 0.2,
@@ -468,57 +516,54 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer - LOCAL SOURCE ONLY
+    // Region Layer - OSM Source
     useEffect(() => {
         const map = mapInstance.current;
-        if (!map) return;
+        if (!map || !geoJsonData) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         
-        // Render GeoJSON directly from local file
-        if (geoJsonData) {
-            geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
-                style: getStyleForRegion,
-                onEachFeature: (feature, layer) => {
-                    const regionName = feature.properties.name;
-                    if (!regionName) return;
+        geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+            style: getStyleForRegion,
+            onEachFeature: (feature, layer) => {
+                const regionName = feature.properties.name;
+                if (!regionName) return;
 
-                    const marketData = getMarketData(regionName);
-                    let tooltipText = regionName;
-                    if (overlayMode === 'pets') tooltipText += `<br/>🐶 Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
-                    if (overlayMode === 'competitors') tooltipText += `<br/>⚔️ Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+                const marketData = getMarketData(regionName);
+                let tooltipText = regionName;
+                if (overlayMode === 'pets') tooltipText += `<br/>🐶 Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'competitors') tooltipText += `<br/>⚔️ Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
 
-                    layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
-                    layer.on({
-                        click: (e) => {
-                            L.DomEvent.stop(e);
-                            map.fitBounds(e.target.getBounds());
-                            highlightRegion(e.target);
-                        },
-                        mouseover: (e) => {
-                            const layer = e.target;
-                            if (layer !== highlightedLayer.current && overlayMode === 'sales') {
-                                layer.setStyle({
-                                    weight: 3,
-                                    color: '#a5b4fc',
-                                    opacity: 1,
-                                    fillOpacity: 0.2, // Highlight fill on hover
-                                });
-                                layer.bringToFront();
-                            }
-                        },
-                        mouseout: (e) => {
-                            const layer = e.target;
-                            if (layer !== highlightedLayer.current) {
-                                geoJsonLayer.current?.resetStyle(layer);
-                            }
+                layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
+                layer.on({
+                    click: (e) => {
+                        L.DomEvent.stop(e);
+                        map.fitBounds(e.target.getBounds());
+                        highlightRegion(e.target);
+                    },
+                    mouseover: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current && overlayMode === 'sales') {
+                            layer.setStyle({
+                                weight: 2,
+                                color: '#a5b4fc',
+                                opacity: 1,
+                                fillOpacity: 0.1, 
+                            });
+                            layer.bringToFront();
                         }
-                    });
-                }
-            }).addTo(map);
-        }
+                    },
+                    mouseout: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current) {
+                            geoJsonLayer.current?.resetStyle(layer);
+                        }
+                    }
+                });
+            }
+        }).addTo(map);
 
-    }, [selectedRegions, overlayMode, localTheme]); // geoJsonData is constant now
+    }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
     return (
         <div 
@@ -533,6 +578,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                         Карта рыночного потенциала
                     </h2>
+                    {isLoadingGeo && (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
+                            <LoaderIcon /> Загрузка геометрии...
+                        </div>
+                    )}
                 </div>
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
