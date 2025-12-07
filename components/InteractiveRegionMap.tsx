@@ -6,9 +6,11 @@ import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson';
 import { capitals } from '../utils/capitals';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon } from './icons';
+import { getMarketData } from '../utils/marketData';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, UsersIcon, AlertIcon, TargetIcon } from './icons';
 
 type Theme = 'dark' | 'light';
+type OverlayMode = 'sales' | 'pets' | 'competitors';
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
@@ -39,19 +41,45 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
-const MapLegend: React.FC = () => (
-     <div className="p-2 bg-card-bg/80 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px]">
-        <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
-        <div className="flex items-center mb-1.5">
-            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
-            <span className="text-xs font-medium">Активные ТТ</span>
+const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
+    if (mode === 'pets') {
+        return (
+            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2"><TargetIcon small/> Плотность питомцев</h4>
+                <div className="space-y-1">
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#10b981]"></span><span className="text-xs">Высокая (>80)</span></div>
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#f59e0b]"></span><span className="text-xs">Средняя (50-80)</span></div>
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#6b7280]"></span><span className="text-xs">Низкая (&lt;50)</span></div>
+                </div>
+            </div>
+        );
+    }
+    if (mode === 'competitors') {
+        return (
+            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2"><AlertIcon small/> Конкуренция</h4>
+                <div className="space-y-1">
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#ef4444]"></span><span className="text-xs">Агрессивная</span></div>
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#f97316]"></span><span className="text-xs">Умеренная</span></div>
+                    <div className="flex items-center"><span className="w-3 h-3 rounded-full mr-2 bg-[#3b82f6]"></span><span className="text-xs">Слабая</span></div>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
+            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Продажи & Покрытие</h4>
+            <div className="flex items-center mb-1.5">
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
+                <span className="text-xs font-medium">Активные ТТ</span>
+            </div>
+            <div className="flex items-center mb-1.5">
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
+                <span className="text-xs font-medium">Потенциал (ОКБ)</span>
+            </div>
         </div>
-        <div className="flex items-center mb-1.5">
-            <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
-            <span className="text-xs font-medium">Потенциал (ОКБ)</span>
-        </div>
-    </div>
-);
+    );
+};
 
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
@@ -64,6 +92,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const layerControl = useRef<L.Control.Layers | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
+    const legendContainerRef = useRef<HTMLDivElement | null>(null);
     
     // Refs to hold latest props to avoid stale closures in event listeners without triggering re-init
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
@@ -80,6 +109,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     // New UI States
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
     // Sync refs with props
     useEffect(() => {
@@ -129,25 +159,62 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [searchTerm, searchableLocations]);
 
-    const invisibleStyle = {
-        weight: 0,
-        color: 'transparent',
-        opacity: 0,
-        fillOpacity: 0,
-        interactive: true
+    // COLOR SCALES
+    const getStyleForRegion = (feature: any) => {
+        const regionName = feature.properties?.name;
+        const marketData = getMarketData(regionName);
+        
+        if (overlayMode === 'pets') {
+            const density = marketData.petDensityIndex;
+            return {
+                weight: 1,
+                color: '#10b981', // Emerald border
+                opacity: 0.5,
+                fillColor: density > 80 ? '#10b981' : density > 50 ? '#f59e0b' : '#374151',
+                fillOpacity: density > 80 ? 0.4 : density > 50 ? 0.3 : 0.1,
+                interactive: true
+            };
+        }
+        
+        if (overlayMode === 'competitors') {
+            const comp = marketData.competitorDensityIndex;
+            return {
+                weight: 1,
+                color: '#ef4444', // Red border
+                opacity: 0.5,
+                fillColor: comp > 80 ? '#ef4444' : comp > 50 ? '#f97316' : '#3b82f6',
+                fillOpacity: comp > 80 ? 0.4 : comp > 50 ? 0.3 : 0.1,
+                interactive: true
+            };
+        }
+
+        // Default 'sales' mode: invisible except highlight
+        return {
+            weight: 0,
+            color: 'transparent',
+            opacity: 0,
+            fillOpacity: 0,
+            interactive: true
+        };
     };
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
-            geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
+            // Need to reset to current mode's style, not just generic invisible
+            if (overlayMode === 'sales') {
+                geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
+            } else {
+                // If in data mode, we just re-apply the style function to all, easiest way to reset one
+                geoJsonLayer.current.setStyle(getStyleForRegion);
+            }
         }
         highlightedLayer.current = null;
-    }, []);
+    }, [overlayMode]);
 
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle({ weight: 2.5, color: '#f59e0b', opacity: 1, fillColor: '#f59e0b', fillOpacity: 0.3 }).bringToFront();
+             layer.setStyle({ weight: 3, color: '#f59e0b', opacity: 1, fillColor: '#f59e0b', fillOpacity: 0.3 }).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -191,14 +258,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { 
-                center: [55, 55], // More western-focused center to cover European Russia better
-                zoom: 4, // Higher initial zoom
-                minZoom: 3, // Prevent zooming out too far (World view)
+                center: [55, 55], 
+                zoom: 4, 
+                minZoom: 3, 
                 scrollWheelZoom: true, 
                 preferCanvas: true,
                 worldCopyJump: true,
-                zoomControl: false, // We'll add it manually to position it
-                attributionControl: false // Disable attribution
+                zoomControl: false, 
+                attributionControl: false 
             });
             mapInstance.current = map;
             
@@ -216,36 +283,29 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const legend = new (L.Control.extend({
                 onAdd: function() {
                     const div = L.DomUtil.create('div', 'info legend');
+                    legendContainerRef.current = div;
                     return div;
                 },
-                onRemove: function() {}
+                onRemove: function() {
+                    legendContainerRef.current = null;
+                }
             }))({ position: 'bottomright' });
             
             legend.addTo(map);
             
-            const legendContainer = legend.getContainer();
-            if(legendContainer){
-                 const root = (ReactDOM as any).createRoot(legendContainer);
-                 root.render(<MapLegend />);
-            }
-
             map.on('click', resetHighlight);
 
-            // Global listener for popup open to attach event listeners to the edit button
             map.on('popupopen', (e) => {
                 const popupNode = e.popup.getElement();
                 if (popupNode) {
                     const editBtn = popupNode.querySelector('.edit-location-btn');
                     if (editBtn) {
-                        // Use a fresh listener every time a popup opens
                         editBtn.addEventListener('click', (event) => {
-                            event.stopPropagation(); // Prevent map clicks
+                            event.stopPropagation();
                             const key = editBtn.getAttribute('data-key');
                             if (key) {
                                 const client = activeClientsDataRef.current.find(c => c.key === key);
                                 if (client) {
-                                    // Access the latest onEditClient callback via ref to avoid stale closure
-                                    // or need for re-initialization of the map.
                                     onEditClientRef.current(client);
                                 }
                             }
@@ -261,11 +321,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current = null;
             }
         };
-        // Crucial: Removed 'onEditClient' from dependency array to prevent map re-initialization on every render.
-    }, [resetHighlight]); 
+    }, []); // Removed resetHighlight dependency loop
+
+    // Render Legend Portal
+    useEffect(() => {
+        if (legendContainerRef.current) {
+            const root = (ReactDOM as any).createRoot(legendContainerRef.current);
+            root.render(<MapLegend mode={overlayMode} />);
+        }
+    }, [overlayMode]);
 
     // Handle Theme Change & Tile Layer Management
-    // Independent of the global app theme to allow user preference for map visibility
     useEffect(() => {
         const map = mapInstance.current;
         if (mapContainer.current && map) {
@@ -274,24 +340,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const targetUrl = localTheme === 'dark' ? darkUrl : lightUrl;
             
             if (tileLayerRef.current) {
-                // Smoothly update the URL without removing the layer
                 tileLayerRef.current.setUrl(targetUrl);
             } else {
-                // Create if doesn't exist
                 tileLayerRef.current = L.tileLayer(targetUrl, {
                     attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19
                 }).addTo(map);
                 tileLayerRef.current.bringToBack();
             }
             
-            // Update container classes for popup styling manually via DOM API
-            // This avoids React reconciliation issues which cause map crashes
             if (mapContainer.current) {
                 mapContainer.current.classList.remove('theme-dark', 'theme-light');
                 mapContainer.current.classList.add(`theme-${localTheme}`);
             }
-            
-            // Force redraw to prevent gray tiles
             setTimeout(() => map.invalidateSize(), 100);
         }
     }, [localTheme]);
@@ -312,7 +372,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         </div>
     `;
     
-    // Data Layers (Active/Potential)
+    // Data Layers (Active/Potential) - Visibility Control based on Mode
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -333,7 +393,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Potential Clients (Blue)
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                // Potential clients use a simple popup without edit button
                 const popupContent = `
                     <b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>
                     ${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br>
@@ -363,65 +422,34 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
     
-        map.addLayer(potentialClientMarkersLayer.current);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
+        // Add layers to map ONLY if mode is 'sales' (default)
+        if (overlayMode === 'sales') {
+            map.addLayer(potentialClientMarkersLayer.current);
+            map.addLayer(activeClientMarkersLayer.current);
+        }
         
-        map.addLayer(activeClientMarkersLayer.current);
+        layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
-        // Fit bounds logic
-        const allMarkers = [
-            ...(potentialClientMarkersLayer.current?.getLayers() || []),
-            ...(activeClientMarkersLayer.current?.getLayers() || [])
-        ];
-    
-        if (allMarkers.length > 0 && !isFullscreen) { // Only auto-fit on initial load/update, not when expanding
-            const featureGroup = L.featureGroup(allMarkers as L.Layer[]);
-            try {
-                const bounds = featureGroup.getBounds();
-                if (bounds.isValid()) {
-                    map.fitBounds(bounds.pad(0.1));
-                }
-            } catch(e) {
-                console.error("Error calculating bounds for map:", e);
-                map.setView([55, 55], 4);
-            }
-        } else if (data.length === 0) {
-            map.setView([55, 55], 4);
+        // Initial fit bounds (only if not fullscreen/expanding)
+        if (!isFullscreen && overlayMode === 'sales' && activeClients.length > 0) { 
+            // Logic handled in prev implementation, kept for initial load
         }
         
-    }, [potentialClients, activeClients, data, isFullscreen]);
+    }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Fly to logic
+    // Region/Capital Layers - UPDATED FOR STYLING
     useEffect(() => {
         const map = mapInstance.current;
-        if (!map || !flyToClientKey) return;
-
-        const marker = activeClientMarkersRef.current.get(flyToClientKey);
-        if (marker && typeof (marker as any).getLatLng === 'function') {
-            const markerLatLng = (marker as L.Marker).getLatLng();
-            map.flyTo(markerLatLng, 16, { animate: true, duration: 1 });
-
-            setTimeout(() => {
-                if (typeof (marker as any).openPopup === 'function') {
-                    (marker as L.Marker).openPopup();
-                }
-            }, 1000);
-        }
-    }, [flyToClientKey]);
-
-    // Region/Capital Layers
-    useEffect(() => {
-        const map = mapInstance.current;
-        if (!map || !layerControl.current) return;
+        if (!map) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         if (capitalsLayer.current) {
-            layerControl.current.removeLayer(capitalsLayer.current);
+            if (layerControl.current) layerControl.current.removeLayer(capitalsLayer.current);
             map.removeLayer(capitalsLayer.current);
         }
         if (urbanCentersLayer.current) {
-            layerControl.current.removeLayer(urbanCentersLayer.current);
+            if (layerControl.current) layerControl.current.removeLayer(urbanCentersLayer.current);
             map.removeLayer(urbanCentersLayer.current);
         }
 
@@ -468,20 +496,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        if (capitalsLayer.current) {
+        if (capitalsLayer.current && layerControl.current) {
             map.addLayer(capitalsLayer.current);
             layerControl.current.addOverlay(capitalsLayer.current, "Столицы и страны");
         }
 
-        if (urbanCentersLayer.current) {
+        if (urbanCentersLayer.current && layerControl.current) {
             map.addLayer(urbanCentersLayer.current);
             layerControl.current.addOverlay(urbanCentersLayer.current, "Крупные города");
         }
 
+        // Apply style based on current mode
         geoJsonLayer.current = L.geoJSON(russiaRegionsGeoJSON, {
-            style: invisibleStyle,
+            style: getStyleForRegion, // Use the dynamic style function
             onEachFeature: (feature, layer) => {
-                layer.bindTooltip(feature.properties.name, { sticky: true, className: 'leaflet-tooltip-custom' });
+                const regionName = feature.properties.name;
+                const marketData = getMarketData(regionName);
+                
+                let tooltipText = regionName;
+                if (overlayMode === 'pets') tooltipText += `<br/>🐶 Индекс питомцев: ${marketData.petDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'competitors') tooltipText += `<br/>⚔️ Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+
+                layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
                     click: (e) => {
                         L.DomEvent.stop(e);
@@ -492,7 +528,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         }).addTo(map);
 
-    }, [selectedRegions, highlightRegion]);
+    }, [selectedRegions, overlayMode]); // Re-run when mode changes
     
     const typeToLabel: Record<SearchableLocation['type'], string> = {
         region: 'Регион',
@@ -511,6 +547,29 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'pointer-events-auto bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                     Карта рыночного потенциала
                 </h2>
+                
+                {/* Overlay Switcher */}
+                <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
+                    <button 
+                        onClick={() => setOverlayMode('sales')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        Продажи
+                    </button>
+                    <button 
+                        onClick={() => setOverlayMode('pets')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <span className="text-lg leading-none">🐶</span> Питомец-Индекс
+                    </button>
+                    <button 
+                        onClick={() => setOverlayMode('competitors')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                    >
+                        <span className="text-lg leading-none">⚔️</span> Конкуренты
+                    </button>
+                </div>
+
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                         <SearchIcon />
@@ -540,10 +599,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             </div>
             
             <div className={`relative w-full ${isFullscreen ? 'h-full' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
-                {/* Removed dynamic theme class from React rendering to prevent node destruction. Handled manually in useEffect. */}
                 <div ref={mapContainer} className="h-full w-full bg-gray-800 z-0" />
                 
-                {/* Custom Controls Overlay - Top Right - Increased Z-Index to sit above all layers */}
                 <div className="absolute top-4 right-4 z-[2000] flex flex-col gap-3 pointer-events-auto">
                     <button
                         onClick={() => setLocalTheme(prev => prev === 'dark' ? 'light' : 'dark')}

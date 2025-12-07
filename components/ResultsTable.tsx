@@ -13,20 +13,29 @@ interface ResultsTableProps {
     onUnidentifiedClick: () => void;
 }
 
-
 const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanClick, disabled, unidentifiedRowsCount, onUnidentifiedClick }) => {
-    const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
+    const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow | 'costScore'; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
     const [rowsPerPage, setRowsPerPage] = useState(15);
     const [copied, setCopied] = useState(false);
 
+    // Mock Cost to Serve Calculation (Idea 6)
+    // In real life, this would use distance from warehouse.
+    // Here we use inverse volume (smaller clients = harder to serve) + random logistics factor.
+    const enrichWithCost = (row: AggregatedDataRow) => {
+        // Simple heuristic: Small volume clients in remote regions cost more
+        const volumeFactor = row.fact > 500 ? 1 : (row.fact > 100 ? 2 : 3);
+        const regionCost = row.region.length % 3 + 1; // Random static factor based on name length
+        return (volumeFactor * regionCost) * 1.5; 
+    };
+
     const handleCopyToClipboard = () => {
         const tsv = [
-            ['Группа', 'РМ', 'Регион', 'Бренд', 'Фасовка', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)'].join('\t'),
+            ['Группа', 'РМ', 'Регион', 'Бренд', 'Фасовка', 'Факт', 'Потенциал', 'Рост (абс.)', 'Рост (%)', 'Cost Score'].join('\t'),
             ...sortedData.map(row => [
                 row.clientName, row.rm, row.region, row.brand, row.packaging,
-                row.fact, row.potential, row.growthPotential, row.growthPercentage.toFixed(2),
+                row.fact, row.potential, row.growthPotential, row.growthPercentage.toFixed(2), (row as any).costScore.toFixed(1)
             ].join('\t'))
         ].join('\n');
         navigator.clipboard.writeText(tsv).then(() => {
@@ -36,43 +45,33 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     };
 
     const filteredData = useMemo(() => {
-        if (!searchTerm) return data;
+        if (!searchTerm) return data.map(d => ({ ...d, costScore: enrichWithCost(d) }));
         const lowercasedFilter = searchTerm.toLowerCase().trim();
         
         return data.filter(item => {
-            // Check aggregated fields
             if (item.clientName.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.rm.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.region.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.brand.toLowerCase().includes(lowercasedFilter)) return true;
             if (item.packaging.toLowerCase().includes(lowercasedFilter)) return true;
-            
-            // Check individual clients within the group
             return item.clients.some(client => {
-                // 1. Check the normalized/displayed address
                 if (client.address.toLowerCase().includes(lowercasedFilter)) return true;
-                
-                // 2. Check the client name
                 if (client.name.toLowerCase().includes(lowercasedFilter)) return true;
-
-                // 3. Check the original raw address from the source file
-                // This ensures that searching for "As written in Excel" works even if parsed differently
                 if (client.originalRow) {
                     const rawAddress = findAddressInRow(client.originalRow);
                     if (rawAddress && rawAddress.toLowerCase().includes(lowercasedFilter)) return true;
                 }
-                
                 return false;
             });
-        });
+        }).map(d => ({ ...d, costScore: enrichWithCost(d) }));
     }, [data, searchTerm]);
 
     const sortedData = useMemo(() => {
         let sortableItems = [...filteredData];
         if (sortConfig !== null) {
             sortableItems.sort((a, b) => {
-                const aValue = a[sortConfig.key];
-                const bValue = b[sortConfig.key];
+                const aValue = (a as any)[sortConfig.key];
+                const bValue = (b as any)[sortConfig.key];
                 if (typeof aValue === 'number' && typeof bValue === 'number') {
                     return sortConfig.direction === 'ascending' ? aValue - bValue : bValue - aValue;
                 }
@@ -85,7 +84,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
         return sortableItems;
     }, [filteredData, sortConfig]);
 
-    const requestSort = (key: keyof AggregatedDataRow) => {
+    const requestSort = (key: keyof AggregatedDataRow | 'costScore') => {
         let direction: 'ascending' | 'descending' = 'ascending';
         if (sortConfig?.key === key && sortConfig.direction === 'ascending') {
             direction = 'descending';
@@ -97,11 +96,11 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     const totalPages = Math.ceil(sortedData.length / rowsPerPage);
     const paginatedData = sortedData.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage);
 
-    const SortableHeader: React.FC<{ sortKey: keyof AggregatedDataRow; children: React.ReactNode }> = ({ sortKey, children }) => {
+    const SortableHeader: React.FC<{ sortKey: keyof AggregatedDataRow | 'costScore'; children: React.ReactNode; title?: string }> = ({ sortKey, children, title }) => {
         const isSorted = sortConfig?.key === sortKey;
         const icon = isSorted ? (sortConfig?.direction === 'ascending' ? <SortUpIcon /> : <SortDownIcon />) : <SortIcon />;
         return (
-            <th scope="col" className="px-4 py-3 cursor-pointer select-none" onClick={() => requestSort(sortKey)}>
+            <th scope="col" className="px-4 py-3 cursor-pointer select-none" onClick={() => requestSort(sortKey)} title={title}>
                 <div className="flex items-center gap-1.5">{children}<span className="w-4 h-4">{icon}</span></div>
             </th>
         );
@@ -144,7 +143,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                 </div>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-gray-300">
+                <table className="w-full text-left text-sm text-gray-300">
                     <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 backdrop-blur-sm">
                         <tr>
                             <th scope="col" className="px-4 py-3">Группа/Клиент</th>
@@ -154,33 +153,34 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                             <SortableHeader sortKey="packaging">Фасовка</SortableHeader>
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
-                            <SortableHeader sortKey="growthPotential">Рост (абс.)</SortableHeader>
-                            <SortableHeader sortKey="growthPercentage">Рост (%)</SortableHeader>
+                            <SortableHeader sortKey="growthPotential">Рост</SortableHeader>
+                            {/* Idea 6: Cost to Serve Column */}
+                            <SortableHeader sortKey="costScore" title="Стоимость обслуживания (Cost-to-Serve). Чем выше балл, тем дороже логистика и менеджмент.">Cost Score</SortableHeader>
                         </tr>
                     </thead>
                     <tbody>
-                         {paginatedData.map((row) => (
+                         {paginatedData.map((row: any) => (
                             <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
                                 <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
                                 <td className="px-4 py-3">{row.rm}</td>
                                 <td className="px-4 py-3">{row.region}</td>
-                                <td 
-                                    className="px-4 py-3 text-accent cursor-pointer hover:text-white hover:underline transition-colors font-medium"
-                                    onClick={(e) => {
-                                        if (onPlanClick) {
-                                            e.stopPropagation();
-                                            onPlanClick(row);
-                                        }
-                                    }}
-                                    title="Нажмите, чтобы увидеть расчет плана"
-                                >
-                                    {row.brand}
-                                </td>
+                                <td className="px-4 py-3 text-accent cursor-pointer hover:text-white hover:underline transition-colors font-medium" onClick={(e) => { if (onPlanClick) { e.stopPropagation(); onPlanClick(row); } }} title="Нажмите, чтобы увидеть расчет плана">{row.brand}</td>
                                 <td className="px-4 py-3">{row.packaging}</td>
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
                                 <td className="px-4 py-3 text-warning font-bold">{formatNumber(row.growthPotential)}</td>
-                                <td className="px-4 py-3 text-warning font-bold">{row.growthPercentage.toFixed(1)}%</td>
+                                {/* Cost Score Cell */}
+                                <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                            <div 
+                                                className={`h-full ${row.costScore > 8 ? 'bg-red-500' : row.costScore > 5 ? 'bg-yellow-500' : 'bg-emerald-500'}`} 
+                                                style={{ width: `${Math.min(100, row.costScore * 10)}%` }}
+                                            ></div>
+                                        </div>
+                                        <span className="text-xs text-gray-400">{row.costScore.toFixed(1)}</span>
+                                    </div>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -195,8 +195,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                         <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1 border border-gray-600 rounded-md disabled:opacity-50">Назад</button>
                         <span>Стр. {currentPage} из {totalPages}</span>
                         <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1 border border-gray-600 rounded-md disabled:opacity-50">Вперед</button>
-                        <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                            className="p-1.5 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-accent focus:border-accent">
+                        <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="p-1.5 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-accent focus:border-accent">
                             <option value={15}>15 / стр</option><option value={30}>30 / стр</option><option value={50}>50 / стр</option>
                         </select>
                     </div>

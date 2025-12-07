@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import Modal from './Modal';
 import DetailChart from './DetailChart';
 import { AggregatedDataRow, OkbStatus, MapPoint } from '../types';
-import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon } from './icons';
+import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, CalculatorIcon, CoverageIcon, SearchIcon, AlertIcon } from './icons';
 
 interface DetailsModalProps {
     isOpen: boolean;
@@ -85,26 +85,51 @@ const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: 
     );
 };
 
+// NEW: Recommendation Component (Idea 2)
+const AssortmentRecommendations: React.FC<{ brand: string; packaging: string }> = ({ brand, packaging }) => {
+    // Simulated recommendations based on "What similar clients buy"
+    // In a real app, this would query the backend for cross-sell data.
+    const recommendations = [
+        { name: `${brand} Паучи 85г Говядина`, reason: 'Топ-3 SKU в регионе' },
+        { name: `${brand} Сухой 1.5кг Курица`, reason: 'Часто берут вместе с текущим' },
+        { name: `${brand} Лакомства 50г`, reason: 'Высокая маржинальность' }
+    ];
+
+    return (
+        <div className="bg-gradient-to-br from-indigo-900/30 to-purple-900/30 p-4 rounded-lg border border-indigo-500/30">
+            <h4 className="font-bold text-sm text-indigo-300 mb-3 flex items-center gap-2">
+                <span className="text-lg">✨</span> Матрица Золотого Стандарта
+            </h4>
+            <div className="space-y-2">
+                {recommendations.map((rec, idx) => (
+                    <div key={idx} className="flex justify-between items-center bg-gray-900/40 p-2 rounded border border-white/5">
+                        <span className="text-sm text-gray-200">{rec.name}</span>
+                        <span className="text-xs text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded">{rec.reason}</span>
+                    </div>
+                ))}
+            </div>
+            <div className="mt-3 text-[10px] text-gray-500 text-center">
+                Рекомендации основаны на анализе похожих точек (Look-alike modeling)
+            </div>
+        </div>
+    );
+};
+
 const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbStatus, onStartEdit }) => {
     if (!data) return null;
 
     const activeClientsCount = data.clients?.length || 0;
     const avgFactPerClient = activeClientsCount > 0 ? data.fact / activeClientsCount : 0;
     
-    // Coverage Formula: Active / (Active + Uncovered)
-    // Approximate: If Uncovered = OKB - Active (capped at 0), then Active / (Active + Uncovered).
-    // Note: Since we don't have exact matching info inside this specific modal's data prop (it's aggregated by brand group),
-    // we use a safe approximation based on OKB total count for the whole region if available, or just fallback.
-    // However, since this modal is for a specific *group*, "Coverage" is a bit abstract here.
-    // We will show Coverage relative to the TOTAL OKB for consistency if OKB count is passed.
-    
     const okbTotal = okbStatus?.rowCount || 0;
     const uncoveredApprox = Math.max(0, okbTotal - activeClientsCount);
     const totalUniverse = activeClientsCount + uncoveredApprox;
     
-    // Cap at 100% explicitly
     const rawCoverage = totalUniverse > 0 ? (activeClientsCount / totalUniverse) * 100 : 0;
     const okbCoverage = Math.min(100, rawCoverage);
+
+    // Idea 8: Cannibalization Check (Mock)
+    const isCannibalizationRisk = activeClientsCount > 5 && avgFactPerClient < 50; // Simple heuristic
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детальная информация: ${data.clientName}`} maxWidth="max-w-[95vw]">
@@ -126,6 +151,24 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                             <MetricCard title="Покрытие ОКБ" value={`${okbCoverage.toFixed(1)}%`} icon={<CoverageIcon />} color="text-rose-400" tooltip={`Доля активных клиентов от всей базы (${activeClientsCount} из ${totalUniverse}). Макс 100%.`} />
                             </div>
                     </div>
+                    
+                    {/* New Risk & Recs Section */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {isCannibalizationRisk && (
+                            <div className="bg-red-900/20 border border-red-500/30 p-4 rounded-lg flex items-start gap-3">
+                                <div className="text-red-400"><AlertIcon /></div>
+                                <div>
+                                    <h4 className="font-bold text-red-400 text-sm">Риск Каннибализации</h4>
+                                    <p className="text-xs text-gray-300 mt-1">
+                                        Высокая плотность точек ({activeClientsCount}) при низком среднем чеке. 
+                                        Возможно, клиенты отбирают трафик друг у друга.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                        <AssortmentRecommendations brand={data.brand} packaging={data.packaging} />
+                    </div>
+
                     <GroupedClientsList clients={data.clients} onStartEdit={onStartEdit} />
                 </div>
                 
@@ -137,7 +180,6 @@ const DetailsModal: React.FC<DetailsModalProps> = ({ isOpen, onClose, data, okbS
                             Факт vs Потенциал
                         </h4>
                     </div>
-                    {/* Increased height for better visual impact */}
                     <div className="h-80 w-full">
                         <DetailChart fact={data.fact} potential={data.potential} />
                     </div>

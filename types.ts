@@ -14,6 +14,10 @@ export interface AggregatedDataRow {
     potentialClients?: PotentialClient[];
     clients: MapPoint[]; // List of individual client objects in the group
     planMetric?: PlanMetric; // Stores the detailed plan calculation for this specific row
+    
+    // New Strategic Metrics
+    costToServeScore?: number; // 1-10 scale
+    eComShare?: number; // Estimated % of online sales in this segment
 }
 
 export type MapPointStatus = 'match' | 'potential';
@@ -39,6 +43,9 @@ export interface MapPoint {
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
     lastUpdated?: number; // Timestamp of the last edit
     comment?: string; // User comments from Column E
+    
+    // Risk Analysis
+    churnRisk?: 'high' | 'medium' | 'low';
 }
 
 export interface EnrichedParsedAddress {
@@ -225,4 +232,23 @@ export interface FileProcessingState {
     fileName: string | null;
     backgroundMessage: string | null;
     startTime: number | null;
+}
+
+// --- NEW TYPES FOR UPGRADES ---
+
+export interface MarketData {
+    regionName: string;
+    petDensityIndex: number; // 0-100 (100 = max density)
+    competitorDensityIndex: number; // 0-100 (100 = high competition)
+    eComPenetration: number; // % of sales online
+}
+
+export interface SalesLeagueMember {
+    rank: number;
+    name: string;
+    score: number;
+    achievementPct: number;
+    volume: number;
+    trend: 'up' | 'down' | 'flat';
+    badge?: 'champion' | 'rising_star' | 'grinder' | 'risk';
 }
