@@ -68,7 +68,11 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     }
     return (
         <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Продажи & Покрытие</h4>
+            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
+            <div className="flex items-center mb-1.5">
+                <span className="inline-block w-3 h-3 rounded-full mr-2 border border-emerald-500"></span>
+                <span className="text-xs font-medium">Граница региона</span>
+            </div>
             <div className="flex items-center mb-1.5">
                 <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
                 <span className="text-xs font-medium">Активные ТТ</span>
@@ -159,54 +163,62 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [searchTerm, searchableLocations]);
 
-    // COLOR SCALES
+    // --- STYLING LOGIC ---
+    // Updated to be clean, sharp, and transparent by default to show the high-quality base map
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
         
+        // Base style for border only
+        const baseStyle = {
+            weight: 1, // Thin, crisp border
+            opacity: 0.6, // Semi-transparent border
+            color: '#6b7280', // Neutral gray border
+            fillOpacity: 0, // Transparent fill by default! Let the base map show.
+            fillColor: 'transparent',
+            interactive: true // Ensure it can still be clicked/hovered
+        };
+
         if (overlayMode === 'pets') {
             const density = marketData.petDensityIndex;
             return {
-                weight: 1,
-                color: '#10b981', // Emerald border
-                opacity: 0.5,
+                ...baseStyle,
+                color: '#10b981', // Green tint for border
                 fillColor: density > 80 ? '#10b981' : density > 50 ? '#f59e0b' : '#374151',
-                fillOpacity: density > 80 ? 0.4 : density > 50 ? 0.3 : 0.1,
-                interactive: true
+                fillOpacity: density > 80 ? 0.3 : density > 50 ? 0.2 : 0.05, // Very light fill
             };
         }
         
         if (overlayMode === 'competitors') {
             const comp = marketData.competitorDensityIndex;
             return {
-                weight: 1,
-                color: '#ef4444', // Red border
-                opacity: 0.5,
+                ...baseStyle,
+                color: '#ef4444', // Red tint for border
                 fillColor: comp > 80 ? '#ef4444' : comp > 50 ? '#f97316' : '#3b82f6',
-                fillOpacity: comp > 80 ? 0.4 : comp > 50 ? 0.3 : 0.1,
-                interactive: true
+                fillOpacity: comp > 80 ? 0.3 : comp > 50 ? 0.2 : 0.05,
             };
         }
 
-        // Default 'sales' mode: invisible except highlight
-        return {
-            weight: 0,
-            color: 'transparent',
-            opacity: 0,
-            fillOpacity: 0,
-            interactive: true
-        };
+        // Default 'sales' mode: Just the border, maybe highlighted if selected
+        const isSelected = selectedRegions.includes(regionName);
+        if (isSelected) {
+            return {
+                ...baseStyle,
+                weight: 2,
+                color: '#818cf8', // Indigo border for selected
+                opacity: 1,
+                fillColor: '#818cf8',
+                fillOpacity: 0.1
+            };
+        }
+
+        return baseStyle;
     };
 
     const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
-            // Need to reset to current mode's style, not just generic invisible
-            if (overlayMode === 'sales') {
-                geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
-            } else {
-                // If in data mode, we just re-apply the style function to all, easiest way to reset one
-                geoJsonLayer.current.setStyle(getStyleForRegion);
-            }
+            // Need to reset to current mode's style
+            geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
         highlightedLayer.current = null;
     }, [overlayMode]);
@@ -214,7 +226,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const highlightRegion = useCallback((layer: L.Layer) => {
         resetHighlight();
         if (layer instanceof L.Path) {
-             layer.setStyle({ weight: 3, color: '#f59e0b', opacity: 1, fillColor: '#f59e0b', fillOpacity: 0.3 }).bringToFront();
+             // Sharp highlight style
+             layer.setStyle({ 
+                 weight: 2, 
+                 color: '#f59e0b', // Amber highlight
+                 opacity: 1, 
+                 fillColor: '#f59e0b', 
+                 fillOpacity: 0.15 // Light fill to indicate selection but keep map visible
+             }).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -321,7 +340,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 tileLayerRef.current = null;
             }
         };
-    }, []); // Removed resetHighlight dependency loop
+    }, []); 
 
     // Render Legend Portal
     useEffect(() => {
@@ -335,6 +354,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         const map = mapInstance.current;
         if (mapContainer.current && map) {
+            // Using CartoDB basemaps which have very sharp, clean lines
             const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
             const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
             const targetUrl = localTheme === 'dark' ? darkUrl : lightUrl;
@@ -431,11 +451,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ (из файла)");
     
-        // Initial fit bounds (only if not fullscreen/expanding)
-        if (!isFullscreen && overlayMode === 'sales' && activeClients.length > 0) { 
-            // Logic handled in prev implementation, kept for initial load
-        }
-        
     }, [potentialClients, activeClients, data, overlayMode]);
     
     // Region/Capital Layers - UPDATED FOR STYLING
@@ -523,6 +538,24 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         L.DomEvent.stop(e);
                         map.fitBounds(e.target.getBounds());
                         highlightRegion(e.target);
+                    },
+                    mouseover: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current && overlayMode === 'sales') {
+                            layer.setStyle({
+                                weight: 2,
+                                color: '#9ca3af',
+                                opacity: 1,
+                                fillOpacity: 0.1
+                            });
+                            layer.bringToFront();
+                        }
+                    },
+                    mouseout: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current) {
+                            geoJsonLayer.current?.resetStyle(layer);
+                        }
                     }
                 });
             }
@@ -554,7 +587,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         onClick={() => setOverlayMode('sales')}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
                     >
-                        Продажи
+                        Продажи (Clean)
                     </button>
                     <button 
                         onClick={() => setOverlayMode('pets')}
