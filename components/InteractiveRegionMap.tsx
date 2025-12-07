@@ -5,8 +5,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon } from './icons';
-import type { FeatureCollection } from 'geojson';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
+import type { FeatureCollection, Feature, Geometry } from 'geojson';
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -126,25 +126,121 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Remote GeoJSON Data State
     const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
+    const [isFromCache, setIsFromCache] = useState(false);
     
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-    // Fetch High-Quality GeoJSONs
+    // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
+            const CACHE_NAME = 'limkorm-geo-v2';
+            
+            // Sources
+            const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+            // Ukraine source to extract new territories
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/org-scn-design-studio-community/shapes/master/geojson/700_UA_region.json';
+            const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
+
             try {
                 setIsLoadingGeo(true);
-                // 1. Fetch Russia Regions (High Quality)
-                const russiaRes = await fetch('https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson');
-                const russiaData = await russiaRes.json();
+                let russiaData, ukraineData, worldData;
+                let usedCache = false;
 
-                // 2. Fetch World Countries for CIS
-                const worldRes = await fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json');
-                const worldData = await worldRes.json();
+                // 1. Try Cache API
+                if ('caches' in window) {
+                    try {
+                        const cache = await caches.open(CACHE_NAME);
+                        const [russiaRes, ukraineRes, worldRes] = await Promise.all([
+                            cache.match(RUSSIA_URL),
+                            cache.match(UKRAINE_URL),
+                            cache.match(WORLD_URL)
+                        ]);
 
-                // Filter & Translate CIS Countries
+                        if (russiaRes && ukraineRes && worldRes) {
+                            russiaData = await russiaRes.json();
+                            ukraineData = await ukraineRes.json();
+                            worldData = await worldRes.json();
+                            usedCache = true;
+                            setIsFromCache(true);
+                        } else {
+                            // Fetch and Cache
+                            const [rNetwork, uNetwork, wNetwork] = await Promise.all([
+                                fetch(RUSSIA_URL),
+                                fetch(UKRAINE_URL),
+                                fetch(WORLD_URL)
+                            ]);
+                            
+                            if (rNetwork.ok && uNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                cache.put(UKRAINE_URL, uNetwork.clone());
+                                cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json();
+                                ukraineData = await uNetwork.json();
+                                worldData = await wNetwork.json();
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Cache API error:', e);
+                    }
+                }
+
+                // Fallback
+                if (!russiaData || !ukraineData || !worldData) {
+                    const [rRes, uRes, wRes] = await Promise.all([
+                        fetch(RUSSIA_URL),
+                        fetch(UKRAINE_URL),
+                        fetch(WORLD_URL)
+                    ]);
+                    russiaData = await rRes.json();
+                    ukraineData = await uRes.json();
+                    worldData = await wRes.json();
+                }
+
+                // --- DATA PROCESSING & MERGING ---
+
+                const features: Feature[] = [];
+
+                // 1. Process Russia (Base)
+                if (russiaData && russiaData.features) {
+                    features.push(...russiaData.features);
+                }
+
+                // 2. Process New Territories (from Ukraine source)
+                // Mapping Ukraine Adm1 names to Russian Federation Subjects
+                const annexMap: Record<string, string> = {
+                    'Donetska': 'Донецкая Народная Республика',
+                    'Luhanska': 'Луганская Народная Республика',
+                    'Zaporizka': 'Запорожская область',
+                    'Khersonska': 'Херсонская область',
+                    'Krym': 'Республика Крым',
+                    'Sevastopol': 'Севастополь'
+                };
+
+                if (ukraineData && ukraineData.features) {
+                    ukraineData.features.forEach((f: any) => {
+                        const nameEn = f.properties?.name || f.properties?.NAME_1; // Adjust based on specific GeoJSON structure
+                        if (nameEn) {
+                            // Check partial matches or exact matches from the map
+                            const targetName = Object.keys(annexMap).find(key => nameEn.includes(key));
+                            
+                            if (targetName) {
+                                const ruName = annexMap[targetName];
+                                // Check if already exists in Russia data (e.g. Crimea might be there)
+                                const exists = features.some((rf: any) => rf.properties?.name === ruName);
+                                if (!exists) {
+                                    // Clone and rename
+                                    const newFeature = JSON.parse(JSON.stringify(f));
+                                    newFeature.properties.name = ruName;
+                                    features.push(newFeature);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // 3. Process CIS Countries (from World)
                 const cisCountriesMap: Record<string, string> = {
                     'Belarus': 'Республика Беларусь',
                     'Kazakhstan': 'Республика Казахстан',
@@ -158,15 +254,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     'Moldova': 'Республика Молдова'
                 };
 
-                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
-                cisFeatures.forEach((f: any) => {
-                    f.properties.name = cisCountriesMap[f.properties.name];
-                });
+                if (worldData && worldData.features) {
+                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                    cisFeatures.forEach((f: any) => {
+                        f.properties.name = cisCountriesMap[f.properties.name];
+                    });
+                    features.push(...cisFeatures);
+                }
 
                 // Merge collections
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisFeatures]
+                    features: features as Feature<Geometry, { [name: string]: any; }>[]
                 });
 
             } catch (error) {
@@ -578,11 +677,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>
                         Карта рыночного потенциала
                     </h2>
-                    {isLoadingGeo && (
+                    {isLoadingGeo ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
-                            <LoaderIcon /> Загрузка геометрии...
+                            <LoaderIcon /> Загрузка геометрии РФ и СНГ...
                         </div>
-                    )}
+                    ) : isFromCache ? (
+                        <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
+                            <CheckIcon /> Из кэша
+                        </div>
+                    ) : null}
                 </div>
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
