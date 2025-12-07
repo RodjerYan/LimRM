@@ -135,50 +135,65 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v2';
+            const CACHE_NAME = 'limkorm-geo-v3'; // Bumped version for new territories
             
             // Sources
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Ukraine source to extract new territories
             const UKRAINE_URL = 'https://raw.githubusercontent.com/org-scn-design-studio-community/shapes/master/geojson/700_UA_region.json';
             const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
+            
+            // New Sources for Unrecognized Republics
+            const GEORGIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson';
+            const MOLDOVA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, ukraineData, worldData;
+                let russiaData, ukraineData, worldData, georgiaData, moldovaData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, ukraineRes, worldRes] = await Promise.all([
+                        const [russiaRes, ukraineRes, worldRes, georgiaRes, moldovaRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
                             cache.match(UKRAINE_URL),
-                            cache.match(WORLD_URL)
+                            cache.match(WORLD_URL),
+                            cache.match(GEORGIA_URL),
+                            cache.match(MOLDOVA_URL)
                         ]);
 
-                        if (russiaRes && ukraineRes && worldRes) {
+                        if (russiaRes && ukraineRes && worldRes && georgiaRes && moldovaRes) {
                             russiaData = await russiaRes.json();
                             ukraineData = await ukraineRes.json();
                             worldData = await worldRes.json();
+                            georgiaData = await georgiaRes.json();
+                            moldovaData = await moldovaRes.json();
                             usedCache = true;
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, uNetwork, wNetwork] = await Promise.all([
+                            const responses = await Promise.all([
                                 fetch(RUSSIA_URL),
                                 fetch(UKRAINE_URL),
-                                fetch(WORLD_URL)
+                                fetch(WORLD_URL),
+                                fetch(GEORGIA_URL),
+                                fetch(MOLDOVA_URL)
                             ]);
                             
-                            if (rNetwork.ok && uNetwork.ok && wNetwork.ok) {
-                                cache.put(RUSSIA_URL, rNetwork.clone());
-                                cache.put(UKRAINE_URL, uNetwork.clone());
-                                cache.put(WORLD_URL, wNetwork.clone());
-                                russiaData = await rNetwork.json();
-                                ukraineData = await uNetwork.json();
-                                worldData = await wNetwork.json();
+                            if (responses.every(r => r.ok)) {
+                                cache.put(RUSSIA_URL, responses[0].clone());
+                                cache.put(UKRAINE_URL, responses[1].clone());
+                                cache.put(WORLD_URL, responses[2].clone());
+                                cache.put(GEORGIA_URL, responses[3].clone());
+                                cache.put(MOLDOVA_URL, responses[4].clone());
+                                
+                                russiaData = await responses[0].json();
+                                ukraineData = await responses[1].json();
+                                worldData = await responses[2].json();
+                                georgiaData = await responses[3].json();
+                                moldovaData = await responses[4].json();
                             }
                         }
                     } catch (e) {
@@ -186,16 +201,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                 }
 
-                // Fallback
-                if (!russiaData || !ukraineData || !worldData) {
-                    const [rRes, uRes, wRes] = await Promise.all([
+                // Fallback (if cache failed or missed)
+                if (!russiaData) {
+                    const responses = await Promise.all([
                         fetch(RUSSIA_URL),
                         fetch(UKRAINE_URL),
-                        fetch(WORLD_URL)
+                        fetch(WORLD_URL),
+                        fetch(GEORGIA_URL),
+                        fetch(MOLDOVA_URL)
                     ]);
-                    russiaData = await rRes.json();
-                    ukraineData = await uRes.json();
-                    worldData = await wRes.json();
+                    russiaData = await responses[0].json();
+                    ukraineData = await responses[1].json();
+                    worldData = await responses[2].json();
+                    georgiaData = await responses[3].json();
+                    moldovaData = await responses[4].json();
                 }
 
                 // --- DATA PROCESSING & MERGING ---
@@ -208,7 +227,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 // 2. Process New Territories (from Ukraine source)
-                // Mapping Ukraine Adm1 names to Russian Federation Subjects
                 const annexMap: Record<string, string> = {
                     'Donetska': 'Донецкая Народная Республика',
                     'Luhanska': 'Луганская Народная Республика',
@@ -220,17 +238,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 if (ukraineData && ukraineData.features) {
                     ukraineData.features.forEach((f: any) => {
-                        const nameEn = f.properties?.name || f.properties?.NAME_1; // Adjust based on specific GeoJSON structure
+                        const nameEn = f.properties?.name || f.properties?.NAME_1;
                         if (nameEn) {
-                            // Check partial matches or exact matches from the map
                             const targetName = Object.keys(annexMap).find(key => nameEn.includes(key));
-                            
                             if (targetName) {
                                 const ruName = annexMap[targetName];
-                                // Check if already exists in Russia data (e.g. Crimea might be there)
                                 const exists = features.some((rf: any) => rf.properties?.name === ruName);
                                 if (!exists) {
-                                    // Clone and rename
                                     const newFeature = JSON.parse(JSON.stringify(f));
                                     newFeature.properties.name = ruName;
                                     features.push(newFeature);
@@ -240,7 +254,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     });
                 }
 
-                // 3. Process CIS Countries (from World)
+                // 3. Process CIS Countries (Parent Shapes)
                 const cisCountriesMap: Record<string, string> = {
                     'Belarus': 'Республика Беларусь',
                     'Kazakhstan': 'Республика Казахстан',
@@ -250,8 +264,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     'Turkmenistan': 'Туркменистан',
                     'Armenia': 'Армения',
                     'Azerbaijan': 'Азербайджан',
-                    'Georgia': 'Грузия',
-                    'Moldova': 'Республика Молдова'
+                    // 'Georgia' and 'Moldova' handled separately below for finer granularity
                 };
 
                 if (worldData && worldData.features) {
@@ -260,6 +273,78 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         f.properties.name = cisCountriesMap[f.properties.name];
                     });
                     features.push(...cisFeatures);
+                }
+
+                // 4. Process Georgia & Unrecognized Republics (Abkhazia, South Ossetia)
+                if (georgiaData && georgiaData.features) {
+                    // Extract Abkhazia
+                    const abkhaziaFeature = georgiaData.features.find((f: any) => 
+                        f.properties?.name?.toLowerCase().includes('abkhazia') || 
+                        f.properties?.name?.toLowerCase().includes('apkhazeti')
+                    );
+                    
+                    // Extract South Ossetia (often named 'Shida Kartli' in Admin1 maps, or separate if Admin0 variant)
+                    // In ClickThatHood 'georgia.geojson' typically contains regions. 
+                    // We look for 'Shida Kartli' as a proxy or specific if available. 
+                    // NOTE: Borders of South Ossetia often overlap with Shida Kartli but aren't identical. 
+                    // Using 'South Ossetia' if found, otherwise map specific region.
+                    const southOssetiaFeature = georgiaData.features.find((f: any) => 
+                        f.properties?.name?.toLowerCase().includes('ossetia')
+                    );
+
+                    // Add Georgia main body (Excluding Abkhazia if possible, but overlaying is safer visually)
+                    const georgiaBase = {
+                        type: 'Feature',
+                        properties: { name: 'Грузия' },
+                        geometry: worldData?.features?.find((f: any) => f.properties?.name === 'Georgia')?.geometry
+                    };
+                    if (georgiaBase.geometry) features.push(georgiaBase as any);
+
+                    // Add Abkhazia
+                    if (abkhaziaFeature) {
+                        const abkhazia = JSON.parse(JSON.stringify(abkhaziaFeature));
+                        abkhazia.properties.name = 'Республика Абхазия';
+                        features.push(abkhazia);
+                    } else {
+                        // Fallback: Check if available in standard world map as separate entity
+                        const abkhaziaWorld = worldData?.features?.find((f: any) => f.properties?.name === 'Abkhazia');
+                        if (abkhaziaWorld) {
+                             const abkhazia = JSON.parse(JSON.stringify(abkhaziaWorld));
+                             abkhazia.properties.name = 'Республика Абхазия';
+                             features.push(abkhazia);
+                        }
+                    }
+
+                    // Add South Ossetia
+                    if (southOssetiaFeature) {
+                        const ossetia = JSON.parse(JSON.stringify(southOssetiaFeature));
+                        ossetia.properties.name = 'Южная Осетия';
+                        features.push(ossetia);
+                    }
+                }
+
+                // 5. Process Moldova & Transnistria
+                if (moldovaData && moldovaData.features) {
+                    // Moldova Base
+                    const moldovaBase = {
+                        type: 'Feature',
+                        properties: { name: 'Республика Молдова' },
+                        geometry: worldData?.features?.find((f: any) => f.properties?.name === 'Moldova')?.geometry
+                    };
+                    if (moldovaBase.geometry) features.push(moldovaBase as any);
+
+                    // Transnistria (Stânga Nistrului)
+                    const transnistriaFeature = moldovaData.features.find((f: any) => 
+                        f.properties?.name?.toLowerCase().includes('transnistria') || 
+                        f.properties?.name?.toLowerCase().includes('stanga nistrului') ||
+                        f.properties?.name?.toLowerCase().includes('stînga nistrului')
+                    );
+
+                    if (transnistriaFeature) {
+                        const transnistria = JSON.parse(JSON.stringify(transnistriaFeature));
+                        transnistria.properties.name = 'Приднестровье'; // Or "Приднестровская Молдавская Республика"
+                        features.push(transnistria);
+                    }
                 }
 
                 // Merge collections
@@ -331,12 +416,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             className: isSelected ? 'selected-region-layer' : ''
         };
 
+        // Custom Highlight for unrecognized republics to make them distinct
+        const isUnrecognized = ['Республика Абхазия', 'Южная Осетия', 'Приднестровье'].includes(regionName);
+        if (isUnrecognized) {
+             baseBorder.color = '#f87171'; // Reddish border for distinct territories
+             baseBorder.weight = 1.5;
+        }
+
         // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : '#374151', 
-                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
+                fillColor: isSelected ? '#818cf8' : (isUnrecognized ? '#f87171' : '#374151'), 
+                fillOpacity: isSelected ? 0.2 : (isUnrecognized ? 0.15 : 0), 
                 interactive: true
             };
         }
