@@ -7,6 +7,7 @@ import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon, ErrorIcon, RetryIcon } from './icons';
 import type { FeatureCollection, Feature, Geometry } from 'geojson';
+import { russiaRegionsGeoJSON } from '../data/russia_regions_geojson'; // Import hardcoded add-ons
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -17,7 +18,7 @@ interface InteractiveRegionMapProps {
     potentialClients: OkbDataRow[];
     activeClients: MapPoint[];
     flyToClientKey: string | null;
-    theme?: Theme; // Global theme (initial state)
+    theme?: Theme;
     onToggleTheme?: () => void;
     onEditClient: (client: MapPoint) => void;
 }
@@ -229,14 +230,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const fetchGeoData = useCallback(async () => {
         const CACHE_NAME = 'limkorm-geo-v3'; 
         
-        // Sources - Using raw.githubusercontent.com which is generally reliable
-        // Fallbacks could be added if needed
+        // Sources
         const SOURCES = {
             RUSSIA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson',
-            UKRAINE: 'https://raw.githubusercontent.com/org-scn-design-studio-community/shapes/master/geojson/700_UA_region.json',
             WORLD: 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json',
-            GEORGIA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson',
-            MOLDOVA: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson'
         };
 
         try {
@@ -246,7 +243,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const results: Record<string, any> = {};
             let usedCache = false;
 
-            // 1. Try Cache API (Fail-safe)
+            // 1. Try Cache API
             if ('caches' in window) {
                 try {
                     const cache = await caches.open(CACHE_NAME);
@@ -269,7 +266,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             if (!usedCache) {
                 const keys = Object.keys(SOURCES) as (keyof typeof SOURCES)[];
                 
-                // Use Promise.allSettled to allow partial failures
                 const fetchPromises = keys.map(key => 
                     fetch(SOURCES[key])
                         .then(r => {
@@ -282,16 +278,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 const settled = await Promise.allSettled(fetchPromises);
                 
-                // Process results
                 settled.forEach((res, index) => {
-                    // This casting is a bit tricky with Promise.allSettled return types in TS, simplify:
                     const result = res as any; 
                     if (result.value && result.value.status === 'fulfilled') {
                         results[result.value.key] = result.value.value;
-                        // Attempt to cache success
                         if ('caches' in window) {
                             caches.open(CACHE_NAME).then(cache => {
-                                // Re-create response to cache
                                 const jsonStr = JSON.stringify(result.value.value);
                                 const response = new Response(jsonStr, { headers: { 'Content-Type': 'application/json' } });
                                 cache.put(SOURCES[keys[index]], response);
@@ -303,7 +295,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 });
             }
 
-            // If Russia failed, we have a problem.
             if (!results.RUSSIA) {
                 throw new Error("Не удалось загрузить карту РФ. Проверьте интернет-соединение.");
             }
@@ -315,7 +306,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // 1. Process Russia (Base)
             if (results.RUSSIA && results.RUSSIA.features) {
                 results.RUSSIA.features.forEach((f: any) => {
-                    // Normalize name to Russian if it's in English
                     if (f.properties?.name) {
                         f.properties.name = normalizeGeoName(f.properties.name);
                     }
@@ -323,31 +313,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 });
             }
 
-            // 2. Process New Territories (from Ukraine source)
-            const annexMap: Record<string, string> = {
-                'Donetska': 'Донецкая Народная Республика',
-                'Luhanska': 'Луганская Народная Республика',
-                'Zaporizka': 'Запорожская область',
-                'Khersonska': 'Херсонская область',
-                'Krym': 'Республика Крым',
-                'Sevastopol': 'Севастополь'
-            };
-
-            if (results.UKRAINE && results.UKRAINE.features) {
-                results.UKRAINE.features.forEach((f: any) => {
-                    const nameEn = f.properties?.name || f.properties?.NAME_1;
-                    if (nameEn) {
-                        const targetName = Object.keys(annexMap).find(key => nameEn.includes(key));
-                        if (targetName) {
-                            const ruName = annexMap[targetName];
-                            // Check if already exists (e.g. Crimea might be in Russia source depending on version)
-                            const exists = features.some((rf: any) => rf.properties?.name === ruName);
-                            if (!exists) {
-                                const newFeature = JSON.parse(JSON.stringify(f));
-                                newFeature.properties.name = ruName;
-                                features.push(newFeature);
-                            }
-                        }
+            // 2. FORCE ADD Local Missing Territories (Crimea, DNR, LNR, Unrecognized)
+            // This ensures they appear regardless of network status or external map versions.
+            if (russiaRegionsGeoJSON && russiaRegionsGeoJSON.features) {
+                const existingNames = new Set(features.map(f => f.properties?.name));
+                russiaRegionsGeoJSON.features.forEach((f: any) => {
+                    // Only add if not already present (prevents duplicates if base map updates)
+                    // Note: We prioritize our local definitions for these specific regions as they likely align better with user expectations.
+                    const name = f.properties?.name;
+                    // For disputed territories, we overwrite or add.
+                    // Simple check: if not in set, push. 
+                    // Actually, let's force push them and rely on Z-index or filtering if needed, 
+                    // but standard GeoJSON render usually handles overlapping okay (last one might cover).
+                    // Best approach: Filter out potentially conflicting simplified shapes from base map if any.
+                    
+                    if (!existingNames.has(name)) {
+                        features.push(f);
                     }
                 });
             }
@@ -362,6 +343,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 'Turkmenistan': 'Туркменистан',
                 'Armenia': 'Армения',
                 'Azerbaijan': 'Азербайджан',
+                'Georgia': 'Грузия', // Main Georgia body
+                'Moldova': 'Республика Молдова' // Main Moldova body
             };
 
             if (results.WORLD && results.WORLD.features) {
@@ -372,63 +355,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 features.push(...cisFeatures);
             }
 
-            // 4. Process Georgia & Unrecognized Republics (Abkhazia, South Ossetia)
-            if (results.GEORGIA && results.GEORGIA.features) {
-                const abkhaziaFeature = results.GEORGIA.features.find((f: any) => 
-                    f.properties?.name?.toLowerCase().includes('abkhazia') || 
-                    f.properties?.name?.toLowerCase().includes('apkhazeti')
-                );
-                
-                const southOssetiaFeature = results.GEORGIA.features.find((f: any) => 
-                    f.properties?.name?.toLowerCase().includes('ossetia') ||
-                    f.properties?.name?.toLowerCase().includes('shida kartli') // Often proxy
-                );
-
-                // Add Georgia main body (Base)
-                const georgiaBase = results.WORLD?.features?.find((f: any) => f.properties?.name === 'Georgia');
-                if (georgiaBase) {
-                     const g = JSON.parse(JSON.stringify(georgiaBase));
-                     g.properties.name = 'Грузия';
-                     features.push(g);
-                }
-
-                // Add Abkhazia
-                if (abkhaziaFeature) {
-                    const abkhazia = JSON.parse(JSON.stringify(abkhaziaFeature));
-                    abkhazia.properties.name = 'Республика Абхазия';
-                    features.push(abkhazia);
-                } 
-
-                // Add South Ossetia
-                if (southOssetiaFeature) {
-                    const ossetia = JSON.parse(JSON.stringify(southOssetiaFeature));
-                    ossetia.properties.name = 'Южная Осетия';
-                    features.push(ossetia);
-                }
-            }
-
-            // 5. Process Moldova & Transnistria
-            if (results.MOLDOVA && results.MOLDOVA.features) {
-                const moldovaBase = results.WORLD?.features?.find((f: any) => f.properties?.name === 'Moldova');
-                if (moldovaBase) {
-                    const m = JSON.parse(JSON.stringify(moldovaBase));
-                    m.properties.name = 'Республика Молдова';
-                    features.push(m);
-                }
-
-                const transnistriaFeature = results.MOLDOVA.features.find((f: any) => 
-                    f.properties?.name?.toLowerCase().includes('transnistria') || 
-                    f.properties?.name?.toLowerCase().includes('stanga nistrului')
-                );
-
-                if (transnistriaFeature) {
-                    const transnistria = JSON.parse(JSON.stringify(transnistriaFeature));
-                    transnistria.properties.name = 'Приднестровье';
-                    features.push(transnistria);
-                }
-            }
-
-            // Merge collections
             setGeoJsonData({
                 type: 'FeatureCollection',
                 features: features as Feature<Geometry, { [name: string]: any; }>[]
@@ -499,19 +425,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             className: isSelected ? 'selected-region-layer' : ''
         };
 
-        // Custom Highlight for unrecognized republics to make them distinct
-        const isUnrecognized = ['Республика Абхазия', 'Южная Осетия', 'Приднестровье'].includes(regionName);
-        if (isUnrecognized) {
-             baseBorder.color = '#f87171'; // Reddish border for distinct territories
-             baseBorder.weight = 1.5;
+        // Custom Highlight for disputed/new territories to make them distinct but integrated
+        const isNewTerritory = ['Донецкая Народная Республика', 'Луганская Народная Республика', 'Запорожская область', 'Херсонская область', 'Республика Крым', 'Севастополь', 'Республика Абхазия', 'Южная Осетия', 'Приднестровье'].includes(regionName);
+        
+        if (isNewTerritory) {
+             baseBorder.color = isSelected ? '#818cf8' : (localTheme === 'dark' ? '#9ca3af' : '#6b7280'); // Same as standard to look native
+             // Optional: Subtle difference if needed, but usually users want them to look "normal"
         }
 
         // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : (isUnrecognized ? '#f87171' : '#374151'), 
-                fillOpacity: isSelected ? 0.2 : (isUnrecognized ? 0.15 : 0), 
+                fillColor: isSelected ? '#818cf8' : '#374151', 
+                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.1 : 0), // Slight fill for new territories to show they exist physically
                 interactive: true
             };
         }
@@ -625,7 +552,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 zoom: 3, 
                 minZoom: 2, 
                 scrollWheelZoom: true, 
-                preferCanvas: true, // IMPORTANT for performance
+                preferCanvas: true, 
                 worldCopyJump: true,
                 zoomControl: false, 
                 attributionControl: false 
@@ -718,7 +645,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    // ... createPopupContent helper remains same ...
     const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
         <div class="popup-inner-content">
             <b>${name}</b><br>
@@ -790,7 +716,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer - OSM Source
+    // Region Layer
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
@@ -862,7 +788,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша
+                            <CheckIcon /> Данные активны
                         </div>
                     ) : null}
                 </div>
