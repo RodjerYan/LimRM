@@ -218,12 +218,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v5'; // Bump version to invalidate old cache
+            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version to invalidate old cache
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            // Corrected URL: use 'main' branch
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/main/public/data/ukraine.geojson';
+            // New verified source for Ukraine regions
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/datasets/geo-admin1-us/master/data/ukraine.geojson';
 
             try {
                 setIsLoadingGeo(true);
