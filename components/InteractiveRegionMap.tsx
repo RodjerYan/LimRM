@@ -75,6 +75,7 @@ const ukraineRegionMap: Record<string, string> = {
     'Khmelnytskyi': 'Хмельницкая область',
     'Kiev': 'Киевская область',
     'Kiev City': 'Киев',
+    'Kyiv City': 'Киев',
     'Kirovohrad': 'Кировоградская область',
     'Luhansk': 'Луганская Народная Республика',
     'Lviv': 'Львовская область',
@@ -91,7 +92,7 @@ const ukraineRegionMap: Record<string, string> = {
     'Zaporizhia': 'Запорожская область',
     'Zhytomyr': 'Житомирская область',
     
-    // GeoJSON "NAME_1" / "VARNAME_1" variations (normalized)
+    // GeoJSON "NAME_1" / "VARNAME_1" / "shapeName" variations (normalized)
     'Cherkaska': 'Черкасская область',
     'Chernihivska': 'Черниговская область',
     'Chernivetska': 'Черновицкая область',
@@ -218,12 +219,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version to invalidate old cache
+            const CACHE_NAME = 'limkorm-geo-v7'; // Bump version to invalidate old cache
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            // New verified source for Ukraine regions
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/datasets/geo-admin1-us/master/data/ukraine.geojson';
+            // Validated source for Ukraine regions (ADM1) from geoBoundaries
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/UKR/ADM1/geoBoundaries-UKR-ADM1.geojson';
 
             try {
                 setIsLoadingGeo(true);
@@ -252,7 +253,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                 }
 
-                // Fallback: Fetch independently
+                // Fallback: Fetch independently with error handling for each
                 if (!russiaData) {
                     try {
                         const res = await fetch(RUSSIA_URL);
@@ -271,6 +272,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     try {
                         const res = await fetch(UKRAINE_URL);
                         if (res.ok) ukraineData = await res.json();
+                        else console.warn(`Ukraine GeoJSON 404: ${UKRAINE_URL}`);
                     } catch (e) { console.error("Ukraine GeoJSON failed", e); }
                 }
 
@@ -320,10 +322,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 if (ukraineData) {
                     // Robust processing for Ukraine GeoJSON (varying property keys)
+                    // geoBoundaries usually uses 'shapeName'
                     ukraineData.features.forEach((f: any) => {
                         const p = f.properties;
-                        // Try to find the name in various possible keys
-                        const rawName = p.name || p.NAME_1 || p.NAME || p.VARNAME_1 || p.varname || p.NAME_RU || p.NAME_LATN;
+                        // Try to find the name in various possible keys, prioritizing shapeName for geoBoundaries
+                        const rawName = p.shapeName || p.name || p.NAME_1 || p.NAME || p.VARNAME_1 || p.varname || p.NAME_RU || p.NAME_LATN;
                         
                         if (rawName) {
                             // Normalize: remove apostrophes, "Oblast", extra spaces
@@ -338,7 +341,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 // Apply the Russian name if found in our map
                                 f.properties.name = ukraineRegionMap[normalized];
                             } else {
-                                // Fallback: use the raw name if no mapping found, but ensure 'name' property exists
+                                // Fallback: use the normalized name if no mapping found
                                 f.properties.name = normalized;
                             }
                         }
