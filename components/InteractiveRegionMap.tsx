@@ -38,25 +38,8 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
-// Helper to validate GeoJSON features to prevent Leaflet crashes
-const isValidGeoJsonFeature = (feature: any) => {
-    if (!feature || !feature.geometry) return false;
-    const { type, coordinates, geometries } = feature.geometry;
-    
-    // Safety check for GeometryCollection
-    if (type === 'GeometryCollection') {
-        return Array.isArray(geometries) && geometries.length > 0;
-    }
-    
-    // Safety check for standard geometries (Polygon, MultiPolygon, etc.)
-    // Coordinates must be an array and not empty
-    return Array.isArray(coordinates) && coordinates.length > 0;
-};
-
 // Helper to fix Chukotka's antimeridian crossing for visualization
 const fixChukotkaGeoJSON = (feature: any) => {
-    if (!isValidGeoJsonFeature(feature)) return feature;
-
     const transformCoord = (coord: number[]) => {
         let [lon, lat] = coord;
         // Shift negative longitudes (Western Hemisphere) to 180+ (Eastern Hemisphere extension)
@@ -69,78 +52,12 @@ const fixChukotkaGeoJSON = (feature: any) => {
     const transformRing = (ring: number[][]) => ring.map(transformCoord);
     const transformPolygon = (coords: number[][][]) => coords.map(transformRing);
 
-    try {
-        if (feature.geometry.type === 'Polygon') {
-            feature.geometry.coordinates = transformPolygon(feature.geometry.coordinates);
-        } else if (feature.geometry.type === 'MultiPolygon') {
-            feature.geometry.coordinates = feature.geometry.coordinates.map(transformPolygon);
-        }
-    } catch (e) {
-        console.warn("Failed to fix Chukotka coords:", e);
+    if (feature.geometry.type === 'Polygon') {
+        feature.geometry.coordinates = transformPolygon(feature.geometry.coordinates);
+    } else if (feature.geometry.type === 'MultiPolygon') {
+        feature.geometry.coordinates = feature.geometry.coordinates.map(transformPolygon);
     }
     return feature;
-};
-
-// Expanded Map for Ukrainian region names from GeoJSON variations to Russian names
-const ukraineRegionMap: Record<string, string> = {
-    // English / Translit standard
-    'Cherkasy': 'Черкасская область',
-    'Chernihiv': 'Черниговская область',
-    'Chernivtsi': 'Черновицкая область',
-    'Crimea': 'Республика Крым',
-    'Dnipropetrovsk': 'Днепропетровская область',
-    'Donetsk': 'Донецкая Народная Республика',
-    'Ivano-Frankivsk': 'Ивано-Франковская область',
-    'Kharkiv': 'Харьковская область',
-    'Kherson': 'Херсонская область',
-    'Khmelnytskyi': 'Хмельницкая область',
-    'Kiev': 'Киевская область',
-    'Kiev City': 'Киев',
-    'Kyiv City': 'Киев',
-    'Kirovohrad': 'Кировоградская область',
-    'Luhansk': 'Луганская Народная Республика',
-    'Lviv': 'Львовская область',
-    'Mykolaiv': 'Николаевская область',
-    'Odessa': 'Одесская область',
-    'Poltava': 'Полтавская область',
-    'Rivne': 'Ровненская область',
-    'Sevastopol': 'Севастополь',
-    'Sumy': 'Сумская область',
-    'Ternopil': 'Тернопольская область',
-    'Vinnytsia': 'Винницкая область',
-    'Volyn': 'Волынская область',
-    'Zakarpattia': 'Закарпатская область',
-    'Zaporizhia': 'Запорожская область',
-    'Zhytomyr': 'Житомирская область',
-    
-    // GeoJSON "NAME_1" / "VARNAME_1" / "shapeName" variations (normalized)
-    'Cherkaska': 'Черкасская область',
-    'Chernihivska': 'Черниговская область',
-    'Chernivetska': 'Черновицкая область',
-    'Dnipropetrovska': 'Днепропетровская область',
-    'Donetska': 'Донецкая Народная Республика',
-    'Ivano-Frankivska': 'Ивано-Франковская область',
-    'Kharkivska': 'Харьковская область',
-    'Khersonska': 'Херсонская область',
-    'Khmelnytska': 'Хмельницкая область',
-    'Khmelnytskyy': 'Хмельницкая область',
-    'Kyivska': 'Киевская область',
-    'Kyiv': 'Киев',
-    'Kirovohradska': 'Кировоградская область',
-    'Luhanska': 'Луганская Народная Республика',
-    'Lvivska': 'Львовская область',
-    'Mykolaivska': 'Николаевская область',
-    'Odeska': 'Одесская область',
-    'Poltavska': 'Полтавская область',
-    'Rivnenska': 'Ровненская область',
-    'Sumska': 'Сумская область',
-    'Ternopilska': 'Тернопольская область',
-    'Vinnytska': 'Винницкая область',
-    'Volynska': 'Волынская область',
-    'Zakarpatska': 'Закарпатская область',
-    'Zaporizka': 'Запорожская область',
-    'Zhytomyrska': 'Житомирская область',
-    'Avtonomna Respublika Krym': 'Республика Крым',
 };
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -148,7 +65,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    Плотность питомцев
+                    <span className="text-lg">🐶</span> Плотность питомцев
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -171,7 +88,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    Конкуренция
+                    <span className="text-lg">⚔️</span> Конкуренция
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -240,151 +157,97 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v8'; // Bump version to invalidate old cache
+            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            // Validated non-LFS source for Ukraine regions
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/slawomirmatuszak/ukrainian_geodata/main/regiony.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData = null, worldData = null, ukraineData = null;
+                let russiaData, worldData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes, ukraineRes] = await Promise.all([
+                        const [russiaRes, worldRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL),
-                            cache.match(UKRAINE_URL)
+                            cache.match(WORLD_URL)
                         ]);
 
-                        if (russiaRes && worldRes && ukraineRes) {
+                        if (russiaRes && worldRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
-                            ukraineData = await ukraineRes.json();
                             usedCache = true;
                             setIsFromCache(true);
+                        } else {
+                            // Fetch and Cache
+                            const [rNetwork, wNetwork] = await Promise.all([
+                                fetch(RUSSIA_URL),
+                                fetch(WORLD_URL)
+                            ]);
+                            
+                            if (rNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json();
+                                worldData = await wNetwork.json();
+                            }
                         }
                     } catch (e) {
-                        console.warn('Cache API lookup failed:', e);
+                        console.warn('Cache API error:', e);
                     }
                 }
 
-                // Fallback: Fetch independently with error handling for each
-                if (!russiaData) {
-                    try {
-                        const res = await fetch(RUSSIA_URL);
-                        if (res.ok) russiaData = await res.json();
-                    } catch (e) { console.error("Russia GeoJSON failed", e); }
-                }
-                
-                if (!worldData) {
-                    try {
-                        const res = await fetch(WORLD_URL);
-                        if (res.ok) worldData = await res.json();
-                    } catch (e) { console.error("World GeoJSON failed", e); }
+                // Fallback if cache failed or data missing
+                if (!russiaData || !worldData) {
+                    const [rRes, wRes] = await Promise.all([
+                        fetch(RUSSIA_URL),
+                        fetch(WORLD_URL)
+                    ]);
+                    russiaData = await rRes.json();
+                    worldData = await wRes.json();
                 }
 
-                if (!ukraineData) {
-                    try {
-                        const res = await fetch(UKRAINE_URL);
-                        if (res.ok) ukraineData = await res.json();
-                        else console.warn(`Ukraine GeoJSON 404: ${UKRAINE_URL}`);
-                    } catch (e) { console.error("Ukraine GeoJSON failed", e); }
-                }
+                // Filter & Translate CIS Countries to match our internal region names
+                const cisCountriesMap: Record<string, string> = {
+                    'Belarus': 'Республика Беларусь',
+                    'Kazakhstan': 'Республика Казахстан',
+                    'Kyrgyzstan': 'Кыргызская Республика',
+                    'Uzbekistan': 'Республика Узбекистан',
+                    'Tajikistan': 'Республика Таджикистан',
+                    'Turkmenistan': 'Туркменистан',
+                    'Armenia': 'Армения',
+                    'Azerbaijan': 'Азербайджан',
+                    'Georgia': 'Грузия',
+                    'Moldova': 'Республика Молдова'
+                };
 
-                // Save to cache if network fetched
-                if (!usedCache && 'caches' in window) {
-                    try {
-                        const cache = await caches.open(CACHE_NAME);
-                        if(russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
-                        if(worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
-                        if(ukraineData) cache.put(UKRAINE_URL, new Response(JSON.stringify(ukraineData)));
-                    } catch (e) { /* ignore cache write errors */ }
-                }
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                cisFeatures.forEach((f: any) => {
+                    f.properties.name = cisCountriesMap[f.properties.name];
+                });
 
-                const features: any[] = [];
-
-                if (russiaData && Array.isArray(russiaData.features)) {
-                    // Filter invalid features first
-                    const validRussia = russiaData.features.filter(isValidGeoJsonFeature);
-                    
-                    // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
-                    const processedRussia = validRussia.map((f: any) => {
+                // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
+                // Manually fix Chukotka coordinates to prevent "streak" across the map
+                if (russiaData && russiaData.features) {
+                    russiaData.features = russiaData.features.map((f: any) => {
                         if (f.properties?.name === 'Чукотский автономный округ') {
                             return fixChukotkaGeoJSON(f);
                         }
                         return f;
                     });
-                    features.push(...processedRussia);
                 }
 
-                if (worldData && Array.isArray(worldData.features)) {
-                    // Filter & Translate CIS Countries to match our internal region names
-                    const cisCountriesMap: Record<string, string> = {
-                        'Belarus': 'Республика Беларусь',
-                        'Kazakhstan': 'Республика Казахстан',
-                        'Kyrgyzstan': 'Кыргызская Республика',
-                        'Uzbekistan': 'Республика Узбекистан',
-                        'Tajikistan': 'Республика Таджикистан',
-                        'Turkmenistan': 'Туркменистан',
-                        'Armenia': 'Армения',
-                        'Azerbaijan': 'Азербайджан',
-                        'Georgia': 'Грузия',
-                        'Moldova': 'Республика Молдова'
-                    };
-                    
-                    const validCis = worldData.features.filter(isValidGeoJsonFeature);
-                    const cisFeatures = validCis.filter((f: any) => cisCountriesMap[f.properties.name]);
-                    
-                    cisFeatures.forEach((f: any) => {
-                        f.properties.name = cisCountriesMap[f.properties.name];
-                    });
-                    features.push(...cisFeatures);
-                }
-
-                if (ukraineData && Array.isArray(ukraineData.features)) {
-                    // Robust processing for Ukraine GeoJSON (varying property keys)
-                    const validUkraine = ukraineData.features.filter(isValidGeoJsonFeature);
-                    
-                    validUkraine.forEach((f: any) => {
-                        const p = f.properties;
-                        // Try to find the name in various possible keys, prioritizing shapeName for geoBoundaries
-                        const rawName = p.shapeName || p.name || p.NAME_1 || p.NAME || p.VARNAME_1 || p.varname || p.NAME_RU || p.NAME_LATN;
-                        
-                        if (rawName) {
-                            // Normalize: remove apostrophes, "Oblast", extra spaces
-                            const normalized = rawName
-                                .replace(/'/g, "")
-                                .replace(/’/g, "")
-                                .replace(/ Oblast.*/i, "") // Remove 'Oblast' and anything after
-                                .replace(/ City.*/i, "")
-                                .trim();
-
-                            if (ukraineRegionMap[normalized]) {
-                                // Apply the Russian name if found in our map
-                                f.properties.name = ukraineRegionMap[normalized];
-                            } else {
-                                // Fallback: use the normalized name if no mapping found
-                                f.properties.name = normalized;
-                            }
-                        }
-                    });
-                    features.push(...validUkraine);
-                }
-
-                if (features.length > 0) {
-                    setGeoJsonData({ type: 'FeatureCollection', features });
-                } else {
-                    console.warn("No valid GeoJSON features found to render.");
-                }
+                // Merge collections: Russia Regions + CIS Countries
+                setGeoJsonData({
+                    type: 'FeatureCollection',
+                    features: [...russiaData.features, ...cisFeatures]
+                });
 
             } catch (error) {
-                console.error("Critical Error fetching map geometry:", error);
+                console.error("Error fetching map geometry:", error);
             } finally {
                 setIsLoadingGeo(false);
             }
@@ -668,7 +531,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
                 data-key="${key}"
             >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                 Изменить местоположение
             </button>
         </div>
@@ -729,57 +592,52 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer - OSM Source with SAFE LOADING
+    // Region Layer - OSM Source
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         
-        try {
-            geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
-                style: getStyleForRegion,
-                onEachFeature: (feature, layer) => {
-                    const regionName = feature.properties.name;
-                    if (!regionName) return;
+        geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+            style: getStyleForRegion,
+            onEachFeature: (feature, layer) => {
+                const regionName = feature.properties.name;
+                if (!regionName) return;
 
-                    const marketData = getMarketData(regionName);
-                    let tooltipText = regionName;
-                    if (overlayMode === 'pets') tooltipText += `<br/>Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
-                    if (overlayMode === 'competitors') tooltipText += `<br/>Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+                const marketData = getMarketData(regionName);
+                let tooltipText = regionName;
+                if (overlayMode === 'pets') tooltipText += `<br/>🐶 Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'competitors') tooltipText += `<br/>⚔️ Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
 
-                    layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
-                    layer.on({
-                        click: (e) => {
-                            L.DomEvent.stop(e);
-                            map.fitBounds(e.target.getBounds());
-                            highlightRegion(e.target);
-                        },
-                        mouseover: (e) => {
-                            const layer = e.target;
-                            if (layer !== highlightedLayer.current && overlayMode === 'sales') {
-                                layer.setStyle({
-                                    weight: 2,
-                                    color: '#a5b4fc',
-                                    opacity: 1,
-                                    fillOpacity: 0.1, 
-                                });
-                                layer.bringToFront();
-                            }
-                        },
-                        mouseout: (e) => {
-                            const layer = e.target;
-                            if (layer !== highlightedLayer.current) {
-                                geoJsonLayer.current?.resetStyle(layer);
-                            }
+                layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
+                layer.on({
+                    click: (e) => {
+                        L.DomEvent.stop(e);
+                        map.fitBounds(e.target.getBounds());
+                        highlightRegion(e.target);
+                    },
+                    mouseover: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current && overlayMode === 'sales') {
+                            layer.setStyle({
+                                weight: 2,
+                                color: '#a5b4fc',
+                                opacity: 1,
+                                fillOpacity: 0.1, 
+                            });
+                            layer.bringToFront();
                         }
-                    });
-                }
-            }).addTo(map);
-        } catch (err) {
-            console.error("Leaflet GeoJSON Render Error:", err);
-            // Don't crash the app, just log
-        }
+                    },
+                    mouseout: (e) => {
+                        const layer = e.target;
+                        if (layer !== highlightedLayer.current) {
+                            geoJsonLayer.current?.resetStyle(layer);
+                        }
+                    }
+                });
+            }
+        }).addTo(map);
 
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
@@ -809,8 +667,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
                     <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
-                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
-                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
+                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">🐶</span> Питомец-Индекс</button>
+                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">⚔️</span> Конкуренты</button>
                 </div>
 
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
