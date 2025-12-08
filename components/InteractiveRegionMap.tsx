@@ -65,7 +65,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    <span className="text-lg">🐶</span> Плотность питомцев
+                    Плотность питомцев
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -88,7 +88,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    <span className="text-lg">⚔️</span> Конкуренция
+                    Конкуренция
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -607,8 +607,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 const marketData = getMarketData(regionName);
                 let tooltipText = regionName;
-                if (overlayMode === 'pets') tooltipText += `<br/>🐶 Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
-                if (overlayMode === 'competitors') tooltipText += `<br/>⚔️ Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'pets') tooltipText += `<br/>Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'competitors') tooltipText += `<br/>Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
 
                 layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
@@ -667,8 +667,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
                     <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
-                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">🐶</span> Питомец-Индекс</button>
-                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">⚔️</span> Конкуренты</button>
+                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
+                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
                 </div>
 
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
