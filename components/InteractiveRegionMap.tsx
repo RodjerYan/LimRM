@@ -60,6 +60,37 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
+// Map Ukrainian region names from GeoJSON (English/Transliterated) to Russian names used in the app
+const ukraineRegionMap: Record<string, string> = {
+    'Cherkasy': 'Черкасская область',
+    'Chernihiv': 'Черниговская область',
+    'Chernivtsi': 'Черновицкая область',
+    'Crimea': 'Республика Крым',
+    'Dnipropetrovsk': 'Днепропетровская область',
+    'Donetsk': 'Донецкая Народная Республика',
+    'Ivano-Frankivsk': 'Ивано-Франковская область',
+    'Kharkiv': 'Харьковская область',
+    'Kherson': 'Херсонская область',
+    'Khmelnytskyi': 'Хмельницкая область',
+    'Kiev': 'Киевская область',
+    'Kiev City': 'Киев',
+    'Kirovohrad': 'Кировоградская область',
+    'Luhansk': 'Луганская Народная Республика',
+    'Lviv': 'Львовская область',
+    'Mykolaiv': 'Николаевская область',
+    'Odessa': 'Одесская область',
+    'Poltava': 'Полтавская область',
+    'Rivne': 'Ровненская область',
+    'Sevastopol': 'Севастополь',
+    'Sumy': 'Сумская область',
+    'Ternopil': 'Тернопольская область',
+    'Vinnytsia': 'Винницкая область',
+    'Volyn': 'Волынская область',
+    'Zakarpattia': 'Закарпатская область',
+    'Zaporizhia': 'Запорожская область',
+    'Zhytomyr': 'Житомирская область'
+};
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -157,42 +188,48 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData;
+                let russiaData, worldData, ukraineData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes] = await Promise.all([
+                        const [russiaRes, worldRes, ukraineRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL)
+                            cache.match(WORLD_URL),
+                            cache.match(UKRAINE_URL)
                         ]);
 
-                        if (russiaRes && worldRes) {
+                        if (russiaRes && worldRes && ukraineRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
+                            ukraineData = await ukraineRes.json();
                             usedCache = true;
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, wNetwork] = await Promise.all([
+                            const [rNetwork, wNetwork, uNetwork] = await Promise.all([
                                 fetch(RUSSIA_URL),
-                                fetch(WORLD_URL)
+                                fetch(WORLD_URL),
+                                fetch(UKRAINE_URL)
                             ]);
                             
-                            if (rNetwork.ok && wNetwork.ok) {
+                            if (rNetwork.ok && wNetwork.ok && uNetwork.ok) {
                                 cache.put(RUSSIA_URL, rNetwork.clone());
                                 cache.put(WORLD_URL, wNetwork.clone());
+                                cache.put(UKRAINE_URL, uNetwork.clone());
                                 russiaData = await rNetwork.json();
                                 worldData = await wNetwork.json();
+                                ukraineData = await uNetwork.json();
                             }
                         }
                     } catch (e) {
@@ -201,13 +238,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 // Fallback if cache failed or data missing
-                if (!russiaData || !worldData) {
-                    const [rRes, wRes] = await Promise.all([
+                if (!russiaData || !worldData || !ukraineData) {
+                    const [rRes, wRes, uRes] = await Promise.all([
                         fetch(RUSSIA_URL),
-                        fetch(WORLD_URL)
+                        fetch(WORLD_URL),
+                        fetch(UKRAINE_URL)
                     ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
+                    ukraineData = await uRes.json();
                 }
 
                 // Filter & Translate CIS Countries to match our internal region names
@@ -229,6 +268,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     f.properties.name = cisCountriesMap[f.properties.name];
                 });
 
+                // Translate Ukraine Regions
+                if (ukraineData && ukraineData.features) {
+                    ukraineData.features.forEach((f: any) => {
+                        const originalName = f.properties.name;
+                        if (ukraineRegionMap[originalName]) {
+                            f.properties.name = ukraineRegionMap[originalName];
+                        }
+                    });
+                }
+
                 // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
                 // Manually fix Chukotka coordinates to prevent "streak" across the map
                 if (russiaData && russiaData.features) {
@@ -240,10 +289,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     });
                 }
 
-                // Merge collections: Russia Regions + CIS Countries
+                // Merge collections: Russia Regions + Ukraine Regions + CIS Countries
+                // Note: Duplicate regions (like Crimea if present in both) will overlap.
+                // We rely on consistent naming to map data.
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisFeatures]
+                    features: [...russiaData.features, ...ukraineData.features, ...cisFeatures]
                 });
 
             } catch (error) {
@@ -531,7 +582,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
                 data-key="${key}"
             >
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
                 Изменить местоположение
             </button>
         </div>

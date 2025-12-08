@@ -1,3 +1,4 @@
+
 // utils/regionMap.ts
 import { abkhazia } from './region-data/abkhazia';
 import { armenia } from './region-data/armenia';
@@ -13,6 +14,7 @@ import { turkmenistan } from './region-data/turkmenistan';
 import { uzbekistan } from './region-data/uzbekistan';
 import { transnistria } from './region-data/transnistria';
 import { south_ossetia } from './region-data/south_ossetia';
+import { ukraine } from './region-data/ukraine';
 
 /**
  * A comprehensive map of cities, towns, and settlements across Russia and the CIS,
@@ -35,4 +37,5 @@ export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; index
   ...uzbekistan,
   ...abkhazia,
   ...south_ossetia,
+  ...ukraine,
 };
