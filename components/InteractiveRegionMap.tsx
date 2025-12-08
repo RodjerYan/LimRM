@@ -38,6 +38,18 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
+// Helper to safely shift coordinates for rendering continuity across 180th meridian
+const shiftLongitude = (lon: number): number => {
+    // If longitude is negative (Western Hemisphere) in the context of this Russia/CIS map,
+    // shift it by 360 to appear on the "right" side of the map (Eastern Hemisphere extension).
+    // Russia ranges roughly from 19E to 190E (where 190 is -170).
+    // CIS countries are all positive.
+    if (lon < 0) {
+        return lon + 360;
+    }
+    return lon;
+};
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -193,6 +205,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
+                }
+
+                // FIX: Shift coordinates for Russia regions (specifically Chukotka) that cross 180th meridian
+                // Negative longitudes are shifted to >180 to ensure contiguous rendering on the right side of the map.
+                if (russiaData && russiaData.features) {
+                    russiaData.features.forEach((feature: any) => {
+                        const shiftCoords = (coords: any): any => {
+                            if (Array.isArray(coords) && typeof coords[0] === 'number') {
+                                // Coordinate pair [lon, lat]
+                                let lon = coords[0];
+                                const lat = coords[1];
+                                if (lon < 0) {
+                                    lon += 360;
+                                }
+                                return [lon, lat];
+                            } else if (Array.isArray(coords)) {
+                                return coords.map(shiftCoords);
+                            }
+                            return coords;
+                        };
+
+                        if (feature.geometry && feature.geometry.coordinates) {
+                            feature.geometry.coordinates = shiftCoords(feature.geometry.coordinates);
+                        }
+                    });
                 }
 
                 // Filter & Translate CIS Countries to match our internal region names
@@ -533,12 +570,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
+                // Shift marker coordinate if negative (Western Hemisphere) to match the shifted map polygon
+                const lon = shiftLongitude(tt.lon);
+                
                 const popupContent = `
                     <b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>
                     ${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br>
                     <small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>
                 `;
-                const marker = L.circleMarker([tt.lat, tt.lon], {
+                const marker = L.circleMarker([tt.lat, lon], {
                     pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
@@ -548,8 +588,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
+                // Shift marker coordinate if negative (Western Hemisphere) to match the shifted map polygon
+                const lon = shiftLongitude(tt.lon);
+
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
-                const marker = L.circleMarker([tt.lat, tt.lon], {
+                const marker = L.circleMarker([tt.lat, lon], {
                     pane: 'markerPane',
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
