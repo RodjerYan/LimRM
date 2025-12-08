@@ -1,4 +1,3 @@
-
 export interface Capital {
     name: string;
     lat: number;

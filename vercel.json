@@ -26,8 +26,20 @@
       "destination": "/api/get-full-cache"
     },
     {
-      "source": "/api/cache-manager",
-      "destination": "/api/cache-manager"
+      "source": "/api/add-to-cache",
+      "destination": "/api/add-to-cache"
+    },
+    {
+      "source": "/api/update-coords",
+      "destination": "/api/update-coords"
+    },
+    {
+      "source": "/api/update-address",
+      "destination": "/api/update-address"
+    },
+    {
+      "source": "/api/delete-address",
+      "destination": "/api/delete-address"
     },
     {
       "source": "/api/get-cached-address",
