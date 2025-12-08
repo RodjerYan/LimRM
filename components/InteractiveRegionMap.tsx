@@ -102,6 +102,10 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
                 <span className="text-xs font-medium">Граница региона</span>
             </div>
             <div className="flex items-center mb-1.5">
+                <span className="inline-block w-4 h-2 mr-2 border border-amber-500 bg-amber-500/20"></span>
+                <span className="text-xs font-medium">Новые территории</span>
+            </div>
+            <div className="flex items-center mb-1.5">
                 <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
                 <span className="text-xs font-medium">Активные ТТ</span>
             </div>
@@ -144,11 +148,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v11'; // Bump version for Ukraine fixes
-            const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+            const CACHE_NAME = 'limkorm-geo-v13'; // BUMPED TO v13 to force fresh load of NV5GIS data
+            
+            // USING NEW SOURCE: Contains all subjects including new territories
+            const RUSSIA_URL = 'https://raw.githubusercontent.com/NV5GIS/regions-russia-geojson/main/russia_subjects.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
 
             const safeFetchJson = async (url: string): Promise<any | null> => {
                 try {
@@ -163,25 +168,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData, breakawayData, ukraineData;
+                let russiaData, worldData, breakawayData;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes, breakRes, ukraineRes] = await Promise.all([
+                        const [russiaRes, worldRes, breakRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
                             cache.match(WORLD_URL),
-                            cache.match(BREAKAWAY_URL),
-                            cache.match(UKRAINE_URL)
+                            cache.match(BREAKAWAY_URL)
                         ]);
 
                         if (russiaRes) russiaData = await russiaRes.json();
                         if (worldRes) worldData = await worldRes.json();
                         if (breakRes) breakawayData = await breakRes.json();
-                        if (ukraineRes) ukraineData = await ukraineRes.json();
 
-                        if (russiaData && worldData && breakawayData && ukraineData) {
+                        if (russiaData && worldData && breakawayData) {
                             setIsFromCache(true);
                         }
                     } catch (e) {
@@ -193,7 +196,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 if (!russiaData) russiaData = await safeFetchJson(RUSSIA_URL);
                 if (!worldData) worldData = await safeFetchJson(WORLD_URL);
                 if (!breakawayData) breakawayData = await safeFetchJson(BREAKAWAY_URL);
-                if (!ukraineData) ukraineData = await safeFetchJson(UKRAINE_URL);
 
                 // Update Cache if we fetched new data
                 if ('caches' in window) {
@@ -201,15 +203,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
                     if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
                     if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
-                    if (ukraineData) cache.put(UKRAINE_URL, new Response(JSON.stringify(ukraineData)));
                 }
 
                 // --- MERGE LOGIC ---
                 const features: any[] = [];
 
-                // 1. Russia (Critical)
+                // 1. Russia (Critical - now contains all subjects)
                 if (russiaData && russiaData.features) {
+                    const newTerritoriesKeywords = ['крым', 'севастополь', 'донец', 'луган', 'запорож', 'херсон', 'dpr', 'lpr'];
+                    
                     russiaData.features.forEach((feature: any) => {
+                        // Normalize Name: handle different property keys in different GeoJSONs
+                        const p = feature.properties;
+                        const rawName = p.name || p.NAME || p.name_ru || p.official_name || p.NAME_1 || '';
+                        
+                        feature.properties.name = rawName; // Normalize to 'name'
+
+                        // Shift coords for antimeridian
                         const shiftCoords = (coords: any): any => {
                             if (Array.isArray(coords) && typeof coords[0] === 'number') {
                                 let lon = coords[0];
@@ -226,8 +236,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         }
                         
                         // Fix for Orel (common mapping issue)
-                        if (feature.properties?.name === 'Orel Oblast') {
+                        if (rawName === 'Orel Oblast' || rawName.includes('Orel')) {
                             feature.properties.name = 'Орловская область';
+                        }
+
+                        // Mark new territories for highlighting
+                        const lowerName = String(rawName).toLowerCase();
+                        if (newTerritoriesKeywords.some(k => lowerName.includes(k))) {
+                            feature.properties.isNewTerritory = true;
                         }
                     });
                     features.push(...russiaData.features);
@@ -256,39 +272,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     features.push(...cisFeatures);
                 }
 
-                // 3. Specific Regions from Ukraine Map (New Territories & Crimea)
-                if (ukraineData && ukraineData.features) {
-                    // Mapping partial Latin names (from GeoJSON properties) to Russian standard names
-                    const targetRegions: Record<string, string> = {
-                        'krym': 'Республика Крым',
-                        'crimea': 'Республика Крым',
-                        'sevastopol': 'Севастополь',
-                        'donets': 'Донецкая Народная Республика',
-                        'luhans': 'Луганская Народная Республика',
-                        'lugans': 'Луганская Народная Республика',
-                        'zaporiz': 'Запорожская область',
-                        'kherson': 'Херсонская область'
-                    };
-
-                    ukraineData.features.forEach((f: any) => {
-                        const originalName = (f.properties?.name || '').toLowerCase();
-                        
-                        // Check if the region name contains any of our target keys
-                        const matchedKey = Object.keys(targetRegions).find(key => 
-                            originalName.includes(key)
-                        );
-
-                        if (matchedKey) {
-                            // Assign Russian name standard
-                            f.properties.name = targetRegions[matchedKey];
-                            // Mark as new territory for potential custom styling, but generally treat as regular region
-                            f.properties.isNewTerritory = true; 
-                            features.push(f);
-                        }
-                    });
-                }
-
-                // 4. Breakaway Republics (Abkhazia, South Ossetia, etc.)
+                // 3. Breakaway Republics (Abkhazia, South Ossetia, etc.)
                 if (breakawayData && breakawayData.features) {
                     const breakawayFeatures = breakawayData.features.filter((f: any) => {
                         const props = f.properties || {};
@@ -297,8 +281,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             props.NAME_EN, props.SUBUNIT, props.ADM0_A3
                         ].filter(Boolean).map(s => String(s).toLowerCase()).join(' ');
 
-                        // Exclude Crimea, Donetsk, Luhansk from here as we sourced them from Ukraine map for better geometry
-                        if (raw.includes('crimea') || raw.includes('donetsk') || raw.includes('luhansk')) return false;
+                        // Exclude regions already covered by Russia main file (Crimea, DPR, LPR)
+                        if (raw.includes('crimea') || raw.includes('donetsk') || raw.includes('luhansk') || raw.includes('sevastopol')) return false;
 
                         return raw.includes('abkhazia') || raw.includes('ossetia') ||
                                raw.includes('transnistria') || raw.includes('karabakh');
@@ -398,11 +382,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const isSelected = selectedRegions.includes(regionName);
         
         // Base border style
-        // Highlight new territories slightly to make them visible against standard gray
         const defaultColor = (localTheme === 'dark' ? '#6b7280' : '#9ca3af');
-        // Treat new territories exactly like active regions if selected, or just standard border if not
-        const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? defaultColor : (isBreakaway ? '#fbbf24' : defaultColor));
-        const weight = isSelected || isBreakaway ? 2 : 1;
+        // High visibility for new territories (Amber/Orange)
+        const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? '#fbbf24' : (isBreakaway ? '#fbbf24' : defaultColor));
+        const weight = isSelected || isBreakaway || isNewTerritory ? 2 : 1;
 
         const baseBorder = {
             weight,
@@ -415,11 +398,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
+            // Force higher fill opacity for new territories so they are visible even without data
+            const newTerritoryFill = isNewTerritory ? 0.35 : 0;
+            const newTerritoryColor = isNewTerritory ? '#d97706' : 'transparent'; // Amber-600
+
             return {
                 ...baseBorder,
-                // Give new territories a subtle tint if no sales yet, just to show they exist
-                fillColor: isSelected ? '#818cf8' : (isNewTerritory ? '#374151' : (isBreakaway ? '#d97706' : '#374151')), 
-                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.2 : (isBreakaway ? 0.1 : 0)), 
+                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : newTerritoryColor), 
+                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.15 : newTerritoryFill), 
                 interactive: true
             };
         }
@@ -771,7 +757,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v11)
+                            <CheckIcon /> Из кэша (v13)
                         </div>
                     ) : null}
                 </div>
