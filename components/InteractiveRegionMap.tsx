@@ -62,8 +62,8 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
   return (
     <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
       <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
-      <div className="flex items-center mb-1.5"><span className="inline-block w-4 h-2 mr-2 border border-gray-500 bg-transparent"></span><span className="text-xs font-medium">Граница региона</span></div>
-      <div className="flex items-center mb-1.5"><span className="inline-block w-4 h-2 mr-2 border border-amber-500 bg-amber-500/20"></span><span className="text-xs font-medium">Новые территории</span></div>
+      <div className="flex items-center mb-1.5"><span className="inline-block w-4 h-2 mr-2 border border-gray-500 bg-gray-500/20"></span><span className="text-xs font-medium">Регионы РФ</span></div>
+      <div className="flex items-center mb-1.5"><span className="inline-block w-4 h-2 mr-2 border border-amber-500 bg-amber-500/40"></span><span className="text-xs font-medium">Новые территории</span></div>
       <div className="flex items-center mb-1.5"><span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span><span className="text-xs font-medium">Активные ТТ</span></div>
       <div className="flex items-center mb-1.5"><span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span><span className="text-xs font-medium">Потенциал (ОКБ)</span></div>
     </div>
@@ -104,7 +104,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
   // 1. Fetch GeoJSON Data
   useEffect(() => {
     const fetchGeoData = async () => {
-      const CACHE_NAME = 'limkorm-geo-v15';
+      // Bumping cache version to v16 to force reload with correct data parsing
+      const CACHE_NAME = 'limkorm-geo-v16';
       const RUSSIA_URL = 'https://raw.githubusercontent.com/NV5GIS/regions-russia-geojson/main/russia_subjects.geojson';
       const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
       const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -152,10 +153,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         // Russia features (NV5GIS)
         if (russiaData && russiaData.features) {
-          const newTerritoriesKeywords = ['крым', 'севастополь', 'донец', 'луган', 'запорож', 'херсон', 'dpr', 'lpr'];
+          // Expanded keywords to match both Russian and English names in source data
+          const newTerritoriesKeywords = [
+            'крым', 'севастополь', 'донец', 'луган', 'запорож', 'херсон', // RU
+            'crimea', 'sevastopol', 'donetsk', 'luhansk', 'lugansk', 'zaporizh', 'kherson', // EN
+            'dpr', 'lpr' // Codes
+          ];
+          
           russiaData.features.forEach((feature: any) => {
             const p = feature.properties || {};
+            // Look for any name property
             const rawName = p.name || p.NAME || p.name_ru || p.official_name || p.NAME_1 || p.NAME_0 || '';
+            
             feature.properties = feature.properties || {};
             feature.properties.name = String(rawName || '').trim();
 
@@ -207,7 +216,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
           });
         }
 
-        if (features.length > 0) setGeoJsonData({ type: 'FeatureCollection', features } as FeatureCollection);
+        if (features.length > 0) {
+            console.log(`Loaded ${features.length} GeoJSON features.`);
+            setGeoJsonData({ type: 'FeatureCollection', features } as FeatureCollection);
+        } else {
+            console.error('No features parsed from GeoJSON sources.');
+        }
       } catch (err) {
         console.error('Error fetching geo data', err);
       } finally {
@@ -253,16 +267,36 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const marketData = getMarketData(regionName);
     const isSelected = selectedRegions.includes(regionName);
 
-    const defaultColor = localTheme === 'dark' ? '#6b7280' : '#9ca3af';
-    const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? '#fbbf24' : (isBreakaway ? '#f59e0b' : defaultColor));
+    // COLORS
+    const defaultBorder = localTheme === 'dark' ? '#6b7280' : '#9ca3af';
+    
+    // Explicitly handle new territories with a distinct amber color
+    const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? '#fbbf24' : (isBreakaway ? '#f59e0b' : defaultBorder));
+    
+    // WEIGHTS
     const weight = isSelected || isBreakaway || isNewTerritory ? 2 : 1;
 
-    const base = { weight, opacity: 1, color: borderColor, fillColor: 'transparent', fillOpacity: 0, className: isSelected ? 'selected-region-layer' : '' } as any;
+    // BASE STYLE
+    // Ensure standard regions have some fill opacity (0.1) so they are visible against the dark map
+    const base = { 
+        weight, 
+        opacity: 1, 
+        color: borderColor, 
+        fillColor: defaultBorder, 
+        fillOpacity: 0.1, 
+        className: isSelected ? 'selected-region-layer' : '' 
+    } as any;
 
     if (overlayMode === 'sales') {
       const newTerritoryFill = isNewTerritory ? 0.35 : 0;
-      const newTerritoryColor = isNewTerritory ? '#d97706' : 'transparent';
-      return { ...base, fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : newTerritoryColor), fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.15 : newTerritoryFill), interactive: true };
+      const newTerritoryColor = isNewTerritory ? '#d97706' : 'transparent'; // Amber-600
+      
+      return { 
+          ...base, 
+          fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : (isNewTerritory ? newTerritoryColor : base.fillColor)), 
+          fillOpacity: isSelected ? 0.25 : (isBreakaway ? 0.35 : (isNewTerritory ? newTerritoryFill : 0.1)), 
+          interactive: true 
+      };
     }
 
     if (overlayMode === 'pets') {
@@ -400,7 +434,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const l = e.target; 
             if (l !== highlightedLayer.current && overlayMode === 'sales') { 
               try { 
-                l.setStyle({ weight: 2, color: '#a5b4fc', opacity: 1, fillOpacity: 0.1 }); 
+                l.setStyle({ weight: 2, color: '#a5b4fc', opacity: 1, fillOpacity: 0.15 }); 
                 l.bringToFront(); 
               } catch (e) {} 
             } 
@@ -415,10 +449,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
       }
     }).addTo(map);
 
-    // Initial fit bounds
+    // Initial fit bounds if valid
     try {
       const bounds = geoJsonLayer.current.getBounds();
-      if (bounds.isValid()) {
+      if (bounds.isValid() && Object.keys(bounds).length > 0) {
         map.fitBounds(bounds, { maxZoom: 6, padding: [50, 50] });
       }
     } catch(e) { /* ignore */ }
