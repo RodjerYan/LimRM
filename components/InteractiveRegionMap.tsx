@@ -147,49 +147,57 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version to v3 for 10m resolution update
+            const CACHE_NAME = 'limkorm-geo-v4'; // Bump version to v4 for breakaway regions
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             
             // High-Resolution 1:10m source from Natural Earth Vector repo.
-            // This file is larger (~5-8MB) but provides sharp, professional-grade boundaries matching the Russian regions.
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
+            
+            // High-Detail Breakaway regions (Abkhazia, Transnistria, etc.)
+            const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData;
+                let russiaData, worldData, breakawayData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes] = await Promise.all([
+                        const [russiaRes, worldRes, breakRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL)
+                            cache.match(WORLD_URL),
+                            cache.match(BREAKAWAY_URL)
                         ]);
 
-                        if (russiaRes && worldRes) {
+                        if (russiaRes && worldRes && breakRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
+                            breakawayData = await breakRes.json();
                             usedCache = true;
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, wNetwork] = await Promise.all([
+                            const [rNetwork, wNetwork, bNetwork] = await Promise.all([
                                 fetch(RUSSIA_URL),
-                                fetch(WORLD_URL)
+                                fetch(WORLD_URL),
+                                fetch(BREAKAWAY_URL)
                             ]);
                             
-                            if (rNetwork.ok && wNetwork.ok) {
+                            if (rNetwork.ok && wNetwork.ok && bNetwork.ok) {
                                 // Clone responses before reading body
                                 const rClone = rNetwork.clone();
                                 const wClone = wNetwork.clone();
+                                const bClone = bNetwork.clone();
                                 
                                 russiaData = await rNetwork.json();
                                 worldData = await wNetwork.json();
+                                breakawayData = await bNetwork.json();
                                 
                                 cache.put(RUSSIA_URL, rClone);
                                 cache.put(WORLD_URL, wClone);
+                                cache.put(BREAKAWAY_URL, bClone);
                             }
                         }
                     } catch (e) {
@@ -198,17 +206,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 // Fallback if cache failed or data missing
-                if (!russiaData || !worldData) {
-                    const [rRes, wRes] = await Promise.all([
+                if (!russiaData || !worldData || !breakawayData) {
+                    const [rRes, wRes, bRes] = await Promise.all([
                         fetch(RUSSIA_URL),
-                        fetch(WORLD_URL)
+                        fetch(WORLD_URL),
+                        fetch(BREAKAWAY_URL)
                     ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
+                    breakawayData = await bRes.json();
                 }
 
                 // FIX: Shift coordinates for Russia regions (specifically Chukotka) that cross 180th meridian
-                // Negative longitudes are shifted to >180 to ensure contiguous rendering on the right side of the map.
                 if (russiaData && russiaData.features) {
                     russiaData.features.forEach((feature: any) => {
                         const shiftCoords = (coords: any): any => {
@@ -253,10 +262,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     f.properties.name = cisCountriesMap[englishName];
                 });
 
-                // Merge collections: Russia Regions + High Res CIS Countries
+                // Filter & Translate Breakaway/Disputed Areas
+                const breakawayMap: Record<string, string> = {
+                    'Abkhazia': 'Республика Абхазия',
+                    'South Ossetia': 'Республика Южная Осетия',
+                    'Transnistria': 'Приднестровье',
+                    'Pridnestrovie': 'Приднестровье'
+                };
+
+                const breakawayFeatures = breakawayData.features.filter((f: any) => {
+                    const name = f.properties.NAME || f.properties.name;
+                    return breakawayMap[name];
+                });
+
+                breakawayFeatures.forEach((f: any) => {
+                    const englishName = f.properties.NAME || f.properties.name;
+                    f.properties.name = breakawayMap[englishName];
+                });
+
+                // Merge collections: Russia Regions + High Res CIS Countries + Breakaway Republics
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisFeatures]
+                    features: [...russiaData.features, ...cisFeatures, ...breakawayFeatures]
                 });
 
             } catch (error) {
@@ -679,7 +706,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v3)
+                            <CheckIcon /> Из кэша (v4)
                         </div>
                     ) : null}
                 </div>

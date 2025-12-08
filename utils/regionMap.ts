@@ -11,6 +11,8 @@ import { russia } from './region-data/russia';
 import { tajikistan } from './region-data/tajikistan';
 import { turkmenistan } from './region-data/turkmenistan';
 import { uzbekistan } from './region-data/uzbekistan';
+import { transnistria } from './region-data/transnistria';
+import { south_ossetia } from './region-data/south_ossetia';
 
 /**
  * A comprehensive map of cities, towns, and settlements across Russia and the CIS,
@@ -20,15 +22,17 @@ import { uzbekistan } from './region-data/uzbekistan';
  */
 export const REGION_BY_CITY_WITH_INDEXES: Record<string, { region: string; indexes: string[]; lat: number; lon: number; }> = {
   ...russia,
-  ...abkhazia,
   ...armenia,
   ...azerbaijan,
   ...belarus,
   ...georgia,
   ...kazakhstan,
   ...kyrgyzstan,
-  ...moldova,
+  ...moldova, // Loaded first
+  ...transnistria, // Overwrites Moldova cities if duplicates exist (e.g. Tiraspol)
   ...tajikistan,
   ...turkmenistan,
   ...uzbekistan,
+  ...abkhazia,
+  ...south_ossetia,
 };

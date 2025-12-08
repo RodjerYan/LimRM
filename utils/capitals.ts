@@ -9,12 +9,14 @@ export interface Capital {
 // FIX: This list has been verified and completed to include all administrative centers for the regions
 // present in the new, comprehensive russia_regions_geojson.ts file.
 export const capitals: Capital[] = [
-    // === Страны ===
+    // === Страны и Республики ===
     { name: 'Москва', lat: 55.7558, lon: 37.6176, type: 'country', region_name: 'Москва' },
     { name: 'Минск', lat: 53.9045, lon: 27.5615, type: 'country', region_name: 'Республика Беларусь' },
     { name: 'Астана', lat: 51.1694, lon: 71.4491, type: 'country', region_name: 'Республика Казахстан' },
     { name: 'Бишкек', lat: 42.8746, lon: 74.5698, type: 'country', region_name: 'Кыргызская Республика' },
     { name: 'Сухум', lat: 43.0013, lon: 41.0234, type: 'country', region_name: 'Республика Абхазия' },
+    { name: 'Тирасполь', lat: 46.8403, lon: 29.6144, type: 'country', region_name: 'Приднестровье' },
+    { name: 'Цхинвал', lat: 42.2250, lon: 43.9667, type: 'country', region_name: 'Республика Южная Осетия' },
     { name: 'Ереван', lat: 40.1792, lon: 44.4991, type: 'country', region_name: 'Армения' },
     { name: 'Баку', lat: 40.4093, lon: 49.8671, type: 'country', region_name: 'Азербайджан' },
     { name: 'Тбилиси', lat: 41.7151, lon: 44.8271, type: 'country', region_name: 'Грузия' },
