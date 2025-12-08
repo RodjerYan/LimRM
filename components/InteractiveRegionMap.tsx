@@ -38,130 +38,6 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
-// Helper to safely shift coordinates for rendering continuity across 180th meridian
-const shiftLongitude = (lon: number): number => {
-    if (lon < 0) {
-        return lon + 360;
-    }
-    return lon;
-};
-
-// --- MAPPING FOR CIS REGIONS (English GeoJSON -> Russian App Data) ---
-const ENGLISH_TO_RUSSIAN_REGIONS: Record<string, string> = {
-    // Belarus
-    "Brest Region": "Брестская область",
-    "Gomel Region": "Гомельская область",
-    "Grodno Region": "Гродненская область",
-    "Mogilev Region": "Могилёвская область",
-    "Minsk Region": "Минская область",
-    "Vitebsk Region": "Витебская область",
-    "Minsk": "Минск",
-    "City of Minsk": "Минск",
-
-    // Kazakhstan
-    "Almaty Region": "Алматинская область",
-    "Akmola Region": "Акмолинская область",
-    "Aktobe Region": "Актюбинская область",
-    "Atyrau Region": "Атырауская область",
-    "East Kazakhstan Region": "Восточно-Казахстанская область",
-    "Jambyl Region": "Жамбылская область",
-    "West Kazakhstan Region": "Западно-Казахстанская область",
-    "Karaganda Region": "Карагандинская область",
-    "Kostanay Region": "Костанайская область",
-    "Kyzylorda Region": "Кызылординская область",
-    "Mangystau Region": "Мангистауская область",
-    "Pavlodar Region": "Павлодарская область",
-    "North Kazakhstan Region": "Северо-Казахстанская область",
-    "South Kazakhstan Region": "Туркестанская область",
-    "Turkestan Region": "Туркестанская область",
-    "Almaty": "Алматы",
-    "Astana": "Астана",
-    "Nur-Sultan": "Астана",
-    "Baikonur": "Байконур",
-    "Shymkent": "Шымкент",
-
-    // Kyrgyzstan
-    "Batken Region": "Баткенская область",
-    "Chuy Region": "Чуйская область",
-    "Issyk-Kul Region": "Иссык-Кульская область",
-    "Jalal-Abad Region": "Джалал-Абадская область",
-    "Naryn Region": "Нарынская область",
-    "Osh Region": "Ошская область",
-    "Talas Region": "Таласская область",
-    "Bishkek": "Бишкек",
-    "Osh": "Ош",
-
-    // Uzbekistan
-    "Tashkent Region": "Ташкентская область",
-    "Tashkent": "Ташкент",
-    "Samarkand Region": "Самаркандская область",
-    "Bukhara Region": "Бухарская область",
-    "Fergana Region": "Ферганская область",
-    "Andijan Region": "Андижанская область",
-    "Namangan Region": "Наманганская область",
-    "Kashkadarya Region": "Кашкадарьинская область",
-    "Surkhandarya Region": "Сурхандарьинская область",
-    "Jizzakh Region": "Джизакская область",
-    "Navoiy Region": "Навоийская область",
-    "Sirdaryo Region": "Сырдарьинская область",
-    "Khorezm Region": "Хорезмская область",
-    "Republic of Karakalpakstan": "Республика Каракалпакстан",
-    "Karakalpakstan": "Республика Каракалпакстан",
-
-    // Tajikistan
-    "Sughd Region": "Согдийская область",
-    "Khatlon Region": "Хатлонская область",
-    "Gorno-Badakhshan Autonomous Region": "Горно-Бадахшанская автономная область",
-    "Districts of Republican Subordination": "Районы республиканского подчинения",
-    "Dushanbe": "Душанбе",
-
-    // Armenia
-    "Yerevan": "Ереван",
-    "Aragatsotn Region": "Арагацотнская область",
-    "Ararat Region": "Араратская область",
-    "Armavir Region": "Армавирская область",
-    "Gegharkunik Region": "Гегаркуникская область",
-    "Kotayk Region": "Котайкская область",
-    "Lori Region": "Лорийская область",
-    "Shirak Region": "Ширакская область",
-    "Syunik Region": "Сюникская область",
-    "Tavush Region": "Тавушская область",
-    "Vayots Dzor Region": "Вайоцдзорская область",
-
-    // Azerbaijan
-    "Baku": "Баку",
-    "Ganja": "Гянджа",
-    "Sumqayit": "Сумгаит",
-    "Nakhchivan Autonomous Republic": "Нахичеванская Автономная Республика",
-
-    // Moldova
-    "Chisinau": "Кишинёв",
-    "Balti": "Бельцы",
-    "Transnistria": "Приднестровье",
-    "Gagauzia": "Гагаузия",
-    
-    // Georgia
-    "Tbilisi": "Тбилиси",
-    "Adjara": "Аджария",
-    "Abkhazia": "Республика Абхазия",
-    "South Ossetia": "Республика Южная Осетия"
-};
-
-// Mixed source configuration to ensure coverage for all CIS countries
-const CIS_CONFIG: { slug: string; name: string; url: string; type: 'click_that_hood' | 'geoboundaries' }[] = [
-    { slug: 'belarus', name: 'Беларусь', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/belarus.geojson', type: 'click_that_hood' },
-    { slug: 'kazakhstan', name: 'Казахстан', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kazakhstan.geojson', type: 'click_that_hood' },
-    { slug: 'kyrgyzstan', name: 'Кыргызстан', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kyrgyzstan.geojson', type: 'click_that_hood' },
-    { slug: 'armenia', name: 'Армения', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/armenia.geojson', type: 'click_that_hood' },
-    { slug: 'georgia', name: 'Грузия', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson', type: 'click_that_hood' },
-    { slug: 'moldova', name: 'Молдова', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson', type: 'click_that_hood' },
-    // Use GeoBoundaries for countries missing in Click That Hood or where detailed regions are needed
-    { slug: 'uzbekistan', name: 'Узбекистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/UZB/ADM1/geoBoundaries-UZB-ADM1.geojson', type: 'geoboundaries' },
-    { slug: 'tajikistan', name: 'Таджикистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/TJK/ADM1/geoBoundaries-TJK-ADM1.geojson', type: 'geoboundaries' },
-    { slug: 'turkmenistan', name: 'Туркменистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/TKM/ADM1/geoBoundaries-TKM-ADM1.geojson', type: 'geoboundaries' },
-    { slug: 'azerbaijan', name: 'Азербайджан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/AZE/ADM1/geoBoundaries-AZE-ADM1.geojson', type: 'geoboundaries' },
-];
-
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -259,155 +135,86 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v7'; // Bump version
-            const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson';
+            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
-
-            const safeFetchJson = async (url: string): Promise<any | null> => {
-                try {
-                    const res = await fetch(url);
-                    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-                    return await res.json();
-                } catch (error) {
-                    console.warn(`Failed to fetch geo data from ${url}:`, error);
-                    return null;
-                }
-            };
-
-            const getCachedOrFetch = async (url: string, cache: Cache | undefined) => {
-                if (cache) {
-                    const cached = await cache.match(url);
-                    if (cached) return cached.json();
-                }
-                const data = await safeFetchJson(url);
-                if (data && cache) {
-                    try {
-                        await cache.put(url, new Response(JSON.stringify(data)));
-                    } catch (e) {
-                        console.warn('Cache quota exceeded or invalid response', e);
-                    }
-                }
-                return data;
-            };
+            // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
+            const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, breakawayData, worldData;
-                let cisDataMap: Record<string, any> = {};
-                
-                let cache: Cache | undefined;
+                let russiaData, worldData;
+                let usedCache = false;
+
+                // 1. Try Cache API
                 if ('caches' in window) {
                     try {
-                        cache = await caches.open(CACHE_NAME);
-                    } catch (e) { console.warn('Cache API error:', e); }
-                }
+                        const cache = await caches.open(CACHE_NAME);
+                        const [russiaRes, worldRes] = await Promise.all([
+                            cache.match(RUSSIA_URL),
+                            cache.match(WORLD_URL)
+                        ]);
 
-                // 1. Fetch Main Data (Russia & World)
-                russiaData = await getCachedOrFetch(RUSSIA_URL, cache);
-                worldData = await getCachedOrFetch(WORLD_URL, cache);
-                breakawayData = await getCachedOrFetch(BREAKAWAY_URL, cache);
-
-                if (russiaData) setIsFromCache(true);
-
-                // 2. Fetch CIS Data in Parallel
-                const cisPromises = CIS_CONFIG.map(async (config) => {
-                    const data = await getCachedOrFetch(config.url, cache);
-                    if (data) cisDataMap[config.slug] = { data, type: config.type };
-                });
-                await Promise.all(cisPromises);
-
-                // --- MERGE LOGIC ---
-                const features: any[] = [];
-
-                // 1. World Background (Low Res - fallback for missing detailed borders)
-                if (worldData && worldData.features) {
-                    const excludedCountries = ['Russia', 'Kazakhstan', 'Belarus', 'Ukraine', 'Uzbekistan', 'Turkmenistan', 'Tajikistan', 'Kyrgyzstan', 'Georgia', 'Azerbaijan', 'Armenia', 'Moldova'];
-                    const worldFeatures = worldData.features.filter((f: any) => {
-                        const name = f.properties.NAME || f.properties.name || f.properties.ADMIN;
-                        return !excludedCountries.includes(name);
-                    });
-                    // Push world features first so they are behind detailed regions
-                    features.push(...worldFeatures);
-                }
-
-                // 2. Russia (High Detail)
-                if (russiaData && russiaData.features) {
-                    russiaData.features.forEach((feature: any) => {
-                        const shiftCoords = (coords: any): any => {
-                            if (Array.isArray(coords) && typeof coords[0] === 'number') {
-                                let lon = coords[0];
-                                const lat = coords[1];
-                                if (lon < 0) lon += 360; // Fix antimeridian crossing
-                                return [lon, lat];
-                            } else if (Array.isArray(coords)) {
-                                return coords.map(shiftCoords);
+                        if (russiaRes && worldRes) {
+                            russiaData = await russiaRes.json();
+                            worldData = await worldRes.json();
+                            usedCache = true;
+                            setIsFromCache(true);
+                        } else {
+                            // Fetch and Cache
+                            const [rNetwork, wNetwork] = await Promise.all([
+                                fetch(RUSSIA_URL),
+                                fetch(WORLD_URL)
+                            ]);
+                            
+                            if (rNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json();
+                                worldData = await wNetwork.json();
                             }
-                            return coords;
-                        };
-                        if (feature.geometry && feature.geometry.coordinates) {
-                            feature.geometry.coordinates = shiftCoords(feature.geometry.coordinates);
                         }
-                    });
-                    features.push(...russiaData.features);
+                    } catch (e) {
+                        console.warn('Cache API error:', e);
+                    }
                 }
 
-                // 3. CIS Countries (Detailed Regions)
-                Object.keys(cisDataMap).forEach((slug) => {
-                    const { data, type } = cisDataMap[slug];
-                    if (data && data.features) {
-                        data.features.forEach((f: any) => {
-                            // Normalize property name
-                            let rawName = '';
-                            if (type === 'geoboundaries') {
-                                rawName = f.properties.shapeName || f.properties.shapeName_1 || '';
-                            } else {
-                                rawName = f.properties.name || f.properties.NAME || f.properties.english_name || '';
-                            }
+                // Fallback if cache failed or data missing
+                if (!russiaData || !worldData) {
+                    const [rRes, wRes] = await Promise.all([
+                        fetch(RUSSIA_URL),
+                        fetch(WORLD_URL)
+                    ]);
+                    russiaData = await rRes.json();
+                    worldData = await wRes.json();
+                }
 
-                            // Translate
-                            if (rawName && ENGLISH_TO_RUSSIAN_REGIONS[rawName]) {
-                                f.properties.name = ENGLISH_TO_RUSSIAN_REGIONS[rawName];
-                            } else {
-                                f.properties.name = rawName; // Fallback to raw if no translation
-                            }
-                        });
-                        features.push(...data.features);
-                    }
+                // Filter & Translate CIS Countries to match our internal region names
+                const cisCountriesMap: Record<string, string> = {
+                    'Belarus': 'Республика Беларусь',
+                    'Kazakhstan': 'Республика Казахстан',
+                    'Kyrgyzstan': 'Кыргызская Республика',
+                    'Uzbekistan': 'Республика Узбекистан',
+                    'Tajikistan': 'Республика Таджикистан',
+                    'Turkmenistan': 'Туркменистан',
+                    'Armenia': 'Армения',
+                    'Azerbaijan': 'Азербайджан',
+                    'Georgia': 'Грузия',
+                    'Moldova': 'Республика Молдова'
+                };
+
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                cisFeatures.forEach((f: any) => {
+                    f.properties.name = cisCountriesMap[f.properties.name];
                 });
 
-                // 4. Breakaway Republics (Natural Earth - High Detail)
-                if (breakawayData && breakawayData.features) {
-                    const breakawayMap: Record<string, string> = {
-                        'Abkhazia': 'Республика Абхазия',
-                        'South Ossetia': 'Республика Южная Осетия',
-                        'Transnistria': 'Приднестровье',
-                        'Pridnestrovie': 'Приднестровье',
-                        'Artsakh': 'Нагорный Карабах' 
-                    };
-
-                    const breakawayFeatures = breakawayData.features.filter((f: any) => {
-                        const name = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
-                        return breakawayMap[name] || breakawayMap[f.properties.name_en];
-                    });
-
-                    breakawayFeatures.forEach((f: any) => {
-                        const englishName = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
-                        f.properties.name = breakawayMap[englishName] || breakawayMap[f.properties.name_en] || englishName;
-                        f.properties.isBreakaway = true;
-                    });
-                    
-                    features.push(...breakawayFeatures);
-                }
-
-                if (features.length > 0) {
-                    setGeoJsonData({ type: 'FeatureCollection', features });
-                } else {
-                    console.error("No geo features loaded.");
-                }
+                // Merge collections: Russia Regions + CIS Countries
+                setGeoJsonData({
+                    type: 'FeatureCollection',
+                    features: [...russiaData.features, ...cisFeatures]
+                });
 
             } catch (error) {
-                console.error("Error in geo data flow:", error);
+                console.error("Error fetching map geometry:", error);
             } finally {
                 setIsLoadingGeo(false);
             }
@@ -456,15 +263,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
-        const isBreakaway = feature.properties?.isBreakaway;
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
         
-        // Base border style
+        // Base border style - SHARPER and more visible
         const baseBorder = {
-            weight: isSelected || isBreakaway ? 2 : 1, // Highlighting breakaways slightly
+            weight: isSelected ? 2 : 1, // Thinner, crisper borders
             opacity: 1,
-            color: isSelected ? '#818cf8' : (isBreakaway ? '#fbbf24' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af')), 
+            color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
             fillColor: 'transparent',
             fillOpacity: 0,
             className: isSelected ? 'selected-region-layer' : ''
@@ -474,8 +280,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : '#374151'), 
-                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.3 : 0), 
+                fillColor: isSelected ? '#818cf8' : '#374151', 
+                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
                 interactive: true
             };
         }
@@ -718,15 +524,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                // Shift marker coordinate if negative (Western Hemisphere) to match the shifted map polygon
-                const lon = shiftLongitude(tt.lon);
-                
                 const popupContent = `
                     <b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>
                     ${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br>
                     <small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>
                 `;
-                const marker = L.circleMarker([tt.lat, lon], {
+                const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
@@ -736,11 +539,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                // Shift marker coordinate if negative (Western Hemisphere) to match the shifted map polygon
-                const lon = shiftLongitude(tt.lon);
-
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
-                const marker = L.circleMarker([tt.lat, lon], {
+                const marker = L.circleMarker([tt.lat, tt.lon], {
                     pane: 'markerPane',
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
@@ -823,7 +623,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     </h2>
                     {isLoadingGeo ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
-                            <LoaderIcon /> Загрузка геометрии (v7)...
+                            <LoaderIcon /> Загрузка геометрии...
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
@@ -833,9 +633,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </div>
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
-                    <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
-                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
-                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
+                    <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
+                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">🐶</span> Питомец-Индекс</button>
+                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}><span className="text-lg leading-none">⚔️</span> Конкуренты</button>
                 </div>
 
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
