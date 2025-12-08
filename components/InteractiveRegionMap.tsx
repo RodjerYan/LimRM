@@ -28,6 +28,33 @@ interface SearchableLocation {
     type: 'region';
 }
 
+// --- CUSTOM GEOMETRY FOR MISSING REGIONS ---
+// Simplified polygons for regions often missing in standard international datasets (Natural Earth Admin-0/1)
+const CUSTOM_GEO_FEATURES = [
+    {
+        type: "Feature",
+        properties: { name: "Запорожская область", isNewTerritory: true },
+        geometry: {
+            type: "Polygon",
+            coordinates: [[
+                [34.8, 46.5], [35.5, 46.4], [36.8, 46.6], [37.0, 47.1], 
+                [36.5, 47.6], [35.2, 47.7], [34.9, 47.5], [34.6, 47.2], [34.8, 46.5]
+            ]]
+        }
+    },
+    {
+        type: "Feature",
+        properties: { name: "Херсонская область", isNewTerritory: true },
+        geometry: {
+            type: "Polygon",
+            coordinates: [[
+                [31.5, 46.5], [32.5, 46.0], [34.8, 46.0], [34.8, 46.5], 
+                [34.6, 47.2], [33.5, 47.5], [32.8, 47.2], [31.5, 46.5]
+            ]]
+        }
+    }
+];
+
 const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     const rowKeys = Object.keys(row);
     for (const keyword of keywords) {
@@ -144,7 +171,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v8'; // Bump version to force refresh for new logic
+            const CACHE_NAME = 'limkorm-geo-v9'; // Bump version for new territories
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -219,6 +246,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         if (feature.geometry && feature.geometry.coordinates) {
                             feature.geometry.coordinates = shiftCoords(feature.geometry.coordinates);
                         }
+                        
+                        // Fix for Orel (common mapping issue)
+                        if (feature.properties?.name === 'Orel Oblast') {
+                            feature.properties.name = 'Орловская область';
+                        }
                     });
                     features.push(...russiaData.features);
                 }
@@ -246,63 +278,56 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     features.push(...cisFeatures);
                 }
 
-                // 3. Breakaway Republics (High Detail from Natural Earth)
+                // 3. Breakaway Republics & New Territories
                 if (breakawayData && breakawayData.features) {
                     const breakawayFeatures = breakawayData.features.filter((f: any) => {
-                        // Check multiple properties for loose matching of the region name
-                        // Natural Earth uses 'ADMIN' for breakaway regions primarily
                         const props = f.properties || {};
-                        const nameCandidates = [
-                            props.NAME, 
-                            props.name, 
-                            props.ADMIN, // Crucial for Natural Earth disputed areas
-                            props.admin,
-                            props.NAME_EN, 
-                            props.name_en, 
-                            props.SUBUNIT,
-                            props.FORMAL_EN,
-                            props.ADM0_A3,
-                            props.SOV_A3
-                        ].filter(Boolean).map(s => String(s).toLowerCase());
+                        const raw = [
+                            props.NAME, props.name, props.ADMIN, props.admin,
+                            props.NAME_EN, props.SUBUNIT, props.ADM0_A3
+                        ].filter(Boolean).map(s => String(s).toLowerCase()).join(' ');
 
-                        return nameCandidates.some(n => 
-                            n.includes('abkhazia') || n.includes('abk') ||
-                            n.includes('ossetia') || n.includes('sos') ||
-                            n.includes('transnistria') || n.includes('pridnestrovie') || n.includes('pmr') ||
-                            n.includes('karabakh') || n.includes('artsakh')
-                        );
+                        return raw.includes('abkhazia') || raw.includes('ossetia') ||
+                               raw.includes('transnistria') || raw.includes('karabakh') ||
+                               raw.includes('crimea') || // Crimea usually here
+                               raw.includes('donetsk') || raw.includes('luhansk'); // DNR/LNR usually here
                     });
 
                     breakawayFeatures.forEach((f: any) => {
                         const props = f.properties || {};
-                        // Construct a broad string to check against
-                        const englishNameRaw = [
-                            props.NAME, 
-                            props.ADMIN, 
-                            props.NAME_EN, 
-                            props.SUBUNIT, 
-                            props.ADM0_A3
-                        ].filter(Boolean).join(' ').toLowerCase();
+                        const raw = [props.NAME, props.ADMIN, props.NAME_EN].filter(Boolean).join(' ').toLowerCase();
                         
-                        let russianName = props.NAME; // fallback
-                        
-                        if (englishNameRaw.includes('abkhazia') || englishNameRaw.includes('abk')) {
-                            russianName = 'Республика Абхазия';
-                        } else if (englishNameRaw.includes('ossetia') || englishNameRaw.includes('sos')) {
-                            russianName = 'Республика Южная Осетия';
-                        } else if (englishNameRaw.includes('transnistria') || englishNameRaw.includes('pridnestrovie')) {
-                            russianName = 'Приднестровье';
-                        } else if (englishNameRaw.includes('karabakh') || englishNameRaw.includes('artsakh')) {
-                            russianName = 'Нагорный Карабах';
+                        let russianName = props.NAME;
+                        let isNewTerritory = false;
+
+                        if (raw.includes('abkhazia')) russianName = 'Республика Абхазия';
+                        else if (raw.includes('ossetia')) russianName = 'Республика Южная Осетия';
+                        else if (raw.includes('transnistria')) russianName = 'Приднестровье';
+                        else if (raw.includes('karabakh')) russianName = 'Нагорный Карабах';
+                        else if (raw.includes('crimea')) {
+                            russianName = 'Республика Крым';
+                            isNewTerritory = true;
+                        }
+                        else if (raw.includes('donetsk')) {
+                            russianName = 'Донецкая Народная Республика';
+                            isNewTerritory = true;
+                        }
+                        else if (raw.includes('luhansk')) {
+                            russianName = 'Луганская Народная Республика';
+                            isNewTerritory = true;
                         }
 
                         f.properties.name = russianName;
-                        f.properties.isBreakaway = true; // Mark for special styling/z-index
+                        f.properties.isBreakaway = true; 
+                        f.properties.isNewTerritory = isNewTerritory;
                     });
                     
-                    // Push them last to ensure they render on top of country layers
                     features.push(...breakawayFeatures);
                 }
+
+                // 4. Inject Custom Geometry for missing regions (Zaporizhzhia, Kherson)
+                // These are often not in standard datasets as distinct entities yet
+                features.push(...CUSTOM_GEO_FEATURES);
 
                 if (features.length > 0) {
                     setGeoJsonData({ type: 'FeatureCollection', features });
@@ -375,14 +400,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const isBreakaway = feature.properties?.isBreakaway;
+        const isNewTerritory = feature.properties?.isNewTerritory;
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
         
         // Base border style
+        // Highlight new territories slightly to make them visible against standard gray
+        const defaultColor = (localTheme === 'dark' ? '#6b7280' : '#9ca3af');
+        const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? '#f59e0b' : (isBreakaway ? '#fbbf24' : defaultColor));
+        const weight = isSelected || isNewTerritory || isBreakaway ? 2 : 1;
+
         const baseBorder = {
-            weight: isSelected || isBreakaway ? 2 : 1, // Highlighting breakaways slightly
+            weight,
             opacity: 1,
-            color: isSelected ? '#818cf8' : (isBreakaway ? '#fbbf24' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af')), 
+            color: borderColor, 
             fillColor: 'transparent',
             fillOpacity: 0,
             className: isSelected ? 'selected-region-layer' : ''
@@ -392,8 +423,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : '#374151'), 
-                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.3 : 0), 
+                // Give new territories a subtle tint if no sales yet, just to show they exist
+                fillColor: isSelected ? '#818cf8' : (isNewTerritory ? '#d97706' : (isBreakaway ? '#d97706' : '#374151')), 
+                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.15 : (isBreakaway ? 0.1 : 0)), 
                 interactive: true
             };
         }
@@ -745,7 +777,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v8)
+                            <CheckIcon /> Из кэша (v9)
                         </div>
                     ) : null}
                 </div>
