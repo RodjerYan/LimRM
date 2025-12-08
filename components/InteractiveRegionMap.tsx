@@ -147,14 +147,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v4'; // Bump version to v4 for breakaway regions
+            const CACHE_NAME = 'limkorm-geo-v4'; 
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            
-            // High-Resolution 1:10m source from Natural Earth Vector repo.
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
-            
-            // High-Detail Breakaway regions (Abkhazia, Transnistria, etc.)
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
+
+            const safeFetchJson = async (url: string): Promise<any | null> => {
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+                    return await res.json();
+                } catch (error) {
+                    console.warn(`Failed to fetch geo data from ${url}:`, error);
+                    return null;
+                }
+            };
 
             try {
                 setIsLoadingGeo(true);
@@ -179,115 +186,108 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, wNetwork, bNetwork] = await Promise.all([
-                                fetch(RUSSIA_URL),
-                                fetch(WORLD_URL),
-                                fetch(BREAKAWAY_URL)
+                            const [rData, wData, bData] = await Promise.all([
+                                safeFetchJson(RUSSIA_URL),
+                                safeFetchJson(WORLD_URL),
+                                safeFetchJson(BREAKAWAY_URL)
                             ]);
                             
-                            if (rNetwork.ok && wNetwork.ok && bNetwork.ok) {
-                                // Clone responses before reading body
-                                const rClone = rNetwork.clone();
-                                const wClone = wNetwork.clone();
-                                const bClone = bNetwork.clone();
-                                
-                                russiaData = await rNetwork.json();
-                                worldData = await wNetwork.json();
-                                breakawayData = await bNetwork.json();
-                                
-                                cache.put(RUSSIA_URL, rClone);
-                                cache.put(WORLD_URL, wClone);
-                                cache.put(BREAKAWAY_URL, bClone);
-                            }
+                            russiaData = rData;
+                            worldData = wData;
+                            breakawayData = bData;
+
+                            // Cache what we successfully got
+                            if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
+                            if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
+                            if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
                         }
                     } catch (e) {
                         console.warn('Cache API error:', e);
                     }
                 }
 
-                // Fallback if cache failed or data missing
-                if (!russiaData || !worldData || !breakawayData) {
-                    const [rRes, wRes, bRes] = await Promise.all([
-                        fetch(RUSSIA_URL),
-                        fetch(WORLD_URL),
-                        fetch(BREAKAWAY_URL)
-                    ]);
-                    russiaData = await rRes.json();
-                    worldData = await wRes.json();
-                    breakawayData = await bRes.json();
-                }
+                // Fallback if cache failed logic skipped or data missing
+                if (!russiaData) russiaData = await safeFetchJson(RUSSIA_URL);
+                if (!worldData) worldData = await safeFetchJson(WORLD_URL);
+                if (!breakawayData) breakawayData = await safeFetchJson(BREAKAWAY_URL);
 
-                // FIX: Shift coordinates for Russia regions (specifically Chukotka) that cross 180th meridian
+                // --- MERGE LOGIC ---
+                const features: any[] = [];
+
+                // 1. Russia (Critical)
                 if (russiaData && russiaData.features) {
                     russiaData.features.forEach((feature: any) => {
                         const shiftCoords = (coords: any): any => {
                             if (Array.isArray(coords) && typeof coords[0] === 'number') {
-                                // Coordinate pair [lon, lat]
                                 let lon = coords[0];
                                 const lat = coords[1];
-                                if (lon < 0) {
-                                    lon += 360;
-                                }
+                                if (lon < 0) lon += 360; // Fix antimeridian crossing
                                 return [lon, lat];
                             } else if (Array.isArray(coords)) {
                                 return coords.map(shiftCoords);
                             }
                             return coords;
                         };
-
                         if (feature.geometry && feature.geometry.coordinates) {
                             feature.geometry.coordinates = shiftCoords(feature.geometry.coordinates);
                         }
                     });
+                    features.push(...russiaData.features);
                 }
 
-                // Filter & Translate CIS Countries to match our internal region names
-                // Mapping property 'NAME' from Natural Earth 10m file
-                const cisCountriesMap: Record<string, string> = {
-                    'Belarus': 'Республика Беларусь',
-                    'Kazakhstan': 'Республика Казахстан',
-                    'Kyrgyzstan': 'Кыргызская Республика',
-                    'Uzbekistan': 'Республика Узбекистан',
-                    'Tajikistan': 'Республика Таджикистан',
-                    'Turkmenistan': 'Туркменистан',
-                    'Armenia': 'Армения',
-                    'Azerbaijan': 'Азербайджан',
-                    'Georgia': 'Грузия',
-                    'Moldova': 'Республика Молдова'
-                };
+                // 2. CIS Countries
+                if (worldData && worldData.features) {
+                    const cisCountriesMap: Record<string, string> = {
+                        'Belarus': 'Республика Беларусь',
+                        'Kazakhstan': 'Республика Казахстан',
+                        'Kyrgyzstan': 'Кыргызская Республика',
+                        'Uzbekistan': 'Республика Узбекистан',
+                        'Tajikistan': 'Республика Таджикистан',
+                        'Turkmenistan': 'Туркменистан',
+                        'Armenia': 'Армения',
+                        'Azerbaijan': 'Азербайджан',
+                        'Georgia': 'Грузия',
+                        'Moldova': 'Республика Молдова'
+                    };
 
-                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.NAME || f.properties.name]);
-                cisFeatures.forEach((f: any) => {
-                    const englishName = f.properties.NAME || f.properties.name;
-                    f.properties.name = cisCountriesMap[englishName];
-                });
+                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.NAME || f.properties.name]);
+                    cisFeatures.forEach((f: any) => {
+                        const englishName = f.properties.NAME || f.properties.name;
+                        f.properties.name = cisCountriesMap[englishName];
+                    });
+                    features.push(...cisFeatures);
+                }
 
-                // Filter & Translate Breakaway/Disputed Areas
-                const breakawayMap: Record<string, string> = {
-                    'Abkhazia': 'Республика Абхазия',
-                    'South Ossetia': 'Республика Южная Осетия',
-                    'Transnistria': 'Приднестровье',
-                    'Pridnestrovie': 'Приднестровье'
-                };
+                // 3. Breakaway Republics (High Detail)
+                if (breakawayData && breakawayData.features) {
+                    const breakawayMap: Record<string, string> = {
+                        'Abkhazia': 'Республика Абхазия',
+                        'South Ossetia': 'Республика Южная Осетия',
+                        'Transnistria': 'Приднестровье',
+                        'Pridnestrovie': 'Приднестровье'
+                    };
 
-                const breakawayFeatures = breakawayData.features.filter((f: any) => {
-                    const name = f.properties.NAME || f.properties.name;
-                    return breakawayMap[name];
-                });
+                    const breakawayFeatures = breakawayData.features.filter((f: any) => {
+                        const name = f.properties.NAME || f.properties.name;
+                        return breakawayMap[name];
+                    });
 
-                breakawayFeatures.forEach((f: any) => {
-                    const englishName = f.properties.NAME || f.properties.name;
-                    f.properties.name = breakawayMap[englishName];
-                });
+                    breakawayFeatures.forEach((f: any) => {
+                        const englishName = f.properties.NAME || f.properties.name;
+                        f.properties.name = breakawayMap[englishName];
+                        f.properties.isBreakaway = true; // Mark for special styling/z-index
+                    });
+                    features.push(...breakawayFeatures);
+                }
 
-                // Merge collections: Russia Regions + High Res CIS Countries + Breakaway Republics
-                setGeoJsonData({
-                    type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisFeatures, ...breakawayFeatures]
-                });
+                if (features.length > 0) {
+                    setGeoJsonData({ type: 'FeatureCollection', features });
+                } else {
+                    console.error("No geo features loaded.");
+                }
 
             } catch (error) {
-                console.error("Error fetching map geometry:", error);
+                console.error("Error in geo data flow:", error);
             } finally {
                 setIsLoadingGeo(false);
             }
@@ -336,12 +336,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
+        const isBreakaway = feature.properties?.isBreakaway;
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
         
-        // Base border style - SHARPER and more visible
+        // Base border style
         const baseBorder = {
-            weight: isSelected ? 2 : 1, // Thinner, crisper borders
+            weight: isSelected || isBreakaway ? 2 : 1, // Highlighting breakaways slightly
             opacity: 1,
             color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
             fillColor: 'transparent',
@@ -353,8 +354,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : '#374151', 
-                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
+                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#4b5563' : '#374151'), 
+                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.1 : 0), 
                 interactive: true
             };
         }
