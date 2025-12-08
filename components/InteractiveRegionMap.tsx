@@ -219,12 +219,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v7'; // Bump version to invalidate old cache
+            const CACHE_NAME = 'limkorm-geo-v8'; // Bump version to invalidate old cache
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            // Validated source for Ukraine regions (ADM1) from geoBoundaries
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/UKR/ADM1/geoBoundaries-UKR-ADM1.geojson';
+            // Validated non-LFS source for Ukraine regions
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/slawomirmatuszak/ukrainian_geodata/main/regiony.geojson';
 
             try {
                 setIsLoadingGeo(true);
@@ -322,7 +322,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 if (ukraineData) {
                     // Robust processing for Ukraine GeoJSON (varying property keys)
-                    // geoBoundaries usually uses 'shapeName'
                     ukraineData.features.forEach((f: any) => {
                         const p = f.properties;
                         // Try to find the name in various possible keys, prioritizing shapeName for geoBoundaries
