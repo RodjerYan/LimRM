@@ -38,10 +38,6 @@
       "destination": "/api/geocode"
     },
     {
-      "source": "/api/get-vk-demographics",
-      "destination": "/api/get-vk-demographics"
-    },
-    {
       "source": "/:path*",
       "destination": "/index.html"
     }

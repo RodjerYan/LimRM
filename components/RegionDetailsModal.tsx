@@ -128,7 +128,8 @@ const VkDemographics: React.FC<{ regionName: string }> = ({ regionName }) => {
         setIsLoading(true);
         setError(null);
         try {
-            const res = await fetch(`/api/get-vk-demographics?region=${encodeURIComponent(regionName)}`);
+            // Using unified geocode endpoint with action=vk_demographics
+            const res = await fetch(`/api/geocode?action=vk_demographics&region=${encodeURIComponent(regionName)}`);
             if (!res.ok) {
                 const err = await res.json();
                 throw new Error(err.error || 'Ошибка запроса VK API');
