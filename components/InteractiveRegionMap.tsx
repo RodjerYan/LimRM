@@ -314,7 +314,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             return {
                 ...baseBorder,
                 fillColor: isSelected ? '#818cf8' : '#374151', 
-                fillOpacity: isSelected ? 0.2 : 0, // Zero opacity for non-selected to show base map clearly
+                // FIX: Use 0.01 instead of 0 to allow pointer events on the polygon when data is loaded
+                fillOpacity: isSelected ? 0.2 : 0.01, 
                 interactive: true
             };
         }
@@ -616,6 +617,25 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         L.DomEvent.stop(e);
                         map.fitBounds(e.target.getBounds());
                         highlightRegion(e.target);
+
+                        // Confetti for Belgorod Oblast
+                        if (feature.properties.name === 'Белгородская область' && (window as any).confetti) {
+                            const centerLatLng = e.target.getBounds().getCenter();
+                            const point = map.latLngToContainerPoint(centerLatLng);
+                            
+                            // Normalize coordinates to 0-1 range relative to the viewport
+                            const x = point.x / window.innerWidth;
+                            const y = point.y / window.innerHeight;
+
+                            (window as any).confetti({
+                                particleCount: 200,
+                                spread: 120,
+                                origin: { y: y, x: x },
+                                colors: ['#ffffff', '#0000ff', '#ff0000'],
+                                zIndex: 9999,
+                                disableForReducedMotion: true
+                            });
+                        }
                     },
                     mouseover: (e) => {
                         const layer = e.target;
