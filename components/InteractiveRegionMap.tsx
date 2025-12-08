@@ -38,6 +38,28 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
+// Helper to fix Chukotka's antimeridian crossing for visualization
+const fixChukotkaGeoJSON = (feature: any) => {
+    const transformCoord = (coord: number[]) => {
+        let [lon, lat] = coord;
+        // Shift negative longitudes (Western Hemisphere) to 180+ (Eastern Hemisphere extension)
+        // This ensures the polygon is drawn continuously on the right side of the map (East of Russia)
+        // instead of wrapping around the world.
+        if (lon < 0) lon += 360;
+        return [lon, lat];
+    };
+
+    const transformRing = (ring: number[][]) => ring.map(transformCoord);
+    const transformPolygon = (coords: number[][][]) => coords.map(transformRing);
+
+    if (feature.geometry.type === 'Polygon') {
+        feature.geometry.coordinates = transformPolygon(feature.geometry.coordinates);
+    } else if (feature.geometry.type === 'MultiPolygon') {
+        feature.geometry.coordinates = feature.geometry.coordinates.map(transformPolygon);
+    }
+    return feature;
+};
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -206,6 +228,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 cisFeatures.forEach((f: any) => {
                     f.properties.name = cisCountriesMap[f.properties.name];
                 });
+
+                // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
+                // Manually fix Chukotka coordinates to prevent "streak" across the map
+                if (russiaData && russiaData.features) {
+                    russiaData.features = russiaData.features.map((f: any) => {
+                        if (f.properties?.name === 'Чукотский автономный округ') {
+                            return fixChukotkaGeoJSON(f);
+                        }
+                        return f;
+                    });
+                }
 
                 // Merge collections: Russia Regions + CIS Countries
                 setGeoJsonData({
