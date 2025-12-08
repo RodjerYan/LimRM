@@ -143,7 +143,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData, moldovaData;
+                let russiaData: any, worldData: any, moldovaData: any;
                 let usedCache = false;
 
                 // 1. Try Cache API
@@ -375,7 +375,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                  weight: 2, 
                  color: '#fbbf24', // Amber-400 Highlight
                  opacity: 1, 
-                 fillOpacity: 0.2,
+                 fillOpacity: 0.2, 
                  dashArray: '' 
              }).bringToFront();
              highlightedLayer.current = layer;
