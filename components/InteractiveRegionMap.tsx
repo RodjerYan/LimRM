@@ -116,15 +116,15 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
                 <div className="space-y-1">
                     <div className="flex items-center">
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
-                        <span className="text-xs">Молодые (&lt;40)</span>
+                        <span className="text-xs">Молодые (&lt;35)</span>
                     </div>
                     <div className="flex items-center">
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
-                        <span className="text-xs">Средний (40-50)</span>
+                        <span className="text-xs">Средний (35-45)</span>
                     </div>
                     <div className="flex items-center">
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#8b5cf6', opacity: 0.5}}></span>
-                        <span className="text-xs">Старший (&gt;50)</span>
+                        <span className="text-xs">Старший (&gt;45)</span>
                     </div>
                 </div>
             </div>
@@ -329,16 +329,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
             fillColor: 'transparent',
             fillOpacity: 0,
-            className: isSelected ? 'selected-region-layer' : ''
+            className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon'
         };
 
         // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : '#374151', 
-                // FIX: Use 0.1 instead of 0.01 to ensure pointer events on the polygon when data is loaded
-                fillOpacity: isSelected ? 0.2 : 0.1, 
+                // FIX: Use darker fill color and higher opacity (0.2) to ensure click events are captured
+                // even when markers are present. Transparent layers often fail click tests in Leaflet.
+                fillColor: isSelected ? '#818cf8' : '#111827', 
+                fillOpacity: isSelected ? 0.3 : 0.2, 
                 interactive: true
             };
         }
@@ -395,10 +396,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             let fillColor = '#6b7280';
             let fillOpacity = 0.3;
 
-            if (age < 40) {
+            if (age < 35) {
                 fillColor = '#10b981'; // Young - Green
                 fillOpacity = 0.6;
-            } else if (age < 50) {
+            } else if (age < 45) {
                 fillColor = '#f59e0b'; // Middle - Yellow/Orange
                 fillOpacity = 0.5;
             } else {
@@ -664,7 +665,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
                     click: (e) => {
-                        L.DomEvent.stop(e);
+                        L.DomEvent.stop(e); // Stop map click handler
                         map.fitBounds(e.target.getBounds());
                         highlightRegion(e.target);
 
@@ -694,7 +695,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 weight: 2,
                                 color: '#a5b4fc',
                                 opacity: 1,
-                                fillOpacity: 0.1, 
+                                fillOpacity: 0.2, // Increased for visibility
                             });
                             layer.bringToFront();
                         }
@@ -710,10 +711,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }).addTo(map);
         
         // Ensure the region layer is at the bottom so it doesn't block markers, 
-        // but since fillOpacity is low/interactive, clicks pass through if needed or captured if hit.
-        // Importantly, markers are in markerPane (z-index 600) and geoJson is in overlayPane (z-index 400),
-        // so markers are naturally on top visually. 
-        // This ensures the polygon is rendered below any other vector layers if multiple exist.
+        // but since fillOpacity is 0.2, clicks pass through if needed or captured if hit.
         geoJsonLayer.current.bringToBack();
 
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
@@ -723,7 +721,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             id="interactive-map-container" 
             className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}
         >
-            <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
+            <style>{`.leaflet-control-attribution { display: none !important; } .region-polygon { pointer-events: auto !important; }`}</style>
             
             {/* Header Controls */}
             <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-5rem)] pointer-events-none' : ''}`}>
