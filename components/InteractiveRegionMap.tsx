@@ -488,12 +488,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             
             L.control.zoom({ position: 'topleft' }).addTo(map);
 
-            map.createPane('markerPane');
-            const markerPane = map.getPane('markerPane');
-            if (markerPane) {
-                markerPane.style.zIndex = '650';
-            }
-
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
             const legend = new (L.Control.extend({
@@ -614,7 +608,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     <small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>
                 `;
                 const marker = L.circleMarker([tt.lat, tt.lon], {
-                    pane: 'markerPane',
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
@@ -625,7 +618,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             if (tt.lat && tt.lon) {
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([tt.lat, tt.lon], {
-                    pane: 'markerPane',
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9
                 }).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
@@ -671,19 +663,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                         // Confetti for Belgorod Oblast
                         if (feature.properties.name === 'Белгородская область' && (window as any).confetti) {
-                            const centerLatLng = e.target.getBounds().getCenter();
-                            const point = map.latLngToContainerPoint(centerLatLng);
-                            
-                            // Normalize coordinates to 0-1 range relative to the viewport
-                            const x = point.x / window.innerWidth;
-                            const y = point.y / window.innerHeight;
+                            const clickPoint = map.latLngToContainerPoint(e.latlng);
+                            const x = clickPoint.x / window.innerWidth;
+                            const y = clickPoint.y / window.innerHeight;
 
                             (window as any).confetti({
-                                particleCount: 200,
-                                spread: 120,
+                                particleCount: 150,
+                                spread: 100,
                                 origin: { y: y, x: x },
                                 colors: ['#ffffff', '#0000ff', '#ff0000'],
-                                zIndex: 9999,
+                                zIndex: 10000,
                                 disableForReducedMotion: true
                             });
                         }
