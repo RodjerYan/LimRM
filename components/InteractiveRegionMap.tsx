@@ -46,6 +46,119 @@ const shiftLongitude = (lon: number): number => {
     return lon;
 };
 
+// --- MAPPING FOR CIS REGIONS (English GeoJSON -> Russian App Data) ---
+const ENGLISH_TO_RUSSIAN_REGIONS: Record<string, string> = {
+    // Belarus
+    "Brest Region": "Брестская область",
+    "Gomel Region": "Гомельская область",
+    "Grodno Region": "Гродненская область",
+    "Mogilev Region": "Могилёвская область",
+    "Minsk Region": "Минская область",
+    "Vitebsk Region": "Витебская область",
+    "Minsk": "Минск",
+    "City of Minsk": "Минск",
+
+    // Kazakhstan
+    "Almaty Region": "Алматинская область",
+    "Akmola Region": "Акмолинская область",
+    "Aktobe Region": "Актюбинская область",
+    "Atyrau Region": "Атырауская область",
+    "East Kazakhstan Region": "Восточно-Казахстанская область",
+    "Jambyl Region": "Жамбылская область",
+    "West Kazakhstan Region": "Западно-Казахстанская область",
+    "Karaganda Region": "Карагандинская область",
+    "Kostanay Region": "Костанайская область",
+    "Kyzylorda Region": "Кызылординская область",
+    "Mangystau Region": "Мангистауская область",
+    "Pavlodar Region": "Павлодарская область",
+    "North Kazakhstan Region": "Северо-Казахстанская область",
+    "South Kazakhstan Region": "Туркестанская область",
+    "Turkestan Region": "Туркестанская область",
+    "Almaty": "Алматы",
+    "Astana": "Астана",
+    "Nur-Sultan": "Астана",
+    "Baikonur": "Байконур",
+    "Shymkent": "Шымкент",
+
+    // Kyrgyzstan
+    "Batken Region": "Баткенская область",
+    "Chuy Region": "Чуйская область",
+    "Issyk-Kul Region": "Иссык-Кульская область",
+    "Jalal-Abad Region": "Джалал-Абадская область",
+    "Naryn Region": "Нарынская область",
+    "Osh Region": "Ошская область",
+    "Talas Region": "Таласская область",
+    "Bishkek": "Бишкек",
+    "Osh": "Ош",
+
+    // Uzbekistan
+    "Tashkent Region": "Ташкентская область",
+    "Tashkent": "Ташкент",
+    "Samarkand Region": "Самаркандская область",
+    "Bukhara Region": "Бухарская область",
+    "Fergana Region": "Ферганская область",
+    "Andijan Region": "Андижанская область",
+    "Namangan Region": "Наманганская область",
+    "Kashkadarya Region": "Кашкадарьинская область",
+    "Surkhandarya Region": "Сурхандарьинская область",
+    "Jizzakh Region": "Джизакская область",
+    "Navoiy Region": "Навоийская область",
+    "Sirdaryo Region": "Сырдарьинская область",
+    "Khorezm Region": "Хорезмская область",
+    "Republic of Karakalpakstan": "Республика Каракалпакстан",
+
+    // Tajikistan
+    "Sughd Region": "Согдийская область",
+    "Khatlon Region": "Хатлонская область",
+    "Gorno-Badakhshan Autonomous Region": "Горно-Бадахшанская автономная область",
+    "Districts of Republican Subordination": "Районы республиканского подчинения",
+    "Dushanbe": "Душанбе",
+
+    // Armenia
+    "Yerevan": "Ереван",
+    "Aragatsotn Region": "Арагацотнская область",
+    "Ararat Region": "Араратская область",
+    "Armavir Region": "Армавирская область",
+    "Gegharkunik Region": "Гегаркуникская область",
+    "Kotayk Region": "Котайкская область",
+    "Lori Region": "Лорийская область",
+    "Shirak Region": "Ширакская область",
+    "Syunik Region": "Сюникская область",
+    "Tavush Region": "Тавушская область",
+    "Vayots Dzor Region": "Вайоцдзорская область",
+
+    // Azerbaijan
+    "Baku": "Баку",
+    "Ganja": "Гянджа",
+    "Sumqayit": "Сумгаит",
+    "Nakhchivan Autonomous Republic": "Нахичеванская Автономная Республика",
+
+    // Moldova
+    "Chisinau": "Кишинёв",
+    "Balti": "Бельцы",
+    "Transnistria": "Приднестровье",
+    "Gagauzia": "Гагаузия",
+    
+    // Georgia
+    "Tbilisi": "Тбилиси",
+    "Adjara": "Аджария",
+    "Abkhazia": "Республика Абхазия", // Often found in Georgia geojson, mapping to our app's name
+    "South Ossetia": "Республика Южная Осетия"
+};
+
+const CIS_URLS = [
+    { slug: 'belarus', name: 'Беларусь' },
+    { slug: 'kazakhstan', name: 'Казахстан' },
+    { slug: 'kyrgyzstan', name: 'Кыргызстан' },
+    { slug: 'uzbekistan', name: 'Узбекистан' },
+    { slug: 'tajikistan', name: 'Таджикистан' },
+    { slug: 'turkmenistan', name: 'Туркменистан' },
+    { slug: 'armenia', name: 'Армения' },
+    { slug: 'azerbaijan', name: 'Азербайджан' },
+    { slug: 'georgia', name: 'Грузия' },
+    { slug: 'moldova', name: 'Молдова' }
+];
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -143,9 +256,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v5'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version for new CIS data
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
+            // Use breakaway for Crimea/Donbas
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
 
             const safeFetchJson = async (url: string): Promise<any | null> => {
@@ -159,44 +272,44 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
             };
 
+            // Helper to get cache or fetch
+            const getCachedOrFetch = async (url: string, cache: Cache | undefined) => {
+                if (cache) {
+                    const cached = await cache.match(url);
+                    if (cached) return cached.json();
+                }
+                const data = await safeFetchJson(url);
+                if (data && cache) {
+                    cache.put(url, new Response(JSON.stringify(data)));
+                }
+                return data;
+            };
+
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData, breakawayData;
-
-                // 1. Try Cache API
+                let russiaData, breakawayData;
+                let cisDataMap: Record<string, any> = {};
+                
+                let cache: Cache | undefined;
                 if ('caches' in window) {
                     try {
-                        const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes, breakRes] = await Promise.all([
-                            cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL),
-                            cache.match(BREAKAWAY_URL)
-                        ]);
-
-                        if (russiaRes) russiaData = await russiaRes.json();
-                        if (worldRes) worldData = await worldRes.json();
-                        if (breakRes) breakawayData = await breakRes.json();
-
-                        if (russiaData && worldData && breakawayData) {
-                            setIsFromCache(true);
-                        }
-                    } catch (e) {
-                        console.warn('Cache API error:', e);
-                    }
+                        cache = await caches.open(CACHE_NAME);
+                    } catch (e) { console.warn('Cache API error:', e); }
                 }
 
-                // 2. Network Fetch (Parallel but independent)
-                if (!russiaData) russiaData = await safeFetchJson(RUSSIA_URL);
-                if (!worldData) worldData = await safeFetchJson(WORLD_URL);
-                if (!breakawayData) breakawayData = await safeFetchJson(BREAKAWAY_URL);
+                // 1. Fetch Main Data
+                russiaData = await getCachedOrFetch(RUSSIA_URL, cache);
+                breakawayData = await getCachedOrFetch(BREAKAWAY_URL, cache);
 
-                // Update Cache if we fetched new data
-                if ('caches' in window) {
-                    const cache = await caches.open(CACHE_NAME);
-                    if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
-                    if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
-                    if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
-                }
+                if (russiaData) setIsFromCache(true);
+
+                // 2. Fetch CIS Data in Parallel
+                const cisPromises = CIS_URLS.map(async (country) => {
+                    const url = `https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/${country.slug}.geojson`;
+                    const data = await getCachedOrFetch(url, cache);
+                    if (data) cisDataMap[country.slug] = data;
+                });
+                await Promise.all(cisPromises);
 
                 // --- MERGE LOGIC ---
                 const features: any[] = [];
@@ -222,28 +335,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     features.push(...russiaData.features);
                 }
 
-                // 2. CIS Countries
-                if (worldData && worldData.features) {
-                    const cisCountriesMap: Record<string, string> = {
-                        'Belarus': 'Республика Беларусь',
-                        'Kazakhstan': 'Республика Казахстан',
-                        'Kyrgyzstan': 'Кыргызская Республика',
-                        'Uzbekistan': 'Республика Узбекистан',
-                        'Tajikistan': 'Республика Таджикистан',
-                        'Turkmenistan': 'Туркменистан',
-                        'Armenia': 'Армения',
-                        'Azerbaijan': 'Азербайджан',
-                        'Georgia': 'Грузия',
-                        'Moldova': 'Республика Молдова'
-                    };
-
-                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.NAME || f.properties.name]);
-                    cisFeatures.forEach((f: any) => {
-                        const englishName = f.properties.NAME || f.properties.name;
-                        f.properties.name = cisCountriesMap[englishName];
-                    });
-                    features.push(...cisFeatures);
-                }
+                // 2. CIS Countries (Detailed Regions)
+                Object.values(cisDataMap).forEach((countryData: any) => {
+                    if (countryData && countryData.features) {
+                        countryData.features.forEach((f: any) => {
+                            // Extract English Name
+                            const rawName = f.properties.name || f.properties.NAME || f.properties.Name || f.properties.english_name || f.properties.name_en;
+                            // Translate
+                            if (rawName && ENGLISH_TO_RUSSIAN_REGIONS[rawName]) {
+                                f.properties.name = ENGLISH_TO_RUSSIAN_REGIONS[rawName];
+                            } else if (rawName) {
+                                // Fallback: leave as is if no translation found, but try to use it
+                                f.properties.name = rawName;
+                            }
+                        });
+                        features.push(...countryData.features);
+                    }
+                });
 
                 // 3. Breakaway Republics (High Detail from Natural Earth)
                 if (breakawayData && breakawayData.features) {
@@ -697,7 +805,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v5)
+                            <CheckIcon /> Из кэша (v6)
                         </div>
                     ) : null}
                 </div>
