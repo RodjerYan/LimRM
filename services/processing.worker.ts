@@ -220,6 +220,87 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
+// --- DATE RANGE DETECTION LOGIC ---
+const parseDateValue = (val: any): number | null => {
+    if (!val) return null;
+    
+    // 1. Excel Serial Date (numbers > 20000, usually around 45000 for current years)
+    if (typeof val === 'number') {
+        if (val > 30000 && val < 60000) {
+            // Excel epoch is 1899-12-30
+            const date = new Date((val - 25569) * 86400 * 1000);
+            return date.getTime();
+        }
+        return null;
+    }
+
+    const strVal = String(val).trim();
+    if (!strVal) return null;
+
+    // 2. String Format DD.MM.YYYY or YYYY-MM-DD
+    // Regex for DD.MM.YYYY
+    const dmy = strVal.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+    if (dmy) {
+        const d = parseInt(dmy[1], 10);
+        const m = parseInt(dmy[2], 10) - 1;
+        const y = parseInt(dmy[3], 10);
+        const date = new Date(y, m, d);
+        if (!isNaN(date.getTime())) return date.getTime();
+    }
+
+    // Regex for YYYY-MM-DD
+    const ymd = strVal.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+    if (ymd) {
+        const y = parseInt(ymd[1], 10);
+        const m = parseInt(ymd[2], 10) - 1;
+        const d = parseInt(ymd[3], 10);
+        const date = new Date(y, m, d);
+        if (!isNaN(date.getTime())) return date.getTime();
+    }
+
+    return null;
+};
+
+const findDateRange = (data: any[]): string | undefined => {
+    if (data.length === 0) return undefined;
+    
+    // 1. Find columns that look like "Date"
+    const row0 = data[0];
+    const keys = Object.keys(row0);
+    const dateKeys = keys.filter(k => {
+        const lower = k.toLowerCase();
+        return lower.includes('дата') || lower.includes('date') || lower.includes('период') || lower.includes('месяц');
+    });
+
+    if (dateKeys.length === 0) return undefined;
+
+    // 2. Scan rows for min/max values
+    let minTs = Infinity;
+    let maxTs = -Infinity;
+    
+    // Scan a sample of rows to performance
+    const sample = data.length > 500 ? data.slice(0, 500) : data;
+
+    for (const row of sample) {
+        for (const key of dateKeys) {
+            const val = row[key];
+            const ts = parseDateValue(val);
+            if (ts) {
+                if (ts < minTs) minTs = ts;
+                if (ts > maxTs) maxTs = ts;
+            }
+        }
+    }
+
+    if (minTs === Infinity || maxTs === -Infinity) return undefined;
+
+    const minDate = new Date(minTs);
+    const maxDate = new Date(maxTs);
+    
+    const fmt = (d: Date) => d.toLocaleDateString('ru-RU');
+    return `${fmt(minDate)} - ${fmt(maxDate)}`;
+};
+
 
 self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const { file, rawSheetData, okbData, cacheData } = e.data;
@@ -269,6 +350,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
+    // NEW: Detect Date Range
+    const dateRange = findDateRange(jsonData);
+    if (dateRange) {
+        console.log(`Detected Date Range: ${dateRange}`);
+    }
+
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
     
@@ -570,7 +657,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    const resultPayload: WorkerResultPayload = { aggregatedData: finalData, plottableActiveClients, unidentifiedRows, okbRegionCounts };
+    // Include dateRange in the result
+    const resultPayload: WorkerResultPayload = { 
+        aggregatedData: finalData, 
+        plottableActiveClients, 
+        unidentifiedRows, 
+        okbRegionCounts,
+        dateRange 
+    };
     postMessage({ type: 'result', payload: resultPayload });
 
     // --- BACKGROUND TASKS ---

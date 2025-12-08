@@ -44,36 +44,42 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
 
 /**
  * Generates a prompt that utilizes Google Search Grounding to find real competitor data.
+ * Updated to use specific date range if available.
  */
-const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => {
+const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number, dateRange?: string): string => {
     const now = new Date();
     const currentYear = now.getFullYear();
     const nextYear = currentYear + 1;
     const todayStr = now.toLocaleDateString('ru-RU');
 
-    // Context for search window (last 6 months roughly)
-    const searchContext = `за последние 6 месяцев ${currentYear} года`;
+    // Context for search window: Use specific range if available, otherwise default to recent history.
+    const searchContext = dateRange 
+        ? `за период ${dateRange}` 
+        : `за последние 6 месяцев ${currentYear} года`;
 
     return `
         Ты — Коммерческий Директор. Сегодня ${todayStr}.
         
         **ЗАДАЧА №1 (Поиск в Интернете):**
-        Используй Google Search, чтобы найти актуальные новости и активность конкурентов в регионе, за который отвечает менеджер **${metrics.rmName}** (обычно это привязано к крупнейшим городам его территории, если название РМ не является географическим, ищи общие тренды по рынку кормов для животных в РФ ${searchContext}).
+        Используй Google Search, чтобы найти актуальные новости и активность конкурентов в регионе, за который отвечает менеджер **${metrics.rmName}** (обычно это привязано к крупнейшим городам его территории, если название РМ не является географическим, ищи общие тренды по рынку кормов для животных в РФ).
+        
+        **КРИТИЧНО:** Ищи информацию строго **${searchContext}**.
+        
         Найди информацию о:
         1. Активности сетей (Магнит, X5, Четыре Лапы, Бетховен) в регионах РФ.
-        2. Изменениях спроса на корма (премиум/эконом) в ${currentYear}.
+        2. Изменениях спроса на корма (премиум/эконом) в указанный период.
         
         **ЗАДАЧА №2 (Обоснование Плана):**
         Обоснуй план продаж на ${nextYear} год.
         
         **Вводные данные:**
         - **РМ:** ${metrics.rmName}
-        - **Факт ${currentYear}:** ${new Intl.NumberFormat('ru-RU').format(metrics.totalFact)}
+        - **Факт:** ${new Intl.NumberFormat('ru-RU').format(metrics.totalFact)}
         - **Доля Рынка (покрытие):** ${metrics.marketShare.toFixed(1)}%
         - **Индивидуальный план:** ${metrics.recommendedGrowthPct.toFixed(1)}% (База компании: ${baseRate}%)
 
         **Структура ответа (Markdown):**
-        1.  **Рыночный Контекст (Real-Time):** Кратко опиши 1-2 найденных факта о конкурентах или рынке за ${searchContext}, которые влияют на территорию.
+        1.  **Рыночный Контекст (${searchContext}):** Кратко опиши 1-2 найденных факта о конкурентах или рынке именно за этот период, которые влияют на территорию.
         2.  **Обоснование Цифры:** Объясни план ${metrics.recommendedGrowthPct.toFixed(1)}%, связывая его с долей рынка (${metrics.marketShare < 40 ? "низкая база - нужно расти агрессивно" : "высокая база - удерживаем позиции"}).
         3.  **Фокус:** Одна конкретная задача на ${nextYear}.
 
@@ -136,17 +142,18 @@ export const streamClientInsights = async (
     return streamResponse(createClientInsightPrompt(clientData), onChunk, onError, signal);
 };
 
-// Updated: Uses tools for search
+// Updated: Uses tools for search and passes dateRange
 export const streamRMInsights = async (
     metrics: RMMetrics,
     baseRate: number,
     onChunk: (chunk: string) => void,
     onError: (error: Error) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    dateRange?: string // Optional date range
 ) => {
     // Request Google Search Tool
     const tools = [{ googleSearch: {} }];
-    return streamResponse(createRMInsightPrompt(metrics, baseRate), onChunk, onError, signal, tools);
+    return streamResponse(createRMInsightPrompt(metrics, baseRate, dateRange), onChunk, onError, signal, tools);
 };
 
 // ... (streamPackagingInsights same) ...

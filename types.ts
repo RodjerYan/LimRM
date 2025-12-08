@@ -134,6 +134,7 @@ export type WorkerResultPayload = {
     plottableActiveClients: MapPoint[];
     unidentifiedRows: UnidentifiedRow[];
     okbRegionCounts: { [key: string]: number };
+    dateRange?: string; // NEW: Detected date range from the file (e.g., "01.01.2024 - 31.03.2024")
 };
 export type WorkerErrorPayload = string;
 

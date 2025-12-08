@@ -70,6 +70,7 @@ const App: React.FC = () => {
 
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
+    const [dateRange, setDateRange] = useState<string | undefined>(undefined); // New state for date range
     
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
@@ -218,8 +219,12 @@ const App: React.FC = () => {
         setAllActiveClients(data.plottableActiveClients);
         setUnidentifiedRows(data.unidentifiedRows);
         setOkbRegionCounts(data.okbRegionCounts);
+        setDateRange(data.dateRange); // Store date range
         setFilters({ rm: '', brand: [], packaging: [], region: [] });
         addNotification(`Данные загружены. ${data.aggregatedData.length} групп, ${data.plottableActiveClients.length} активных точек.`, 'success');
+        if (data.dateRange) {
+            addNotification(`Определен период данных: ${data.dateRange}`, 'info');
+        }
         if (data.unidentifiedRows.length > 0) {
             addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
@@ -647,6 +652,7 @@ const App: React.FC = () => {
                             okbStatus={okbStatus}
                             onActiveClientsClick={() => setIsClientsModalOpen(true)}
                             onEditClient={(client: MapPoint) => handleStartEdit(client, 'clients')}
+                            dateRange={dateRange} // PASS DATE RANGE
                         />
                     </div>
                 );
@@ -800,6 +806,7 @@ const App: React.FC = () => {
                 okbRegionCounts={okbRegionCounts}
                 okbData={okbData}
                 mode="modal" 
+                dateRange={dateRange} // PASS DATE RANGE
             />
         </div>
     );

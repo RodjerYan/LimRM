@@ -12,9 +12,10 @@ interface RMAnalysisModalProps {
     onClose: () => void;
     rmData: RMMetrics | null;
     baseRate: number;
+    dateRange?: string; // New Prop
 }
 
-const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmData, baseRate }) => {
+const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmData, baseRate, dateRange }) => {
     const [analysis, setAnalysis] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -55,7 +56,8 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                 }
                 setIsLoading(false);
             },
-            abortControllerRef.current.signal
+            abortControllerRef.current.signal,
+            dateRange // Pass the date range
         ).finally(() => {
             setIsLoading(false);
         });
@@ -99,7 +101,11 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                         {isLoading && (
                             <div className="flex items-center gap-2 text-xs text-cyan-400 animate-pulse">
                                 <SearchIcon small />
-                                <span>Поиск данных в Интернете...</span>
+                                <span>
+                                    {dateRange 
+                                        ? `Поиск данных за период: ${dateRange}...` 
+                                        : 'Поиск актуальных данных в Интернете...'}
+                                </span>
                             </div>
                         )}
                     </div>
@@ -118,7 +124,7 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                                     <div className="h-4 bg-gray-700 rounded w-3/4"></div>
                                     <div className="h-4 bg-gray-700 rounded w-full"></div>
                                     <div className="h-4 bg-gray-700 rounded w-5/6"></div>
-                                    <div className="text-xs text-gray-500 pt-2">Анализ конкурентов за текущий отчетный период...</div>
+                                    <div className="text-xs text-gray-500 pt-2">Анализ конкурентов...</div>
                                 </div>
                             ) : (
                                 <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />

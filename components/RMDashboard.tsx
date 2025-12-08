@@ -49,6 +49,7 @@ interface RMDashboardProps {
     okbStatus?: OkbStatus | null;
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
+    dateRange?: string; // New Prop
 }
 
 // ... (PackagingCharts component remains same) ...
@@ -233,7 +234,7 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
     );
 };
 
-export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient }) => {
+export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);

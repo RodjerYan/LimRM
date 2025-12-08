@@ -188,15 +188,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version
+            const CACHE_NAME = 'limkorm-geo-v4'; // Bump version
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
+            // Corrected URL: use 'main' branch
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/main/public/data/ukraine.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData, ukraineData;
+                let russiaData = null, worldData = null, ukraineData = null;
                 let usedCache = false;
 
                 // 1. Try Cache API
@@ -215,90 +216,93 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             ukraineData = await ukraineRes.json();
                             usedCache = true;
                             setIsFromCache(true);
-                        } else {
-                            // Fetch and Cache
-                            const [rNetwork, wNetwork, uNetwork] = await Promise.all([
-                                fetch(RUSSIA_URL),
-                                fetch(WORLD_URL),
-                                fetch(UKRAINE_URL)
-                            ]);
-                            
-                            if (rNetwork.ok && wNetwork.ok && uNetwork.ok) {
-                                cache.put(RUSSIA_URL, rNetwork.clone());
-                                cache.put(WORLD_URL, wNetwork.clone());
-                                cache.put(UKRAINE_URL, uNetwork.clone());
-                                russiaData = await rNetwork.json();
-                                worldData = await wNetwork.json();
-                                ukraineData = await uNetwork.json();
-                            }
                         }
                     } catch (e) {
-                        console.warn('Cache API error:', e);
+                        console.warn('Cache API lookup failed:', e);
                     }
                 }
 
-                // Fallback if cache failed or data missing
-                if (!russiaData || !worldData || !ukraineData) {
-                    const [rRes, wRes, uRes] = await Promise.all([
-                        fetch(RUSSIA_URL),
-                        fetch(WORLD_URL),
-                        fetch(UKRAINE_URL)
-                    ]);
-                    russiaData = await rRes.json();
-                    worldData = await wRes.json();
-                    ukraineData = await uRes.json();
+                // Fallback: Fetch independently
+                if (!russiaData) {
+                    try {
+                        const res = await fetch(RUSSIA_URL);
+                        if (res.ok) russiaData = await res.json();
+                    } catch (e) { console.error("Russia GeoJSON failed", e); }
+                }
+                
+                if (!worldData) {
+                    try {
+                        const res = await fetch(WORLD_URL);
+                        if (res.ok) worldData = await res.json();
+                    } catch (e) { console.error("World GeoJSON failed", e); }
                 }
 
-                // Filter & Translate CIS Countries to match our internal region names
-                const cisCountriesMap: Record<string, string> = {
-                    'Belarus': 'Республика Беларусь',
-                    'Kazakhstan': 'Республика Казахстан',
-                    'Kyrgyzstan': 'Кыргызская Республика',
-                    'Uzbekistan': 'Республика Узбекистан',
-                    'Tajikistan': 'Республика Таджикистан',
-                    'Turkmenistan': 'Туркменистан',
-                    'Armenia': 'Армения',
-                    'Azerbaijan': 'Азербайджан',
-                    'Georgia': 'Грузия',
-                    'Moldova': 'Республика Молдова'
-                };
-
-                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
-                cisFeatures.forEach((f: any) => {
-                    f.properties.name = cisCountriesMap[f.properties.name];
-                });
-
-                // Translate Ukraine Regions
-                if (ukraineData && ukraineData.features) {
-                    ukraineData.features.forEach((f: any) => {
-                        const originalName = f.properties.name;
-                        if (ukraineRegionMap[originalName]) {
-                            f.properties.name = ukraineRegionMap[originalName];
-                        }
-                    });
+                if (!ukraineData) {
+                    try {
+                        const res = await fetch(UKRAINE_URL);
+                        if (res.ok) ukraineData = await res.json();
+                    } catch (e) { console.error("Ukraine GeoJSON failed", e); }
                 }
 
-                // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
-                // Manually fix Chukotka coordinates to prevent "streak" across the map
-                if (russiaData && russiaData.features) {
+                // Save to cache if network fetched
+                if (!usedCache && 'caches' in window) {
+                    try {
+                        const cache = await caches.open(CACHE_NAME);
+                        if(russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
+                        if(worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
+                        if(ukraineData) cache.put(UKRAINE_URL, new Response(JSON.stringify(ukraineData)));
+                    } catch (e) { /* ignore cache write errors */ }
+                }
+
+                const features = [];
+
+                if (russiaData) {
+                    // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
                     russiaData.features = russiaData.features.map((f: any) => {
                         if (f.properties?.name === 'Чукотский автономный округ') {
                             return fixChukotkaGeoJSON(f);
                         }
                         return f;
                     });
+                    features.push(...russiaData.features);
                 }
 
-                // Merge collections: Russia Regions + Ukraine Regions + CIS Countries
-                // Note: Duplicate regions (like Crimea if present in both) will overlap.
-                // We rely on consistent naming to map data.
-                setGeoJsonData({
-                    type: 'FeatureCollection',
-                    features: [...russiaData.features, ...ukraineData.features, ...cisFeatures]
-                });
+                if (worldData) {
+                    // Filter & Translate CIS Countries to match our internal region names
+                    const cisCountriesMap: Record<string, string> = {
+                        'Belarus': 'Республика Беларусь',
+                        'Kazakhstan': 'Республика Казахстан',
+                        'Kyrgyzstan': 'Кыргызская Республика',
+                        'Uzbekistan': 'Республика Узбекистан',
+                        'Tajikistan': 'Республика Таджикистан',
+                        'Turkmenistan': 'Туркменистан',
+                        'Armenia': 'Армения',
+                        'Azerbaijan': 'Азербайджан',
+                        'Georgia': 'Грузия',
+                        'Moldova': 'Республика Молдова'
+                    };
+                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                    cisFeatures.forEach((f: any) => {
+                        f.properties.name = cisCountriesMap[f.properties.name];
+                    });
+                    features.push(...cisFeatures);
+                }
+
+                if (ukraineData) {
+                    // Translate Ukraine Regions
+                    ukraineData.features.forEach((f: any) => {
+                        const originalName = f.properties.name;
+                        if (ukraineRegionMap[originalName]) {
+                            f.properties.name = ukraineRegionMap[originalName];
+                        }
+                    });
+                    features.push(...ukraineData.features);
+                }
+
+                setGeoJsonData({ type: 'FeatureCollection', features });
 
             } catch (error) {
-                console.error("Error fetching map geometry:", error);
+                console.error("Critical Error fetching map geometry:", error);
             } finally {
                 setIsLoadingGeo(false);
             }
