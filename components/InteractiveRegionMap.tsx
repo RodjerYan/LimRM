@@ -60,8 +60,9 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
-// Map Ukrainian region names from GeoJSON (English/Transliterated) to Russian names used in the app
+// Expanded Map for Ukrainian region names from GeoJSON variations to Russian names
 const ukraineRegionMap: Record<string, string> = {
+    // English / Translit standard
     'Cherkasy': 'Черкасская область',
     'Chernihiv': 'Черниговская область',
     'Chernivtsi': 'Черновицкая область',
@@ -88,7 +89,36 @@ const ukraineRegionMap: Record<string, string> = {
     'Volyn': 'Волынская область',
     'Zakarpattia': 'Закарпатская область',
     'Zaporizhia': 'Запорожская область',
-    'Zhytomyr': 'Житомирская область'
+    'Zhytomyr': 'Житомирская область',
+    
+    // GeoJSON "NAME_1" / "VARNAME_1" variations (normalized)
+    'Cherkaska': 'Черкасская область',
+    'Chernihivska': 'Черниговская область',
+    'Chernivetska': 'Черновицкая область',
+    'Dnipropetrovska': 'Днепропетровская область',
+    'Donetska': 'Донецкая Народная Республика',
+    'Ivano-Frankivska': 'Ивано-Франковская область',
+    'Kharkivska': 'Харьковская область',
+    'Khersonska': 'Херсонская область',
+    'Khmelnytska': 'Хмельницкая область',
+    'Khmelnytskyy': 'Хмельницкая область',
+    'Kyivska': 'Киевская область',
+    'Kyiv': 'Киев',
+    'Kirovohradska': 'Кировоградская область',
+    'Luhanska': 'Луганская Народная Республика',
+    'Lvivska': 'Львовская область',
+    'Mykolaivska': 'Николаевская область',
+    'Odeska': 'Одесская область',
+    'Poltavska': 'Полтавская область',
+    'Rivnenska': 'Ровненская область',
+    'Sumska': 'Сумская область',
+    'Ternopilska': 'Тернопольская область',
+    'Vinnytska': 'Винницкая область',
+    'Volynska': 'Волынская область',
+    'Zakarpatska': 'Закарпатская область',
+    'Zaporizka': 'Запорожская область',
+    'Zhytomyrska': 'Житомирская область',
+    'Avtonomna Respublika Krym': 'Республика Крым',
 };
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -188,7 +218,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v4'; // Bump version
+            const CACHE_NAME = 'limkorm-geo-v5'; // Bump version to invalidate old cache
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
@@ -289,11 +319,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 if (ukraineData) {
-                    // Translate Ukraine Regions
+                    // Robust processing for Ukraine GeoJSON (varying property keys)
                     ukraineData.features.forEach((f: any) => {
-                        const originalName = f.properties.name;
-                        if (ukraineRegionMap[originalName]) {
-                            f.properties.name = ukraineRegionMap[originalName];
+                        const p = f.properties;
+                        // Try to find the name in various possible keys
+                        const rawName = p.name || p.NAME_1 || p.NAME || p.VARNAME_1 || p.varname || p.NAME_RU || p.NAME_LATN;
+                        
+                        if (rawName) {
+                            // Normalize: remove apostrophes, "Oblast", extra spaces
+                            const normalized = rawName
+                                .replace(/'/g, "")
+                                .replace(/’/g, "")
+                                .replace(/ Oblast.*/i, "") // Remove 'Oblast' and anything after
+                                .replace(/ City.*/i, "")
+                                .trim();
+
+                            if (ukraineRegionMap[normalized]) {
+                                // Apply the Russian name if found in our map
+                                f.properties.name = ukraineRegionMap[normalized];
+                            } else {
+                                // Fallback: use the raw name if no mapping found, but ensure 'name' property exists
+                                f.properties.name = normalized;
+                            }
                         }
                     });
                     features.push(...ukraineData.features);
