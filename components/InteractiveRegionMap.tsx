@@ -5,6 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
+import { REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 
@@ -143,7 +144,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v7'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -256,27 +257,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             props.NAME_EN, 
                             props.name_en, 
                             props.SUBUNIT,
-                            props.FORMAL_EN
+                            props.FORMAL_EN,
+                            props.ADM0_A3,
+                            props.SOV_A3
                         ].filter(Boolean).map(s => String(s).toLowerCase());
 
                         return nameCandidates.some(n => 
-                            n.includes('abkhazia') || 
-                            n.includes('ossetia') || 
-                            n.includes('transnistria') || 
-                            n.includes('pridnestrovie') || 
-                            n.includes('karabakh')
+                            n.includes('abkhazia') || n.includes('abk') ||
+                            n.includes('ossetia') || n.includes('sos') ||
+                            n.includes('transnistria') || n.includes('pridnestrovie') || n.includes('pmr') ||
+                            n.includes('karabakh') || n.includes('artsakh')
                         );
                     });
 
                     breakawayFeatures.forEach((f: any) => {
                         const props = f.properties || {};
-                        const englishNameRaw = [props.NAME, props.NAME_EN, props.SUBUNIT].filter(Boolean).join(' ').toLowerCase();
+                        const englishNameRaw = [props.NAME, props.NAME_EN, props.SUBUNIT, props.ADM0_A3].filter(Boolean).join(' ').toLowerCase();
                         
                         let russianName = props.NAME; // fallback
-                        if (englishNameRaw.includes('abkhazia')) russianName = 'Республика Абхазия';
-                        else if (englishNameRaw.includes('ossetia')) russianName = 'Республика Южная Осетия';
+                        if (englishNameRaw.includes('abkhazia') || englishNameRaw.includes('abk')) russianName = 'Республика Абхазия';
+                        else if (englishNameRaw.includes('ossetia') || englishNameRaw.includes('sos')) russianName = 'Республика Южная Осетия';
                         else if (englishNameRaw.includes('transnistria') || englishNameRaw.includes('pridnestrovie')) russianName = 'Приднестровье';
-                        else if (englishNameRaw.includes('karabakh')) russianName = 'Нагорный Карабах';
+                        else if (englishNameRaw.includes('karabakh') || englishNameRaw.includes('artsakh')) russianName = 'Нагорный Карабах';
 
                         f.properties.name = russianName;
                         f.properties.isBreakaway = true; // Mark for special styling/z-index
@@ -326,11 +328,25 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     }, [geoJsonData]);
 
+    // Enhanced Search: Handles aliases (e.g. "ПМР" -> "Приднестровье")
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
-            const lowerSearchTerm = searchTerm.toLowerCase();
+            const lowerRaw = searchTerm.toLowerCase().trim();
+            const targets = [lowerRaw];
+
+            // Look for synonyms in the Keyword Map
+            for (const [key, val] of Object.entries(REGION_KEYWORD_MAP)) {
+                // If user types "пмр", we add "приднестровье" to search targets
+                if (key.includes(lowerRaw) || lowerRaw.includes(key)) {
+                    targets.push(val.toLowerCase());
+                }
+            }
+
             const results = searchableLocations
-                .filter(loc => loc.name.toLowerCase().includes(lowerSearchTerm))
+                .filter(loc => {
+                    const locName = loc.name.toLowerCase();
+                    return targets.some(t => locName.includes(t));
+                })
                 .slice(0, 7);
             setSearchResults(results);
         } else {
@@ -713,11 +729,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v6)
+                            <CheckIcon /> Из кэша (v7)
                         </div>
                     ) : null}
                 </div>
                 
+                {/* CLEAN BUTTONS - NO EMOJIS */}
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
                     <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
                     <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
