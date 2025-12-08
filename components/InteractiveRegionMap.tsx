@@ -104,11 +104,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
   // 1. Fetch GeoJSON Data
   useEffect(() => {
     const fetchGeoData = async () => {
-      // Bumping cache version to v16 to force reload with correct data parsing
-      const CACHE_NAME = 'limkorm-geo-v16';
-      const RUSSIA_URL = 'https://raw.githubusercontent.com/NV5GIS/regions-russia-geojson/main/russia_subjects.geojson';
+      const CACHE_NAME = 'limkorm-geo-v17-composite';
+      // Basic Russia map (often excludes Crimea/New Territories in international versions)
+      const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+      // Ukraine map (contains the regions we need to extract)
+      const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
       const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
-      const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
 
       const safeFetchJson = async (url: string) => {
         try {
@@ -123,95 +124,98 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
       try {
         setIsLoadingGeo(true);
-        let russiaData: any = null, worldData: any = null, breakawayData: any = null;
+        let russiaData: any = null, ukraineData: any = null, worldData: any = null;
 
         if ('caches' in window) {
           try {
             const cache = await caches.open(CACHE_NAME);
-            const [rRes, wRes, bRes] = await Promise.all([cache.match(RUSSIA_URL), cache.match(WORLD_URL), cache.match(BREAKAWAY_URL)]);
+            const [rRes, uRes, wRes] = await Promise.all([
+              cache.match(RUSSIA_URL), 
+              cache.match(UKRAINE_URL),
+              cache.match(WORLD_URL)
+            ]);
             if (rRes) russiaData = await rRes.json();
+            if (uRes) ukraineData = await uRes.json();
             if (wRes) worldData = await wRes.json();
-            if (bRes) breakawayData = await bRes.json();
-            if (russiaData && worldData && breakawayData) setIsFromCache(true);
+            if (russiaData && ukraineData && worldData) setIsFromCache(true);
           } catch (e) { console.warn('Cache read error', e); }
         }
 
         if (!russiaData) russiaData = await safeFetchJson(RUSSIA_URL);
+        if (!ukraineData) ukraineData = await safeFetchJson(UKRAINE_URL);
         if (!worldData) worldData = await safeFetchJson(WORLD_URL);
-        if (!breakawayData) breakawayData = await safeFetchJson(BREAKAWAY_URL);
 
         if ('caches' in window) {
           try {
             const cache = await caches.open(CACHE_NAME);
             if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
+            if (ukraineData) cache.put(UKRAINE_URL, new Response(JSON.stringify(ukraineData)));
             if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
-            if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
           } catch (e) { console.warn('Cache write error', e); }
         }
 
         const features: any[] = [];
 
-        // Russia features (NV5GIS)
+        // 1. Add Russia (Mainland) features
         if (russiaData && russiaData.features) {
-          // Expanded keywords to match both Russian and English names in source data
-          const newTerritoriesKeywords = [
-            'крым', 'севастополь', 'донец', 'луган', 'запорож', 'херсон', // RU
-            'crimea', 'sevastopol', 'donetsk', 'luhansk', 'lugansk', 'zaporizh', 'kherson', // EN
-            'dpr', 'lpr' // Codes
-          ];
-          
           russiaData.features.forEach((feature: any) => {
             const p = feature.properties || {};
-            // Look for any name property
-            const rawName = p.name || p.NAME || p.name_ru || p.official_name || p.NAME_1 || p.NAME_0 || '';
-            
+            const rawName = p.name || p.NAME || '';
             feature.properties = feature.properties || {};
             feature.properties.name = String(rawName || '').trim();
-
-            const lower = String(rawName).toLowerCase();
-            if (newTerritoriesKeywords.some(k => lower.includes(k))) {
-              feature.properties.isNewTerritory = true;
-            }
             features.push(feature);
           });
         }
 
-        // World/CIS features
+        // 2. Extract and Rename specific regions from Ukraine GeoJSON
+        if (ukraineData && ukraineData.features) {
+          // Map of Ukraine GeoJSON names (latin) to Russian Official Names
+          // Keys should allow partial matching (lowercase)
+          const targetRegions: Record<string, string> = {
+            'crimea': 'Республика Крым',
+            'krym': 'Республика Крым',
+            'sevastopol': 'Севастополь',
+            'donets': 'Донецкая Народная Республика', // Matches Donetsk
+            'luhan': 'Луганская Народная Республика', // Matches Luhansk
+            'zaporiz': 'Запорожская область', // Matches Zaporizhia
+            'kherson': 'Херсонская область'
+          };
+
+          ukraineData.features.forEach((feature: any) => {
+            const originalName = (feature.properties?.name || '').toLowerCase();
+            let matchedRussianName: string | null = null;
+
+            for (const [key, ruName] of Object.entries(targetRegions)) {
+              if (originalName.includes(key)) {
+                matchedRussianName = ruName;
+                break;
+              }
+            }
+
+            if (matchedRussianName) {
+              // Modify the feature to belong to Russia (visually)
+              feature.properties = feature.properties || {};
+              feature.properties.name = matchedRussianName;
+              feature.properties.isNewTerritory = true; // Flag for specific styling if needed
+              features.push(feature);
+            }
+          });
+        }
+
+        // 3. Add CIS Neighbors
         if (worldData && worldData.features) {
           const cisMap: Record<string, string> = {
-            'Belarus': 'Республика Беларусь', 'Kazakhstan': 'Республика Казахстан', 'Kyrgyzstan': 'Кыргызская Республика',
-            'Uzbekistan': 'Республика Узбекистан', 'Tajikistan': 'Республика Таджикистан', 'Turkmenistan': 'Туркменистан',
-            'Armenia': 'Армения', 'Azerbaijan': 'Азербайджан', 'Georgia': 'Грузия', 'Moldova': 'Республика Молдова'
+            'Belarus': 'Республика Беларусь', 'Kazakhstan': 'Республика Казахстан', 
+            'Uzbekistan': 'Республика Узбекистан', 'Tajikistan': 'Республика Таджикистан',
+            'Kyrgyzstan': 'Кыргызская Республика', 'Turkmenistan': 'Туркменистан',
+            'Armenia': 'Армения', 'Azerbaijan': 'Азербайджан', 
+            'Georgia': 'Грузия', 'Moldova': 'Республика Молдова'
           };
           const cisFeatures = worldData.features.filter((f: any) => cisMap[f.properties.NAME || f.properties.name]);
           cisFeatures.forEach((f: any) => {
             const englishName = f.properties.NAME || f.properties.name;
             f.properties = f.properties || {};
             f.properties.name = cisMap[englishName];
-            features.push(f);
-          });
-        }
-
-        // Breakaway features
-        if (breakawayData && breakawayData.features) {
-          const breakawayFeatures = breakawayData.features.filter((f: any) => {
-            const props = f.properties || {};
-            const raw = [props.NAME, props.name, props.ADMIN, props.admin, props.NAME_EN, props.SUBUNIT].filter(Boolean).join(' ').toLowerCase();
-            if (raw.includes('crimea') || raw.includes('donetsk') || raw.includes('luhansk') || raw.includes('sevastopol')) return false;
-            return raw.includes('abkhazia') || raw.includes('ossetia') || raw.includes('transnistria') || raw.includes('karabakh');
-          });
-
-          breakawayFeatures.forEach((f: any) => {
-            const props = f.properties || {};
-            const raw = [props.NAME, props.ADMIN, props.NAME_EN].filter(Boolean).join(' ').toLowerCase();
-            let russianName = props.NAME || props.name || '';
-            if (raw.includes('abkhazia')) russianName = 'Республика Абхазия';
-            else if (raw.includes('ossetia')) russianName = 'Республика Южная Осетия';
-            else if (raw.includes('transnistria')) russianName = 'Приднестровье';
-            else if (raw.includes('karabakh')) russianName = 'Нагорный Карабах';
-            f.properties = f.properties || {};
-            f.properties.name = russianName;
-            f.properties.isBreakaway = true;
             features.push(f);
           });
         }
