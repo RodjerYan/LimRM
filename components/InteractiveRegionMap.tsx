@@ -7,6 +7,7 @@ import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
+import { moldovaGeoJSON } from '../data/moldova_geojson';
 
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors';
@@ -204,6 +205,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
                 cisFeatures.forEach((f: any) => {
                     f.properties.name = cisCountriesMap[f.properties.name];
+                    
+                    // --- HIGH-RES GEOMETRY OVERRIDE ---
+                    // Replace simplified Moldova geometry with detailed polygon
+                    if (f.properties.name === 'Республика Молдова' && moldovaGeoJSON) {
+                        f.geometry = moldovaGeoJSON.geometry;
+                    }
                 });
 
                 // Merge collections
