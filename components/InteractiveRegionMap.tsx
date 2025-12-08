@@ -40,10 +40,6 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 
 // Helper to safely shift coordinates for rendering continuity across 180th meridian
 const shiftLongitude = (lon: number): number => {
-    // If longitude is negative (Western Hemisphere) in the context of this Russia/CIS map,
-    // shift it by 360 to appear on the "right" side of the map (Eastern Hemisphere extension).
-    // Russia ranges roughly from 19E to 190E (where 190 is -170).
-    // CIS countries are all positive.
     if (lon < 0) {
         return lon + 360;
     }
@@ -147,7 +143,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v4'; 
+            const CACHE_NAME = 'limkorm-geo-v5'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -166,7 +162,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             try {
                 setIsLoadingGeo(true);
                 let russiaData, worldData, breakawayData;
-                let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
@@ -178,38 +173,30 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             cache.match(BREAKAWAY_URL)
                         ]);
 
-                        if (russiaRes && worldRes && breakRes) {
-                            russiaData = await russiaRes.json();
-                            worldData = await worldRes.json();
-                            breakawayData = await breakRes.json();
-                            usedCache = true;
-                            setIsFromCache(true);
-                        } else {
-                            // Fetch and Cache
-                            const [rData, wData, bData] = await Promise.all([
-                                safeFetchJson(RUSSIA_URL),
-                                safeFetchJson(WORLD_URL),
-                                safeFetchJson(BREAKAWAY_URL)
-                            ]);
-                            
-                            russiaData = rData;
-                            worldData = wData;
-                            breakawayData = bData;
+                        if (russiaRes) russiaData = await russiaRes.json();
+                        if (worldRes) worldData = await worldRes.json();
+                        if (breakRes) breakawayData = await breakRes.json();
 
-                            // Cache what we successfully got
-                            if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
-                            if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
-                            if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
+                        if (russiaData && worldData && breakawayData) {
+                            setIsFromCache(true);
                         }
                     } catch (e) {
                         console.warn('Cache API error:', e);
                     }
                 }
 
-                // Fallback if cache failed logic skipped or data missing
+                // 2. Network Fetch (Parallel but independent)
                 if (!russiaData) russiaData = await safeFetchJson(RUSSIA_URL);
                 if (!worldData) worldData = await safeFetchJson(WORLD_URL);
                 if (!breakawayData) breakawayData = await safeFetchJson(BREAKAWAY_URL);
+
+                // Update Cache if we fetched new data
+                if ('caches' in window) {
+                    const cache = await caches.open(CACHE_NAME);
+                    if (russiaData) cache.put(RUSSIA_URL, new Response(JSON.stringify(russiaData)));
+                    if (worldData) cache.put(WORLD_URL, new Response(JSON.stringify(worldData)));
+                    if (breakawayData) cache.put(BREAKAWAY_URL, new Response(JSON.stringify(breakawayData)));
+                }
 
                 // --- MERGE LOGIC ---
                 const features: any[] = [];
@@ -258,25 +245,28 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     features.push(...cisFeatures);
                 }
 
-                // 3. Breakaway Republics (High Detail)
+                // 3. Breakaway Republics (High Detail from Natural Earth)
                 if (breakawayData && breakawayData.features) {
                     const breakawayMap: Record<string, string> = {
                         'Abkhazia': 'Республика Абхазия',
                         'South Ossetia': 'Республика Южная Осетия',
                         'Transnistria': 'Приднестровье',
-                        'Pridnestrovie': 'Приднестровье'
+                        'Pridnestrovie': 'Приднестровье',
+                        'Artsakh': 'Нагорный Карабах' 
                     };
 
                     const breakawayFeatures = breakawayData.features.filter((f: any) => {
-                        const name = f.properties.NAME || f.properties.name;
-                        return breakawayMap[name];
+                        const name = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
+                        return breakawayMap[name] || breakawayMap[f.properties.name_en];
                     });
 
                     breakawayFeatures.forEach((f: any) => {
-                        const englishName = f.properties.NAME || f.properties.name;
-                        f.properties.name = breakawayMap[englishName];
+                        const englishName = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
+                        f.properties.name = breakawayMap[englishName] || breakawayMap[f.properties.name_en] || englishName;
                         f.properties.isBreakaway = true; // Mark for special styling/z-index
                     });
+                    
+                    // Push them last to ensure they render on top of country layers
                     features.push(...breakawayFeatures);
                 }
 
@@ -344,7 +334,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const baseBorder = {
             weight: isSelected || isBreakaway ? 2 : 1, // Highlighting breakaways slightly
             opacity: 1,
-            color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
+            color: isSelected ? '#818cf8' : (isBreakaway ? '#fbbf24' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af')), 
             fillColor: 'transparent',
             fillOpacity: 0,
             className: isSelected ? 'selected-region-layer' : ''
@@ -354,8 +344,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#4b5563' : '#374151'), 
-                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.1 : 0), 
+                fillColor: isSelected ? '#818cf8' : (isBreakaway ? '#d97706' : '#374151'), 
+                fillOpacity: isSelected ? 0.2 : (isBreakaway ? 0.3 : 0), 
                 interactive: true
             };
         }
@@ -707,15 +697,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v4)
+                            <CheckIcon /> Из кэша (v5)
                         </div>
                     ) : null}
                 </div>
                 
                 <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
-                    <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
-                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
-                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
+                    <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
+                    <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
+                    <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
                 </div>
 
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
