@@ -135,10 +135,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version to v3 for 10m resolution update
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
-            const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
+            
+            // High-Resolution 1:10m source from Natural Earth Vector repo.
+            // This file is larger (~5-8MB) but provides sharp, professional-grade boundaries matching the Russian regions.
+            const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
 
             try {
                 setIsLoadingGeo(true);
@@ -167,10 +169,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             ]);
                             
                             if (rNetwork.ok && wNetwork.ok) {
-                                cache.put(RUSSIA_URL, rNetwork.clone());
-                                cache.put(WORLD_URL, wNetwork.clone());
+                                // Clone responses before reading body
+                                const rClone = rNetwork.clone();
+                                const wClone = wNetwork.clone();
+                                
                                 russiaData = await rNetwork.json();
                                 worldData = await wNetwork.json();
+                                
+                                cache.put(RUSSIA_URL, rClone);
+                                cache.put(WORLD_URL, wClone);
                             }
                         }
                     } catch (e) {
@@ -189,6 +196,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 // Filter & Translate CIS Countries to match our internal region names
+                // Mapping property 'NAME' from Natural Earth 10m file
                 const cisCountriesMap: Record<string, string> = {
                     'Belarus': 'Республика Беларусь',
                     'Kazakhstan': 'Республика Казахстан',
@@ -202,12 +210,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     'Moldova': 'Республика Молдова'
                 };
 
-                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.NAME || f.properties.name]);
                 cisFeatures.forEach((f: any) => {
-                    f.properties.name = cisCountriesMap[f.properties.name];
+                    const englishName = f.properties.NAME || f.properties.name;
+                    f.properties.name = cisCountriesMap[englishName];
                 });
 
-                // Merge collections: Russia Regions + CIS Countries
+                // Merge collections: Russia Regions + High Res CIS Countries
                 setGeoJsonData({
                     type: 'FeatureCollection',
                     features: [...russiaData.features, ...cisFeatures]
@@ -627,7 +636,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша
+                            <CheckIcon /> Из кэша (v3)
                         </div>
                     ) : null}
                 </div>
