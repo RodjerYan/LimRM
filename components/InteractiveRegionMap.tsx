@@ -139,31 +139,37 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const CACHE_NAME = 'limkorm-geo-v1';
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
+            const MOLDOVA_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries/MDA.geo.json';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData;
+                let russiaData, worldData, moldovaData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes] = await Promise.all([
+                        const [russiaRes, worldRes, moldovaRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL)
+                            cache.match(WORLD_URL),
+                            cache.match(MOLDOVA_URL)
                         ]);
 
                         if (russiaRes && worldRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
+                            if (moldovaRes) {
+                                moldovaData = await moldovaRes.json();
+                            }
                             usedCache = true;
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, wNetwork] = await Promise.all([
+                            const [rNetwork, wNetwork, mNetwork] = await Promise.all([
                                 fetch(RUSSIA_URL),
-                                fetch(WORLD_URL)
+                                fetch(WORLD_URL),
+                                fetch(MOLDOVA_URL).catch(() => null)
                             ]);
                             
                             if (rNetwork.ok && wNetwork.ok) {
@@ -171,6 +177,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 cache.put(WORLD_URL, wNetwork.clone());
                                 russiaData = await rNetwork.json();
                                 worldData = await wNetwork.json();
+                            }
+                            
+                            if (mNetwork && mNetwork.ok) {
+                                cache.put(MOLDOVA_URL, mNetwork.clone());
+                                moldovaData = await mNetwork.json();
                             }
                         }
                     } catch (e) {
@@ -180,12 +191,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 // Fallback if cache failed or data missing
                 if (!russiaData || !worldData) {
-                    const [rRes, wRes] = await Promise.all([
+                    const [rRes, wRes, mRes] = await Promise.all([
                         fetch(RUSSIA_URL),
-                        fetch(WORLD_URL)
+                        fetch(WORLD_URL),
+                        fetch(MOLDOVA_URL).catch(() => null)
                     ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
+                    if (mRes && mRes.ok) moldovaData = await mRes.json();
                 }
 
                 // Filter & Translate CIS Countries
@@ -208,8 +221,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     
                     // --- HIGH-RES GEOMETRY OVERRIDE ---
                     // Replace simplified Moldova geometry with detailed polygon
-                    if (f.properties.name === 'Республика Молдова' && moldovaGeoJSON) {
-                        f.geometry = moldovaGeoJSON.geometry;
+                    if (f.properties.name === 'Республика Молдова') {
+                        // Priority 1: Fetched High-Res GeoJSON (OSM standard)
+                        if (moldovaData) {
+                            f.geometry = moldovaData.geometry || moldovaData; // handle if it's a Feature or Geometry
+                        } 
+                        // Priority 2: Local High-Res Fallback (Updated in data/moldova_geojson.ts)
+                        else if (moldovaGeoJSON) {
+                            f.geometry = moldovaGeoJSON.geometry;
+                        }
                     }
                 });
 
