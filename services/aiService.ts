@@ -1,14 +1,9 @@
 
-import { AggregatedDataRow, MapPoint, RMMetrics, PlanMetric } from "../types";
+import { AggregatedDataRow, RMMetrics } from "../types";
 
-// The proxy URL should be configured in one place, but for simplicity, we define it here.
 const PROXY_URL = import.meta.env.VITE_GEMINI_PROXY_URL || '/api/gemini-proxy';
 
-/**
- * Generates a prompt for Gemini based on a client's data (individual or grouped).
- * @param clientData - The data for the client/group.
- * @returns A string prompt for the AI.
- */
+// ... (keep createClientInsightPrompt same) ...
 const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
     const formattedFact = new Intl.NumberFormat('ru-RU').format(clientData.fact);
     const formattedPotential = new Intl.NumberFormat('ru-RU').format(clientData.potential);
@@ -48,57 +43,45 @@ const createClientInsightPrompt = (clientData: AggregatedDataRow): string => {
 };
 
 /**
- * Generates a prompt to justify the calculated sales plan for an RM.
+ * Generates a prompt that utilizes Google Search Grounding to find real competitor data.
  */
 const createRMInsightPrompt = (metrics: RMMetrics, baseRate: number): string => {
-    // Determine current time context dynamically
     const now = new Date();
     const currentYear = now.getFullYear();
     const nextYear = currentYear + 1;
     const todayStr = now.toLocaleDateString('ru-RU');
 
-    const share = metrics.marketShare.toFixed(1);
-    const plan = metrics.recommendedGrowthPct.toFixed(1);
-    const fact = new Intl.NumberFormat('ru-RU').format(metrics.totalFact);
-    const potential = new Intl.NumberFormat('ru-RU').format(metrics.totalPotential);
-    const nextPlan = new Intl.NumberFormat('ru-RU').format(metrics.nextYearPlan);
+    // Context for search window (last 6 months roughly)
+    const searchContext = `за последние 6 месяцев ${currentYear} года`;
 
     return `
         Ты — Коммерческий Директор. Сегодня ${todayStr}.
-        Твоя задача — обосновать индивидуальный план продаж на ${nextYear} год для Регионального Менеджера (РМ).
-        РМ может быть недоволен цифрой, поэтому нужно четко и аргументированно объяснить, почему выставлен именно такой процент.
-
+        
+        **ЗАДАЧА №1 (Поиск в Интернете):**
+        Используй Google Search, чтобы найти актуальные новости и активность конкурентов в регионе, за который отвечает менеджер **${metrics.rmName}** (обычно это привязано к крупнейшим городам его территории, если название РМ не является географическим, ищи общие тренды по рынку кормов для животных в РФ ${searchContext}).
+        Найди информацию о:
+        1. Активности сетей (Магнит, X5, Четыре Лапы, Бетховен) в регионах РФ.
+        2. Изменениях спроса на корма (премиум/эконом) в ${currentYear}.
+        
+        **ЗАДАЧА №2 (Обоснование Плана):**
+        Обоснуй план продаж на ${nextYear} год.
+        
         **Вводные данные:**
         - **РМ:** ${metrics.rmName}
-        - **Факт ${currentYear}:** ${fact}
-        - **Общий Потенциал территории:** ${potential}
-        - **Текущая Доля Рынка (Насыщенность):** ${share}%
-        - **Базовая ставка повышения для всех:** ${baseRate}%
-        - **Индивидуальный план (рассчитанный):** ${plan}%
-        - **План в цифрах на ${nextYear}:** ${nextPlan}
+        - **Факт ${currentYear}:** ${new Intl.NumberFormat('ru-RU').format(metrics.totalFact)}
+        - **Доля Рынка (покрытие):** ${metrics.marketShare.toFixed(1)}%
+        - **Индивидуальный план:** ${metrics.recommendedGrowthPct.toFixed(1)}% (База компании: ${baseRate}%)
 
-        **Логика расчета ("Умное планирование"):**
-        1. Если Доля Рынка низкая (< 35-40%), значит территория пустая. Мы требуем рост ВЫШЕ базового (${baseRate}%), так как расти с нуля легко.
-        2. Если Доля Рынка высокая (> 45%), значит территория насыщена. Расти на ${baseRate}% нереально без демпинга. Мы СНИЖАЕМ план, чтобы он был выполнимым.
-        3. Если Доля Рынка средняя (~40%), план близок к базовому.
+        **Структура ответа (Markdown):**
+        1.  **Рыночный Контекст (Real-Time):** Кратко опиши 1-2 найденных факта о конкурентах или рынке за ${searchContext}, которые влияют на территорию.
+        2.  **Обоснование Цифры:** Объясни план ${metrics.recommendedGrowthPct.toFixed(1)}%, связывая его с долей рынка (${metrics.marketShare < 40 ? "низкая база - нужно расти агрессивно" : "высокая база - удерживаем позиции"}).
+        3.  **Фокус:** Одна конкретная задача на ${nextYear}.
 
-        **Твоя задача:**
-        Напиши короткое, структурированное обоснование для РМ (на русском языке, Markdown).
-        
-        **Структура ответа:**
-        1.  **Анализ ситуации:** Оцени текущую долю рынка (${share}%). Это много (потолок) или мало (голубой океан)?
-        2.  **Обоснование цифры:** Объясни, почему план именно ${plan}% (выше или ниже базового). Используй фразы вроде "С учетом низкой базы..." или "Учитывая высокую насыщенность...".
-        3.  **Резюме:** Мотивирующая фраза. Например: "План амбициозный, но с твоим потенциалом реальный" или "План консервативный, задача — удержать позиции".
-
-        Будь убедителен, краток и профессионален. Не используй сложные формулы, объясняй суть.
-        Обязательно используй актуальные годы (${currentYear} -> ${nextYear}) в ответе.
+        Будь кратким, используй найденные данные.
     `;
 };
 
-/**
- * NEW: Generates a prompt for specific packaging analysis with Forecast Tables.
- * Uses a rigorous "Commercial Director" persona.
- */
+// ... (keep createPackagingInsightPrompt same) ...
 const createPackagingInsightPrompt = (
     packagingName: string, 
     skuList: string[], 
@@ -143,10 +126,7 @@ const createPackagingInsightPrompt = (
     `;
 };
 
-
-/**
- * Fetches AI-powered insights for a given client from the Gemini API via our proxy.
- */
+// ... (streamClientInsights same) ...
 export const streamClientInsights = async (
     clientData: AggregatedDataRow,
     onChunk: (chunk: string) => void,
@@ -156,9 +136,7 @@ export const streamClientInsights = async (
     return streamResponse(createClientInsightPrompt(clientData), onChunk, onError, signal);
 };
 
-/**
- * Fetches AI justification for an RM's sales plan.
- */
+// Updated: Uses tools for search
 export const streamRMInsights = async (
     metrics: RMMetrics,
     baseRate: number,
@@ -166,12 +144,12 @@ export const streamRMInsights = async (
     onError: (error: Error) => void,
     signal: AbortSignal
 ) => {
-    return streamResponse(createRMInsightPrompt(metrics, baseRate), onChunk, onError, signal);
+    // Request Google Search Tool
+    const tools = [{ googleSearch: {} }];
+    return streamResponse(createRMInsightPrompt(metrics, baseRate), onChunk, onError, signal, tools);
 };
 
-/**
- * Fetches AI analysis for a specific packaging row.
- */
+// ... (streamPackagingInsights same) ...
 export const streamPackagingInsights = async (
     packagingName: string,
     skuList: string[],
@@ -187,20 +165,22 @@ export const streamPackagingInsights = async (
     return streamResponse(prompt, onChunk, onError, signal);
 };
 
-/**
- * Shared helper to call the proxy
- */
+// Updated: Accepts tools argument
 async function streamResponse(
     prompt: string,
     onChunk: (chunk: string) => void,
     onError: (error: Error) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    tools?: any[] // Optional tools array
 ) {
     try {
+        const body: any = { prompt };
+        if (tools) body.tools = tools;
+
         const response = await fetch(PROXY_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt }),
+            body: JSON.stringify(body),
             signal,
         });
 

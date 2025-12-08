@@ -38,146 +38,6 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
-// Dictionary to translate GeoJSON English names to our App's Russian names
-const REGION_NAME_TRANSLATIONS: Record<string, string> = {
-    // Belarus
-    "Brest Region": "Брестская область",
-    "Vitebsk Region": "Витебская область",
-    "Gomel Region": "Гомельская область",
-    "Homyel Region": "Гомельская область",
-    "Grodno Region": "Гродненская область",
-    "Hrodna Region": "Гродненская область",
-    "Minsk Region": "Минская область",
-    "Mogilev Region": "Могилёвская область",
-    "Mahilyow Region": "Могилёвская область",
-    "City of Minsk": "Минск",
-    "Minsk": "Минск",
-
-    // Kazakhstan
-    "Akmola Region": "Акмолинская область",
-    "Aktobe Region": "Актюбинская область",
-    "Almaty Region": "Алматинская область",
-    "Atyrau Region": "Атырауская область",
-    "West Kazakhstan Region": "Западно-Казахстанская область",
-    "Jambyl Region": "Жамбылская область",
-    "Karaganda Region": "Карагандинская область",
-    "Kostanay Region": "Костанайская область",
-    "Kyzylorda Region": "Кызылординская область",
-    "Mangystau Region": "Мангистауская область",
-    "Pavlodar Region": "Павлодарская область",
-    "North Kazakhstan Region": "Северо-Казахстанская область",
-    "East Kazakhstan Region": "Восточно-Казахстанская область",
-    "Turkestan Region": "Туркестанская область",
-    "South Kazakhstan Region": "Туркестанская область", // Old name
-    "Astana": "Астана",
-    "Nur-Sultan": "Астана",
-    "Almaty": "Алматы",
-    "Shymkent": "Шымкент",
-
-    // Kyrgyzstan
-    "Batken Region": "Баткенская область",
-    "Chuy Region": "Чуйская область",
-    "Issyk-Kul Region": "Иссык-Кульская область",
-    "Jalal-Abad Region": "Джалал-Абадская область",
-    "Naryn Region": "Нарынская область",
-    "Osh Region": "Ошская область",
-    "Talas Region": "Таласская область",
-    "Bishkek": "Бишкек",
-    "Osh City": "Ош",
-    "Osh": "Ош",
-
-    // Uzbekistan
-    "Andijan Region": "Андижанская область",
-    "Bukhara Region": "Бухарская область",
-    "Fergana Region": "Ферганская область",
-    "Jizzakh Region": "Джизакская область",
-    "Qashqadaryo Region": "Кашкадарьинская область",
-    "Kashkadarya Region": "Кашкадарьинская область",
-    "Xorazm Region": "Хорезмская область",
-    "Khorezm Region": "Хорезмская область",
-    "Namangan Region": "Наманганская область",
-    "Navoiy Region": "Навоийская область",
-    "Samarqand Region": "Самаркандская область",
-    "Sirdaryo Region": "Сырдарьинская область",
-    "Syrdarya Region": "Сырдарьинская область",
-    "Surxondaryo Region": "Сурхандарьинская область",
-    "Surkhandarya Region": "Сурхандарьинская область",
-    "Tashkent Region": "Ташкентская область",
-    "Tashkent": "Ташкент",
-    "Tashkent City": "Ташкент",
-    "Republic of Karakalpakstan": "Республика Каракалпакстан",
-    
-    // Tajikistan
-    "Gorno-Badakhshan Autonomous Province": "Горно-Бадахшанская автономная область",
-    "Khatlon Province": "Хатлонская область",
-    "Sughd Province": "Согдийская область",
-    "Dushanbe": "Душанбе",
-    "Districts of Republican Subordination": "Районы республиканского подчинения",
-
-    // Moldova (Partial)
-    "Transnistria": "Приднестровье",
-    "Gagauzia": "Гагаузия",
-    "Chisinau": "Кишинёв",
-    "Balti": "Бельцы",
-    
-    // Armenia
-    "Yerevan": "Ереван",
-    "Shirak Province": "Ширакская область",
-    "Lori Province": "Лорийская область",
-    "Tavush Province": "Тавушская область",
-    "Aragatsotn Province": "Арагацотнская область",
-    "Ararat Province": "Араратская область",
-    "Armavir Province": "Армавирская область",
-    "Gegharkunik Province": "Гегаркуникская область",
-    "Kotayk Province": "Котайкская область",
-    "Syunik Province": "Сюникская область",
-    "Vayots Dzor Province": "Вайоц-Дзорская область",
-    
-    // Azerbaijan (Simplified)
-    "Baku": "Баку",
-    "Ganja": "Гянджа",
-    "Nakhchivan Autonomous Republic": "Нахичеванская Автономная Республика",
-    
-    // Georgia
-    "Tbilisi": "Тбилиси",
-    "Adjara": "Адхария",
-    "Abkhazia": "Республика Абхазия",
-    
-    // Turkmenistan
-    "Ashgabat": "Ашхабад",
-    "Ahal Region": "Ахалский велаят",
-    "Balkan Region": "Балканский велаят",
-    "Dashoguz Region": "Дашогузский велаят",
-    "Lebap Region": "Лебапский велаят",
-    "Mary Region": "Марыйский велаят"
-};
-
-const CIS_FILES = [
-    { code: 'by', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/belarus.geojson' },
-    { code: 'kz', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kazakhstan.geojson' },
-    { code: 'kg', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kyrgyzstan.geojson' },
-    { code: 'uz', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/uzbekistan.geojson' },
-    { code: 'tj', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/tajikistan.geojson' },
-    { code: 'md', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson' },
-    { code: 'am', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/armenia.geojson' },
-    { code: 'ge', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson' },
-    { code: 'az', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/azerbaijan.geojson' },
-    { code: 'tm', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/turkmenistan.geojson' }
-];
-
-const COUNTRY_CODE_TO_NAME: Record<string, string> = {
-    'by': 'Республика Беларусь',
-    'kz': 'Республика Казахстан',
-    'kg': 'Кыргызская Республика',
-    'uz': 'Республика Узбекистан',
-    'tj': 'Республика Таджикистан',
-    'tm': 'Туркменистан',
-    'md': 'Республика Молдова',
-    'am': 'Армения',
-    'az': 'Азербайджан',
-    'ge': 'Грузия'
-};
-
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -275,7 +135,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; 
+            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
@@ -283,10 +143,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             try {
                 setIsLoadingGeo(true);
                 let russiaData, worldData;
-                const cisDataFeatures: any[] = [];
                 let usedCache = false;
 
-                // 1. Try Cache API for Russia & World
+                // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
@@ -298,61 +157,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         if (russiaRes && worldRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
+                            usedCache = true;
+                            setIsFromCache(true);
+                        } else {
+                            // Fetch and Cache
+                            const [rNetwork, wNetwork] = await Promise.all([
+                                fetch(RUSSIA_URL),
+                                fetch(WORLD_URL)
+                            ]);
                             
-                            // Try to load cached CIS files
-                            const cisPromises = CIS_FILES.map(async file => {
-                                const cached = await cache.match(file.url);
-                                if (cached) return cached.json();
-                                return null;
-                            });
-                            const cisResults = await Promise.all(cisPromises);
-                            // Only use cache if ALL CIS files are present, otherwise fetch all to be safe/consistent
-                            if (cisResults.every(r => r !== null)) {
-                                cisResults.forEach((data, index) => {
-                                    // Inject Country Name
-                                    const fileDef = CIS_FILES[index];
-                                    const countryName = COUNTRY_CODE_TO_NAME[fileDef.code];
-                                    data.features.forEach((f: any) => {
-                                         f.properties.country = countryName;
-                                    });
-                                    cisDataFeatures.push(...data.features);
-                                });
-                                usedCache = true;
-                                setIsFromCache(true);
-                            }
-                        } 
-                        
-                        if (!usedCache) {
-                            // Fetch and Cache All
-                            const promises = [fetch(RUSSIA_URL), fetch(WORLD_URL), ...CIS_FILES.map(f => fetch(f.url))];
-                            const responses = await Promise.allSettled(promises);
-                            
-                            // Russia (0) and World (1) must succeed
-                            if (responses[0].status === 'fulfilled' && responses[1].status === 'fulfilled') {
-                                const russiaRes = responses[0].value;
-                                const worldRes = responses[1].value;
-                                if (russiaRes.ok && worldRes.ok) {
-                                    cache.put(RUSSIA_URL, russiaRes.clone());
-                                    cache.put(WORLD_URL, worldRes.clone());
-                                    russiaData = await russiaRes.json();
-                                    worldData = await worldRes.json();
-                                }
-                            }
-
-                            // Process CIS files (indices 2+)
-                            for (let i = 2; i < responses.length; i++) {
-                                const res = responses[i];
-                                if (res.status === 'fulfilled' && res.value.ok) {
-                                    const fileDef = CIS_FILES[i-2];
-                                    cache.put(fileDef.url, res.value.clone());
-                                    const data = await res.value.json();
-                                    // Inject Country Name for grouping
-                                    const countryName = COUNTRY_CODE_TO_NAME[fileDef.code];
-                                    data.features.forEach((f: any) => {
-                                         f.properties.country = countryName;
-                                    });
-                                    cisDataFeatures.push(...data.features);
-                                }
+                            if (rNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json();
+                                worldData = await wNetwork.json();
                             }
                         }
                     } catch (e) {
@@ -360,44 +178,39 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                 }
 
-                // Fallback / Data preparation
+                // Fallback if cache failed or data missing
                 if (!russiaData || !worldData) {
-                    // Fetch if cache failed completely
-                    const [rRes, wRes] = await Promise.all([fetch(RUSSIA_URL), fetch(WORLD_URL)]);
+                    const [rRes, wRes] = await Promise.all([
+                        fetch(RUSSIA_URL),
+                        fetch(WORLD_URL)
+                    ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
                 }
 
-                const normalizeFeatures = (features: any[]) => {
-                    features.forEach((f: any) => {
-                        const originalName = f.properties?.name;
-                        if (originalName && REGION_NAME_TRANSLATIONS[originalName]) {
-                            f.properties.name = REGION_NAME_TRANSLATIONS[originalName];
-                        }
-                    });
+                // Filter & Translate CIS Countries to match our internal region names
+                const cisCountriesMap: Record<string, string> = {
+                    'Belarus': 'Республика Беларусь',
+                    'Kazakhstan': 'Республика Казахстан',
+                    'Kyrgyzstan': 'Кыргызская Республика',
+                    'Uzbekistan': 'Республика Узбекистан',
+                    'Tajikistan': 'Республика Таджикистан',
+                    'Turkmenistan': 'Туркменистан',
+                    'Armenia': 'Армения',
+                    'Azerbaijan': 'Азербайджан',
+                    'Georgia': 'Грузия',
+                    'Moldova': 'Республика Молдова'
                 };
 
-                normalizeFeatures(russiaData.features);
-                normalizeFeatures(cisDataFeatures);
-
-                // Filter World Data to exclude countries for which we have detailed regions
-                const excludedCountries = new Set([
-                    'Russia', 'Belarus', 'Kazakhstan', 'Kyrgyzstan', 'Uzbekistan', 
-                    'Tajikistan', 'Turkmenistan', 'Moldova', 'Armenia', 'Georgia', 'Azerbaijan'
-                ]);
-                
-                const excludedIso = new Set(['RU', 'BY', 'KZ', 'KG', 'UZ', 'TJ', 'TM', 'MD', 'AM', 'GE', 'AZ']);
-
-                const filteredWorldFeatures = worldData.features.filter((f: any) => {
-                    const name = f.properties.name || f.properties.NAME;
-                    const iso = f.properties.iso_a2 || f.properties.ISO_A2;
-                    return !excludedCountries.has(name) && !excludedIso.has(iso);
+                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                cisFeatures.forEach((f: any) => {
+                    f.properties.name = cisCountriesMap[f.properties.name];
                 });
 
-                // Merge collections: Russia Regions + CIS Regions + Rest of World Countries
+                // Merge collections: Russia Regions + CIS Countries
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisDataFeatures, ...filteredWorldFeatures]
+                    features: [...russiaData.features, ...cisFeatures]
                 });
 
             } catch (error) {
@@ -451,10 +264,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
-        
-        // Highlight if the specific region matches OR if the parent country matches
-        // This ensures that selecting "Republic of Kazakhstan" highlights all its sub-regions
-        const isSelected = selectedRegions.includes(regionName) || (feature.properties.country && selectedRegions.includes(feature.properties.country));
+        const isSelected = selectedRegions.includes(regionName);
         
         // Base border style - SHARPER and more visible
         const baseBorder = {

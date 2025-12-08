@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Modal from './Modal';
 import { RMMetrics } from '../types';
 import { streamRMInsights } from '../services/aiService';
-import { LoaderIcon, TrendingUpIcon, TargetIcon } from './icons';
+import { LoaderIcon, TrendingUpIcon, TargetIcon, SearchIcon } from './icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
@@ -94,12 +94,12 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                     <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-3">
                         <h3 className="text-lg font-bold text-indigo-300 flex items-center gap-2">
                             <div className="p-1 bg-indigo-500/20 rounded-lg"><TrendingUpIcon /></div>
-                            Обоснование от AI
+                            AI Анализ Рынка (Google Grounding)
                         </h3>
                         {isLoading && (
                             <div className="flex items-center gap-2 text-xs text-cyan-400 animate-pulse">
-                                <LoaderIcon />
-                                <span>Генерация ответа...</span>
+                                <SearchIcon small />
+                                <span>Поиск данных в Интернете...</span>
                             </div>
                         )}
                     </div>
@@ -118,6 +118,7 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                                     <div className="h-4 bg-gray-700 rounded w-3/4"></div>
                                     <div className="h-4 bg-gray-700 rounded w-full"></div>
                                     <div className="h-4 bg-gray-700 rounded w-5/6"></div>
+                                    <div className="text-xs text-gray-500 pt-2">Анализ конкурентов за текущий отчетный период...</div>
                                 </div>
                             ) : (
                                 <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
@@ -130,7 +131,7 @@ const RMAnalysisModal: React.FC<RMAnalysisModalProps> = ({ isOpen, onClose, rmDa
                     <div className="text-yellow-500 mt-1"><TargetIcon small/></div>
                     <div className="text-xs text-gray-300">
                         <strong className="text-yellow-400 block mb-1">Как читать это обоснование:</strong>
-                        Алгоритм учитывает эффект "низкой базы". Если доля рынка мала, потенциал роста огромен, и стандартных {baseRate}% недостаточно. Если доля рынка высока, удерживать её сложнее, поэтому план снижается для реалистичности.
+                        Алгоритм учитывает эффект "низкой базы" и реальные рыночные тренды, найденные через Google Search. Если доля рынка мала, потенциал роста огромен, и стандартных {baseRate}% недостаточно.
                     </div>
                 </div>
             </div>

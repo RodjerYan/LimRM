@@ -8,10 +8,7 @@ export const config = {
 
 /**
  * Handles POST requests to proxy Gemini API calls.
- * It takes a 'prompt' from the request body and streams a response from the Gemini API.
- * This version uses a pool of API keys for load balancing and redundancy.
- * @param {Request} req The incoming request object.
- * @returns {Response} A streaming response with the generated text or an error response.
+ * It takes a 'prompt' and optional 'tools' from the request body.
  */
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
@@ -22,7 +19,7 @@ export default async function handler(req: Request) {
   }
 
   try {
-    const { prompt } = await req.json();
+    const { prompt, tools } = await req.json();
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: 'Prompt is required' }), {
@@ -31,7 +28,7 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Read multiple API keys from environment variables and filter out any that are not set.
+    // Read multiple API keys from environment variables
     const apiKeys = [
       process.env.API_KEY_1,
       process.env.API_KEY_2,
@@ -40,35 +37,34 @@ export default async function handler(req: Request) {
     ].filter(Boolean) as string[];
 
     if (apiKeys.length === 0) {
-        const detailedErrorMessage = `Server configuration error: No Gemini API keys found in environment variables (API_KEY_1, etc.).`;
-        console.error(detailedErrorMessage);
-        return new Response(JSON.stringify({ error: detailedErrorMessage }), {
+        return new Response(JSON.stringify({ error: 'Server configuration error: No Gemini API keys found.' }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
         });
     }
     
-    // Select a random API key from the available pool for each request.
     const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
-    
-    // Initialize the GoogleGenAI client
     const ai = new GoogleGenAI({ apiKey });
 
-    // Select a suitable and cost-effective model
+    // Ensure model supports tools if requested
     const model = 'gemini-2.5-flash';
 
-    // Call the Gemini API to generate content as a stream.
-    // FIX: Ensure contents is STRICTLY an array of objects with parts to avoid 500 errors on strict endpoints
-    const responseStream = await ai.models.generateContentStream({
+    const generateConfig: any = {
         model,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
             temperature: 0.7,
             candidateCount: 1,
         }
-    });
+    };
+
+    // Attach tools if provided (e.g. { googleSearch: {} })
+    if (tools) {
+        generateConfig.config.tools = tools;
+    }
+
+    const responseStream = await ai.models.generateContentStream(generateConfig);
     
-    // Create a new ReadableStream to pipe the response from Gemini back to the client.
     const stream = new ReadableStream({
       async start(controller) {
         try {
@@ -81,16 +77,11 @@ export default async function handler(req: Request) {
             controller.close();
         } catch (streamError) {
             console.error('Stream processing error:', streamError);
-            const errorMessage = streamError instanceof Error ? streamError.message : 'Unknown stream error';
-            // If the stream hasn't started sending data, we might be able to send an error message
-            // But usually once streaming starts, we can't change headers. 
-            // We log it and close.
             controller.error(streamError);
         }
       },
     });
 
-    // Return the stream as the response.
     return new Response(stream, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
@@ -102,13 +93,11 @@ export default async function handler(req: Request) {
     
     if (error instanceof Error) {
         errorMessage = error.message;
-        // Check if it is a GoogleGenAI specific error structure or HTTP error
         if ((error as any).status) {
              statusCode = (error as any).status;
         }
     }
     
-    // Return a structured error response if something goes wrong.
     return new Response(JSON.stringify({ error: 'Failed to get response from Gemini API', details: errorMessage }), {
       status: statusCode,
       headers: { 'Content-Type': 'application/json' },
