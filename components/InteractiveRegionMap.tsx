@@ -51,7 +51,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    <span className="text-lg">🐶</span> Плотность питомцев
+                    Питомец-Индекс
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -74,7 +74,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
-                    <span className="text-lg">⚔️</span> Конкуренция
+                    Конкуренция
                 </h4>
                 <div className="space-y-1">
                     <div className="flex items-center">
@@ -143,7 +143,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v5'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -247,22 +247,38 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 // 3. Breakaway Republics (High Detail from Natural Earth)
                 if (breakawayData && breakawayData.features) {
-                    const breakawayMap: Record<string, string> = {
-                        'Abkhazia': 'Республика Абхазия',
-                        'South Ossetia': 'Республика Южная Осетия',
-                        'Transnistria': 'Приднестровье',
-                        'Pridnestrovie': 'Приднестровье',
-                        'Artsakh': 'Нагорный Карабах' 
-                    };
-
                     const breakawayFeatures = breakawayData.features.filter((f: any) => {
-                        const name = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
-                        return breakawayMap[name] || breakawayMap[f.properties.name_en];
+                        // Check multiple properties for loose matching of the region name
+                        const props = f.properties || {};
+                        const nameCandidates = [
+                            props.NAME, 
+                            props.name, 
+                            props.NAME_EN, 
+                            props.name_en, 
+                            props.SUBUNIT,
+                            props.FORMAL_EN
+                        ].filter(Boolean).map(s => String(s).toLowerCase());
+
+                        return nameCandidates.some(n => 
+                            n.includes('abkhazia') || 
+                            n.includes('ossetia') || 
+                            n.includes('transnistria') || 
+                            n.includes('pridnestrovie') || 
+                            n.includes('karabakh')
+                        );
                     });
 
                     breakawayFeatures.forEach((f: any) => {
-                        const englishName = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
-                        f.properties.name = breakawayMap[englishName] || breakawayMap[f.properties.name_en] || englishName;
+                        const props = f.properties || {};
+                        const englishNameRaw = [props.NAME, props.NAME_EN, props.SUBUNIT].filter(Boolean).join(' ').toLowerCase();
+                        
+                        let russianName = props.NAME; // fallback
+                        if (englishNameRaw.includes('abkhazia')) russianName = 'Республика Абхазия';
+                        else if (englishNameRaw.includes('ossetia')) russianName = 'Республика Южная Осетия';
+                        else if (englishNameRaw.includes('transnistria') || englishNameRaw.includes('pridnestrovie')) russianName = 'Приднестровье';
+                        else if (englishNameRaw.includes('karabakh')) russianName = 'Нагорный Карабах';
+
+                        f.properties.name = russianName;
                         f.properties.isBreakaway = true; // Mark for special styling/z-index
                     });
                     
@@ -697,7 +713,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v5)
+                            <CheckIcon /> Из кэша (v6)
                         </div>
                     ) : null}
                 </div>
