@@ -165,6 +165,19 @@ const CIS_FILES = [
     { code: 'tm', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/turkmenistan.geojson' }
 ];
 
+const COUNTRY_CODE_TO_NAME: Record<string, string> = {
+    'by': 'Республика Беларусь',
+    'kz': 'Республика Казахстан',
+    'kg': 'Кыргызская Республика',
+    'uz': 'Республика Узбекистан',
+    'tj': 'Республика Таджикистан',
+    'tm': 'Туркменистан',
+    'md': 'Республика Молдова',
+    'am': 'Армения',
+    'az': 'Азербайджан',
+    'ge': 'Грузия'
+};
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -262,7 +275,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version for new CIS data
+            const CACHE_NAME = 'limkorm-geo-v3'; 
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
@@ -295,7 +308,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             const cisResults = await Promise.all(cisPromises);
                             // Only use cache if ALL CIS files are present, otherwise fetch all to be safe/consistent
                             if (cisResults.every(r => r !== null)) {
-                                cisResults.forEach(data => cisDataFeatures.push(...data.features));
+                                cisResults.forEach((data, index) => {
+                                    // Inject Country Name
+                                    const fileDef = CIS_FILES[index];
+                                    const countryName = COUNTRY_CODE_TO_NAME[fileDef.code];
+                                    data.features.forEach((f: any) => {
+                                         f.properties.country = countryName;
+                                    });
+                                    cisDataFeatures.push(...data.features);
+                                });
                                 usedCache = true;
                                 setIsFromCache(true);
                             }
@@ -322,8 +343,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             for (let i = 2; i < responses.length; i++) {
                                 const res = responses[i];
                                 if (res.status === 'fulfilled' && res.value.ok) {
-                                    cache.put(CIS_FILES[i-2].url, res.value.clone());
+                                    const fileDef = CIS_FILES[i-2];
+                                    cache.put(fileDef.url, res.value.clone());
                                     const data = await res.value.json();
+                                    // Inject Country Name for grouping
+                                    const countryName = COUNTRY_CODE_TO_NAME[fileDef.code];
+                                    data.features.forEach((f: any) => {
+                                         f.properties.country = countryName;
+                                    });
                                     cisDataFeatures.push(...data.features);
                                 }
                             }
@@ -341,12 +368,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     worldData = await wRes.json();
                 }
 
-                // Normalize Russian Names in Russia Data (if needed) and CIS Data
-                // Note: russia.geojson from click_that_hood usually has English names or local names.
-                // We attempt to translate them using our dictionary if they match keys.
-                // However, for Russia, the logic usually works if the map keys match. 
-                // Let's apply translation to ALL features to be safe.
-                
                 const normalizeFeatures = (features: any[]) => {
                     features.forEach((f: any) => {
                         const originalName = f.properties?.name;
@@ -360,13 +381,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 normalizeFeatures(cisDataFeatures);
 
                 // Filter World Data to exclude countries for which we have detailed regions
-                // Countries with detailed regions: Russia + CIS list
                 const excludedCountries = new Set([
                     'Russia', 'Belarus', 'Kazakhstan', 'Kyrgyzstan', 'Uzbekistan', 
                     'Tajikistan', 'Turkmenistan', 'Moldova', 'Armenia', 'Georgia', 'Azerbaijan'
                 ]);
                 
-                // Also exclude by ISO codes if available to be safer
                 const excludedIso = new Set(['RU', 'BY', 'KZ', 'KG', 'UZ', 'TJ', 'TM', 'MD', 'AM', 'GE', 'AZ']);
 
                 const filteredWorldFeatures = worldData.features.filter((f: any) => {
@@ -432,7 +451,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
-        const isSelected = selectedRegions.includes(regionName);
+        
+        // Highlight if the specific region matches OR if the parent country matches
+        // This ensures that selecting "Republic of Kazakhstan" highlights all its sub-regions
+        const isSelected = selectedRegions.includes(regionName) || (feature.properties.country && selectedRegions.includes(feature.properties.country));
         
         // Base border style - SHARPER and more visible
         const baseBorder = {
