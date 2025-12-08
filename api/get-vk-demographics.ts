@@ -20,11 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // 1. Find Capital City for the Region
-        // We use the local capitals database to map "Region Name" -> "City Name"
-        // This is crucial because VK searches users by City, not Region.
         const capitalEntry = capitals.find(c => c.region_name?.toLowerCase() === region.toLowerCase());
-        
-        // Fallback: If region IS the city (e.g. Moscow), or no mapping found, try using region name itself
         const queryCity = capitalEntry ? capitalEntry.name : region;
 
         console.log(`[VK API] Searching for city: ${queryCity} (Region: ${region})`);
@@ -43,7 +39,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const foundCityTitle = cityData.response.items[0].title;
 
         // 3. Search Users in this City to calculate age
-        // fetching 100 users with 'bdate' field
         const usersSearchUrl = `https://api.vk.com/method/users.search?city=${cityId}&count=100&fields=bdate&access_token=${VK_SERVICE_KEY}&v=${VK_API_VERSION}`;
         
         const usersRes = await fetch(usersSearchUrl);
@@ -67,7 +62,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (parts.length === 3) {
                     const birthYear = parseInt(parts[2], 10);
                     const age = currentYear - birthYear;
-                    // Filter unrealistic ages to clean data (e.g. < 10 or > 90 often fake)
+                    // Filter unrealistic ages to clean data
                     if (age >= 14 && age <= 90) {
                         totalAge += age;
                         count++;
@@ -89,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         res.status(200).json({
             region: region,
             city: foundCityTitle,
-            avgAge: Math.round(avgAge * 10) / 10, // Round to 1 decimal
+            avgAge: Math.round(avgAge * 10) / 10,
             sampleSize: count,
             source: 'VK.com API'
         });

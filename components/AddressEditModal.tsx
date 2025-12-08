@@ -347,9 +347,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         
         // CRITICAL: Derive oldAddress from the CURRENT data state.
-        // If 'data' was updated by parent after last save, (data as MapPoint).address holds the NEW value.
-        // We use this new value as the 'oldAddress' for the NEXT save.
-        // Fallback to originalRow only for the very first edit.
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
         
@@ -381,14 +378,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             // 1. Update Address / Comment
             if (isAddressChanged || isCommentChanged) {
-                const res = await fetch('/api/update-address', {
+                // UPDATE: Using new cache-manager
+                const res = await fetch('/api/cache-manager', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
+                        action: 'update-address',
                         rmName: rm, 
                         oldAddress, 
                         newAddress: editedAddress,
-                        comment: comment // Pass comment
+                        comment: comment 
                     }),
                 });
                 if (!res.ok) {
@@ -405,7 +404,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const newHistoryEntry = `${oldAddress} [${timestamp}]`;
                     setHistory(prev => [newHistoryEntry, ...prev]);
                 } else if (isCommentChanged) {
-                    // Just show the entered comment in history as requested
                     const commentEntry = `Комментарий: "${comment}" [${timestamp}]`;
                     setHistory(prev => [commentEntry, ...prev]);
                 }
@@ -419,21 +417,20 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             let currentLon = (data as MapPoint).lon;
             
             // Determine if we need to enter geocoding state
-            // We only geocode if the address changed AND we haven't manually set coordinates.
-            // If only comment changed, this remains false.
             let isGeocodingState = isAddressChanged && !manualCoords;
 
             // 2. Handle Manual Coordinates Update
             if (manualCoords) {
                 currentLat = manualCoords.lat;
                 currentLon = manualCoords.lon;
-                isGeocodingState = false; // Coordinates are known/manual, no polling needed
+                isGeocodingState = false; 
 
-                // Save explicit coordinates to cache
-                await fetch('/api/update-coords', {
+                // Save explicit coordinates to cache via cache-manager
+                await fetch('/api/cache-manager', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
+                        action: 'update-coords',
                         rmName: rm, 
                         updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] 
                     })
@@ -461,14 +458,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 fact: (data as MapPoint).fact,
                 isGeocoding: isGeocodingState,
                 lastUpdated: updateTimestamp,
-                comment: comment // Update comment in local state
+                comment: comment 
             };
             
             // Update parent state immediately so 'data' prop updates for next edit
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
-            // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)
-            // If only comment changed, we skip this block and go straight to idle
             if (!manualCoords && isAddressChanged) {
                 setStatus('geocoding');
                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
@@ -492,10 +487,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setError(null);
 
         try {
-            const res = await fetch('/api/delete-address', {
+            // Use consolidated API
+            const res = await fetch('/api/cache-manager', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rmName: rm, address: addressToDelete }),
+                body: JSON.stringify({ action: 'delete', rmName: rm, address: addressToDelete }),
             });
 
             if (!res.ok) {
@@ -526,7 +522,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-    // Display current address from map point state to reflect recent edits
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
@@ -540,11 +535,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     
-    // Display coordinates: prefer manual selection if active, otherwise fallback to current data
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
-    // Determine save button text
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -584,6 +577,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* ... UI code ... */}
                 <div className="flex flex-col gap-4">
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar">
                         <h4 className="font-bold text-lg mb-3 text-indigo-400">Исходные данные строки</h4>
