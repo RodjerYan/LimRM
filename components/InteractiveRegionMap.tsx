@@ -38,8 +38,25 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
+// Helper to validate GeoJSON features to prevent Leaflet crashes
+const isValidGeoJsonFeature = (feature: any) => {
+    if (!feature || !feature.geometry) return false;
+    const { type, coordinates, geometries } = feature.geometry;
+    
+    // Safety check for GeometryCollection
+    if (type === 'GeometryCollection') {
+        return Array.isArray(geometries) && geometries.length > 0;
+    }
+    
+    // Safety check for standard geometries (Polygon, MultiPolygon, etc.)
+    // Coordinates must be an array and not empty
+    return Array.isArray(coordinates) && coordinates.length > 0;
+};
+
 // Helper to fix Chukotka's antimeridian crossing for visualization
 const fixChukotkaGeoJSON = (feature: any) => {
+    if (!isValidGeoJsonFeature(feature)) return feature;
+
     const transformCoord = (coord: number[]) => {
         let [lon, lat] = coord;
         // Shift negative longitudes (Western Hemisphere) to 180+ (Eastern Hemisphere extension)
@@ -52,10 +69,14 @@ const fixChukotkaGeoJSON = (feature: any) => {
     const transformRing = (ring: number[][]) => ring.map(transformCoord);
     const transformPolygon = (coords: number[][][]) => coords.map(transformRing);
 
-    if (feature.geometry.type === 'Polygon') {
-        feature.geometry.coordinates = transformPolygon(feature.geometry.coordinates);
-    } else if (feature.geometry.type === 'MultiPolygon') {
-        feature.geometry.coordinates = feature.geometry.coordinates.map(transformPolygon);
+    try {
+        if (feature.geometry.type === 'Polygon') {
+            feature.geometry.coordinates = transformPolygon(feature.geometry.coordinates);
+        } else if (feature.geometry.type === 'MultiPolygon') {
+            feature.geometry.coordinates = feature.geometry.coordinates.map(transformPolygon);
+        }
+    } catch (e) {
+        console.warn("Failed to fix Chukotka coords:", e);
     }
     return feature;
 };
@@ -286,20 +307,23 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     } catch (e) { /* ignore cache write errors */ }
                 }
 
-                const features = [];
+                const features: any[] = [];
 
-                if (russiaData) {
+                if (russiaData && Array.isArray(russiaData.features)) {
+                    // Filter invalid features first
+                    const validRussia = russiaData.features.filter(isValidGeoJsonFeature);
+                    
                     // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
-                    russiaData.features = russiaData.features.map((f: any) => {
+                    const processedRussia = validRussia.map((f: any) => {
                         if (f.properties?.name === 'Чукотский автономный округ') {
                             return fixChukotkaGeoJSON(f);
                         }
                         return f;
                     });
-                    features.push(...russiaData.features);
+                    features.push(...processedRussia);
                 }
 
-                if (worldData) {
+                if (worldData && Array.isArray(worldData.features)) {
                     // Filter & Translate CIS Countries to match our internal region names
                     const cisCountriesMap: Record<string, string> = {
                         'Belarus': 'Республика Беларусь',
@@ -313,16 +337,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         'Georgia': 'Грузия',
                         'Moldova': 'Республика Молдова'
                     };
-                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                    
+                    const validCis = worldData.features.filter(isValidGeoJsonFeature);
+                    const cisFeatures = validCis.filter((f: any) => cisCountriesMap[f.properties.name]);
+                    
                     cisFeatures.forEach((f: any) => {
                         f.properties.name = cisCountriesMap[f.properties.name];
                     });
                     features.push(...cisFeatures);
                 }
 
-                if (ukraineData) {
+                if (ukraineData && Array.isArray(ukraineData.features)) {
                     // Robust processing for Ukraine GeoJSON (varying property keys)
-                    ukraineData.features.forEach((f: any) => {
+                    const validUkraine = ukraineData.features.filter(isValidGeoJsonFeature);
+                    
+                    validUkraine.forEach((f: any) => {
                         const p = f.properties;
                         // Try to find the name in various possible keys, prioritizing shapeName for geoBoundaries
                         const rawName = p.shapeName || p.name || p.NAME_1 || p.NAME || p.VARNAME_1 || p.varname || p.NAME_RU || p.NAME_LATN;
@@ -345,10 +374,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             }
                         }
                     });
-                    features.push(...ukraineData.features);
+                    features.push(...validUkraine);
                 }
 
-                setGeoJsonData({ type: 'FeatureCollection', features });
+                if (features.length > 0) {
+                    setGeoJsonData({ type: 'FeatureCollection', features });
+                } else {
+                    console.warn("No valid GeoJSON features found to render.");
+                }
 
             } catch (error) {
                 console.error("Critical Error fetching map geometry:", error);
@@ -696,52 +729,57 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer - OSM Source
+    // Region Layer - OSM Source with SAFE LOADING
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
 
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
         
-        geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
-            style: getStyleForRegion,
-            onEachFeature: (feature, layer) => {
-                const regionName = feature.properties.name;
-                if (!regionName) return;
+        try {
+            geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+                style: getStyleForRegion,
+                onEachFeature: (feature, layer) => {
+                    const regionName = feature.properties.name;
+                    if (!regionName) return;
 
-                const marketData = getMarketData(regionName);
-                let tooltipText = regionName;
-                if (overlayMode === 'pets') tooltipText += `<br/>Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
-                if (overlayMode === 'competitors') tooltipText += `<br/>Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+                    const marketData = getMarketData(regionName);
+                    let tooltipText = regionName;
+                    if (overlayMode === 'pets') tooltipText += `<br/>Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
+                    if (overlayMode === 'competitors') tooltipText += `<br/>Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
 
-                layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
-                layer.on({
-                    click: (e) => {
-                        L.DomEvent.stop(e);
-                        map.fitBounds(e.target.getBounds());
-                        highlightRegion(e.target);
-                    },
-                    mouseover: (e) => {
-                        const layer = e.target;
-                        if (layer !== highlightedLayer.current && overlayMode === 'sales') {
-                            layer.setStyle({
-                                weight: 2,
-                                color: '#a5b4fc',
-                                opacity: 1,
-                                fillOpacity: 0.1, 
-                            });
-                            layer.bringToFront();
+                    layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
+                    layer.on({
+                        click: (e) => {
+                            L.DomEvent.stop(e);
+                            map.fitBounds(e.target.getBounds());
+                            highlightRegion(e.target);
+                        },
+                        mouseover: (e) => {
+                            const layer = e.target;
+                            if (layer !== highlightedLayer.current && overlayMode === 'sales') {
+                                layer.setStyle({
+                                    weight: 2,
+                                    color: '#a5b4fc',
+                                    opacity: 1,
+                                    fillOpacity: 0.1, 
+                                });
+                                layer.bringToFront();
+                            }
+                        },
+                        mouseout: (e) => {
+                            const layer = e.target;
+                            if (layer !== highlightedLayer.current) {
+                                geoJsonLayer.current?.resetStyle(layer);
+                            }
                         }
-                    },
-                    mouseout: (e) => {
-                        const layer = e.target;
-                        if (layer !== highlightedLayer.current) {
-                            geoJsonLayer.current?.resetStyle(layer);
-                        }
-                    }
-                });
-            }
-        }).addTo(map);
+                    });
+                }
+            }).addTo(map);
+        } catch (err) {
+            console.error("Leaflet GeoJSON Render Error:", err);
+            // Don't crash the app, just log
+        }
 
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
