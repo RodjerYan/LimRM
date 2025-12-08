@@ -73,34 +73,37 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<L.Map | null>(null);
+  
+  // Layers
   const geoJsonLayer = useRef<L.GeoJSON | null>(null);
   const potentialClientMarkersLayer = useRef<L.LayerGroup | null>(null);
   const activeClientMarkersLayer = useRef<L.LayerGroup | null>(null);
-  const layerControl = useRef<L.Control.Layers | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  
+  // Controls & Refs
+  const layerControl = useRef<L.Control.Layers | null>(null);
   const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
   const legendContainerRef = useRef<HTMLDivElement | null>(null);
+  const legendRootRef = useRef<ReactDOM.Root | null>(null);
+  const highlightedLayer = useRef<L.Layer | null>(null);
 
+  // Sync refs for event handlers
   const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
   const onEditClientRef = useRef(onEditClient);
 
-  const highlightedLayer = useRef<L.Layer | null>(null);
-
+  // State
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
-
   const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
   const [isLoadingGeo, setIsLoadingGeo] = useState(true);
   const [isFromCache, setIsFromCache] = useState(false);
-
   const [localTheme, setLocalTheme] = useState<Theme>(theme);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-  // Fetch GeoJSONs (NV5GIS Russia, Natural Earth countries, Breakaway)
+  // 1. Fetch GeoJSON Data
   useEffect(() => {
     const fetchGeoData = async () => {
-      // ✅ 4. Updated Cache Name to force refresh
       const CACHE_NAME = 'limkorm-geo-v15';
       const RUSSIA_URL = 'https://raw.githubusercontent.com/NV5GIS/regions-russia-geojson/main/russia_subjects.geojson';
       const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
@@ -147,7 +150,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         const features: any[] = [];
 
-        // Russia features (NV5GIS) — keep coordinates untouched
+        // Russia features (NV5GIS)
         if (russiaData && russiaData.features) {
           const newTerritoriesKeywords = ['крым', 'севастополь', 'донец', 'луган', 'запорож', 'херсон', 'dpr', 'lpr'];
           russiaData.features.forEach((feature: any) => {
@@ -160,12 +163,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             if (newTerritoriesKeywords.some(k => lower.includes(k))) {
               feature.properties.isNewTerritory = true;
             }
-
             features.push(feature);
           });
         }
 
-        // Add CIS / countries from Natural Earth (only a subset we care about)
+        // World/CIS features
         if (worldData && worldData.features) {
           const cisMap: Record<string, string> = {
             'Belarus': 'Республика Беларусь', 'Kazakhstan': 'Республика Казахстан', 'Kyrgyzstan': 'Кыргызская Республика',
@@ -181,7 +183,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
           });
         }
 
-        // Breakaway regions (exclude Crimea/Donetsk/Luhansk if already in Russia file)
+        // Breakaway features
         if (breakawayData && breakawayData.features) {
           const breakawayFeatures = breakawayData.features.filter((f: any) => {
             const props = f.properties || {};
@@ -206,8 +208,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
 
         if (features.length > 0) setGeoJsonData({ type: 'FeatureCollection', features } as FeatureCollection);
-        else console.error('No geo features loaded');
-
       } catch (err) {
         console.error('Error fetching geo data', err);
       } finally {
@@ -218,10 +218,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     fetchGeoData();
   }, []);
 
-  // Sync refs
+  // 2. Sync Refs
   useEffect(() => { activeClientsDataRef.current = activeClients; }, [activeClients]);
   useEffect(() => { onEditClientRef.current = onEditClient; }, [onEditClient]);
 
+  // 3. Search Logic
   const searchableLocations = useMemo(() => {
     if (!geoJsonData) return [] as SearchableLocation[];
     const names = new Set<string>();
@@ -236,7 +237,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     if (searchTerm.trim().length > 1) {
       const lower = searchTerm.toLowerCase().trim();
       const targets = [lower];
-      // ✅ 3. Robust Keyword Map: ensure values are strings
       for (const [k,v] of Object.entries(REGION_KEYWORD_MAP)) {
         if (k.includes(lower) || lower.includes(k)) targets.push(String(v).toLowerCase());
       }
@@ -245,8 +245,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     } else setSearchResults([]);
   }, [searchTerm, searchableLocations]);
 
-  // Styles for regions
-  const getStyleForRegion = (feature: any) => {
+  // 4. Style Logic
+  const getStyleForRegion = useCallback((feature: any) => {
     const regionName = feature.properties?.name || '';
     const isBreakaway = !!feature.properties?.isBreakaway;
     const isNewTerritory = !!feature.properties?.isNewTerritory;
@@ -282,7 +282,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }
 
     return base;
-  };
+  }, [localTheme, overlayMode, selectedRegions]);
 
   const resetHighlight = useCallback(() => {
     if (highlightedLayer.current && geoJsonLayer.current) {
@@ -291,15 +291,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     highlightedLayer.current = null;
   }, [overlayMode, localTheme]);
 
-  // ✅ 1. Fixed highlightRegion function: complete syntax and style logic
   const highlightRegion = useCallback((layer: L.Layer) => {
     resetHighlight();
     if (layer instanceof L.Path) {
-      layer.setStyle({
-        weight: 3,
-        color: '#ffffff',
-        fillOpacity: 0.4,
-      });
+      layer.setStyle({ weight: 3, color: '#ffffff', opacity: 1, fillOpacity: 0.4 });
       try { (layer as any).bringToFront(); } catch (e) {}
       highlightedLayer.current = layer;
     }
@@ -315,7 +310,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     if (found) { map.fitBounds((found as any).getBounds()); highlightRegion(found); }
   }, [highlightRegion]);
 
-  // Map init
+  // 5. Map Initialization
   useEffect(() => {
     if (!mapContainer.current) return;
     if (mapInstance.current) return;
@@ -324,107 +319,241 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     mapInstance.current = map;
     L.control.zoom({ position: 'topleft' }).addTo(map);
 
+    // Create custom pane for markers to sit above regions
     map.createPane('markerPane');
-    const pane = map.getPane('markerPane'); if (pane) pane.style.zIndex = '650';
+    const pane = map.getPane('markerPane'); 
+    if (pane) pane.style.zIndex = '650';
 
     layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
-    const legend = new (L.Control.extend({ onAdd() { const d = L.DomUtil.create('div', 'info legend'); legendContainerRef.current = d; return d; }, onRemove() { legendContainerRef.current = null; } }))({ position: 'bottomright' });
-    legend.addTo(map);
+    // Create container for Legend
+    const LegendControl = L.Control.extend({
+      onAdd: () => {
+        const d = L.DomUtil.create('div', 'info legend');
+        legendContainerRef.current = d;
+        return d;
+      },
+      onRemove: () => {
+        legendContainerRef.current = null;
+      }
+    });
+    new LegendControl({ position: 'bottomright' }).addTo(map);
 
     map.on('click', resetHighlight);
 
+    // Popup Event Delegation
     map.on('popupopen', (e: any) => {
-      const popupNode = e.popup?.getElement?.();
+      const popupNode = e.popup?.getElement();
       if (!popupNode) return;
+      
       const editBtn = popupNode.querySelector('.edit-location-btn');
-      if (editBtn) editBtn.addEventListener('click', (ev: any) => { ev.stopPropagation(); const key = editBtn.getAttribute('data-key'); if (key) { const client = activeClientsDataRef.current.find(c => c.key === key); if (client) onEditClientRef.current(client); } });
+      if (editBtn) {
+        // Clone to strip old listeners
+        const newBtn = editBtn.cloneNode(true);
+        editBtn.parentNode.replaceChild(newBtn, editBtn);
+        
+        newBtn.addEventListener('click', (ev: any) => {
+          ev.stopPropagation();
+          const key = newBtn.getAttribute('data-key');
+          if (key) {
+            const client = activeClientsDataRef.current.find(c => c.key === key);
+            if (client) onEditClientRef.current(client);
+          }
+        });
+      }
     });
 
-    return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
+    return () => {
+      if (mapInstance.current) {
+        mapInstance.current.remove();
+        mapInstance.current = null;
+        tileLayerRef.current = null;
+      }
+    };
   }, []);
 
-  // Render legend into container
-  useEffect(() => { if (legendContainerRef.current) { const root = (ReactDOM as any).createRoot(legendContainerRef.current); root.render(<MapLegend mode={overlayMode} />); } }, [overlayMode]);
+  // 6. Render GeoJSON Layer
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !geoJsonData) return;
 
-  // Tile layer
+    if (geoJsonLayer.current) {
+      map.removeLayer(geoJsonLayer.current);
+    }
+
+    geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+      style: getStyleForRegion,
+      onEachFeature: (feature, layer) => {
+        const regionName = feature.properties?.name; 
+        if (!regionName) return;
+        
+        const marketData = getMarketData(regionName);
+        let tooltip = regionName;
+        if (overlayMode === 'pets') tooltip += `\nПитомец-Индекс: ${Math.round(marketData.petDensityIndex || 0)}`;
+        if (overlayMode === 'competitors') tooltip += `\nКонкуренция: ${Math.round(marketData.competitorDensityIndex || 0)}`;
+        
+        layer.bindTooltip(tooltip, { sticky: true, className: 'leaflet-tooltip-custom' });
+
+        layer.on({
+          click: (e: any) => { L.DomEvent.stop(e); map.fitBounds(e.target.getBounds()); highlightRegion(e.target); },
+          mouseover: (e: any) => { 
+            const l = e.target; 
+            if (l !== highlightedLayer.current && overlayMode === 'sales') { 
+              try { 
+                l.setStyle({ weight: 2, color: '#a5b4fc', opacity: 1, fillOpacity: 0.1 }); 
+                l.bringToFront(); 
+              } catch (e) {} 
+            } 
+          },
+          mouseout: (e: any) => { 
+            const l = e.target; 
+            if (l !== highlightedLayer.current) {
+               geoJsonLayer.current?.resetStyle(l); 
+            }
+          }
+        });
+      }
+    }).addTo(map);
+
+    // Initial fit bounds
+    try {
+      const bounds = geoJsonLayer.current.getBounds();
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { maxZoom: 6, padding: [50, 50] });
+      }
+    } catch(e) { /* ignore */ }
+
+  }, [geoJsonData, getStyleForRegion, overlayMode]);
+
+  // 7. Render Markers (Active & Potential)
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !layerControl.current) return;
+
+    // Active Clients Layer
+    if (activeClientMarkersLayer.current) {
+      try { 
+        activeClientMarkersLayer.current.clearLayers();
+        layerControl.current.removeLayer(activeClientMarkersLayer.current);
+      } catch(e) {}
+    }
+    activeClientMarkersLayer.current = L.layerGroup();
+    activeClientMarkersRef.current.clear();
+
+    const createPopup = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
+      <div class="popup-inner-content text-gray-800">
+        <b>${name}</b><br>
+        ${address}<br>
+        <small>${type || 'н/д'}</small>
+        ${contacts ? `<hr style="margin:5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+        <button class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2" data-key="${key}">Изменить</button>
+      </div>
+    `;
+
+    activeClients.forEach(tt => {
+      if (tt.lat && tt.lon) {
+        const marker = L.circleMarker([tt.lat, tt.lon], { 
+          pane: 'markerPane', 
+          fillColor: '#10b981', 
+          color: '#059669', 
+          radius: 4, 
+          weight: 1, 
+          opacity: 1, 
+          fillOpacity: 0.9 
+        });
+        marker.bindPopup(createPopup(tt.name, tt.address, tt.type, tt.contacts, tt.key));
+        activeClientMarkersLayer.current?.addLayer(marker);
+        activeClientMarkersRef.current.set(tt.key, marker);
+      }
+    });
+
+    // Potential Clients Layer
+    if (potentialClientMarkersLayer.current) {
+      try { 
+        potentialClientMarkersLayer.current.clearLayers();
+        layerControl.current.removeLayer(potentialClientMarkersLayer.current);
+      } catch(e) {}
+    }
+    potentialClientMarkersLayer.current = L.layerGroup();
+
+    potentialClients.forEach(tt => {
+      if (tt.lat && tt.lon) {
+        const popup = `<b>${findValueInRow(tt,['наименование','клиент'])}</b><br>${findValueInRow(tt,['юридический адрес','адрес'])}<br><small>${findValueInRow(tt,['вид деятельности','тип']) || 'н/д'}</small>`;
+        const marker = L.circleMarker([tt.lat, tt.lon], { 
+          pane: 'markerPane', 
+          fillColor: '#3b82f6', 
+          color: '#2563eb', 
+          radius: 3, 
+          weight: 1, 
+          opacity: 1, 
+          fillOpacity: 0.8 
+        });
+        marker.bindPopup(popup);
+        potentialClientMarkersLayer.current?.addLayer(marker);
+      }
+    });
+
+    if (overlayMode === 'sales') {
+      map.addLayer(activeClientMarkersLayer.current!);
+      map.addLayer(potentialClientMarkersLayer.current!);
+    } else {
+      map.removeLayer(activeClientMarkersLayer.current!);
+      map.removeLayer(potentialClientMarkersLayer.current!);
+    }
+
+    layerControl.current.addOverlay(activeClientMarkersLayer.current!, 'Активные ТТ');
+    layerControl.current.addOverlay(potentialClientMarkersLayer.current!, 'Потенциал (ОКБ)');
+
+  }, [activeClients, potentialClients, overlayMode]);
+
+  // 8. FlyTo Handler
+  useEffect(() => {
+    if (flyToClientKey && mapInstance.current) {
+      const marker = activeClientMarkersRef.current.get(flyToClientKey);
+      if (marker && marker instanceof L.CircleMarker) {
+        mapInstance.current.flyTo(marker.getLatLng(), 14, { duration: 1.5 });
+        marker.openPopup();
+      }
+    }
+  }, [flyToClientKey]);
+
+  // 9. Theme Switching
   useEffect(() => {
     const map = mapInstance.current; if (!map) return;
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
     const target = localTheme === 'dark' ? darkUrl : lightUrl;
-    if (tileLayerRef.current) tileLayerRef.current.setUrl(target);
-    else { tileLayerRef.current = L.tileLayer(target, { attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19 }).addTo(map); tileLayerRef.current.bringToBack(); }
-    if (mapContainer.current) { mapContainer.current.classList.remove('theme-dark','theme-light'); mapContainer.current.classList.add(`theme-${localTheme}`); }
-    setTimeout(() => map.invalidateSize(), 100);
+    
+    if (tileLayerRef.current) {
+      tileLayerRef.current.setUrl(target);
+    } else {
+      tileLayerRef.current = L.tileLayer(target, { attribution: '&copy; OpenStreetMap &copy; CARTO', subdomains: 'abcd', maxZoom: 19 }).addTo(map);
+      tileLayerRef.current.bringToBack();
+    }
+    
+    if (mapContainer.current) {
+      mapContainer.current.classList.remove('theme-dark','theme-light');
+      mapContainer.current.classList.add(`theme-${localTheme}`);
+    }
   }, [localTheme]);
 
-  const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
-    <div class="popup-inner-content">
-      <b>${name}</b><br>
-      ${address}<br>
-      <small>${type || 'н/д'}</small>
-      ${contacts ? `<hr style="margin:5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-      <button class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2" data-key="${key}">Изменить местоположение</button>
-    </div>
-  `;
-
-  // Markers
+  // 10. Legend Rendering (React Portal)
   useEffect(() => {
-    const map = mapInstance.current; if (!map || !layerControl.current) return;
-    if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
-    potentialClientMarkersLayer.current = L.layerGroup();
-    if (activeClientMarkersLayer.current) { map.removeLayer(activeClientMarkersLayer.current); layerControl.current.removeLayer(activeClientMarkersLayer.current); }
-    activeClientMarkersLayer.current = L.layerGroup(); activeClientMarkersRef.current.clear();
-
-    potentialClients.forEach(tt => { if (tt.lat && tt.lon) {
-      const popup = `<b>${findValueInRow(tt,['наименование','клиент'])}</b><br>${findValueInRow(tt,['юридический адрес','адрес'])}<br><small>${findValueInRow(tt,['вид деятельности','тип']) || 'н/д'}</small>`;
-      const marker = L.circleMarker([tt.lat, tt.lon], { pane: 'markerPane', fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8 }).bindPopup(popup);
-      potentialClientMarkersLayer.current?.addLayer(marker);
-    }});
-
-    activeClients.forEach(tt => { if (tt.lat && tt.lon) {
-      const popup = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
-      const marker = L.circleMarker([tt.lat, tt.lon], { pane: 'markerPane', fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9 }).bindPopup(popup);
-      activeClientMarkersLayer.current?.addLayer(marker);
-      activeClientMarkersRef.current.set(tt.key, marker);
-    }});
-
-    if (overlayMode === 'sales') { map.addLayer(potentialClientMarkersLayer.current!); map.addLayer(activeClientMarkersLayer.current!); }
-    layerControl.current.addOverlay(potentialClientMarkersLayer.current!, 'Потенциал (ОКБ)');
-    layerControl.current.addOverlay(activeClientMarkersLayer.current!, 'Активные ТТ');
-  }, [potentialClients, activeClients, data, overlayMode]);
-
-  // GeoJSON layer render
-  useEffect(() => {
-    const map = mapInstance.current; if (!map || !geoJsonData) return;
-    if (geoJsonLayer.current) { map.removeLayer(geoJsonLayer.current); geoJsonLayer.current = null; }
-
-    geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
-      style: getStyleForRegion,
-      onEachFeature: (feature, layer) => {
-        const regionName = feature.properties?.name; if (!regionName) return;
-        const marketData = getMarketData(regionName);
-        let tooltip = regionName;
-        if (overlayMode === 'pets') tooltip += `\nПитомец-Индекс: ${Math.round(marketData.petDensityIndex || 0)}`;
-        if (overlayMode === 'competitors') tooltip += `\nКонкуренция: ${Math.round(marketData.competitorDensityIndex || 0)}`;
-        layer.bindTooltip(tooltip, { sticky: true, className: 'leaflet-tooltip-custom' });
-
-        layer.on({
-          click: (e: any) => { L.DomEvent.stop(e); map.fitBounds(e.target.getBounds()); highlightRegion(e.target); },
-          mouseover: (e: any) => { const l = e.target; if (l !== highlightedLayer.current && overlayMode === 'sales') { try { l.setStyle({ weight: 2, color: '#a5b4fc', opacity: 1, fillOpacity: 0.1 }); l.bringToFront(); } catch (e) {} } },
-          mouseout: (e: any) => { const l = e.target; if (l !== highlightedLayer.current) geoJsonLayer.current?.resetStyle(l); }
-        });
+    if (legendContainerRef.current) {
+      if (!legendRootRef.current) {
+        legendRootRef.current = ReactDOM.createRoot(legendContainerRef.current);
       }
-    }).addTo(map);
+      legendRootRef.current.render(<MapLegend mode={overlayMode} />);
+    }
+  }, [overlayMode]);
 
-  }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
-
-  // ✅ 2. Complete return statement rendering the component
   return (
     <div id="interactive-map-container" className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}>
       <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
+      
+      {/* Header / Controls */}
       <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-5rem)] pointer-events-none' : ''}`}>
+        
         <div className="flex items-center gap-3 pointer-events-auto">
           <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>Карта рыночного потенциала</h2>
           {isLoadingGeo ? (<div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md"><LoaderIcon /> Загрузка геометрии...</div>) : isFromCache ? (<div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md"><CheckIcon /> Из кэша</div>) : null}
@@ -436,20 +565,25 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
           <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
         </div>
 
+        {/* Search Bar */}
         <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
           <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Поиск региона..." className="w-full p-2 pl-10 bg-card-bg/80 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-text-main placeholder-gray-500 transition backdrop-blur-sm" />
-          {searchResults.length > 0 && (<ul className="absolute z-50 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">{searchResults.map(loc => (<li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-text-main cursor-pointer hover:bg-indigo-500/20 flex justify-between items-center"><span>{loc.name}</span></li>))}</ul>)}
+          {searchResults.length > 0 && (<ul className="absolute z-50 w-full mt-1 bg-card-bg/90 backdrop-blur-md border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto custom-scrollbar">{searchResults.map(loc => (<li key={loc.name} onClick={() => handleLocationSelect(loc)} className="px-4 py-2 text-text-main cursor-pointer hover:bg-indigo-500/20 flex justify-between items-center border-b border-gray-700/50 last:border-0"><span>{loc.name}</span></li>))}</ul>)}
         </div>
       </div>
 
+      {/* Map Canvas */}
       <div className={`relative w-full ${isFullscreen ? 'h-full' : 'h-[65vh]'} rounded-lg overflow-hidden border border-gray-700`}>
         <div ref={mapContainer as any} className="h-full w-full bg-gray-800 z-0" />
+        
+        {/* Right Controls */}
         <div className="absolute top-4 right-4 z-[2000] flex flex-col gap-3 pointer-events-auto">
           <button onClick={() => setLocalTheme(prev => prev === 'dark' ? 'light' : 'dark')} className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center">{localTheme === 'dark' ? <SunIcon /> : <MoonIcon />}</button>
           <button onClick={() => setIsFullscreen(prev => !prev)} className="bg-card-bg/90 hover:bg-gray-700 text-text-main p-2.5 rounded-lg shadow-lg border border-gray-600 transition-all backdrop-blur-md flex items-center justify-center">{isFullscreen ? <MinimizeIcon /> : <MaximizeIcon />}</button>
         </div>
-        <div className="absolute bottom-4 left-4 z-[2000] pointer-events-auto">{/* legend rendered via react root into leaflet control */}</div>
+        
+        {/* Legend container managed by Leaflet, content by React Portal */}
       </div>
     </div>
   );
