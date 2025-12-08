@@ -9,7 +9,7 @@ import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, 
 import type { FeatureCollection } from 'geojson';
 
 type Theme = 'dark' | 'light';
-type OverlayMode = 'sales' | 'pets' | 'competitors';
+type OverlayMode = 'sales' | 'pets' | 'competitors' | 'age';
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
@@ -102,6 +102,29 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
                     <div className="flex items-center">
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#3b82f6', opacity: 0.3}}></span>
                         <span className="text-xs">Слабая (&lt;50)</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    if (mode === 'age') {
+        return (
+            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+                    Возраст владельцев
+                </h4>
+                <div className="space-y-1">
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
+                        <span className="text-xs">Молодые (&lt;40)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
+                        <span className="text-xs">Средний (40-50)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#8b5cf6', opacity: 0.5}}></span>
+                        <span className="text-xs">Старший (&gt;50)</span>
                     </div>
                 </div>
             </div>
@@ -314,8 +337,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             return {
                 ...baseBorder,
                 fillColor: isSelected ? '#818cf8' : '#374151', 
-                // FIX: Use 0.01 instead of 0 to allow pointer events on the polygon when data is loaded
-                fillOpacity: isSelected ? 0.2 : 0.01, 
+                // FIX: Use 0.1 instead of 0.01 to ensure pointer events on the polygon when data is loaded
+                fillOpacity: isSelected ? 0.2 : 0.1, 
                 interactive: true
             };
         }
@@ -354,6 +377,32 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 fillOpacity = 0.6;
             } else if (comp > 50) {
                 fillColor = '#f97316';
+                fillOpacity = 0.5;
+            }
+
+            return {
+                ...baseBorder,
+                color: isSelected ? '#ffffff' : '#4b5563',
+                fillColor: fillColor,
+                fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity,
+                interactive: true
+            };
+        }
+
+        // Mode 4: Age
+        if (overlayMode === 'age') {
+            const age = marketData.avgOwnerAge;
+            let fillColor = '#6b7280';
+            let fillOpacity = 0.3;
+
+            if (age < 40) {
+                fillColor = '#10b981'; // Young - Green
+                fillOpacity = 0.6;
+            } else if (age < 50) {
+                fillColor = '#f59e0b'; // Middle - Yellow/Orange
+                fillOpacity = 0.5;
+            } else {
+                fillColor = '#8b5cf6'; // Senior - Purple
                 fillOpacity = 0.5;
             }
 
@@ -610,6 +659,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 let tooltipText = regionName;
                 if (overlayMode === 'pets') tooltipText += `<br/>Индекс: ${marketData.petDensityIndex.toFixed(0)}`;
                 if (overlayMode === 'competitors') tooltipText += `<br/>Конкуренция: ${marketData.competitorDensityIndex.toFixed(0)}`;
+                if (overlayMode === 'age') tooltipText += `<br/>Ср. возраст: ${marketData.avgOwnerAge.toFixed(0)}`;
 
                 layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
@@ -658,6 +708,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 });
             }
         }).addTo(map);
+        
+        // Ensure the region layer is at the bottom so it doesn't block markers, 
+        // but since fillOpacity is low/interactive, clicks pass through if needed or captured if hit.
+        // Importantly, markers are in markerPane (z-index 600) and geoJson is in overlayPane (z-index 400),
+        // so markers are naturally on top visually. 
+        // This ensures the polygon is rendered below any other vector layers if multiple exist.
+        geoJsonLayer.current.bringToBack();
 
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
@@ -685,10 +742,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     ) : null}
                 </div>
                 
-                <div className={`flex bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
+                <div className={`flex flex-wrap bg-gray-800/80 p-1 rounded-lg border border-gray-600 pointer-events-auto backdrop-blur-md ${isFullscreen ? 'shadow-xl' : ''}`}>
                     <button onClick={() => setOverlayMode('sales')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'sales' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Продажи</button>
                     <button onClick={() => setOverlayMode('pets')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'pets' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Питомец-Индекс</button>
                     <button onClick={() => setOverlayMode('competitors')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'competitors' ? 'bg-red-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Конкуренты</button>
+                    <button onClick={() => setOverlayMode('age')} className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-2 ${overlayMode === 'age' ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>Возраст</button>
                 </div>
 
                 <div className={`relative w-full md:w-auto md:min-w-[300px] ${isFullscreen ? 'pointer-events-auto' : ''}`}>

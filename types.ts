@@ -242,6 +242,7 @@ export interface MarketData {
     petDensityIndex: number; // 0-100 (100 = max density)
     competitorDensityIndex: number; // 0-100 (100 = high competition)
     eComPenetration: number; // % of sales online
+    avgOwnerAge: number; // Average age of pet owners
 }
 
 export interface SalesLeagueMember {
