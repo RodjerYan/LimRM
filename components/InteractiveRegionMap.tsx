@@ -106,6 +106,7 @@ const ENGLISH_TO_RUSSIAN_REGIONS: Record<string, string> = {
     "Sirdaryo Region": "Сырдарьинская область",
     "Khorezm Region": "Хорезмская область",
     "Republic of Karakalpakstan": "Республика Каракалпакстан",
+    "Karakalpakstan": "Республика Каракалпакстан",
 
     // Tajikistan
     "Sughd Region": "Согдийская область",
@@ -142,21 +143,23 @@ const ENGLISH_TO_RUSSIAN_REGIONS: Record<string, string> = {
     // Georgia
     "Tbilisi": "Тбилиси",
     "Adjara": "Аджария",
-    "Abkhazia": "Республика Абхазия", // Often found in Georgia geojson, mapping to our app's name
+    "Abkhazia": "Республика Абхазия",
     "South Ossetia": "Республика Южная Осетия"
 };
 
-const CIS_URLS = [
-    { slug: 'belarus', name: 'Беларусь' },
-    { slug: 'kazakhstan', name: 'Казахстан' },
-    { slug: 'kyrgyzstan', name: 'Кыргызстан' },
-    { slug: 'uzbekistan', name: 'Узбекистан' },
-    { slug: 'tajikistan', name: 'Таджикистан' },
-    { slug: 'turkmenistan', name: 'Туркменистан' },
-    { slug: 'armenia', name: 'Армения' },
-    { slug: 'azerbaijan', name: 'Азербайджан' },
-    { slug: 'georgia', name: 'Грузия' },
-    { slug: 'moldova', name: 'Молдова' }
+// Mixed source configuration to ensure coverage for all CIS countries
+const CIS_CONFIG: { slug: string; name: string; url: string; type: 'click_that_hood' | 'geoboundaries' }[] = [
+    { slug: 'belarus', name: 'Беларусь', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/belarus.geojson', type: 'click_that_hood' },
+    { slug: 'kazakhstan', name: 'Казахстан', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kazakhstan.geojson', type: 'click_that_hood' },
+    { slug: 'kyrgyzstan', name: 'Кыргызстан', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/kyrgyzstan.geojson', type: 'click_that_hood' },
+    { slug: 'armenia', name: 'Армения', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/armenia.geojson', type: 'click_that_hood' },
+    { slug: 'georgia', name: 'Грузия', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/georgia.geojson', type: 'click_that_hood' },
+    { slug: 'moldova', name: 'Молдова', url: 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/moldova.geojson', type: 'click_that_hood' },
+    // Use GeoBoundaries for countries missing in Click That Hood or where detailed regions are needed
+    { slug: 'uzbekistan', name: 'Узбекистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/UZB/ADM1/geoBoundaries-UZB-ADM1.geojson', type: 'geoboundaries' },
+    { slug: 'tajikistan', name: 'Таджикистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/TJK/ADM1/geoBoundaries-TJK-ADM1.geojson', type: 'geoboundaries' },
+    { slug: 'turkmenistan', name: 'Туркменистан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/TKM/ADM1/geoBoundaries-TKM-ADM1.geojson', type: 'geoboundaries' },
+    { slug: 'azerbaijan', name: 'Азербайджан', url: 'https://raw.githubusercontent.com/wmgeolab/geoBoundaries/main/releaseData/gbOpen/AZE/ADM1/geoBoundaries-AZE-ADM1.geojson', type: 'geoboundaries' },
 ];
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -256,9 +259,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v6'; // Bump version for new CIS data
+            const CACHE_NAME = 'limkorm-geo-v7'; // Bump version
+            const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson';
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            // Use breakaway for Crimea/Donbas
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
 
             const safeFetchJson = async (url: string): Promise<any | null> => {
@@ -272,7 +275,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
             };
 
-            // Helper to get cache or fetch
             const getCachedOrFetch = async (url: string, cache: Cache | undefined) => {
                 if (cache) {
                     const cached = await cache.match(url);
@@ -280,14 +282,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
                 const data = await safeFetchJson(url);
                 if (data && cache) {
-                    cache.put(url, new Response(JSON.stringify(data)));
+                    try {
+                        await cache.put(url, new Response(JSON.stringify(data)));
+                    } catch (e) {
+                        console.warn('Cache quota exceeded or invalid response', e);
+                    }
                 }
                 return data;
             };
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, breakawayData;
+                let russiaData, breakawayData, worldData;
                 let cisDataMap: Record<string, any> = {};
                 
                 let cache: Cache | undefined;
@@ -297,24 +303,35 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     } catch (e) { console.warn('Cache API error:', e); }
                 }
 
-                // 1. Fetch Main Data
+                // 1. Fetch Main Data (Russia & World)
                 russiaData = await getCachedOrFetch(RUSSIA_URL, cache);
+                worldData = await getCachedOrFetch(WORLD_URL, cache);
                 breakawayData = await getCachedOrFetch(BREAKAWAY_URL, cache);
 
                 if (russiaData) setIsFromCache(true);
 
                 // 2. Fetch CIS Data in Parallel
-                const cisPromises = CIS_URLS.map(async (country) => {
-                    const url = `https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/${country.slug}.geojson`;
-                    const data = await getCachedOrFetch(url, cache);
-                    if (data) cisDataMap[country.slug] = data;
+                const cisPromises = CIS_CONFIG.map(async (config) => {
+                    const data = await getCachedOrFetch(config.url, cache);
+                    if (data) cisDataMap[config.slug] = { data, type: config.type };
                 });
                 await Promise.all(cisPromises);
 
                 // --- MERGE LOGIC ---
                 const features: any[] = [];
 
-                // 1. Russia (Critical)
+                // 1. World Background (Low Res - fallback for missing detailed borders)
+                if (worldData && worldData.features) {
+                    const excludedCountries = ['Russia', 'Kazakhstan', 'Belarus', 'Ukraine', 'Uzbekistan', 'Turkmenistan', 'Tajikistan', 'Kyrgyzstan', 'Georgia', 'Azerbaijan', 'Armenia', 'Moldova'];
+                    const worldFeatures = worldData.features.filter((f: any) => {
+                        const name = f.properties.NAME || f.properties.name || f.properties.ADMIN;
+                        return !excludedCountries.includes(name);
+                    });
+                    // Push world features first so they are behind detailed regions
+                    features.push(...worldFeatures);
+                }
+
+                // 2. Russia (High Detail)
                 if (russiaData && russiaData.features) {
                     russiaData.features.forEach((feature: any) => {
                         const shiftCoords = (coords: any): any => {
@@ -335,25 +352,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     features.push(...russiaData.features);
                 }
 
-                // 2. CIS Countries (Detailed Regions)
-                Object.values(cisDataMap).forEach((countryData: any) => {
-                    if (countryData && countryData.features) {
-                        countryData.features.forEach((f: any) => {
-                            // Extract English Name
-                            const rawName = f.properties.name || f.properties.NAME || f.properties.Name || f.properties.english_name || f.properties.name_en;
+                // 3. CIS Countries (Detailed Regions)
+                Object.keys(cisDataMap).forEach((slug) => {
+                    const { data, type } = cisDataMap[slug];
+                    if (data && data.features) {
+                        data.features.forEach((f: any) => {
+                            // Normalize property name
+                            let rawName = '';
+                            if (type === 'geoboundaries') {
+                                rawName = f.properties.shapeName || f.properties.shapeName_1 || '';
+                            } else {
+                                rawName = f.properties.name || f.properties.NAME || f.properties.english_name || '';
+                            }
+
                             // Translate
                             if (rawName && ENGLISH_TO_RUSSIAN_REGIONS[rawName]) {
                                 f.properties.name = ENGLISH_TO_RUSSIAN_REGIONS[rawName];
-                            } else if (rawName) {
-                                // Fallback: leave as is if no translation found, but try to use it
-                                f.properties.name = rawName;
+                            } else {
+                                f.properties.name = rawName; // Fallback to raw if no translation
                             }
                         });
-                        features.push(...countryData.features);
+                        features.push(...data.features);
                     }
                 });
 
-                // 3. Breakaway Republics (High Detail from Natural Earth)
+                // 4. Breakaway Republics (Natural Earth - High Detail)
                 if (breakawayData && breakawayData.features) {
                     const breakawayMap: Record<string, string> = {
                         'Abkhazia': 'Республика Абхазия',
@@ -371,10 +394,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     breakawayFeatures.forEach((f: any) => {
                         const englishName = f.properties.NAME || f.properties.name || f.properties.NAME_EN;
                         f.properties.name = breakawayMap[englishName] || breakawayMap[f.properties.name_en] || englishName;
-                        f.properties.isBreakaway = true; // Mark for special styling/z-index
+                        f.properties.isBreakaway = true;
                     });
                     
-                    // Push them last to ensure they render on top of country layers
                     features.push(...breakawayFeatures);
                 }
 
@@ -801,11 +823,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     </h2>
                     {isLoadingGeo ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-indigo-600/80 rounded-lg text-white text-xs animate-pulse shadow-lg backdrop-blur-md">
-                            <LoaderIcon /> Загрузка геометрии...
+                            <LoaderIcon /> Загрузка геометрии (v7)...
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v6)
+                            <CheckIcon /> Из кэша
                         </div>
                     ) : null}
                 </div>
