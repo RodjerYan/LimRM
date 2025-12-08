@@ -144,7 +144,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v10'; // Bump version for Ukraine integration
+            const CACHE_NAME = 'limkorm-geo-v11'; // Bump version for Ukraine fixes
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             const WORLD_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson';
             const BREAKAWAY_URL = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_breakaway_disputed_areas.geojson';
@@ -258,27 +258,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
                 // 3. Specific Regions from Ukraine Map (New Territories & Crimea)
                 if (ukraineData && ukraineData.features) {
-                    const targetRegions = {
-                        'Crimea': 'Республика Крым',
-                        'Donetsk': 'Донецкая Народная Республика',
-                        'Luhansk': 'Луганская Народная Республика',
-                        'Zaporizhia': 'Запорожская область',
-                        'Kherson': 'Херсонская область'
+                    // Mapping partial Latin names (from GeoJSON properties) to Russian standard names
+                    const targetRegions: Record<string, string> = {
+                        'krym': 'Республика Крым',
+                        'crimea': 'Республика Крым',
+                        'sevastopol': 'Севастополь',
+                        'donets': 'Донецкая Народная Республика',
+                        'luhans': 'Луганская Народная Республика',
+                        'lugans': 'Луганская Народная Республика',
+                        'zaporiz': 'Запорожская область',
+                        'kherson': 'Херсонская область'
                     };
 
                     ukraineData.features.forEach((f: any) => {
                         const originalName = (f.properties?.name || '').toLowerCase();
                         
-                        // Check if the region is one of the targets
+                        // Check if the region name contains any of our target keys
                         const matchedKey = Object.keys(targetRegions).find(key => 
-                            originalName.includes(key.toLowerCase())
+                            originalName.includes(key)
                         );
 
                         if (matchedKey) {
                             // Assign Russian name standard
-                            f.properties.name = targetRegions[matchedKey as keyof typeof targetRegions];
-                            // Mark as new territory for styling (optional, or just treat as normal region)
-                            f.properties.isNewTerritory = true;
+                            f.properties.name = targetRegions[matchedKey];
+                            // Mark as new territory for potential custom styling, but generally treat as regular region
+                            f.properties.isNewTerritory = true; 
                             features.push(f);
                         }
                     });
@@ -396,8 +400,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Base border style
         // Highlight new territories slightly to make them visible against standard gray
         const defaultColor = (localTheme === 'dark' ? '#6b7280' : '#9ca3af');
-        const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? '#f59e0b' : (isBreakaway ? '#fbbf24' : defaultColor));
-        const weight = isSelected || isNewTerritory || isBreakaway ? 2 : 1;
+        // Treat new territories exactly like active regions if selected, or just standard border if not
+        const borderColor = isSelected ? '#818cf8' : (isNewTerritory ? defaultColor : (isBreakaway ? '#fbbf24' : defaultColor));
+        const weight = isSelected || isBreakaway ? 2 : 1;
 
         const baseBorder = {
             weight,
@@ -413,8 +418,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             return {
                 ...baseBorder,
                 // Give new territories a subtle tint if no sales yet, just to show they exist
-                fillColor: isSelected ? '#818cf8' : (isNewTerritory ? '#d97706' : (isBreakaway ? '#d97706' : '#374151')), 
-                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.15 : (isBreakaway ? 0.1 : 0)), 
+                fillColor: isSelected ? '#818cf8' : (isNewTerritory ? '#374151' : (isBreakaway ? '#d97706' : '#374151')), 
+                fillOpacity: isSelected ? 0.2 : (isNewTerritory ? 0.2 : (isBreakaway ? 0.1 : 0)), 
                 interactive: true
             };
         }
@@ -766,7 +771,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         </div>
                     ) : isFromCache ? (
                         <div className="flex items-center gap-2 px-3 py-1 bg-emerald-600/20 border border-emerald-500/50 rounded-lg text-emerald-400 text-xs shadow-lg backdrop-blur-md">
-                            <CheckIcon /> Из кэша (v10)
+                            <CheckIcon /> Из кэша (v11)
                         </div>
                     ) : null}
                 </div>
