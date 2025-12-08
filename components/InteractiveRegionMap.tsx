@@ -135,9 +135,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v1';
+            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            const WORLD_URL = 'https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json';
+            // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
+            const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
 
             try {
                 setIsLoadingGeo(true);
@@ -187,7 +188,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     worldData = await wRes.json();
                 }
 
-                // Filter & Translate CIS Countries
+                // Filter & Translate CIS Countries to match our internal region names
                 const cisCountriesMap: Record<string, string> = {
                     'Belarus': 'Республика Беларусь',
                     'Kazakhstan': 'Республика Казахстан',
@@ -206,7 +207,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     f.properties.name = cisCountriesMap[f.properties.name];
                 });
 
-                // Merge collections
+                // Merge collections: Russia Regions + CIS Countries
                 setGeoJsonData({
                     type: 'FeatureCollection',
                     features: [...russiaData.features, ...cisFeatures]
@@ -487,7 +488,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    // ... createPopupContent helper remains same ...
     const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
         <div class="popup-inner-content">
             <b>${name}</b><br>
