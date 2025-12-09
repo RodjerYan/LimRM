@@ -382,7 +382,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             // 1. Update Address / Comment
             if (isAddressChanged || isCommentChanged) {
-                const res = await fetch('/api/update-address', {
+                const res = await fetch('/api/manage-cache?action=update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -431,7 +431,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 isGeocodingState = false; // Coordinates are known/manual, no polling needed
 
                 // Save explicit coordinates to cache
-                await fetch('/api/update-coords', {
+                await fetch('/api/manage-cache?action=update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -493,7 +493,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setError(null);
 
         try {
-            const res = await fetch('/api/delete-address', {
+            const res = await fetch('/api/manage-cache?action=delete-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rmName: rm, address: addressToDelete }),
@@ -530,7 +530,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setDeletingHistoryItem(entryText);
 
         try {
-            const res = await fetch('/api/delete-history-entry', {
+            const res = await fetch('/api/manage-cache?action=delete-history-entry', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 

@@ -673,7 +673,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
         for (const rmName of newAddressRMs) {
             try {
-                await fetch('/api/add-to-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, rows: newAddressesToCache[rmName] }) });
+                // Modified: Using manage-cache endpoint
+                await fetch('/api/manage-cache?action=add-to-cache', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ rmName, rows: newAddressesToCache[rmName] }) 
+                });
             } catch (e) { console.error(`Failed to add to cache for ${rmName}:`, e); }
         }
     }
@@ -705,7 +710,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
             if (updates.length > 0) {
                 postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
                 try {
-                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
+                     // Modified: Using manage-cache endpoint
+                     await fetch('/api/manage-cache?action=update-coords', { 
+                         method: 'POST', 
+                         headers: { 'Content-Type': 'application/json' }, 
+                         body: JSON.stringify({ rmName, updates }) 
+                    });
                 } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
             }
         }
