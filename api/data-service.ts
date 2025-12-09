@@ -1,12 +1,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import * as XLSX from 'xlsx';
-import { Buffer } from 'buffer';
 import { 
     getOKBData, 
     getAkbData, 
-    getOKBAddresses, 
-    batchUpdateOKBStatus, 
     getFullCoordsCache, 
     getAddressFromCache, 
     appendToCache, 
@@ -55,7 +51,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(404).json({ error: 'Address not found in cache' });
             }
 
-            // 5. Geocode Proxy
+            // 5. Geocode Proxy (Consolidated from api/geocode.ts)
             if (action === 'geocode') {
                 const address = req.query.address as string;
                 if (!address) return res.status(400).json({ error: 'Address required' });
@@ -82,37 +78,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // --- WRITE OPERATIONS (POST) ---
         if (req.method === 'POST') {
-            
-            // 6. Check OKB Status (File Upload)
-            if (action === 'get-okb-status') {
-                if (!req.body || !req.body.fileBase64) {
-                    return res.status(400).json({ error: 'File required' });
-                }
-                const okbAddresses = await getOKBAddresses();
-                const buffer = Buffer.from(req.body.fileBase64, 'base64');
-                const workbook = XLSX.read(buffer, { type: 'buffer' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const akbData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-                const akbAddresses = new Set(akbData.flat().map(cell => String(cell).trim()));
-
-                const updates: { rowIndex: number, status: string }[] = [];
-                const results: { okbAddress: string, status: string }[] = [];
-
-                okbAddresses.forEach((okbAddress: string, index: number) => {
-                    const status = akbAddresses.has(okbAddress) ? 'Совпадение' : 'Не найдено';
-                    updates.push({ rowIndex: index + 2, status });
-                    results.push({ okbAddress, status });
-                });
-
-                if (updates.length > 0) await batchUpdateOKBStatus(updates);
-                return res.status(200).json({ results });
-            }
+            const body = req.body;
 
             // 7. Add to Cache
             if (action === 'add-to-cache') {
-                const { rmName, rows } = req.body;
+                const { rmName, rows } = body;
                 if (!rmName || !Array.isArray(rows)) return res.status(400).json({ error: 'Invalid payload' });
+                // Format rows for sheets: [address, lat, lon]
                 const formattedRows = rows.map((row: any) => [row.address, row.lat ?? '', row.lon ?? '']);
                 await appendToCache(rmName, formattedRows);
                 return res.status(200).json({ success: true });
@@ -120,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 8. Delete Address
             if (action === 'delete-address') {
-                const { rmName, address } = req.body;
+                const { rmName, address } = body;
                 if (!rmName || !address) return res.status(400).json({ error: 'Invalid payload' });
                 await deleteAddressFromCache(rmName, address);
                 return res.status(200).json({ success: true });
@@ -128,7 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 9. Update Address / Comment
             if (action === 'update-address') {
-                const { rmName, oldAddress, newAddress, comment } = req.body;
+                const { rmName, oldAddress, newAddress, comment } = body;
                 if (!rmName || !oldAddress || !newAddress) return res.status(400).json({ error: 'Invalid payload' });
                 await updateAddressInCache(rmName, oldAddress, newAddress, comment);
                 return res.status(200).json({ success: true });
@@ -136,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 10. Update Coordinates
             if (action === 'update-coords') {
-                const { rmName, updates } = req.body;
+                const { rmName, updates } = body;
                 if (!rmName || !Array.isArray(updates)) return res.status(400).json({ error: 'Invalid payload' });
                 await updateCacheCoords(rmName, updates);
                 return res.status(200).json({ success: true });
@@ -144,7 +116,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 11. Delete History Entry
             if (action === 'delete-history-entry') {
-                const { rmName, address, entryText } = req.body;
+                const { rmName, address, entryText } = body;
                 if (!rmName || !address || !entryText) return res.status(400).json({ error: 'Invalid payload' });
                 await deleteHistoryEntryFromCache(rmName, address, entryText);
                 return res.status(200).json({ success: true });
