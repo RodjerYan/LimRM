@@ -5,12 +5,9 @@ import { formatETR } from '../utils/timeUtils';
 import { DataIcon } from './icons';
 
 interface FileUploadProps {
-    // New Props from Global State
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
-    // Callback for cloud processing
     onStartCloudProcessing?: () => void;
-    
     okbStatus: OkbStatus | null;
     disabled: boolean;
 }
@@ -51,12 +48,10 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
         }
     }, [onStartProcessing, disabled, mode]);
 
-    // Derived state from global props
     const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
     const showBaseMissingOverlay = (!okbStatus || okbStatus.status !== 'ready') && !isProcessing && !fileName;
 
-    // Calculate ETR locally based on startTime passed from global state
     let etr: number | null = null;
     if (isProcessing && startTime && progress > 0 && progress < 100) {
         const elapsedTime = (Date.now() - startTime) / 1000;
@@ -69,7 +64,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
              {!isBlocked && <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>}
             
             <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
-                {/* Header with Mode Switcher */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                     <div className="flex items-center gap-4">
                         <div className={`flex items-center justify-center w-10 h-10 rounded-full text-white font-bold shadow-lg ring-2 ring-white/10 ${isBlocked ? 'bg-gray-700' : 'bg-gradient-to-br from-purple-500 to-pink-600 shadow-purple-500/30'}`}>
@@ -99,7 +93,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                     )}
                 </div>
 
-                {/* Content Area */}
                 {mode === 'file' ? (
                     <div className="relative group/drop">
                         <label 
@@ -132,7 +125,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                                     </>
                                 )}
                             </div>
-                            {/* Progress Background */}
                             {progress > 0 && (
                                 <div 
                                     className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300 ease-out"
@@ -144,7 +136,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                     </div>
                 ) : (
                     <div className="flex flex-col items-center justify-center w-full min-h-[10rem] border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-6 relative overflow-hidden transition-all">
-                        {/* Background decoration */}
                         <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
                         <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
 
@@ -177,7 +168,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                             </div>
                         )}
                         
-                        {/* Progress Background for Cloud */}
                         {progress > 0 && (
                             <div className="absolute bottom-0 left-0 w-full h-1 bg-gray-700/50">
                                 <div 
@@ -189,7 +179,6 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                     </div>
                 )}
 
-                {/* Status & Progress Details */}
                 {(fileName || (mode === 'cloud' && isProcessing)) && (
                     <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-2">
                         <div className="flex justify-between items-center text-sm">

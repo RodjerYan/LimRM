@@ -131,8 +131,6 @@ const App: React.FC = () => {
     const isDataLoaded = allData.length > 0;
 
     // --- SMART DATA INTEGRATION ---
-    // Prepare a set of OKB coordinates for exact matching, mimicking Dashboard logic.
-    // This ensures that coverage calculations (and thus growth plans) are consistent across views.
     const okbCoordSet = useMemo(() => {
         const set = new Set<string>();
         if (okbData && okbData.length > 0) {
@@ -146,8 +144,6 @@ const App: React.FC = () => {
         return set;
     }, [okbData]);
 
-    // Enrich the raw data with the Planning Engine logic so AMP matches the Dashboard.
-    // Using default base rate of 15% for general analytics view.
     const smartData = useMemo(() => {
         return enrichDataWithSmartPlan(allData, okbRegionCounts, 15, okbCoordSet);
     }, [allData, okbRegionCounts, okbCoordSet]);
@@ -212,14 +208,12 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
-    // --- FILE PROCESSING LOGIC (Moved from FileUpload.tsx) ---
-    
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
         setAllData(data.aggregatedData);
         setAllActiveClients(data.plottableActiveClients);
         setUnidentifiedRows(data.unidentifiedRows);
         setOkbRegionCounts(data.okbRegionCounts);
-        setDateRange(data.dateRange); // Store date range
+        setDateRange(data.dateRange); 
         setFilters({ rm: '', brand: [], packaging: [], region: [] });
         addNotification(`Данные загружены. ${data.aggregatedData.length} групп, ${data.plottableActiveClients.length} активных точек.`, 'success');
         if (data.dateRange) {
@@ -229,19 +223,14 @@ const App: React.FC = () => {
             addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
         
-        // Auto-switch to Analytics if data loaded, but give a small delay so user sees 100% progress
         setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
 
-    // --- WORKER SETUP & COMMUNICATION ---
-    
-    // Initialize Worker logic (abstracted to be reused by both file and cloud flow)
     const initWorker = useCallback(async (
         payload: { file?: File, rawSheetData?: any[][] },
         messageStart: string, 
         fileNameForState: string
     ) => {
-        // Reset State
         setProcessingState({
             isProcessing: true,
             progress: 0,
@@ -251,10 +240,10 @@ const App: React.FC = () => {
             startTime: Date.now()
         });
 
-        // Pre-load cache
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`, { cache: 'no-store' });
+            // Using unified data-service
+            const response = await fetch(`/api/data-service?action=get-full-cache&t=${Date.now()}`, { cache: 'no-store' });
             if (response.ok) {
                 cacheData = await response.json();
                 setProcessingState(prev => ({ ...prev, message: 'Кэш загружен, инициализация...' }));
@@ -295,7 +284,7 @@ const App: React.FC = () => {
                     handleFileProcessed(payload);
                     setProcessingState(prev => ({ 
                         ...prev, 
-                        isProcessing: false, // Keep file name but stop processing flag
+                        isProcessing: false, 
                         progress: 100, 
                         message: 'Обработка завершена!' 
                     }));
@@ -324,7 +313,6 @@ const App: React.FC = () => {
             addNotification(`Критическая ошибка воркера: ${e.message}`, 'error');
         };
         
-        // Start Worker
         workerRef.current.postMessage({ ...payload, okbData, cacheData });
 
     }, [okbData, handleFileProcessed, addNotification]);
@@ -345,7 +333,8 @@ const App: React.FC = () => {
         });
 
         try {
-            const response = await fetch('/api/get-akb');
+            // Using unified data-service
+            const response = await fetch('/api/data-service?action=get-akb');
             if (!response.ok) throw new Error('Failed to fetch AKB data from cloud');
             const rawSheetData = await response.json();
             
@@ -353,7 +342,6 @@ const App: React.FC = () => {
                 throw new Error('Cloud sheet is empty');
             }
 
-            // Hand over to worker
             initWorker({ rawSheetData }, 'Данные получены, запуск обработки...', 'Cloud: AKB Sheet');
 
         } catch (error) {
@@ -368,16 +356,12 @@ const App: React.FC = () => {
     }, [initWorker, addNotification]);
 
 
-    // Cleanup worker on unmount of App (page close)
     useEffect(() => {
         return () => {
             workerRef.current?.terminate();
         }
     }, []);
 
-
-    // --- Legacy / Shared Handlers ---
-    
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
         setIsLoading(loading);
         setLoadingMessage(message);
@@ -437,7 +421,6 @@ const App: React.FC = () => {
         if (lastModal === 'unidentified') setIsUnidentifiedModalOpen(true);
     }, [modalHistory]);
 
-    // Improved data update handler
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         setAllActiveClients(prev => {
             const exists = prev.some(c => c.key === oldKey);
@@ -521,11 +504,12 @@ const App: React.FC = () => {
 
         const startTime = Date.now();
 
-        fetch(`/api/geocode?address=${encodeURIComponent(address)}`)
+        // Using unified data-service
+        fetch(`/api/data-service?action=geocode&address=${encodeURIComponent(address)}`)
             .then(res => res.ok ? res.json() : null)
             .then(coords => {
                 if (coords) {
-                     fetch('/api/update-coords', {
+                     fetch('/api/data-service?action=update-coords', {
                          method: 'POST',
                          headers: { 'Content-Type': 'application/json' },
                          body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
@@ -536,7 +520,8 @@ const App: React.FC = () => {
         const check = async () => {
             try {
                 if (Date.now() - startTime > MAX_POLL_TIME) throw new Error('Timeout waiting for coordinates');
-                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+                // Using unified data-service
+                const res = await fetch(`/api/data-service?action=get-cached-address&rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data.lat && data.lon) {
@@ -598,7 +583,6 @@ const App: React.FC = () => {
     useEffect(() => {
         setIsLoading(true);
         const timer = setTimeout(() => {
-            // Apply filters to the SMART (enriched) data, not the raw data
             const result = applyFilters(smartData, filters);
             setFilteredData(result);
             setIsLoading(false);
@@ -609,9 +593,7 @@ const App: React.FC = () => {
     const isControlPanelLocked = isLoading;
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
 
-    // --- RENDER CONTENT BASED ON ACTIVE TAB ---
     const renderContent = () => {
-        // Separate wrapper classes based on content type
         const limitedWrapperClass = "w-full max-w-[1600px] mx-auto px-4 lg:px-8";
         const fullWidthWrapperClass = "w-full px-4 lg:px-8"; 
 
@@ -620,13 +602,11 @@ const App: React.FC = () => {
                 return (
                     <div className={limitedWrapperClass}>
                         <Adapta 
-                            // Pass down the processing state and start handler
                             processingState={processingState}
                             onStartProcessing={handleStartFileProcessing}
                             onStartCloudProcessing={handleStartCloudProcessing}
-                            // Legacy props (some might be deprecated in FileUpload but kept for compatibility if needed)
-                            onFileProcessed={handleFileProcessed} // Redundant if handled via state but good for clear interface
-                            onProcessingStateChange={handleProcessingStateChange} // Legacy, could be removed
+                            onFileProcessed={handleFileProcessed}
+                            onProcessingStateChange={handleProcessingStateChange}
                             okbData={okbData}
                             okbStatus={okbStatus}
                             onOkbStatusChange={handleOkbStatusChange}
@@ -642,9 +622,9 @@ const App: React.FC = () => {
                 return (
                     <div className={fullWidthWrapperClass}>
                         <RMDashboard 
-                            isOpen={true} // Always open when in this view
+                            isOpen={true} 
                             onClose={() => setActiveModule('amp')} 
-                            data={filteredData} // Passing enriched data to Dashboard is redundant but safe (dashboard recalcs anyway)
+                            data={filteredData}
                             okbRegionCounts={okbRegionCounts}
                             okbData={okbData}
                             mode="page"
@@ -652,7 +632,7 @@ const App: React.FC = () => {
                             okbStatus={okbStatus}
                             onActiveClientsClick={() => setIsClientsModalOpen(true)}
                             onEditClient={(client: MapPoint) => handleStartEdit(client, 'clients')}
-                            dateRange={dateRange} // PASS DATE RANGE
+                            dateRange={dateRange}
                         />
                     </div>
                 );
@@ -665,7 +645,6 @@ const App: React.FC = () => {
             case 'agile':
                 return (
                     <div className={limitedWrapperClass}>
-                        {/* PASS SMART DATA HERE */}
                         <AgileLearning data={smartData} />
                     </div>
                 );
@@ -686,7 +665,6 @@ const App: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Map occupies full width at the top */}
                         <InteractiveRegionMap 
                             data={filteredData} 
                             selectedRegions={filters.region} 
@@ -698,7 +676,6 @@ const App: React.FC = () => {
                             onEditClient={(client) => handleStartEdit(client, 'clients')}
                         />
 
-                        {/* Split layout: Filters (Left) | Chart (Right) - Unequal Width (25% / 75%) */}
                         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                             <div className="h-full lg:col-span-1">
                                 <Filters
@@ -720,7 +697,6 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
-                        {/* Results Table - Full Width at Bottom */}
                         <div className="w-full">
                             <ResultsTable 
                                 data={filteredData} 
@@ -738,10 +714,8 @@ const App: React.FC = () => {
 
     return (
         <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300 flex">
-            {/* SIDEBAR NAVIGATION */}
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
 
-            {/* MAIN CONTENT AREA - Shifted right due to fixed sidebar */}
             <main className={`flex-1 ml-0 lg:ml-64 p-4 lg:p-8 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
                 {renderContent()}
             </main>
@@ -788,17 +762,15 @@ const App: React.FC = () => {
                 globalTheme={theme}
             />
             
-            {/* New Modal for specific brand plan explanation */}
             {planExplanationData && (
                 <GrowthExplanationModal
                     isOpen={!!planExplanationData}
                     onClose={() => setPlanExplanationData(null)}
                     data={planExplanationData}
-                    baseRate={15} // Default base rate for general view context
+                    baseRate={15}
                 />
             )}
             
-            {/* Retain Modal version if needed, but main access is via sidebar now */}
             <RMDashboard 
                 isOpen={isRMDashboardOpen} 
                 onClose={() => setIsRMDashboardOpen(false)} 
@@ -806,7 +778,7 @@ const App: React.FC = () => {
                 okbRegionCounts={okbRegionCounts}
                 okbData={okbData}
                 mode="modal" 
-                dateRange={dateRange} // PASS DATE RANGE
+                dateRange={dateRange}
             />
         </div>
     );

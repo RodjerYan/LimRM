@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
@@ -23,7 +24,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         setIsFetching(true);
         onStatusChange({ status: 'loading', message: 'Загрузка данных ОКБ... Это может занять до минуты.' });
         try {
-            const response = await fetch('/api/get-okb');
+            // Using unified data-service
+            const response = await fetch('/api/data-service?action=get-okb');
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.details || errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);

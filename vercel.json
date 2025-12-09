@@ -6,36 +6,12 @@
       "destination": "/api/gemini-proxy"
     },
     {
-      "source": "/api/get-okb",
-      "destination": "/api/get-okb"
-    },
-    {
-      "source": "/api/get-akb",
-      "destination": "/api/get-akb"
-    },
-    {
-      "source": "/api/get-okb-status",
-      "destination": "/api/get-okb-status"
-    },
-    {
       "source": "/api/get-conflict-zones",
       "destination": "/api/get-conflict-zones"
     },
     {
-      "source": "/api/get-full-cache",
-      "destination": "/api/get-full-cache"
-    },
-    {
-      "source": "/api/manage-cache",
-      "destination": "/api/manage-cache"
-    },
-    {
-      "source": "/api/get-cached-address",
-      "destination": "/api/get-cached-address"
-    },
-    {
-      "source": "/api/geocode",
-      "destination": "/api/geocode"
+      "source": "/api/data-service",
+      "destination": "/api/data-service"
     },
     {
       "source": "/:path*",

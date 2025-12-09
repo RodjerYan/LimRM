@@ -50,7 +50,6 @@ const SinglePointMap: React.FC<{
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
 
-    // Search State
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -59,33 +58,22 @@ const SinglePointMap: React.FC<{
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-    // 1. Initialize Map (Once)
     useEffect(() => {
         if (!mapContainerRef.current) return;
-
-        // FIX: Strict Mode Safety - Prevent double initialization
         if (mapRef.current) return;
 
-        // Create map instance
         const map = L.map(mapContainerRef.current, { 
             scrollWheelZoom: true,
-            zoomControl: false, // Disable default to add manual control
+            zoomControl: false, 
             center: [55.75, 37.61],
             zoom: 5,
-            attributionControl: false // Disable attribution
+            attributionControl: false 
         });
         
         mapRef.current = map;
-
-        // Add zoom control to top-left explicitly
         L.control.zoom({ position: 'topleft' }).addTo(map);
+        tileLayerRef.current = L.tileLayer(darkUrl, { attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
 
-        // Create tile layer (placeholder, URL set in next effect)
-        tileLayerRef.current = L.tileLayer(darkUrl, {
-            attribution: '&copy; OpenStreetMap &copy; CARTO',
-        }).addTo(map);
-
-        // Cleanup on unmount
         return () => {
             map.remove();
             mapRef.current = null;
@@ -94,14 +82,12 @@ const SinglePointMap: React.FC<{
         };
     }, []);
 
-    // 2. Handle Theme Updates
     useEffect(() => {
         if (!tileLayerRef.current) return;
         const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
         tileLayerRef.current.setUrl(targetUrl);
     }, [theme]);
 
-    // 3. Handle Data/Marker Updates
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
@@ -132,14 +118,12 @@ const SinglePointMap: React.FC<{
              
             map.setView(latLng, isExpanded ? 16 : 15);
         } else {
-            // No coords
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
         }
         
-        // Fix gray tiles
         const timer = setTimeout(() => map.invalidateSize(), 200);
         return () => clearTimeout(timer);
 
@@ -159,10 +143,11 @@ const SinglePointMap: React.FC<{
         setIsSearching(true);
         searchTimeout.current = setTimeout(async () => {
             try {
-                const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&accept-language=ru`);
+                // Using unified data-service geocode
+                const res = await fetch(`/api/data-service?action=geocode&address=${encodeURIComponent(q)}`);
                 if (res.ok) {
                     const data = await res.json();
-                    setSearchResults(data);
+                    if(data.lat) setSearchResults([{ display_name: q, lat: data.lat, lon: data.lon }]);
                 }
             } catch (err) {
                 console.error(err);
@@ -187,7 +172,6 @@ const SinglePointMap: React.FC<{
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
             
-            {/* Map Search Bar - Shifted right (left-14) to avoid zoom controls, High Z-Index */}
             <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
@@ -216,7 +200,6 @@ const SinglePointMap: React.FC<{
                 </div>
             </div>
 
-            {/* Map Controls Overlay - Positioned Top Right - Explicit Z-Index */}
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
@@ -251,7 +234,7 @@ const SinglePointMap: React.FC<{
 
 const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme }) => {
     const [editedAddress, setEditedAddress] = useState('');
-    const [comment, setComment] = useState(''); // New state for comment
+    const [comment, setComment] = useState(''); 
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -260,17 +243,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     const [deletingHistoryItem, setDeletingHistoryItem] = useState<string | null>(null);
-    
-    // State for manually selected coordinates
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
-    
-    // UI States for map
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
-
     const justSaved = useRef(false);
 
-    // Sync local map theme with global theme when opened
     useEffect(() => {
         if (isOpen) {
             setMapTheme(globalTheme);
@@ -281,14 +258,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setIsLoadingHistory(true);
         setHistory([]);
         try {
-            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+            // Using unified data-service
+            const res = await fetch(`/api/data-service?action=get-cached-address&rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
                     const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
-                // Refresh comment from cache if needed (though local state might be newer)
                 if (result.comment && !comment) {
                     setComment(result.comment);
                 }
@@ -303,12 +280,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-            // Use data.address directly if available (for edited points), otherwise fall back to raw parsing
             const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
             setEditedAddress(currentAddress);
-            setComment((data as MapPoint).comment || ''); // Initialize comment
-            
-            // Reset manual coords on open
+            setComment((data as MapPoint).comment || ''); 
             setManualCoords(null);
             setIsMapExpanded(false);
             
@@ -346,11 +320,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
-        
-        // CRITICAL: Derive oldAddress from the CURRENT data state.
-        // If 'data' was updated by parent after last save, (data as MapPoint).address holds the NEW value.
-        // We use this new value as the 'oldAddress' for the NEXT save.
-        // Fallback to originalRow only for the very first edit.
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
         
@@ -361,7 +330,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             oldKey = normalizeAddress(oldAddress);
         }
 
-        // Determine what changed
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
         const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -380,16 +348,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         try {
             const rm = findValueInRow(originalRow, ['рм']);
             
-            // 1. Update Address / Comment
             if (isAddressChanged || isCommentChanged) {
-                const res = await fetch('/api/manage-cache?action=update-address', {
+                // Using unified data-service for updates
+                const res = await fetch('/api/data-service?action=update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         rmName: rm, 
                         oldAddress, 
                         newAddress: editedAddress,
-                        comment: comment // Pass comment
+                        comment: comment 
                     }),
                 });
                 if (!res.ok) {
@@ -397,7 +365,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     throw new Error(err.details || 'Ошибка при сохранении адреса/комментария.');
                 }
                 
-                // Optimistic history update - Visual only
                 const timestamp = new Date().toLocaleString('ru-RU', {
                     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
                 });
@@ -406,7 +373,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const newHistoryEntry = `${oldAddress} [${timestamp}]`;
                     setHistory(prev => [newHistoryEntry, ...prev]);
                 } else if (isCommentChanged) {
-                    // Just show the entered comment in history as requested
                     const commentEntry = `Комментарий: "${comment}" [${timestamp}]`;
                     setHistory(prev => [commentEntry, ...prev]);
                 }
@@ -418,20 +384,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
-            
-            // Determine if we need to enter geocoding state
-            // We only geocode if the address changed AND we haven't manually set coordinates.
-            // If only comment changed, this remains false.
             let isGeocodingState = isAddressChanged && !manualCoords;
 
-            // 2. Handle Manual Coordinates Update
             if (manualCoords) {
                 currentLat = manualCoords.lat;
                 currentLon = manualCoords.lon;
-                isGeocodingState = false; // Coordinates are known/manual, no polling needed
+                isGeocodingState = false; 
 
-                // Save explicit coordinates to cache
-                await fetch('/api/manage-cache?action=update-coords', {
+                // Using unified data-service for coords
+                await fetch('/api/data-service?action=update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
@@ -462,14 +423,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 fact: (data as MapPoint).fact,
                 isGeocoding: isGeocodingState,
                 lastUpdated: updateTimestamp,
-                comment: comment // Update comment in local state
+                comment: comment 
             };
             
-            // Update parent state immediately so 'data' prop updates for next edit
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
-            // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)
-            // If only comment changed, we skip this block and go straight to idle
             if (!manualCoords && isAddressChanged) {
                 setStatus('geocoding');
                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
@@ -493,7 +451,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setError(null);
 
         try {
-            const res = await fetch('/api/manage-cache?action=delete-address', {
+            // Unified delete address
+            const res = await fetch('/api/data-service?action=delete-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rmName: rm, address: addressToDelete }),
@@ -530,7 +489,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setDeletingHistoryItem(entryText);
 
         try {
-            const res = await fetch('/api/manage-cache?action=delete-history-entry', {
+            // Unified delete history
+            const res = await fetch('/api/data-service?action=delete-history-entry', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
@@ -545,12 +505,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 throw new Error(err.details || 'Ошибка при удалении записи истории.');
             }
 
-            // Update local state
             setHistory(prev => prev.filter(item => item !== entryText));
 
         } catch (e) {
             console.error('Failed to delete history entry:', e);
-            // Optionally show error notification
         } finally {
             setDeletingHistoryItem(null);
         }
@@ -564,7 +522,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-    // Display current address from map point state to reflect recent edits
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
@@ -578,11 +535,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     
-    // Display coordinates: prefer manual selection if active, otherwise fallback to current data
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
-    // Determine save button text
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -795,7 +750,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 </div>
             </div>
 
-            {/* Full Screen Map Modal */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-card-bg/80 backdrop-blur-sm border-b border-gray-700">
