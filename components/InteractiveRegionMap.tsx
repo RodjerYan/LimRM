@@ -8,13 +8,6 @@ import { getMarketData } from '../utils/marketData';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 
-// Define the global confetti type
-declare global {
-    interface Window {
-        confetti: any;
-    }
-}
-
 type Theme = 'dark' | 'light';
 type OverlayMode = 'sales' | 'pets' | 'competitors' | 'age';
 
@@ -442,10 +435,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                  opacity: 1, 
                  fillOpacity: 0.2,
                  dashArray: '' 
-             });
-             // Do NOT call bringToFront() here when using a dedicated pane, 
-             // as it might mess up the pane ordering if not careful.
-             // With z-index panes, visual stacking is handled by the pane.
+             }).bringToFront();
              highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
@@ -496,14 +486,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
             mapInstance.current = map;
             
-            // --- FIX FOR INTERACTIVITY ---
-            // Create a dedicated pane for regions with a lower z-index than the default overlayPane (400).
-            // This ensures regions are always rendered "below" markers but stay interactive.
-            // When using 'preferCanvas: true', having regions on the same canvas as markers can sometimes cause hit-detection issues.
-            // Using a separate pane and forcing SVG renderer for regions (in the geoJSON options below) solves this.
-            map.createPane('regionPane');
-            map.getPane('regionPane')!.style.zIndex = '350'; 
-
             L.control.zoom({ position: 'topleft' }).addTo(map);
 
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -662,12 +644,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         
         geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
             style: getStyleForRegion,
-            // CRITICAL FIX: Use the dedicated regionPane and force SVG renderer.
-            // This ensures regions are always rendered in their own DOM container (SVG) below the markers (Canvas/OverlayPane),
-            // guaranteeing that clicks propagate correctly to the regions when not hitting a marker.
-            pane: 'regionPane',
-            // @ts-ignore
-            renderer: L.svg({ pane: 'regionPane' }), 
             onEachFeature: (feature, layer) => {
                 const regionName = feature.properties.name;
                 if (!regionName) return;
@@ -686,17 +662,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         highlightRegion(e.target);
 
                         // Confetti for Belgorod Oblast
-                        if (feature.properties.name === 'Белгородская область' && window.confetti) {
+                        if (feature.properties.name === 'Белгородская область' && (window as any).confetti) {
                             const clickPoint = map.latLngToContainerPoint(e.latlng);
-                            // Normalize coordinates to 0-1 range for canvas-confetti
-                            const x = clickPoint.x / map.getSize().x;
-                            const y = clickPoint.y / map.getSize().y;
+                            const x = clickPoint.x / window.innerWidth;
+                            const y = clickPoint.y / window.innerHeight;
 
-                            window.confetti({
+                            (window as any).confetti({
                                 particleCount: 150,
                                 spread: 100,
                                 origin: { y: y, x: x },
-                                colors: ['#ffffff', '#0000ff', '#ff0000'], // Russian Tricolor/Belgorod Colors
+                                colors: ['#ffffff', '#0000ff', '#ff0000'],
                                 zIndex: 10000,
                                 disableForReducedMotion: true
                             });
@@ -711,7 +686,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 opacity: 1,
                                 fillOpacity: 0.2, // Increased for visibility
                             });
-                            // Do not use bringToFront() freely with panes, relying on pane z-index
+                            layer.bringToFront();
                         }
                     },
                     mouseout: (e) => {
@@ -724,6 +699,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         }).addTo(map);
         
+        // Ensure the region layer is at the bottom so it doesn't block markers, 
+        // but since fillOpacity is 0.2, clicks pass through if needed or captured if hit.
+        geoJsonLayer.current.bringToBack();
+
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
     return (
