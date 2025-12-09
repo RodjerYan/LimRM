@@ -42,6 +42,10 @@
       "destination": "/api/delete-address"
     },
     {
+      "source": "/api/delete-history-entry",
+      "destination": "/api/delete-history-entry"
+    },
+    {
       "source": "/api/get-cached-address",
       "destination": "/api/get-cached-address"
     },

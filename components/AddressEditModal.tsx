@@ -259,6 +259,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+    const [deletingHistoryItem, setDeletingHistoryItem] = useState<string | null>(null);
     
     // State for manually selected coordinates
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
@@ -517,6 +518,43 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setError((e as Error).message);
         }
     };
+
+    const handleDeleteHistoryItem = async (entryText: string) => {
+        if (!data) return;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const rm = findValueInRow(originalRow, ['рм']);
+
+        if (!rm || !currentAddress) return;
+
+        setDeletingHistoryItem(entryText);
+
+        try {
+            const res = await fetch('/api/delete-history-entry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    rmName: rm, 
+                    address: currentAddress, 
+                    entryText 
+                }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.details || 'Ошибка при удалении записи истории.');
+            }
+
+            // Update local state
+            setHistory(prev => prev.filter(item => item !== entryText));
+
+        } catch (e) {
+            console.error('Failed to delete history entry:', e);
+            // Optionally show error notification
+        } finally {
+            setDeletingHistoryItem(null);
+        }
+    };
     
     const handleRetryGeocode = () => {
        handleSave();
@@ -614,10 +652,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             {history.length > 0 ? (
                                 <ul className="space-y-2">
                                     {history.map((item, idx) => (
-                                        <li key={idx} className="p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex flex-col gap-1 hover:bg-gray-700/80 transition-colors">
-                                            <div className="flex items-center gap-2 text-accent text-xs font-bold">
-                                                <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
-                                                <span>Изменение #{history.length - idx}</span>
+                                        <li key={idx} className="relative p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex flex-col gap-1 hover:bg-gray-700/80 transition-colors group">
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex items-center gap-2 text-accent text-xs font-bold">
+                                                    <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+                                                    <span>Изменение #{history.length - idx}</span>
+                                                </div>
+                                                <button 
+                                                    onClick={() => handleDeleteHistoryItem(item)}
+                                                    disabled={deletingHistoryItem === item}
+                                                    className="text-gray-500 hover:text-red-400 transition-colors p-1 rounded hover:bg-gray-600 disabled:opacity-50 disabled:cursor-wait"
+                                                    title="Удалить запись из истории"
+                                                >
+                                                    {deletingHistoryItem === item ? (
+                                                        <div className="w-3 h-3 border-2 border-gray-400 border-t-red-400 rounded-full animate-spin"></div>
+                                                    ) : (
+                                                        <TrashIcon small />
+                                                    )}
+                                                </button>
                                             </div>
                                             <span className="pl-4 break-words whitespace-pre-wrap">{item}</span>
                                         </li>

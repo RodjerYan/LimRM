@@ -526,6 +526,61 @@ export async function updateAddressInCache(
 }
 
 /**
+ * Deletes a specific history entry from the cache by removing it from Column D.
+ * @param rmName The name of the Regional Manager (and the sheet).
+ * @param address The current address key to find the row.
+ * @param entryToDelete The exact text of the history entry to remove.
+ */
+export async function deleteHistoryEntryFromCache(rmName: string, address: string, entryToDelete: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+
+    // Fetch A:D to find row and get history
+    const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!A:D`,
+    });
+
+    const rows = response.data.values || [];
+    const addressNorm = normalizeForComparison(address);
+
+    // Find row index
+    let rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === addressNorm);
+    
+    // If not found by current address, try finding by history (though we should be calling this with current address)
+    if (rowIndex === -1) {
+         rowIndex = rows.findIndex(r => isAddressInHistory(String(r[3] || ''), addressNorm));
+    }
+
+    if (rowIndex === -1) return; // Not found
+
+    const rowNumber = rowIndex + 1;
+    const currentHistory = rows[rowIndex][3] ? String(rows[rowIndex][3]) : '';
+    
+    if (!currentHistory) return;
+
+    // Split by newline or ||
+    let historyLines = currentHistory.split(/\n/);
+    if (historyLines.length === 1 && currentHistory.includes('||')) {
+         historyLines = currentHistory.split('||').map(s => s.trim());
+    }
+
+    // Filter out the entry. 
+    const newHistoryLines = historyLines.filter(line => line.trim() !== entryToDelete.trim());
+    const newHistoryStr = newHistoryLines.join('\n');
+
+    // Update Column D
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${actualSheetTitle}'!D${rowNumber}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+            values: [[newHistoryStr]],
+        },
+    });
+}
+
+/**
  * Deletes an address row from the cache.
  * Performs a "Soft Delete" by writing 'DELETED' to the coordinate columns.
  * This preserves the address in Col A (and potentially history in Col D) but marks it as ignored.
