@@ -6,7 +6,8 @@ import {
     AggregatedDataRow,
     MapPoint,
     UnidentifiedRow,
-    OkbDataRow
+    OkbDataRow,
+    CoordsCache
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { normalizeAddress, findValueInRow, findAddressInRow, recoverRegion } from '../utils/dataUtils';
@@ -40,12 +41,21 @@ function normalizeSheetData(data: any[][]): any[] {
 let newAddressesToCache: Record<string, { address: string }[]> = {};
 let addressesToGeocode: Record<string, string[]> = {};
 
+// Typed payload interface to fix implicit any errors
+interface ProcessPayload {
+    file?: File;
+    rawSheetData?: any[][];
+    cacheData: CoordsCache;
+    okbData: OkbDataRow[];
+}
+
 // Main Worker Event Listener
 self.onmessage = async (event: MessageEvent) => {
     const { type, payload } = event.data;
 
     if (type === 'process') {
-        const { file, rawSheetData, cacheData, okbData } = payload;
+        // Explicitly cast payload to typed interface
+        const { file, rawSheetData, cacheData, okbData } = payload as ProcessPayload;
         
         try {
             // Reset background task accumulators
@@ -119,7 +129,6 @@ self.onmessage = async (event: MessageEvent) => {
                 addressesToGeocode[rm].push(address);
             };
 
-            let processedCount = 0;
             const totalRows = rawRows.length;
 
             for (let i = 0; i < totalRows; i++) {
@@ -295,7 +304,7 @@ self.onmessage = async (event: MessageEvent) => {
             sortedClients.forEach(c => {
                 const currentFact = c.fact || 0;
                 runningSum += currentFact;
-                const percentage = runningSum / totalVolume;
+                const percentage = totalVolume > 0 ? runningSum / totalVolume : 1;
                 if (percentage <= 0.8) c.abcCategory = 'A';
                 else if (percentage <= 0.95) c.abcCategory = 'B';
                 else c.abcCategory = 'C';
@@ -315,7 +324,7 @@ self.onmessage = async (event: MessageEvent) => {
             // We use the okbData passed in payload
             const okbRegionCounts: { [key: string]: number } = {};
             if (okbData) {
-                okbData.forEach(row => {
+                okbData.forEach((row: OkbDataRow) => {
                     const region = findValueInRow(row, ['регион', 'область', 'субъект']);
                     if (region) {
                         // Standardize region name if possible, or use raw
