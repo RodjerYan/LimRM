@@ -1,0 +1,32 @@
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { getAkbData } from './lib/sheets.js';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+    if (req.method !== 'GET') {
+        res.setHeader('Allow', ['GET']);
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    try {
+        const akbData = await getAkbData();
+        // Prevent caching for this data as it might change frequently
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.status(200).json(akbData);
+    } catch (error) {
+        console.error('Error fetching AKB data from Google Sheets:', error);
+        
+        let detailedMessage = 'An unknown server error occurred.';
+        if (error instanceof Error) {
+            detailedMessage = error.message;
+        }
+        
+        const gapiError = error as any;
+        if (gapiError.response?.data?.error) {
+            const { message, code, status } = gapiError.response.data.error;
+            detailedMessage = `Google API Error ${code} (${status}): ${message}`;
+        }
+
+        res.status(500).json({ error: 'Failed to retrieve AKB data', details: detailedMessage });
+    }
+}

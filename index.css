@@ -1,0 +1,125 @@
+
+@import "https://geist-font.vercel.app/css/geist.css";
+@import "https://geist-font.vercel.app/css/geist-mono.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Dark Mode (Default) */
+  --primary-dark: 17 24 39; /* #111827 */
+  --card-bg: 31 41 55;      /* #1F2937 */
+  --text-main: 229 231 235; /* #e5e7eb (gray-200) */
+  --text-muted: 156 163 175; /* #9ca3af (gray-400) */
+}
+
+/* 
+   SCALING: 75% 
+   Standard browser font-size is 16px. 
+   Setting root to 12px scales all REM-based Tailwind classes (width, height, padding, font) to 75%.
+   This creates the "Zoom Out" effect without breaking 100vh layout calculations.
+*/
+html {
+  font-size: 12px;
+}
+
+/* GLOBAL SCROLLBAR STYLING (Dark & Sleek) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #111827; /* primary-dark */
+}
+::-webkit-scrollbar-thumb {
+  background: #374151; /* gray-700 */
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563; /* gray-600 */
+}
+
+.light-mode {
+  /* Light Mode */
+  --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) */
+  --card-bg: 255 255 255;      /* #ffffff */
+  --text-main: 17 24 39;       /* #111827 (gray-900) */
+  --text-muted: 75 85 99;      /* #4b5563 (gray-600) */
+}
+
+@layer base {
+  body {
+    @apply text-text-main;
+  }
+}
+
+@layer utilities {
+  /* Utility to completely hide scrollbar while keeping functionality */
+  .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+  }
+  .scrollbar-hide {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+  }
+
+  .shimmer-effect::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 3s infinite linear;
+  }
+
+  /* Hide number input arrows */
+  .no-spinner::-webkit-outer-spin-button,
+  .no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .no-spinner {
+    -moz-appearance: textfield;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+/* Animation for pulsing red markers (Churn/Risk) */
+@keyframes pulse-red {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    transform: scale(1);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    transform: scale(1.1);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    transform: scale(1);
+  }
+}
+
+.pulsing-marker-red {
+  animation: pulse-red 2s infinite;
+  border-radius: 50%;
+  background-color: #ef4444 !important;
+  border: 2px solid white !important;
+}
