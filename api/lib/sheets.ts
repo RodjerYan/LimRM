@@ -4,9 +4,35 @@ import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
-const AKB_SPREADSHEET_ID = '1AirnUDv3IiVWnwoNN0OmIVLLWSDsFmMNbEcA709j6EU';
-const AKB_SHEET_GID = 1604990825;
 const SHEET_NAME = 'Base';
+
+// List of all monthly AKB source sheets (Jan 2025 - Dec 2026)
+const AKB_SOURCES = [
+    { month: 'Январь 2025', id: '1AirnUDv3IiVWnwoNN0OmIVLLWSDsFmMNbEcA709j6EU' },
+    { month: 'Февраль 2025', id: '1MuWT53aC3-yKA57JjpWk3m1vj56bQHpNlBTZDUdFdjA' },
+    { month: 'Март 2025', id: '1dny_bp6wkXLJVXRJ3eFgCA0VMncaR_QtEEKkipSX7VY' },
+    { month: 'Апрель 2025', id: '1zWCHx1ESVs30cUi267qdbQ7uBjoLJxVMgKx9XMdZaVg' },
+    { month: 'Май 2025', id: '1PpKTF8gkA2Y-kt_6u6__LTNHyTLn0vOemKsPqMr5CVE' },
+    { month: 'Июнь 2025', id: '1mgBu2oD2R5FIcPEQRhg71C709bYrLppsGiv56of97Fk' },
+    { month: 'Июль 2025', id: '1z4hHi-e-nh28VQUAi1xwcH1KcRvdUB2r03Kp_YWqLJo' },
+    { month: 'Август 2025', id: '11eThOSwdltdcJEh6_zqTg_ZCk1w54ZHEF7TUCCyByyQ' },
+    { month: 'Сентябрь 2025', id: '1R-Ljp1RzIqRPX6O3PagepcI8Nmp3MdP-yzKrdS9dLN0' },
+    { month: 'Октябрь 2025', id: '1BfkwMXI_AJGykEWtNvhc3pECo23YQk327WmoGyEbPO8' },
+    { month: 'Ноябрь 2025', id: '18LU8W5a0edXEWwU-90TgPQPvYUmmL2HBFR-ndCkd5-Q' },
+    { month: 'Декабрь 2025', id: '17z9GEBxUl_moMabtTHKzl8ewPkSpEjb4U15W60A1rbM' },
+    { month: 'Январь 2026', id: '1L55_oeifyaLJNfUYbxTaOEEFN44YV6aKarWYNKF1hqs' },
+    { month: 'Февраль 2026', id: '1IB4h81Y0zv46Qw4HQ9PCAwu-hgbkbhjyRR_9TjwE4ns' },
+    { month: 'Март 2026', id: '1ENhibgwC04NBHqjT_nOvoMzHQoWGNEW7s9Q9pSK-IM8' },
+    { month: 'Апрель 2026', id: '1q71Yw-NVa08_dsqWxBzTZgVLEajQmkHP5leYSOWYYME' },
+    { month: 'Май 2026', id: '1S_J-u_mNchmQdIxUC8Ed5FNFrOEk5GhBJH5m-F5FtPM' },
+    { month: 'Июнь 2026', id: '1gaRZdfdHUGiKUVhkfiqSA__Qiu-A1qeIRCm-oJ7KgBo' },
+    { month: 'Июль 2026', id: '1-U4CppHolhOirbAAwZeh8ayraXBZu5JOlaWCOfthca0' },
+    { month: 'Август 2026', id: '1i5JSpM-EItiRhrVWjjPMLlvfNBDYKv66dFRY1MpMp74' },
+    { month: 'Сентябрь 2026', id: '1_tEPTqqsL1AVkWHRZvQkbnaz0gtGYN2uAvlDptFaHo0' },
+    { month: 'Октябрь 2026', id: '1bG4h2qNzBybwMKa3j9liRziBUE9O8LW5KH8trmRMuPo' },
+    { month: 'Ноябрь 2026', id: '1LpCYKO0M1uX2y3yXkXL809uG9NFHRYX_BcwqI9hMpCY' },
+    { month: 'Декабрь 2026', id: '1LqwBn8px0-KU8otKDSUV4yfYsLHzkM2I46bth_e5P40' }
+];
 
 /**
  * Creates and returns an authenticated Google Sheets API client.
@@ -150,34 +176,74 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 
 
 /**
- * Fetches the Active Client Base (AKB) from the specific Google Sheet provided by user.
- * It automatically resolves the Sheet Name (Title) based on the hardcoded GID.
+ * Fetches the Active Client Base (AKB) from multiple Google Sheets (Jan 2025 - Dec 2026).
+ * It aggregates data from all provided source sheets into a single dataset.
+ * It ensures only one header row is preserved at the top.
  */
 export async function getAkbData(): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
-    
-    // 1. Get Spreadsheet Metadata to find the sheet name by GID
-    const meta = await sheets.spreadsheets.get({
-        spreadsheetId: AKB_SPREADSHEET_ID,
-        fields: 'sheets.properties',
-    });
+    const allData: any[][] = [];
+    let headersSet = false;
 
-    const sheet = meta.data.sheets?.find(s => s.properties?.sheetId === AKB_SHEET_GID);
-    
-    if (!sheet || !sheet.properties?.title) {
-        throw new Error(`Could not find sheet with GID ${AKB_SHEET_GID} in the provided spreadsheet.`);
+    // Helper function to fetch data from a single sheet
+    const fetchSheetData = async (source: { month: string; id: string }) => {
+        try {
+            // 1. Get Spreadsheet Metadata to find the first sheet name (tab name)
+            // We assume the relevant data is always on the first visible sheet.
+            const meta = await sheets.spreadsheets.get({
+                spreadsheetId: source.id,
+                fields: 'sheets.properties',
+            });
+
+            const firstSheetTitle = meta.data.sheets?.[0]?.properties?.title;
+            
+            if (!firstSheetTitle) {
+                console.warn(`Could not find any sheets in spreadsheet for ${source.month} (${source.id}). Skipping.`);
+                return [];
+            }
+
+            // 2. Fetch all values from that sheet
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: source.id,
+                range: `'${firstSheetTitle}'!A:Z`, // Fetch sufficiently wide range
+                valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
+            });
+
+            const rows = res.data.values || [];
+            if (rows.length === 0) return [];
+
+            return rows;
+        } catch (error) {
+            console.error(`Error fetching AKB data for ${source.month}:`, error);
+            // We continue processing other sheets even if one fails
+            return [];
+        }
+    };
+
+    // Execute fetches in parallel for performance
+    const results = await Promise.all(AKB_SOURCES.map(source => fetchSheetData(source)));
+
+    // Aggregate results
+    for (const rows of results) {
+        if (rows.length === 0) continue;
+
+        if (!headersSet) {
+            // First successful fetch: take headers and data
+            allData.push(...rows);
+            headersSet = true;
+        } else {
+            // Subsequent fetches: skip header (row 0), take data
+            if (rows.length > 1) {
+                allData.push(...rows.slice(1));
+            }
+        }
     }
 
-    const sheetTitle = sheet.properties.title;
+    if (allData.length === 0) {
+        throw new Error('Failed to retrieve data from any of the configured AKB spreadsheets.');
+    }
 
-    // 2. Fetch all values from that sheet
-    const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: AKB_SPREADSHEET_ID,
-        range: `'${sheetTitle}'!A:Z`, // Fetch sufficiently wide range
-        valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
-    });
-
-    return res.data.values || [];
+    return allData;
 }
 
 
