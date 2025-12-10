@@ -12,7 +12,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Extract year from query parameter, default to '2025' if not provided for safety
         const year = (req.query.year as string) || '2025';
         
-        const akbData = await getAkbData(year);
+        // Extract optional quarter parameter (1, 2, 3, 4)
+        const quarterStr = req.query.quarter as string;
+        let quarter: number | undefined;
+        if (quarterStr) {
+            const q = parseInt(quarterStr, 10);
+            if (!isNaN(q) && q >= 1 && q <= 4) {
+                quarter = q;
+            }
+        }
+        
+        const akbData = await getAkbData(year, quarter);
+        
+        if (!akbData || akbData.length === 0) {
+             throw new Error('No data found for year ' + year + (quarter ? ` Q${quarter}` : ''));
+        }
+
         // Prevent caching for this data as it might change frequently
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json(akbData);

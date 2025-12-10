@@ -181,10 +181,11 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  * It ensures only one header row is preserved at the top.
  * 
  * @param year - Optional year string (e.g. "2025" or "2026") to filter which sheets to load.
+ * @param quarter - Optional quarter number (1, 2, 3, 4) to filter specifically by quarter.
  */
-export async function getAkbData(year?: string): Promise<any[][]> {
+export async function getAkbData(year?: string, quarter?: number): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
-    const allData: any[][] = []; // Keep as const ref, mutate content
+    const allData: any[][] = [];
     let headersSet = false;
     const errors: string[] = [];
 
@@ -194,8 +195,24 @@ export async function getAkbData(year?: string): Promise<any[][]> {
         sourcesToFetch = AKB_SOURCES.filter(source => source.month.includes(year));
     }
 
+    // Filter by Quarter if provided
+    if (quarter) {
+        const monthMap: Record<number, string[]> = {
+            1: ['Январь', 'Февраль', 'Март'],
+            2: ['Апрель', 'Май', 'Июнь'],
+            3: ['Июль', 'Август', 'Сентябрь'],
+            4: ['Октябрь', 'Ноябрь', 'Декабрь']
+        };
+        const targetMonths = monthMap[quarter];
+        if (targetMonths) {
+            sourcesToFetch = sourcesToFetch.filter(source => 
+                targetMonths.some(m => source.month.startsWith(m))
+            );
+        }
+    }
+
     if (sourcesToFetch.length === 0) {
-        throw new Error(`Нет данных для выбранного года: ${year}`);
+        throw new Error(`Нет данных для выбранного периода: ${year} Q${quarter || 'All'}`);
     }
 
     // Helper function to fetch data from a batch of sources
@@ -222,36 +239,27 @@ export async function getAkbData(year?: string): Promise<any[][]> {
         return Promise.all(promises);
     };
 
-    // Process in chunks to balance concurrency and memory usage.
-    // 6 allows 2 batches for a full year (12 months), reducing memory pressure compared to all-at-once.
-    const chunkSize = 6; 
-    for (let i = 0; i < sourcesToFetch.length; i += chunkSize) {
-        const batch = sourcesToFetch.slice(i, i + chunkSize);
-        const batchResults = await processBatch(batch);
+    // Process all sources in one batch (concurrency up to 3 is generally safe for Google API per request)
+    // If quarter filtering is used, we only have 3 items max anyway.
+    const batchResults = await processBatch(sourcesToFetch);
 
-        for (const rows of batchResults) {
-            if (!rows || rows.length === 0) continue;
+    for (const rows of batchResults) {
+        if (!rows || rows.length === 0) continue;
 
-            if (!headersSet) {
-                // First successful fetch: take headers and data
-                // Optimization: Use loop push instead of spread/concat to manage memory and stack
-                for (let r = 0; r < rows.length; r++) {
+        if (!headersSet) {
+            // First successful fetch: take headers and data
+            // Optimization: Use loop push instead of spread/concat to manage memory and stack
+            for (let r = 0; r < rows.length; r++) {
+                allData.push(rows[r]);
+            }
+            headersSet = true;
+        } else {
+            // Subsequent fetches: skip header (row 0), take data
+            if (rows.length > 1) {
+                for (let r = 1; r < rows.length; r++) {
                     allData.push(rows[r]);
                 }
-                headersSet = true;
-            } else {
-                // Subsequent fetches: skip header (row 0), take data
-                if (rows.length > 1) {
-                    for (let r = 1; r < rows.length; r++) {
-                        allData.push(rows[r]);
-                    }
-                }
             }
-        }
-        
-        // Small delay to let GC breathe if needed
-        if (i + chunkSize < sourcesToFetch.length) {
-             await new Promise(resolve => setTimeout(resolve, 100));
         }
     }
 
@@ -263,7 +271,7 @@ export async function getAkbData(year?: string): Promise<any[][]> {
         } catch(e) {}
         
         throw new Error(
-            `Не удалось загрузить данные ни из одной таблицы за ${year || 'все годы'}. \n` +
+            `Не удалось загрузить данные ни из одной таблицы за ${year || 'все годы'} Q${quarter || 'All'}. \n` +
             `Вероятно, у сервисного аккаунта нет доступа. \n` +
             `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к этим таблицам для email: \n${email}\n\n` +
             `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`

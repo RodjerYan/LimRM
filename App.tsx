@@ -334,41 +334,75 @@ const App: React.FC = () => {
         initWorker({ file }, 'Загрузка кэша координат...', file.name);
     }, [initWorker]);
 
-    // Updated to accept year argument
+    // Updated to split load into 4 requests to avoid timeouts
     const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
         setProcessingState({
             isProcessing: true,
-            progress: 5,
-            message: `Подключение к Google Sheets (${year})...`,
+            progress: 2,
+            message: `Инициализация многопоточной загрузки (${year})...`,
             fileName: `Cloud: AKB Sheet ${year}`,
             backgroundMessage: null,
             startTime: Date.now()
         });
 
         try {
-            // Pass year query param
-            const response = await fetch(`/api/get-akb?year=${year}`);
-            if (!response.ok) {
-                // FIX: Properly extract JSON error details from the response to show meaningful errors to the user.
-                let errorMsg = 'Failed to fetch AKB data from cloud';
-                try {
-                    const errorData = await response.json();
-                    if (errorData.details) errorMsg = errorData.details;
-                    else if (errorData.error) errorMsg = errorData.error;
-                } catch (e) {
-                    // ignore json parse error, fall back to status text if available
-                    errorMsg = response.statusText || 'Unknown Server Error (500). Check Vercel logs.';
-                }
-                throw new Error(errorMsg);
-            }
-            const rawSheetData = await response.json();
+            // Initiate 4 parallel requests for each quarter
+            const quarters = [1, 2, 3, 4];
             
-            if (!Array.isArray(rawSheetData) || rawSheetData.length === 0) {
-                throw new Error('Cloud sheet is empty');
+            const fetchQuarter = async (q: number) => {
+                try {
+                    const response = await fetch(`/api/get-akb?year=${year}&quarter=${q}`);
+                    if (!response.ok) {
+                        let errorMsg = `Quarter ${q} fetch failed`;
+                        try {
+                            const errorData = await response.json();
+                            if (errorData.details) errorMsg = errorData.details;
+                            else if (errorData.error) errorMsg = errorData.error;
+                        } catch (e) { /* ignore */ }
+                        throw new Error(errorMsg);
+                    }
+                    const data = await response.json();
+                    return { q, data };
+                } catch (error) {
+                    console.error(`Failed to fetch Q${q}:`, error);
+                    // Return empty array to allow partial success, or re-throw to fail hard
+                    // Let's re-throw to alert user if any part fails
+                    throw error;
+                }
+            };
+
+            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка кварталов 1-4...` }));
+
+            const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
+            
+            // Merge results
+            let mergedData: any[] = [];
+            // Preserve headers from the first successful chunk
+            let headers: any[] | null = null;
+
+            results.forEach(({ q, data }) => {
+                if (Array.isArray(data) && data.length > 0) {
+                    // Assuming first row is header. 
+                    // The backend `getAkbData` logic aggregates sources and keeps headers in the first row of result.
+                    // But if we call it 4 times, we get 4 results each with a header row.
+                    
+                    if (!headers) {
+                        headers = data[0];
+                        mergedData.push(headers); // Add header row once
+                        mergedData.push(...data.slice(1));
+                    } else {
+                        // Skip header row for subsequent chunks
+                        mergedData.push(...data.slice(1));
+                    }
+                }
+            });
+
+            if (mergedData.length <= 1) { // Only header or empty
+                throw new Error('No data found for any quarter.');
             }
 
             // Hand over to worker
-            initWorker({ rawSheetData }, 'Данные получены, запуск обработки...', `Cloud: AKB Sheet ${year}`);
+            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, запуск обработки...', `Cloud: AKB Sheet ${year}`);
 
         } catch (error) {
             console.error("Cloud load error:", error);
@@ -378,7 +412,6 @@ const App: React.FC = () => {
                 isProcessing: false, 
                 message: `Ошибка: ${msg}` 
             }));
-            // Show a longer notification for errors to allow reading
             addNotification(`Ошибка загрузки: ${msg}`, 'error');
         }
     }, [initWorker, addNotification]);
