@@ -184,7 +184,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  */
 export async function getAkbData(year?: string): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
-    const allData: any[][] = [];
+    let allData: any[][] = [];
     let headersSet = false;
     const errors: string[] = [];
 
@@ -234,12 +234,14 @@ export async function getAkbData(year?: string): Promise<any[][]> {
 
             if (!headersSet) {
                 // First successful fetch: take headers and data
-                allData.push(...rows);
+                // Fix: use concat to avoid stack overflow on large datasets
+                allData = allData.concat(rows);
                 headersSet = true;
             } else {
                 // Subsequent fetches: skip header (row 0), take data
                 if (rows.length > 1) {
-                    allData.push(...rows.slice(1));
+                    // Fix: use concat to avoid stack overflow
+                    allData = allData.concat(rows.slice(1));
                 }
             }
         }
