@@ -185,57 +185,52 @@ export async function getAkbData(): Promise<any[][]> {
     const allData: any[][] = [];
     let headersSet = false;
 
-    // Helper function to fetch data from a single sheet
-    const fetchSheetData = async (source: { month: string; id: string }) => {
-        try {
-            // 1. Get Spreadsheet Metadata to find the first sheet name (tab name)
-            // We assume the relevant data is always on the first visible sheet.
-            const meta = await sheets.spreadsheets.get({
-                spreadsheetId: source.id,
-                fields: 'sheets.properties',
-            });
+    // Helper function to fetch data from a batch of sources
+    const processBatch = async (batch: typeof AKB_SOURCES) => {
+        const promises = batch.map(async (source) => {
+            try {
+                // Optimization: Directly request range 'A:Z' which typically works for the first sheet.
+                // This avoids an extra API call to get sheet metadata/name.
+                const res = await sheets.spreadsheets.values.get({
+                    spreadsheetId: source.id,
+                    range: 'A:Z', 
+                    valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
+                });
 
-            const firstSheetTitle = meta.data.sheets?.[0]?.properties?.title;
-            
-            if (!firstSheetTitle) {
-                console.warn(`Could not find any sheets in spreadsheet for ${source.month} (${source.id}). Skipping.`);
+                return res.data.values || [];
+            } catch (error) {
+                console.error(`Error fetching AKB data for ${source.month}:`, error);
+                // Return empty array to allow other sheets to proceed even if one fails
                 return [];
             }
-
-            // 2. Fetch all values from that sheet
-            const res = await sheets.spreadsheets.values.get({
-                spreadsheetId: source.id,
-                range: `'${firstSheetTitle}'!A:Z`, // Fetch sufficiently wide range
-                valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
-            });
-
-            const rows = res.data.values || [];
-            if (rows.length === 0) return [];
-
-            return rows;
-        } catch (error) {
-            console.error(`Error fetching AKB data for ${source.month}:`, error);
-            // We continue processing other sheets even if one fails
-            return [];
-        }
+        });
+        return Promise.all(promises);
     };
 
-    // Execute fetches in parallel for performance
-    const results = await Promise.all(AKB_SOURCES.map(source => fetchSheetData(source)));
+    // Process in chunks to avoid hitting Google API rate limits or Vercel timeouts
+    const chunkSize = 6; 
+    for (let i = 0; i < AKB_SOURCES.length; i += chunkSize) {
+        const batch = AKB_SOURCES.slice(i, i + chunkSize);
+        const batchResults = await processBatch(batch);
 
-    // Aggregate results
-    for (const rows of results) {
-        if (rows.length === 0) continue;
+        for (const rows of batchResults) {
+            if (rows.length === 0) continue;
 
-        if (!headersSet) {
-            // First successful fetch: take headers and data
-            allData.push(...rows);
-            headersSet = true;
-        } else {
-            // Subsequent fetches: skip header (row 0), take data
-            if (rows.length > 1) {
-                allData.push(...rows.slice(1));
+            if (!headersSet) {
+                // First successful fetch: take headers and data
+                allData.push(...rows);
+                headersSet = true;
+            } else {
+                // Subsequent fetches: skip header (row 0), take data
+                if (rows.length > 1) {
+                    allData.push(...rows.slice(1));
+                }
             }
+        }
+        
+        // Small delay between batches to respect rate limits
+        if (i + chunkSize < AKB_SOURCES.length) {
+             await new Promise(resolve => setTimeout(resolve, 500)); 
         }
     }
 
