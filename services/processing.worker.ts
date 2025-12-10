@@ -347,7 +347,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-    if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
+    // Relaxed check: Allow files even if "Weight" is missing, but prefer it for calculations
+    // if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
     // NEW: Detect Date Range
@@ -439,7 +440,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        const rm = findValueInRow(row, ['рм']);
+        
+        // Strict keyword matching for RM to avoid picking up "Специализация корма"
+        const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер']);
 
         if (i > 0 && i % 5000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
@@ -512,9 +515,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // We use the enriched final address for display if available, otherwise the potentially redirected one
         const finalAddress = parsedAddress.finalAddress || clientAddress || '';
         
-        const weight = parseFloat(String(findValueInRow(row, ['вес']) || '0').replace(/\s/g, '').replace(',', '.'));
+        // Updated Weight logic to prioritize explicit 'Вес, кг' or just 'Вес'
+        const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес кг', 'вес', 'сумма отгрузки, руб', 'количество, кг', 'нетто']) || '0').replace(/\s/g, '').replace(',', '.'));
+        
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка']) || 'Бренд не указан';
+        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Бренд не указан';
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
         if (isNaN(weight)) continue;
@@ -532,7 +537,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         aggregatedData[key].fact += weight;
 
         if (hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал']) || '0').replace(/\s/g, '').replace(',', '.'));
+            const potential = parseFloat(String(findValueInRow(row, ['потенциал', 'план']) || '0').replace(/\s/g, '').replace(',', '.'));
             if (!isNaN(potential)) aggregatedData[key].potential += potential;
         }
 
@@ -584,8 +589,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 city: groupNameForAggregation,
                 region: regionForAggregation, 
                 rm, brand, packaging,
-                type: findValueInRow(row, ['канал продаж']),
-                contacts: findValueInRow(row, ['контакты']),
+                type: findValueInRow(row, ['канал продаж', 'канал']),
+                contacts: findValueInRow(row, ['контакты', 'телефон']),
                 originalRow: row,
                 fact: weight,
                 comment: comment, // Set comment

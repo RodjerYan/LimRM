@@ -126,6 +126,9 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
+ * IMPROVED: Uses a tiered approach (Exact > Word Boundary > Loose) to avoid false positives.
+ * This fixes issues where "РМ" matched "Специализация корма".
+ * 
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
  * @returns The found string value or an empty string.
@@ -133,12 +136,39 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
+
+    // 1. Priority: Exact Match (ignoring case/whitespace)
+    // Ensures "РМ" finds "РМ", but not "Корм"
     for (const keyword of keywords) {
-        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword));
-        if (foundKey && row[foundKey] != null) { // Check for null and undefined
+        const k = keyword.toLowerCase().trim();
+        const exactKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === k);
+        if (exactKey && row[exactKey] != null) return String(row[exactKey]);
+    }
+
+    // 2. Priority: Word Boundary Match
+    // Matches "РМ (ФИО)" or "РМ", but NOT "КоРМа" or "ФоРМа"
+    for (const keyword of keywords) {
+        const k = keyword.toLowerCase().trim();
+        // Escape special regex chars in keyword
+        const escapedK = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Regex looks for the keyword surrounded by non-word chars (or start/end of string)
+        const regex = new RegExp(`(^|[^а-яёa-z0-9])${escapedK}([^а-яёa-z0-9]|$)`, 'i');
+        
+        const boundaryKey = rowKeys.find(rKey => regex.test(rKey.toLowerCase().trim()));
+        if (boundaryKey && row[boundaryKey] != null) return String(row[boundaryKey]);
+    }
+
+    // 3. Fallback: Loose Partial Match (ONLY for keywords > 2 chars)
+    // We skip short keywords here to prevent "РМ" matching "Корм" if regex failed
+    for (const keyword of keywords) {
+        if (keyword.length <= 2) continue; 
+        
+        const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword.toLowerCase().trim()));
+        if (foundKey && row[foundKey] != null) {
             return String(row[foundKey]);
         }
     }
+    
     return '';
 };
 
