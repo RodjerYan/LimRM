@@ -184,6 +184,7 @@ export async function getAkbData(): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     const allData: any[][] = [];
     let headersSet = false;
+    const errors: string[] = [];
 
     // Helper function to fetch data from a batch of sources
     const processBatch = async (batch: typeof AKB_SOURCES) => {
@@ -199,7 +200,9 @@ export async function getAkbData(): Promise<any[][]> {
 
                 return res.data.values || [];
             } catch (error) {
-                console.error(`Error fetching AKB data for ${source.month}:`, error);
+                const msg = error instanceof Error ? error.message : String(error);
+                console.error(`Error fetching AKB data for ${source.month}:`, msg);
+                errors.push(`${source.month}: ${msg}`);
                 // Return empty array to allow other sheets to proceed even if one fails
                 return [];
             }
@@ -207,8 +210,9 @@ export async function getAkbData(): Promise<any[][]> {
         return Promise.all(promises);
     };
 
-    // Process in chunks to avoid hitting Google API rate limits or Vercel timeouts
-    const chunkSize = 6; 
+    // Process in larger chunks to speed up (parallelize more)
+    // 10 concurrent requests is usually safe for Google API standard quota (60 per min / user)
+    const chunkSize = 10; 
     for (let i = 0; i < AKB_SOURCES.length; i += chunkSize) {
         const batch = AKB_SOURCES.slice(i, i + chunkSize);
         const batchResults = await processBatch(batch);
@@ -230,12 +234,23 @@ export async function getAkbData(): Promise<any[][]> {
         
         // Small delay between batches to respect rate limits
         if (i + chunkSize < AKB_SOURCES.length) {
-             await new Promise(resolve => setTimeout(resolve, 500)); 
+             await new Promise(resolve => setTimeout(resolve, 200)); 
         }
     }
 
     if (allData.length === 0) {
-        throw new Error('Failed to retrieve data from any of the configured AKB spreadsheets.');
+        let email = "unknown";
+        try {
+             const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
+             email = key.client_email;
+        } catch(e) {}
+        
+        throw new Error(
+            `Не удалось загрузить данные ни из одной таблицы. \n` +
+            `Вероятно, у сервисного аккаунта нет доступа. \n` +
+            `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к этим таблицам для email: \n${email}\n\n` +
+            `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`
+        );
     }
 
     return allData;
