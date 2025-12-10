@@ -11,7 +11,8 @@ interface AdaptaProps {
     // Global Processing Props
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
-    onStartCloudProcessing?: () => void;
+    // Updated: Accept function taking a year string
+    onStartCloudProcessing?: (year: string) => void;
 
     // Legacy/Data Props
     onFileProcessed: (data: WorkerResultPayload) => void;

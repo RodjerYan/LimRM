@@ -8,8 +8,8 @@ interface FileUploadProps {
     // New Props from Global State
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
-    // Callback for cloud processing
-    onStartCloudProcessing?: () => void;
+    // Updated: Callback for cloud processing now accepts a year
+    onStartCloudProcessing?: (year: string) => void;
     
     okbStatus: OkbStatus | null;
     disabled: boolean;
@@ -18,6 +18,7 @@ interface FileUploadProps {
 const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcessing, onStartCloudProcessing, okbStatus, disabled }) => {
     const [isDragging, setIsDragging] = useState(false);
     const [mode, setMode] = useState<'file' | 'cloud'>('file');
+    const [selectedYear, setSelectedYear] = useState<string>('2025');
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -77,7 +78,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-white leading-tight">Загрузка данных</h2>
-                            <p className="text-xs text-gray-400">Источник: {mode === 'file' ? 'Локальный файл (XLSX)' : 'Google Sheets (АКБ)'}</p>
+                            <p className="text-xs text-gray-400">Источник: {mode === 'file' ? 'Локальный файл (XLSX)' : `Google Sheets (${selectedYear})`}</p>
                         </div>
                     </div>
                     
@@ -143,7 +144,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </label>
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center w-full min-h-[10rem] border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-6 relative overflow-hidden transition-all">
+                    <div className="flex flex-col items-center justify-center w-full min-h-[12rem] border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-6 relative overflow-hidden transition-all">
                         {/* Background decoration */}
                         <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
                         <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
@@ -151,7 +152,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         {isProcessing ? (
                             <div className="flex flex-col items-center animate-pulse z-10">
                                 <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
-                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком...</p>
+                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком ({selectedYear})...</p>
                             </div>
                         ) : (
                             <div className="text-center z-10 flex flex-col items-center gap-4">
@@ -162,16 +163,32 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                                 <div className="space-y-1">
                                     <h3 className="text-sm font-bold text-emerald-100">Google Sheets Источник</h3>
                                     <p className="text-xs text-gray-400 max-w-[280px] mx-auto leading-relaxed">
-                                        Прямая загрузка актуальной базы АКБ из подключенной корпоративной таблицы.
+                                        Выберите год для загрузки базы АКБ.
                                     </p>
                                 </div>
 
+                                {/* Year Selection Buttons */}
+                                <div className="flex bg-gray-800/80 p-1 rounded-lg border border-emerald-500/20 backdrop-blur-sm">
+                                    <button 
+                                        onClick={() => setSelectedYear('2025')}
+                                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${selectedYear === '2025' ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        2025
+                                    </button>
+                                    <button 
+                                        onClick={() => setSelectedYear('2026')}
+                                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${selectedYear === '2026' ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+                                    >
+                                        2026
+                                    </button>
+                                </div>
+
                                 <button 
-                                    onClick={onStartCloudProcessing}
+                                    onClick={() => onStartCloudProcessing && onStartCloudProcessing(selectedYear)}
                                     disabled={disabled}
                                     className="group bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-2.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-emerald-900/30 hover:shadow-emerald-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
                                 >
-                                    <span>Загрузить таблицу</span>
+                                    <span>Загрузить {selectedYear}</span>
                                     <svg className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                                 </button>
                             </div>
@@ -194,7 +211,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                     <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-2">
                         <div className="flex justify-between items-center text-sm">
                             <p className="text-gray-200 font-medium truncate max-w-[70%]" title={fileName || 'Cloud Data'}>
-                                {fileName || 'Google Sheets Data'}
+                                {fileName || `Google Sheets (${selectedYear})`}
                             </p>
                             <span className="text-xs font-mono text-purple-300 bg-purple-900/30 px-1.5 py-0.5 rounded">{Math.round(progress)}%</span>
                         </div>

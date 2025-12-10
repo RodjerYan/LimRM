@@ -9,7 +9,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const akbData = await getAkbData();
+        // Extract year from query parameter, default to '2025' if not provided for safety
+        const year = (req.query.year as string) || '2025';
+        
+        const akbData = await getAkbData(year);
         // Prevent caching for this data as it might change frequently
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json(akbData);

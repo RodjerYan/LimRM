@@ -334,18 +334,20 @@ const App: React.FC = () => {
         initWorker({ file }, 'Загрузка кэша координат...', file.name);
     }, [initWorker]);
 
-    const handleStartCloudProcessing = useCallback(async () => {
+    // Updated to accept year argument
+    const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
         setProcessingState({
             isProcessing: true,
             progress: 5,
-            message: 'Подключение к Google Sheets (АКБ)...',
-            fileName: 'Cloud: AKB Sheet',
+            message: `Подключение к Google Sheets (${year})...`,
+            fileName: `Cloud: AKB Sheet ${year}`,
             backgroundMessage: null,
             startTime: Date.now()
         });
 
         try {
-            const response = await fetch('/api/get-akb');
+            // Pass year query param
+            const response = await fetch(`/api/get-akb?year=${year}`);
             if (!response.ok) throw new Error('Failed to fetch AKB data from cloud');
             const rawSheetData = await response.json();
             
@@ -354,7 +356,7 @@ const App: React.FC = () => {
             }
 
             // Hand over to worker
-            initWorker({ rawSheetData }, 'Данные получены, запуск обработки...', 'Cloud: AKB Sheet');
+            initWorker({ rawSheetData }, 'Данные получены, запуск обработки...', `Cloud: AKB Sheet ${year}`);
 
         } catch (error) {
             console.error("Cloud load error:", error);

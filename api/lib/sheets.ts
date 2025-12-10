@@ -179,12 +179,24 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  * Fetches the Active Client Base (AKB) from multiple Google Sheets (Jan 2025 - Dec 2026).
  * It aggregates data from all provided source sheets into a single dataset.
  * It ensures only one header row is preserved at the top.
+ * 
+ * @param year - Optional year string (e.g. "2025" or "2026") to filter which sheets to load.
  */
-export async function getAkbData(): Promise<any[][]> {
+export async function getAkbData(year?: string): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     const allData: any[][] = [];
     let headersSet = false;
     const errors: string[] = [];
+
+    // Filter sources based on requested year to reduce load
+    let sourcesToFetch = AKB_SOURCES;
+    if (year) {
+        sourcesToFetch = AKB_SOURCES.filter(source => source.month.includes(year));
+    }
+
+    if (sourcesToFetch.length === 0) {
+        throw new Error(`Нет данных для выбранного года: ${year}`);
+    }
 
     // Helper function to fetch data from a batch of sources
     const processBatch = async (batch: typeof AKB_SOURCES) => {
@@ -211,10 +223,10 @@ export async function getAkbData(): Promise<any[][]> {
     };
 
     // Process in larger chunks to speed up (parallelize more)
-    // 10 concurrent requests is usually safe for Google API standard quota (60 per min / user)
-    const chunkSize = 10; 
-    for (let i = 0; i < AKB_SOURCES.length; i += chunkSize) {
-        const batch = AKB_SOURCES.slice(i, i + chunkSize);
+    // Decreased chunk size to 4 to prevent 500 errors on Vercel Hobby plan timeouts
+    const chunkSize = 4; 
+    for (let i = 0; i < sourcesToFetch.length; i += chunkSize) {
+        const batch = sourcesToFetch.slice(i, i + chunkSize);
         const batchResults = await processBatch(batch);
 
         for (const rows of batchResults) {
@@ -233,7 +245,7 @@ export async function getAkbData(): Promise<any[][]> {
         }
         
         // Small delay between batches to respect rate limits
-        if (i + chunkSize < AKB_SOURCES.length) {
+        if (i + chunkSize < sourcesToFetch.length) {
              await new Promise(resolve => setTimeout(resolve, 200)); 
         }
     }
@@ -246,7 +258,7 @@ export async function getAkbData(): Promise<any[][]> {
         } catch(e) {}
         
         throw new Error(
-            `Не удалось загрузить данные ни из одной таблицы. \n` +
+            `Не удалось загрузить данные ни из одной таблицы за ${year || 'все годы'}. \n` +
             `Вероятно, у сервисного аккаунта нет доступа. \n` +
             `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к этим таблицам для email: \n${email}\n\n` +
             `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`
