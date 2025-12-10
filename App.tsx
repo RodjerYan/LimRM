@@ -356,8 +356,8 @@ const App: React.FC = () => {
                     if (errorData.details) errorMsg = errorData.details;
                     else if (errorData.error) errorMsg = errorData.error;
                 } catch (e) {
-                    // ignore json parse error, fall back to status text
-                    errorMsg = response.statusText;
+                    // ignore json parse error, fall back to status text if available
+                    errorMsg = response.statusText || 'Unknown Server Error (500). Check Vercel logs.';
                 }
                 throw new Error(errorMsg);
             }

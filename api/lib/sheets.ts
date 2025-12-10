@@ -184,7 +184,7 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  */
 export async function getAkbData(year?: string): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
-    let allData: any[][] = [];
+    const allData: any[][] = []; // Keep as const ref, mutate content
     let headersSet = false;
     const errors: string[] = [];
 
@@ -222,31 +222,37 @@ export async function getAkbData(year?: string): Promise<any[][]> {
         return Promise.all(promises);
     };
 
-    // Process in larger chunks to speed up (parallelize more)
-    // Increased chunk size to 12 to fetch entire year in parallel and avoid Vercel 10s timeout
-    const chunkSize = 12; 
+    // Process in chunks to balance concurrency and memory usage.
+    // 6 allows 2 batches for a full year (12 months), reducing memory pressure compared to all-at-once.
+    const chunkSize = 6; 
     for (let i = 0; i < sourcesToFetch.length; i += chunkSize) {
         const batch = sourcesToFetch.slice(i, i + chunkSize);
         const batchResults = await processBatch(batch);
 
         for (const rows of batchResults) {
-            if (rows.length === 0) continue;
+            if (!rows || rows.length === 0) continue;
 
             if (!headersSet) {
                 // First successful fetch: take headers and data
-                // Fix: use concat to avoid stack overflow on large datasets
-                allData = allData.concat(rows);
+                // Optimization: Use loop push instead of spread/concat to manage memory and stack
+                for (let r = 0; r < rows.length; r++) {
+                    allData.push(rows[r]);
+                }
                 headersSet = true;
             } else {
                 // Subsequent fetches: skip header (row 0), take data
                 if (rows.length > 1) {
-                    // Fix: use concat to avoid stack overflow
-                    allData = allData.concat(rows.slice(1));
+                    for (let r = 1; r < rows.length; r++) {
+                        allData.push(rows[r]);
+                    }
                 }
             }
         }
         
-        // No delay needed for single batch
+        // Small delay to let GC breathe if needed
+        if (i + chunkSize < sourcesToFetch.length) {
+             await new Promise(resolve => setTimeout(resolve, 100));
+        }
     }
 
     if (allData.length === 0) {
