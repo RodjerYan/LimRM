@@ -697,4 +697,4 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     }
 
     return null;
-}
+}.
