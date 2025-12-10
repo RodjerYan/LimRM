@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
 
@@ -12,16 +12,9 @@ interface OKBManagementProps {
 const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
     const [isFetching, setIsFetching] = useState(false);
 
-    useEffect(() => {
-        if (!status) {
-            onStatusChange({ status: 'idle', message: 'Загрузите данные ОКБ для начала работы.' });
-        }
-    }, [onStatusChange, status]);
-
-
-    const handleFetchData = async () => {
+    const handleFetchData = useCallback(async () => {
         setIsFetching(true);
-        onStatusChange({ status: 'loading', message: 'Загрузка данных ОКБ... Это может занять до минуты.' });
+        onStatusChange({ status: 'loading', message: 'Автоматическая загрузка данных ОКБ...' });
         try {
             const response = await fetch('/api/get-okb');
             if (!response.ok) {
@@ -42,7 +35,14 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         } finally {
             setIsFetching(false);
         }
-    };
+    }, [onStatusChange, onDataChange]);
+
+    useEffect(() => {
+        if (!status) {
+            // Автоматическая загрузка при старте (если статус отсутствует)
+            handleFetchData();
+        }
+    }, [status, handleFetchData]);
 
     const isLoading = isFetching || status?.status === 'loading';
     const isReady = status?.status === 'ready';
