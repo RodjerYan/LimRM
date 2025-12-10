@@ -223,8 +223,8 @@ export async function getAkbData(year?: string): Promise<any[][]> {
     };
 
     // Process in larger chunks to speed up (parallelize more)
-    // Decreased chunk size to 4 to prevent 500 errors on Vercel Hobby plan timeouts
-    const chunkSize = 4; 
+    // Decreased chunk size to 3 to effectively prevent 500 errors on Vercel Hobby plan timeouts
+    const chunkSize = 3; 
     for (let i = 0; i < sourcesToFetch.length; i += chunkSize) {
         const batch = sourcesToFetch.slice(i, i + chunkSize);
         const batchResults = await processBatch(batch);

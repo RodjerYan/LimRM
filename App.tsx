@@ -348,7 +348,19 @@ const App: React.FC = () => {
         try {
             // Pass year query param
             const response = await fetch(`/api/get-akb?year=${year}`);
-            if (!response.ok) throw new Error('Failed to fetch AKB data from cloud');
+            if (!response.ok) {
+                // FIX: Properly extract JSON error details from the response to show meaningful errors to the user.
+                let errorMsg = 'Failed to fetch AKB data from cloud';
+                try {
+                    const errorData = await response.json();
+                    if (errorData.details) errorMsg = errorData.details;
+                    else if (errorData.error) errorMsg = errorData.error;
+                } catch (e) {
+                    // ignore json parse error, fall back to status text
+                    errorMsg = response.statusText;
+                }
+                throw new Error(errorMsg);
+            }
             const rawSheetData = await response.json();
             
             if (!Array.isArray(rawSheetData) || rawSheetData.length === 0) {
@@ -360,12 +372,14 @@ const App: React.FC = () => {
 
         } catch (error) {
             console.error("Cloud load error:", error);
+            const msg = (error as Error).message;
             setProcessingState(prev => ({ 
                 ...prev, 
                 isProcessing: false, 
-                message: `Ошибка загрузки из облака: ${(error as Error).message}` 
+                message: `Ошибка: ${msg}` 
             }));
-            addNotification('Не удалось загрузить данные из Google Sheets', 'error');
+            // Show a longer notification for errors to allow reading
+            addNotification(`Ошибка загрузки: ${msg}`, 'error');
         }
     }, [initWorker, addNotification]);
 
