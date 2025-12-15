@@ -283,7 +283,14 @@ const findDateRange = (data: any[]): string | undefined => {
  * This prevents the "All Unidentified" issue when files have metadata rows at the top.
  */
 function findHeaderRowIndex(rawRows: any[][]): number {
-    const CRITICAL_KEYWORDS = ['рм', 'региональный менеджер', 'менеджер', 'адрес', 'клиент', 'контрагент', 'вес', 'факт', 'бренд'];
+    const CRITICAL_KEYWORDS = [
+        'distrid', 'дистрибьютор', // User specific
+        'рм', 'региональный менеджер', 'менеджер', // User specific
+        'адрес', 'адрес тт limkorm', // User specific
+        'клиент', 'контрагент', 
+        'вес', 'вес, кг', // User specific
+        'факт', 'бренд', 'торговая марка' // User specific
+    ];
     const MAX_SCAN_ROWS = 25; // Limit scanning to top 25 rows
 
     for (let i = 0; i < Math.min(rawRows.length, MAX_SCAN_ROWS); i++) {
@@ -468,6 +475,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // Strict keyword matching for RM to avoid picking up "Специализация корма"
         const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер']);
+
+        // Check if this row is actually a duplicate header from merged files
+        if (rm.toLowerCase() === 'рм' || rm.toLowerCase() === 'региональный менеджер') {
+            continue;
+        }
 
         if (i > 0 && i % 5000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);

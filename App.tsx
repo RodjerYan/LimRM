@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import Navigation from './components/Navigation';
@@ -374,51 +373,24 @@ const App: React.FC = () => {
 
             const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
             
-            // --- FIX: Intelligent Header Deduplication & Stack Overflow Prevention ---
-            // 1. We must find the headers exactly ONCE.
-            // 2. We must ignore header rows in subsequent chunks.
-            // 3. We must avoid spread operator on massive arrays.
+            // --- FIX: NO SMART HEADER DETECTION HERE ---
+            // Simply merge all raw rows. The Worker will find the headers.
+            // This avoids dropping data if the first row of a chunk is not what we expect.
             
             let combinedData: any[] = [];
-            let headers: any[] | null = null;
 
             for (const { q, data } of results) {
                 if (!Array.isArray(data) || data.length === 0) continue;
 
-                // Simple heuristic: Does the first row look like a header?
-                // Check if it contains specific known column names.
-                const firstRow = data[0];
-                const firstRowStr = JSON.stringify(firstRow).toLowerCase();
-                const looksLikeHeader = firstRowStr.includes('рм') || firstRowStr.includes('дистрибьютор') || firstRowStr.includes('адрес');
-
-                let startIndex = 0;
-
-                if (looksLikeHeader) {
-                    if (!headers) {
-                        // Capture headers from the first valid chunk that has them
-                        headers = firstRow;
-                    }
-                    // Skip the header row for this data chunk so we don't have duplicate headers in the body
-                    startIndex = 1; 
-                }
-
-                // FIX: Use loop instead of push(...data) to avoid "Maximum call stack size exceeded"
-                for (let i = startIndex; i < data.length; i++) {
+                // Loop push is required to prevent "Maximum call stack size exceeded" 
+                // when arrays are very large (thousands of rows)
+                for (let i = 0; i < data.length; i++) {
                     combinedData.push(data[i]);
                 }
             }
 
             if (combinedData.length === 0) { 
                 throw new Error('Данные за выбранный год не найдены или папки пусты.');
-            }
-
-            // Re-attach the SINGLE header row at the very top
-            if (headers) {
-                combinedData.unshift(headers);
-            } else {
-                // Fallback: If no headers were detected (weird data), we might be missing them or using raw data.
-                // The worker's smart detection will try its best, but this is a warning sign.
-                console.warn("No clear headers found in cloud chunks. Sending raw data.");
             }
 
             // Hand over to worker
