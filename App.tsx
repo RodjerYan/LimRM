@@ -359,7 +359,6 @@ const App: React.FC = () => {
                             if (errorData.details) errorMsg = errorData.details;
                             else if (errorData.error) errorMsg = errorData.error;
                         } catch (e) { /* ignore */ }
-                        // Allow specific quarters to fail if they don't exist yet
                         console.warn(`Warn: ${errorMsg}`);
                         return { q, data: [] }; 
                     }
@@ -367,7 +366,6 @@ const App: React.FC = () => {
                     return { q, data };
                 } catch (error) {
                     console.error(`Failed to fetch Q${q}:`, error);
-                    // Return empty data on error to prevent total failure
                     return { q, data: [] };
                 }
             };
@@ -376,27 +374,55 @@ const App: React.FC = () => {
 
             const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
             
-            // Merge results safely
-            let mergedData: any[] = [];
+            // --- FIX: Intelligent Header Deduplication & Stack Overflow Prevention ---
+            // 1. We must find the headers exactly ONCE.
+            // 2. We must ignore header rows in subsequent chunks.
+            // 3. We must avoid spread operator on massive arrays.
             
-            // Just push ALL rows from ALL successful chunks.
-            // We do NOT strip headers here because we don't know where the real headers are yet.
-            // The worker will be responsible for finding the header row and filtering garbage.
-            results.forEach(({ q, data }) => {
-                if (Array.isArray(data) && data.length > 0) {
-                    // Use simple loop to avoid stack overflow with large arrays
-                    for (let i = 0; i < data.length; i++) {
-                        mergedData.push(data[i]);
-                    }
-                }
-            });
+            let combinedData: any[] = [];
+            let headers: any[] | null = null;
 
-            if (mergedData.length === 0) { 
+            for (const { q, data } of results) {
+                if (!Array.isArray(data) || data.length === 0) continue;
+
+                // Simple heuristic: Does the first row look like a header?
+                // Check if it contains specific known column names.
+                const firstRow = data[0];
+                const firstRowStr = JSON.stringify(firstRow).toLowerCase();
+                const looksLikeHeader = firstRowStr.includes('рм') || firstRowStr.includes('дистрибьютор') || firstRowStr.includes('адрес');
+
+                let startIndex = 0;
+
+                if (looksLikeHeader) {
+                    if (!headers) {
+                        // Capture headers from the first valid chunk that has them
+                        headers = firstRow;
+                    }
+                    // Skip the header row for this data chunk so we don't have duplicate headers in the body
+                    startIndex = 1; 
+                }
+
+                // FIX: Use loop instead of push(...data) to avoid "Maximum call stack size exceeded"
+                for (let i = startIndex; i < data.length; i++) {
+                    combinedData.push(data[i]);
+                }
+            }
+
+            if (combinedData.length === 0) { 
                 throw new Error('Данные за выбранный год не найдены или папки пусты.');
             }
 
+            // Re-attach the SINGLE header row at the very top
+            if (headers) {
+                combinedData.unshift(headers);
+            } else {
+                // Fallback: If no headers were detected (weird data), we might be missing them or using raw data.
+                // The worker's smart detection will try its best, but this is a warning sign.
+                console.warn("No clear headers found in cloud chunks. Sending raw data.");
+            }
+
             // Hand over to worker
-            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, поиск заголовков...', `Cloud: AKB Sheet ${year}`);
+            initWorker({ rawSheetData: combinedData }, 'Сборка данных завершена, поиск заголовков...', `Cloud: AKB Sheet ${year}`);
 
         } catch (error) {
             console.error("Cloud load error:", error);
