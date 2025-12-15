@@ -386,10 +386,17 @@ const App: React.FC = () => {
                     if (!headers) {
                         headers = data[0];
                         mergedData.push(headers); // Add header row once
-                        mergedData.push(...data.slice(1));
+                        // FIX: Use loop instead of spread to prevent RangeError: Maximum call stack size exceeded
+                        // when dealing with large datasets (e.g. > 100k rows)
+                        for (let i = 1; i < data.length; i++) {
+                            mergedData.push(data[i]);
+                        }
                     } else {
                         // Skip header row for subsequent chunks
-                        mergedData.push(...data.slice(1));
+                        // FIX: Use loop instead of spread
+                        for (let i = 1; i < data.length; i++) {
+                            mergedData.push(data[i]);
+                        }
                     }
                 }
             });
