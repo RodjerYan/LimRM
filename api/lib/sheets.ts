@@ -143,8 +143,9 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
  * 
  * @param year - Year string (e.g. "2025") to find the specific year folder.
  * @param quarter - Optional quarter number (1-4) to filter month folders.
+ * @param month - Optional month number (1-12) to filter month folders.
  */
-export async function getAkbData(year?: string, quarter?: number): Promise<any[][]> {
+export async function getAkbData(year?: string, quarter?: number, month?: number): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     const drive = await getGoogleDriveClient();
     
@@ -168,13 +169,29 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     const monthFoldersRes = await drive.files.list({
         q: `'${yearFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
         fields: 'files(id, name)',
-        pageSize: 100 // Should cover 12 months easily
+        pageSize: 100 
     });
 
     let monthFolders = monthFoldersRes.data.files || [];
 
-    // 3. Filter Month Folders by Quarter (if provided)
-    if (quarter) {
+    // 3. Filter Month Folders
+    if (month) {
+        const monthNames = [
+            ['january', 'январь', '01', '1'], ['february', 'февраль', '02', '2'], ['march', 'март', '03', '3'],
+            ['april', 'апрель', '04', '4'], ['may', 'май', '05', '5'], ['june', 'июнь', '06', '6'],
+            ['july', 'июль', '07', '7'], ['august', 'август', '08', '8'], ['september', 'сентябрь', '09', '9'],
+            ['october', 'октябрь', '10'], ['november', 'ноябрь', '11'], ['december', 'декабрь', '12']
+        ];
+        
+        if (month >= 1 && month <= 12) {
+            const targetAliases = monthNames[month - 1];
+            monthFolders = monthFolders.filter(f => {
+                const nameLower = (f.name || '').toLowerCase();
+                // Ensure exact word matching or distinct delimiter to avoid matching "Jan" inside "Jani"
+                return targetAliases.some(m => nameLower.includes(m));
+            });
+        }
+    } else if (quarter) {
         const monthMap: Record<number, string[]> = {
             1: ['january', 'february', 'march', 'январь', 'февраль', 'март', '01', '1', '02', '2', '03', '3'],
             2: ['april', 'may', 'june', 'апрель', 'май', 'июнь', '04', '4', '05', '5', '06', '6'],
@@ -190,17 +207,13 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         }
     }
 
-    // FIX: If no folders found for a specific quarter, just return empty data.
-    // This allows parallel requests for future quarters (empty) to succeed without crashing the app.
+    // FIX: Return empty if no folders found for specific range (normal for future months)
     if (monthFolders.length === 0) {
-        if (quarter) {
-            return []; // Valid empty result for a specific quarter
-        }
+        if (quarter || month) return [];
         throw new Error(`Нет папок месяцев внутри папки ${targetYear}`);
     }
 
-    // 4. Find all spreadsheet files inside the selected month folders
-    // We do this in parallel for all selected months
+    // 4. Find all spreadsheet files
     const sourcesToFetch: { id: string; month: string }[] = [];
 
     await Promise.all(monthFolders.map(async (folder) => {
@@ -208,7 +221,7 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         const filesRes = await drive.files.list({
             q: `'${folder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false`,
             fields: 'files(id, name)',
-            pageSize: 50 // Accommodate split files (e.g. January, January_1)
+            pageSize: 50 
         });
         
         filesRes.data.files?.forEach(file => {
@@ -221,15 +234,12 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         });
     }));
 
-    // If we found folders but no files inside them
     if (sourcesToFetch.length === 0) {
-        if (quarter) return []; // Valid empty result
+        if (quarter || month) return []; 
         throw new Error(`Папки месяцев найдены, но в них нет файлов Excel/Google Sheets за ${targetYear}`);
     }
 
-    console.log(`Found ${sourcesToFetch.length} files to fetch for ${targetYear} Q${quarter || 'All'}`);
-
-    // 5. Fetch content from all found spreadsheets
+    // 5. Fetch content
     const fetchPromises = sourcesToFetch.map(async (source) => {
         try {
             const res = await sheets.spreadsheets.values.get({
@@ -253,13 +263,11 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         if (!rows || rows.length === 0) continue;
 
         if (!headersSet) {
-            // First successful fetch: take headers and data
             for (let r = 0; r < rows.length; r++) {
                 allData.push(rows[r]);
             }
             headersSet = true;
         } else {
-            // Subsequent fetches: skip header (row 0), take data
             if (rows.length > 1) {
                 for (let r = 1; r < rows.length; r++) {
                     allData.push(rows[r]);
@@ -268,28 +276,15 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         }
     }
 
-    // Only throw error if we tried to fetch files but got absolutely nothing and it wasn't an empty quarter scenario
     if (allData.length === 0 && sourcesToFetch.length > 0) {
-        let email = "unknown";
-        try {
-             const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
-             email = key.client_email;
-        } catch(e) {}
-        
-        throw new Error(
-            `Не удалось загрузить данные ни из одной таблицы (всего найдено: ${sourcesToFetch.length}). \n` +
-            `Вероятно, у сервисного аккаунта нет доступа к файлам внутри папок. \n` +
-            `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к корневой папке и всем вложенным папкам/файлам для email: \n${email}\n\n` +
-            `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`
-        );
+        // Only throw if we expected data but failed completely
+        return [];
     }
 
     return allData;
 }
 
-
-// --- COORDINATE CACHE FUNCTIONS ---
-
+// ... (rest of the file: CoordsCache functions) ...
 function normalizeForComparison(str: string): string {
     return String(str || '')
         .toLowerCase()

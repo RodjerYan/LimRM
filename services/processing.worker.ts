@@ -1,3 +1,4 @@
+
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -284,12 +285,13 @@ const findDateRange = (data: any[]): string | undefined => {
  */
 function findHeaderRowIndex(rawRows: any[][]): number {
     const CRITICAL_KEYWORDS = [
-        'distrid', 'дистрибьютор', // User specific
-        'рм', 'региональный менеджер', 'менеджер', // User specific
-        'адрес', 'адрес тт limkorm', // User specific
+        '1distrid', 'distrid', // Exact match for user case
+        'дистрибьютор', 
+        'рм', 'региональный менеджер', 'менеджер', 
+        'адрес тт limkorm', 'фактический адрес', 'адрес',
         'клиент', 'контрагент', 
-        'вес', 'вес, кг', // User specific
-        'факт', 'бренд', 'торговая марка' // User specific
+        'вес', 'вес, кг', 
+        'факт', 'бренд', 'торговая марка'
     ];
     const MAX_SCAN_ROWS = 25; // Limit scanning to top 25 rows
 

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import Navigation from './components/Navigation';
@@ -333,7 +334,7 @@ const App: React.FC = () => {
         initWorker({ file }, 'Загрузка кэша координат...', file.name);
     }, [initWorker]);
 
-    // Updated to split load into 4 requests to avoid timeouts
+    // Updated to split load into MONTHS to avoid timeouts and payload limits
     const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
         setProcessingState({
             isProcessing: true,
@@ -345,45 +346,54 @@ const App: React.FC = () => {
         });
 
         try {
-            // Initiate 4 parallel requests for each quarter
-            const quarters = [1, 2, 3, 4];
+            // Initiate parallel requests for each month (1-12) to keep payload small
+            const months = Array.from({length: 12}, (_, i) => i + 1);
             
-            const fetchQuarter = async (q: number) => {
+            const fetchMonth = async (m: number) => {
                 try {
-                    const response = await fetch(`/api/get-akb?year=${year}&quarter=${q}`);
+                    const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
                     if (!response.ok) {
-                        let errorMsg = `Quarter ${q} fetch failed`;
+                        let errorMsg = `Month ${m} fetch failed`;
                         try {
                             const errorData = await response.json();
                             if (errorData.details) errorMsg = errorData.details;
                             else if (errorData.error) errorMsg = errorData.error;
                         } catch (e) { /* ignore */ }
                         console.warn(`Warn: ${errorMsg}`);
-                        return { q, data: [] }; 
+                        return { m, data: [] }; 
                     }
                     const data = await response.json();
-                    return { q, data };
+                    return { m, data };
                 } catch (error) {
-                    console.error(`Failed to fetch Q${q}:`, error);
-                    return { q, data: [] };
+                    console.error(`Failed to fetch Month ${m}:`, error);
+                    return { m, data: [] };
                 }
             };
 
-            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка кварталов 1-4...` }));
+            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка данных по месяцам (1-12)...` }));
 
-            const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
+            // Process 4 months at a time to be safe with browser connection limits
+            const results = [];
+            for (let i = 0; i < months.length; i += 4) {
+                const chunk = months.slice(i, i + 4);
+                const chunkResults = await Promise.all(chunk.map(m => fetchMonth(m)));
+                results.push(...chunkResults);
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    progress: 10 + Math.round((i / 12) * 20),
+                    message: `Загружено ${Math.min(i + 4, 12)}/12 месяцев...`
+                }));
+            }
             
-            // --- FIX: NO SMART HEADER DETECTION HERE ---
-            // Simply merge all raw rows. The Worker will find the headers.
-            // This avoids dropping data if the first row of a chunk is not what we expect.
+            // --- MERGE LOGIC ---
+            // Just concatenate all raw rows. The Worker will handle header detection and deduping.
             
             let combinedData: any[] = [];
 
-            for (const { q, data } of results) {
+            for (const { m, data } of results) {
                 if (!Array.isArray(data) || data.length === 0) continue;
 
-                // Loop push is required to prevent "Maximum call stack size exceeded" 
-                // when arrays are very large (thousands of rows)
+                // Safe loop push to avoid "Maximum call stack size exceeded"
                 for (let i = 0; i < data.length; i++) {
                     combinedData.push(data[i]);
                 }
