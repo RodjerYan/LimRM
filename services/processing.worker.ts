@@ -299,22 +299,22 @@ function findHeaderRowIndex(rawRows: any[][]): number {
         'дм'
     ];
     
-    // Scan first 25 rows
-    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+    // Scan first 30 rows
+    for (let i = 0; i < Math.min(rawRows.length, 30); i++) {
         const row = rawRows[i];
         if (!Array.isArray(row)) continue;
         
         const rowStr = row.map(cell => String(cell || '').toLowerCase().trim());
         
-        // Count how many of our STRICT headers appear in this row
+        // Count matches using partial includes to handle sticky formatting
         let matchCount = 0;
         for (const header of STRICT_HEADERS) {
-            if (rowStr.includes(header)) {
+            if (rowStr.some(cell => cell.includes(header))) {
                 matchCount++;
             }
         }
 
-        // If we find at least 3 of these specific headers, we are confident this is the right row.
+        // If we find at least 3 of these specific headers
         if (matchCount >= 3) {
             console.log(`Strict Header Detection: Found matches at row ${i} (matches: ${matchCount})`);
             return i;
@@ -323,11 +323,12 @@ function findHeaderRowIndex(rawRows: any[][]): number {
 
     // Fallback: Use the anchor if strict count fails
     const ANCHOR_KEYWORD = 'адрес тт limkorm';
-    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+    for (let i = 0; i < Math.min(rawRows.length, 30); i++) {
         const row = rawRows[i];
         if (!Array.isArray(row)) continue;
         const rowStr = row.map(cell => String(cell || '').toLowerCase().trim());
-        if (rowStr.includes(ANCHOR_KEYWORD)) {
+        // Try strict and partial check for anchor
+        if (rowStr.some(cell => cell.includes(ANCHOR_KEYWORD))) {
              return i;
         }
     }
@@ -358,15 +359,14 @@ self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[
                  throw new Error('Файл не содержит данных после заголовков.');
             }
 
-            const headers = effectiveData[0].map(h => String(h || ''));
+            // FORCE TRIM HEADERS to avoid "РМ " mismatch
+            const headers = effectiveData[0].map(h => String(h || '').trim());
             const rows = effectiveData.slice(1);
             
             // 3. Convert to Objects
             const jsonData = rows.map(rowArray => {
                 const obj: any = {};
                 headers.forEach((h, i) => {
-                    // Use index to map value to header. 
-                    // Important: rowArray might be shorter than headers array if trailing cells are empty.
                     if (h) obj[h] = rowArray[i];
                 });
                 return obj;
@@ -487,8 +487,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const row = jsonData[i];
         
         // STRICT USER DEFINED FIELDS SEARCH
-        // FIX: Add 'pm' (Latin) support as fallback if file uses mixed encodings
-        const rm = findValueInRow(row, ['рм', 'pm']); 
+        // FIX: Add 'pm' (Latin) support and ensure we check against keys without whitespace (headers are trimmed now)
+        const rm = findValueInRow(row, ['рм', 'pm', 'рм ']); 
         
         // Strict "Адрес ТТ LimKorm" priority
         let clientAddress = findValueInRow(row, ['адрес тт limkorm']) || findAddressInRow(row);
@@ -499,7 +499,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // If RM is missing, it's definitely unidentified.
         if (!rm) {
-            unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
+            // MEMORY FIX: Only store first 1000 unidentified rows to prevent OOM
+            if (unidentifiedRows.length < 1000) {
+                unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
+            }
             continue;
         }
 
@@ -537,7 +540,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // Check if the cached entry is explicitly invalid (e.g. "Не найдено" in sheet)
         if (cacheEntry && cacheEntry.isInvalid) {
-             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+             if (unidentifiedRows.length < 1000) {
+                 unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+             }
              continue;
         }
 
@@ -548,7 +553,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         // Reject only if we know NOTHING about location and have no cached coordinates
         if (!isCityFound && !isRegionFound && !isCached) {
-            unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+            if (unidentifiedRows.length < 1000) {
+                unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+            }
             continue;
         }
 
@@ -703,8 +710,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const resultPayload: WorkerResultPayload = { 
         aggregatedData: finalData, 
         plottableActiveClients, 
-        // CRITICAL FIX: Limit the size of unidentified rows payload to prevent "Out of Memory" crash when serialization fails for huge arrays.
-        unidentifiedRows: unidentifiedRows.slice(0, 1000), 
+        // IMPORTANT: We now pass the limited array
+        unidentifiedRows: unidentifiedRows, 
         okbRegionCounts,
         dateRange 
     };
