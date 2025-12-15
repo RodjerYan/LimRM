@@ -21,28 +21,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 quarter = q;
             }
         }
-
-        // Extract optional month parameter (1-12)
-        const monthStr = req.query.month as string;
-        let month: number | undefined;
-        if (monthStr) {
-            const m = parseInt(monthStr, 10);
-            if (!isNaN(m) && m >= 1 && m <= 12) {
-                month = m;
-            }
-        }
         
-        const akbData = await getAkbData(year, quarter, month);
+        const akbData = await getAkbData(year, quarter);
         
-        // Return 200 with empty array even if no data, as per new logic for split loading
-        // Only throw if absolutely no data AND no specific filter specified (full year missing)
-        if ((!akbData || akbData.length === 0) && !quarter && !month) {
-             throw new Error('No data found for year ' + year);
+        if (!akbData || akbData.length === 0) {
+             throw new Error('No data found for year ' + year + (quarter ? ` Q${quarter}` : ''));
         }
 
         // Prevent caching for this data as it might change frequently
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.status(200).json(akbData || []);
+        res.status(200).json(akbData);
     } catch (error) {
         console.error('Error fetching AKB data from Google Sheets:', error);
         

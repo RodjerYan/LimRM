@@ -334,7 +334,7 @@ const App: React.FC = () => {
         initWorker({ file }, 'Загрузка кэша координат...', file.name);
     }, [initWorker]);
 
-    // Updated to split load into MONTHS to avoid timeouts and payload limits
+    // Updated to split load into 4 requests to avoid timeouts
     const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
         setProcessingState({
             isProcessing: true,
@@ -346,65 +346,63 @@ const App: React.FC = () => {
         });
 
         try {
-            // Initiate parallel requests for each month (1-12) to keep payload small
-            const months = Array.from({length: 12}, (_, i) => i + 1);
+            // Initiate 4 parallel requests for each quarter
+            const quarters = [1, 2, 3, 4];
             
-            const fetchMonth = async (m: number) => {
+            const fetchQuarter = async (q: number) => {
                 try {
-                    const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
+                    const response = await fetch(`/api/get-akb?year=${year}&quarter=${q}`);
                     if (!response.ok) {
-                        let errorMsg = `Month ${m} fetch failed`;
+                        let errorMsg = `Quarter ${q} fetch failed`;
                         try {
                             const errorData = await response.json();
                             if (errorData.details) errorMsg = errorData.details;
                             else if (errorData.error) errorMsg = errorData.error;
                         } catch (e) { /* ignore */ }
-                        console.warn(`Warn: ${errorMsg}`);
-                        return { m, data: [] }; 
+                        throw new Error(errorMsg);
                     }
                     const data = await response.json();
-                    return { m, data };
+                    return { q, data };
                 } catch (error) {
-                    console.error(`Failed to fetch Month ${m}:`, error);
-                    return { m, data: [] };
+                    console.error(`Failed to fetch Q${q}:`, error);
+                    // Return empty array to allow partial success, or re-throw to fail hard
+                    // Let's re-throw to alert user if any part fails
+                    throw error;
                 }
             };
 
-            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка данных по месяцам (1-12)...` }));
+            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка кварталов 1-4...` }));
 
-            // Process 4 months at a time to be safe with browser connection limits
-            const results = [];
-            for (let i = 0; i < months.length; i += 4) {
-                const chunk = months.slice(i, i + 4);
-                const chunkResults = await Promise.all(chunk.map(m => fetchMonth(m)));
-                results.push(...chunkResults);
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    progress: 10 + Math.round((i / 12) * 20),
-                    message: `Загружено ${Math.min(i + 4, 12)}/12 месяцев...`
-                }));
-            }
+            const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
             
-            // --- MERGE LOGIC ---
-            // Just concatenate all raw rows. The Worker will handle header detection and deduping.
-            
-            let combinedData: any[] = [];
+            // Merge results
+            let mergedData: any[] = [];
+            // Preserve headers from the first successful chunk
+            let headers: any[] | null = null;
 
-            for (const { m, data } of results) {
-                if (!Array.isArray(data) || data.length === 0) continue;
-
-                // Safe loop push to avoid "Maximum call stack size exceeded"
-                for (let i = 0; i < data.length; i++) {
-                    combinedData.push(data[i]);
+            results.forEach(({ q, data }) => {
+                if (Array.isArray(data) && data.length > 0) {
+                    // Assuming first row is header. 
+                    // The backend `getAkbData` logic aggregates sources and keeps headers in the first row of result.
+                    // But if we call it 4 times, we get 4 results each with a header row.
+                    
+                    if (!headers) {
+                        headers = data[0];
+                        mergedData.push(headers); // Add header row once
+                        mergedData.push(...data.slice(1));
+                    } else {
+                        // Skip header row for subsequent chunks
+                        mergedData.push(...data.slice(1));
+                    }
                 }
-            }
+            });
 
-            if (combinedData.length === 0) { 
-                throw new Error('Данные за выбранный год не найдены или папки пусты.');
+            if (mergedData.length <= 1) { // Only header or empty
+                throw new Error('No data found for any quarter.');
             }
 
             // Hand over to worker
-            initWorker({ rawSheetData: combinedData }, 'Сборка данных завершена, поиск заголовков...', `Cloud: AKB Sheet ${year}`);
+            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, запуск обработки...', `Cloud: AKB Sheet ${year}`);
 
         } catch (error) {
             console.error("Cloud load error:", error);
