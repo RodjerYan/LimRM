@@ -189,10 +189,14 @@ function findPotentialClients(
 }
 
 const findClientNameHeader = (headers: string[]): string | undefined => {
+    // Explicit priority for user defined headers
+    const strictMatch = headers.find(h => h.toLowerCase().trim() === 'уникальное наименование товара');
+    if (strictMatch) return strictMatch;
+
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
     const priorityTerms = [
-        'уникальное наименование товара', // Exact user term
+        'уникальное наименование товара',
         'название магазина limkorm', 
         'название клиента', 
         'наименование клиента', 
@@ -278,58 +282,53 @@ const findDateRange = (data: any[]): string | undefined => {
 };
 
 /**
- * INTELLIGENT HEADER SEARCH
- * Scans the first 25 rows of a dataset to find the most likely header row.
- * PRIORITIZES 'Адрес ТТ LimKorm' as the golden anchor.
+ * INTELLIGENT HEADER SEARCH - UPDATED
+ * Prioritizes EXACT user provided headers.
  */
 function findHeaderRowIndex(rawRows: any[][]): number {
-    const ANCHOR_KEYWORD = 'адрес тт limkorm';
-    
-    // 1. Scan for the specific anchor column first (Highest Priority)
-    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
-        const row = rawRows[i];
-        if (!Array.isArray(row)) continue;
-        const rowStr = row.map(cell => String(cell || '').toLowerCase());
-        
-        if (rowStr.includes(ANCHOR_KEYWORD)) {
-            console.log(`Smart Header Detection: Found EXACT Anchor at row ${i}`);
-            return i;
-        }
-    }
-
-    // 2. Fallback to multi-keyword matching if anchor not found
-    const CRITICAL_KEYWORDS = [
-        'дистрибьютор', 
+    const STRICT_HEADERS = [
+        'дистрибьютор',
         'торговая марка',
         'уникальное наименование товара',
         'фасовка',
-        'вес, кг', 'вес кг', 'вес',
+        'вес, кг',
         'месяц',
-        'адрес',
+        'адрес тт limkorm',
         'канал продаж',
         'рм',
         'дм'
     ];
     
+    // Scan first 25 rows
     for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
         const row = rawRows[i];
         if (!Array.isArray(row)) continue;
-
-        let matchCount = 0;
-        const rowStr = row.map(cell => String(cell || '').toLowerCase());
         
-        for (const cell of rowStr) {
-            for (const keyword of CRITICAL_KEYWORDS) {
-                if (cell.includes(keyword)) {
-                    matchCount++;
-                    break; 
-                }
+        const rowStr = row.map(cell => String(cell || '').toLowerCase().trim());
+        
+        // Count how many of our STRICT headers appear in this row
+        let matchCount = 0;
+        for (const header of STRICT_HEADERS) {
+            if (rowStr.includes(header)) {
+                matchCount++;
             }
         }
 
-        if (matchCount >= 2) {
-            console.log(`Smart Header Detection: Found headers at row index ${i}`);
+        // If we find at least 3 of these specific headers, we are confident this is the right row.
+        if (matchCount >= 3) {
+            console.log(`Strict Header Detection: Found matches at row ${i} (matches: ${matchCount})`);
             return i;
+        }
+    }
+
+    // Fallback: Use the anchor if strict count fails
+    const ANCHOR_KEYWORD = 'адрес тт limkorm';
+    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+        const row = rawRows[i];
+        if (!Array.isArray(row)) continue;
+        const rowStr = row.map(cell => String(cell || '').toLowerCase().trim());
+        if (rowStr.includes(ANCHOR_KEYWORD)) {
+             return i;
         }
     }
 
@@ -486,21 +485,13 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        // Strict keyword matching for RM to avoid picking up "Специализация корма"
-        const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер']);
-
-        // Check if this row is actually a duplicate header from merged files
-        if (rm.toLowerCase() === 'рм' || rm.toLowerCase() === 'региональный менеджер') {
-            continue;
-        }
-
-        if (i > 0 && i % 5000 === 0) {
-            const percentage = 10 + Math.round((i / jsonData.length) * 85);
-            postMessage({ type: 'progress', payload: { percentage, message: `Обработка: ${i.toLocaleString('ru-RU')}...` } });
-        }
+        // STRICT USER DEFINED FIELDS SEARCH
+        const rm = findValueInRow(row, ['рм']); // Strict "РМ"
+        const dm = findValueInRow(row, ['дм']); // Strict "ДМ" (if needed)
         
-        let clientAddress = findAddressInRow(row);
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
+        // Strict "Адрес ТТ LimKorm" priority
+        let clientAddress = findValueInRow(row, ['адрес тт limkorm']) || findAddressInRow(row);
+        const distributor = findValueInRow(row, ['дистрибьютор']);
         
         // Filter out empty rows or garbage rows that slipped through
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
@@ -566,12 +557,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         // We use the enriched final address for display if available, otherwise the potentially redirected one
         const finalAddress = parsedAddress.finalAddress || clientAddress || '';
         
-        // Updated Weight logic to prioritize explicit 'Вес, кг' or just 'Вес'
-        const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес кг', 'вес', 'сумма отгрузки, руб', 'количество, кг', 'нетто']) || '0').replace(/\s/g, '').replace(',', '.'));
+        // Strict Weight Logic based on user list
+        const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес']) || '0').replace(/\s/g, '').replace(',', '.'));
         
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Бренд не указан';
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        const brand = findValueInRow(row, ['торговая марка']) || 'Бренд не указан';
+        const packaging = findValueInRow(row, ['фасовка']) || 'Не указана';
 
         if (isNaN(weight)) continue;
         
@@ -638,7 +629,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 city: groupNameForAggregation,
                 region: regionForAggregation, 
                 rm, brand, packaging,
-                type: findValueInRow(row, ['канал продаж', 'канал']),
+                type: findValueInRow(row, ['канал продаж']),
                 contacts: findValueInRow(row, ['контакты', 'телефон']),
                 originalRow: row,
                 fact: weight,
