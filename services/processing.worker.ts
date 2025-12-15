@@ -192,12 +192,12 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
     const priorityTerms = [
+        'уникальное наименование товара', // Exact user term
         'название магазина limkorm', 
         'название клиента', 
         'наименование клиента', 
         'контрагент', 
         'клиент', 
-        'уникальное наименование товара'
     ];
     
     for (const term of priorityTerms) {
@@ -280,18 +280,20 @@ const findDateRange = (data: any[]): string | undefined => {
 /**
  * INTELLIGENT HEADER SEARCH
  * Scans the first 20 rows of a dataset to find the most likely header row.
- * It looks for rows containing critical keywords like "РМ", "Адрес", "Клиент".
- * This prevents the "All Unidentified" issue when files have metadata rows at the top.
+ * IT LOOKS FOR EXACT USER SPECIFIED HEADERS.
  */
 function findHeaderRowIndex(rawRows: any[][]): number {
     const CRITICAL_KEYWORDS = [
-        '1distrid', 'distrid', // Exact match for user case
         'дистрибьютор', 
-        'рм', 'региональный менеджер', 'менеджер', 
-        'адрес тт limkorm', 'фактический адрес', 'адрес',
-        'клиент', 'контрагент', 
-        'вес', 'вес, кг', 
-        'факт', 'бренд', 'торговая марка'
+        'торговая марка',
+        'уникальное наименование товара',
+        'фасовка',
+        'вес, кг', 'вес кг', 'вес',
+        'месяц',
+        'адрес тт limkorm', 'адрес',
+        'канал продаж',
+        'рм',
+        'дм'
     ];
     const MAX_SCAN_ROWS = 25; // Limit scanning to top 25 rows
 
