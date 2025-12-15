@@ -1,44 +1,17 @@
 
-import { google, sheets_v4 } from 'googleapis';
+import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-
-// List of all monthly AKB source sheets (Jan 2025 - Dec 2026)
-const AKB_SOURCES = [
-    { month: 'Январь 2025', id: '1AirnUDv3IiVWnwoNN0OmIVLLWSDsFmMNbEcA709j6EU' },
-    { month: 'Февраль 2025', id: '1MuWT53aC3-yKA57JjpWk3m1vj56bQHpNlBTZDUdFdjA' },
-    { month: 'Март 2025', id: '1dny_bp6wkXLJVXRJ3eFgCA0VMncaR_QtEEKkipSX7VY' },
-    { month: 'Апрель 2025', id: '1zWCHx1ESVs30cUi267qdbQ7uBjoLJxVMgKx9XMdZaVg' },
-    { month: 'Май 2025', id: '1PpKTF8gkA2Y-kt_6u6__LTNHyTLn0vOemKsPqMr5CVE' },
-    { month: 'Июнь 2025', id: '1mgBu2oD2R5FIcPEQRhg71C709bYrLppsGiv56of97Fk' },
-    { month: 'Июль 2025', id: '1z4hHi-e-nh28VQUAi1xwcH1KcRvdUB2r03Kp_YWqLJo' },
-    { month: 'Август 2025', id: '11eThOSwdltdcJEh6_zqTg_ZCk1w54ZHEF7TUCCyByyQ' },
-    { month: 'Сентябрь 2025', id: '1R-Ljp1RzIqRPX6O3PagepcI8Nmp3MdP-yzKrdS9dLN0' },
-    { month: 'Октябрь 2025', id: '1BfkwMXI_AJGykEWtNvhc3pECo23YQk327WmoGyEbPO8' },
-    { month: 'Ноябрь 2025', id: '18LU8W5a0edXEWwU-90TgPQPvYUmmL2HBFR-ndCkd5-Q' },
-    { month: 'Декабрь 2025', id: '17z9GEBxUl_moMabtTHKzl8ewPkSpEjb4U15W60A1rbM' },
-    { month: 'Январь 2026', id: '1L55_oeifyaLJNfUYbxTaOEEFN44YV6aKarWYNKF1hqs' },
-    { month: 'Февраль 2026', id: '1IB4h81Y0zv46Qw4HQ9PCAwu-hgbkbhjyRR_9TjwE4ns' },
-    { month: 'Март 2026', id: '1ENhibgwC04NBHqjT_nOvoMzHQoWGNEW7s9Q9pSK-IM8' },
-    { month: 'Апрель 2026', id: '1q71Yw-NVa08_dsqWxBzTZgVLEajQmkHP5leYSOWYYME' },
-    { month: 'Май 2026', id: '1S_J-u_mNchmQdIxUC8Ed5FNFrOEk5GhBJH5m-F5FtPM' },
-    { month: 'Июнь 2026', id: '1gaRZdfdHUGiKUVhkfiqSA__Qiu-A1qeIRCm-oJ7KgBo' },
-    { month: 'Июль 2026', id: '1-U4CppHolhOirbAAwZeh8ayraXBZu5JOlaWCOfthca0' },
-    { month: 'Август 2026', id: '1i5JSpM-EItiRhrVWjjPMLlvfNBDYKv66dFRY1MpMp74' },
-    { month: 'Сентябрь 2026', id: '1_tEPTqqsL1AVkWHRZvQkbnaz0gtGYN2uAvlDptFaHo0' },
-    { month: 'Октябрь 2026', id: '1bG4h2qNzBybwMKa3j9liRziBUE9O8LW5KH8trmRMuPo' },
-    { month: 'Ноябрь 2026', id: '1LpCYKO0M1uX2y3yXkXL809uG9NFHRYX_BcwqI9hMpCY' },
-    { month: 'Декабрь 2026', id: '1LqwBn8px0-KU8otKDSUV4yfYsLHzkM2I46bth_e5P40' }
-];
+const ROOT_FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ'; // Root folder containing Year folders
 
 /**
- * Creates and returns an authenticated Google Sheets API client.
- * It uses service account credentials stored in an environment variable.
+ * Creates and returns an authenticated Google Auth client.
+ * Shared between Sheets and Drive APIs.
  */
-async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
+async function getGoogleAuth() {
   const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   if (!serviceAccountKey) {
     throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
@@ -50,35 +23,42 @@ async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
   } catch (error) {
     console.error("Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:", error);
     throw new Error(
-      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string without extra characters or line breaks. Check your Vercel environment variable settings.'
+      'Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string.'
     );
   }
 
-  const auth = new google.auth.GoogleAuth({
+  return new google.auth.GoogleAuth({
     credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive.metadata.readonly' // Allow reading folder structure
+    ],
   });
+}
 
-  const sheets = google.sheets({ version: 'v4', auth });
-  return sheets;
+async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
+  const auth = await getGoogleAuth();
+  return google.sheets({ version: 'v4', auth });
+}
+
+async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
+    const auth = await getGoogleAuth();
+    return google.drive({ version: 'v3', auth });
 }
 
 /**
  * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
- * It parses the data into an array of structured objects compatible with the application's types.
- * This version includes robust parsing to handle empty rows and headers gracefully.
- * @returns {Promise<OkbDataRow[]>} A promise that resolves to an array of OKB data rows.
  */
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:P`, // Fetch a wider range to include potential coordinate columns
+    range: `${SHEET_NAME}!A:P`, 
   });
 
   const rows = res.data.values;
   if (!rows || rows.length < 2) {
-    return []; // No data or only a header row
+    return []; 
   }
 
   const header = rows[0].map(h => String(h || '').trim());
@@ -96,21 +76,13 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
                 row[key] = rowArray[index] || null;
             }
         });
-
-        // STRICT COLUMN MAPPING CONFIRMED BY SCREENSHOTS:
-        // OKB Sheet "Base for RM": 
-        // Column L (Index 11) = "Долгота" (Longitude)
-        // Column M (Index 12) = "Широта" (Latitude)
-        // 0-based index: A=0 ... K=10, L=11, M=12
         
         let latVal = row['lat'] || row['latitude'] || row['широта'] || row['Широта'];
         let lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['Долгота'];
 
-        // Force override from specific columns if headers failed or just to be safe
-        // We check if the row has enough columns to contain L and M
         if (rowArray.length > 12) {
-             const rawLon = rowArray[11]; // Column L is Longitude (Index 11)
-             const rawLat = rowArray[12]; // Column M is Latitude (Index 12)
+             const rawLon = rowArray[11]; 
+             const rawLat = rowArray[12]; 
              
              if (rawLat && rawLon) {
                  latVal = rawLat;
@@ -135,10 +107,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
   return okbData;
 }
 
-/**
- * Fetches only the client addresses from column C of the Google Sheet, skipping the header.
- * @returns {Promise<string[]>} A promise that resolves to an array of address strings.
- */
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
     const res = await sheets.spreadsheets.values.get({
@@ -150,11 +118,6 @@ export async function getOKBAddresses(): Promise<string[]> {
     return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
 }
 
-
-/**
- * Updates client statuses in the Google Sheet in a single batch request for efficiency.
- * @param {Array<{rowIndex: number, status: string}>} updates - An array of update objects.
- */
 export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: string }[]) {
     if (updates.length === 0) return;
 
@@ -174,81 +137,116 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     });
 }
 
-
 /**
- * Fetches the Active Client Base (AKB) from multiple Google Sheets (Jan 2025 - Dec 2026).
- * It aggregates data from all provided source sheets into a single dataset.
- * It ensures only one header row is preserved at the top.
+ * Dynamically discovers and fetches AKB data from Google Drive.
+ * Structure: Root Folder -> Year Folder (e.g. "2025") -> Month Folders -> Spreadsheet Files
  * 
- * @param year - Optional year string (e.g. "2025" or "2026") to filter which sheets to load.
- * @param quarter - Optional quarter number (1, 2, 3, 4) to filter specifically by quarter.
+ * @param year - Year string (e.g. "2025") to find the specific year folder.
+ * @param quarter - Optional quarter number (1-4) to filter month folders.
  */
 export async function getAkbData(year?: string, quarter?: number): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
+    const drive = await getGoogleDriveClient();
+    
+    const targetYear = year || '2025';
     const allData: any[][] = [];
     let headersSet = false;
     const errors: string[] = [];
 
-    // Filter sources based on requested year to reduce load
-    let sourcesToFetch = AKB_SOURCES;
-    if (year) {
-        sourcesToFetch = AKB_SOURCES.filter(source => source.month.includes(year));
+    // 1. Find the Folder for the requested Year
+    const yearFolderRes = await drive.files.list({
+        q: `'${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and name = '${targetYear}' and trashed = false`,
+        fields: 'files(id, name)',
+    });
+
+    const yearFolderId = yearFolderRes.data.files?.[0]?.id;
+    if (!yearFolderId) {
+        throw new Error(`Папка для года "${targetYear}" не найдена в корневой директории Google Drive.`);
     }
 
-    // Filter by Quarter if provided
+    // 2. List all Month sub-folders inside the Year folder
+    const monthFoldersRes = await drive.files.list({
+        q: `'${yearFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name)',
+        pageSize: 100 // Should cover 12 months easily
+    });
+
+    let monthFolders = monthFoldersRes.data.files || [];
+
+    // 3. Filter Month Folders by Quarter (if provided)
     if (quarter) {
         const monthMap: Record<number, string[]> = {
-            1: ['Январь', 'Февраль', 'Март'],
-            2: ['Апрель', 'Май', 'Июнь'],
-            3: ['Июль', 'Август', 'Сентябрь'],
-            4: ['Октябрь', 'Ноябрь', 'Декабрь']
+            1: ['january', 'february', 'march', 'январь', 'февраль', 'март', '01', '02', '03'],
+            2: ['april', 'may', 'june', 'апрель', 'май', 'июнь', '04', '05', '06'],
+            3: ['july', 'august', 'september', 'июль', 'август', 'сентябрь', '07', '08', '09'],
+            4: ['october', 'november', 'december', 'октябрь', 'ноябрь', 'декабрь', '10', '11', '12']
         };
         const targetMonths = monthMap[quarter];
         if (targetMonths) {
-            sourcesToFetch = sourcesToFetch.filter(source => 
-                targetMonths.some(m => source.month.startsWith(m))
-            );
+            monthFolders = monthFolders.filter(f => {
+                const nameLower = (f.name || '').toLowerCase();
+                return targetMonths.some(m => nameLower.includes(m));
+            });
         }
     }
 
-    if (sourcesToFetch.length === 0) {
-        throw new Error(`Нет данных для выбранного периода: ${year} Q${quarter || 'All'}`);
+    if (monthFolders.length === 0) {
+        throw new Error(`Нет папок месяцев для ${targetYear} Q${quarter || 'All'}`);
     }
 
-    // Helper function to fetch data from a batch of sources
-    const processBatch = async (batch: typeof AKB_SOURCES) => {
-        const promises = batch.map(async (source) => {
-            try {
-                // Optimization: Directly request range 'A:Z' which typically works for the first sheet.
-                // This avoids an extra API call to get sheet metadata/name.
-                const res = await sheets.spreadsheets.values.get({
-                    spreadsheetId: source.id,
-                    range: 'A:Z', 
-                    valueRenderOption: 'UNFORMATTED_VALUE', // Get raw numbers/dates
-                });
+    // 4. Find all spreadsheet files inside the selected month folders
+    // We do this in parallel for all selected months
+    const sourcesToFetch: { id: string; month: string }[] = [];
 
-                return res.data.values || [];
-            } catch (error) {
-                const msg = error instanceof Error ? error.message : String(error);
-                console.error(`Error fetching AKB data for ${source.month}:`, msg);
-                errors.push(`${source.month}: ${msg}`);
-                // Return empty array to allow other sheets to proceed even if one fails
-                return [];
+    await Promise.all(monthFolders.map(async (folder) => {
+        if (!folder.id) return;
+        const filesRes = await drive.files.list({
+            q: `'${folder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 50 // Accommodate split files (e.g. January, January_1)
+        });
+        
+        filesRes.data.files?.forEach(file => {
+            if (file.id) {
+                sourcesToFetch.push({
+                    id: file.id,
+                    month: folder.name || 'Unknown'
+                });
             }
         });
-        return Promise.all(promises);
-    };
+    }));
 
-    // Process all sources in one batch (concurrency up to 3 is generally safe for Google API per request)
-    // If quarter filtering is used, we only have 3 items max anyway.
-    const batchResults = await processBatch(sourcesToFetch);
+    if (sourcesToFetch.length === 0) {
+        throw new Error(`Не найдено файлов таблиц в папках за ${targetYear} Q${quarter || 'All'}`);
+    }
 
+    console.log(`Found ${sourcesToFetch.length} files to fetch for ${targetYear} Q${quarter || 'All'}`);
+
+    // 5. Fetch content from all found spreadsheets
+    const fetchPromises = sourcesToFetch.map(async (source) => {
+        try {
+            const res = await sheets.spreadsheets.values.get({
+                spreadsheetId: source.id,
+                range: 'A:Z', 
+                valueRenderOption: 'UNFORMATTED_VALUE',
+            });
+            return res.data.values || [];
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error(`Error fetching file ${source.id} (${source.month}):`, msg);
+            errors.push(`${source.month}: ${msg}`);
+            return [];
+        }
+    });
+
+    const batchResults = await Promise.all(fetchPromises);
+
+    // 6. Aggregate results
     for (const rows of batchResults) {
         if (!rows || rows.length === 0) continue;
 
         if (!headersSet) {
             // First successful fetch: take headers and data
-            // Optimization: Use loop push instead of spread/concat to manage memory and stack
             for (let r = 0; r < rows.length; r++) {
                 allData.push(rows[r]);
             }
@@ -271,9 +269,9 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         } catch(e) {}
         
         throw new Error(
-            `Не удалось загрузить данные ни из одной таблицы за ${year || 'все годы'} Q${quarter || 'All'}. \n` +
-            `Вероятно, у сервисного аккаунта нет доступа. \n` +
-            `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к этим таблицам для email: \n${email}\n\n` +
+            `Не удалось загрузить данные ни из одной таблицы (всего найдено: ${sourcesToFetch.length}). \n` +
+            `Вероятно, у сервисного аккаунта нет доступа к файлам внутри папок. \n` +
+            `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к корневой папке и всем вложенным папкам/файлам для email: \n${email}\n\n` +
             `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`
         );
     }
@@ -282,40 +280,26 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
 }
 
 
-// --- NEW FUNCTIONS FOR COORDINATE CACHE ---
+// --- COORDINATE CACHE FUNCTIONS ---
 
-/**
- * Robust string normalizer for comparison logic.
- * Handles non-breaking spaces, multiple whitespaces, and casing.
- */
 function normalizeForComparison(str: string): string {
     return String(str || '')
         .toLowerCase()
-        .replace(/\u00A0/g, ' ') // Replace non-breaking space
-        .replace(/[.,]/g, ' ')   // Replace common punctuation to avoid mismatches on typos
-        .replace(/\s+/g, ' ')    // Collapse multiple spaces
+        .replace(/\u00A0/g, ' ') 
+        .replace(/[.,]/g, ' ')   
+        .replace(/\s+/g, ' ')    
         .trim();
 }
 
-/**
- * Helper function to check if a specific address exists in a history string.
- * Handles timestamp stripping and various separators using robust normalization.
- */
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
-    // Split by newline (new format) or double pipe (old format)
     const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
     return entries.some(entry => {
-        // Remove the timestamp part: " [DD.MM.YYYY HH:mm]"
         const addrPart = entry.split('[')[0];
         return normalizeForComparison(addrPart) === targetAddressNorm;
     });
 }
 
-/**
- * Fetches all data from the coordinate cache spreadsheet.
- * @returns A record where keys are RM names (sheet titles) and values are arrays of cached data.
- */
 export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await sheets.spreadsheets.get({
@@ -325,8 +309,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
 
-    // Updated range to fetch Column E (Comments)
-    const ranges = sheetTitles.map(title => `'${title}'!A:E`); // Address, lat, lon, history/redirect, comment
+    const ranges = sheetTitles.map(title => `'${title}'!A:E`); 
     const response = await sheets.spreadsheets.values.batchGet({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         ranges,
@@ -338,35 +321,23 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     response.data.valueRanges?.forEach((valueRange) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) {
-             title = title.substring(1, title.length - 1); // unquote if sheet name has spaces
+             title = title.substring(1, title.length - 1); 
         }
         const values = valueRange.values || [];
-        if (values.length > 1) { // Skip header
+        if (values.length > 1) {
             cache[title] = values.slice(1).map(row => {
-                // AKB CACHE MAPPING CONFIRMED BY SCREENSHOTS "AKB base active":
-                // Column A (Index 0): Address
-                // Column B (Index 1): Latitude (lat)
-                // Column C (Index 2): Longitude (lon)
-                // Column D (Index 3): History/Old address
-                // Column E (Index 4): Comments (New)
-                
                 const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
                 const latStrLower = latStr.toLowerCase();
                 const lonStrLower = lonStr.toLowerCase();
                 
-                // Check for soft delete flag
                 const isDeleted = latStr === 'DELETED' || lonStr === 'DELETED';
-                
-                // Check for explicit error statuses in the cache sheet
                 const isInvalid = BAD_STATUSES.some(status => latStrLower.includes(status) || lonStrLower.includes(status));
 
                 const lat = (!isDeleted && !isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
                 const lon = (!isDeleted && !isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
                 
-                // Return raw history string. The worker will parse it to build the redirect map.
                 const history = row[3] ? String(row[3]).trim() : undefined;
-                
                 const comment = row[4] ? String(row[4]).trim() : undefined;
 
                 return {
@@ -378,39 +349,29 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                     isInvalid: isInvalid,
                     comment: comment
                 };
-            }).filter(item => item.address); // Only include items with an address
+            }).filter(item => item.address);
         }
     });
 
     return cache;
 }
 
-/**
- * Ensures a sheet exists for a given RM name (case-insensitively).
- * If it exists, returns the actual sheet title with its original casing.
- * If not, it creates a new sheet with the provided RM name and headers.
- * @param sheets The authenticated Google Sheets API client.
- * @param rmName The name of the sheet (RM name) to find or create.
- * @returns The actual title of the existing or newly created sheet.
- */
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
     const lowerRmName = rmName.toLowerCase();
     const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
 
     if (existingSheet && existingSheet.properties?.title) {
-        return existingSheet.properties.title; // Return the existing, correctly-cased title
+        return existingSheet.properties.title; 
     }
     
-    // If not exists, create it with the provided rmName casing
     await sheets.spreadsheets.batchUpdate({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         requestBody: {
             requests: [{ addSheet: { properties: { title: rmName } } }],
         },
     });
-    // Add headers to the new sheet
-    // Updated headers to include 'Комментарии' column
+    
     await sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${rmName}'!A1`,
@@ -419,16 +380,9 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
             values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии']],
         },
     });
-    return rmName; // The new sheet has this title
+    return rmName; 
 }
 
-
-/**
- * Appends new rows to a specific RM's sheet in the cache. Creates the sheet if it doesn't exist.
- * This version performs a case-insensitive check to avoid adding duplicate addresses.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param rowsToAppend An array of rows to add, where each row is an array of strings/numbers.
- */
 export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
     if (rowsToAppend.length === 0) return;
     
@@ -462,12 +416,6 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     });
 }
 
-
-/**
- * Updates coordinates for existing addresses in a specific RM's sheet.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param updates An array of objects containing the address and new coordinates.
- */
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
     if (updates.length === 0) return;
     
@@ -505,17 +453,6 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     }
 }
 
-/**
- * Replaces an old address with a new one in the cache by updating the existing row.
- * Optionally updates the comment in Column E.
- * KEEPS HISTORY: Appends the old address to Column D (History).
- * CRITICAL: Preserves existing B (lat) and C (lon) columns to prevent data loss during rename unless renaming.
- * 
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param oldAddress The address to be replaced (from the file or current UI state).
- * @param newAddress The new, corrected address.
- * @param comment Optional comment to save in Column E.
- */
 export async function updateAddressInCache(
     rmName: string,
     oldAddress: string,
@@ -525,8 +462,6 @@ export async function updateAddressInCache(
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    // Fetch A:E to check current addresses, coordinates, history, and comments
-    // We must include header check or skip it. Assuming row 1 is header.
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:E`,
@@ -539,12 +474,8 @@ export async function updateAddressInCache(
 
     let rowIndex = -1;
 
-    // 1) First, find the row by looking for the Old Address in Column A (Current Address)
-    // This covers the most common case: renaming the current active entry.
     rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === oldNorm);
 
-    // 2) If not found in A, search in History (Column D)
-    // This covers cases where the UI might be stale, or we are correcting an address that was already renamed once.
     if (rowIndex === -1) {
         rowIndex = rows.findIndex(r => isAddressInHistory(String(r[3] || ''), oldNorm));
     }
@@ -554,9 +485,7 @@ export async function updateAddressInCache(
     });
 
     if (rowIndex === -1) {
-        console.log(`[updateAddressInCache] Row not found for "${oldAddress}" (norm: ${oldNorm}). Appending new row.`);
-        // Case: The row doesn't exist at all (neither current nor history).
-        // Treat as a new entry.
+        console.log(`[updateAddressInCache] Row not found for "${oldAddress}". Appending new row.`);
         await sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
@@ -569,25 +498,15 @@ export async function updateAddressInCache(
         return;
     }
 
-    // Row found. Get current data to preserve it.
     const row = rows[rowIndex];
     const currentAddress = String(row[0] || '');
-    // Preserve coordinates!
-    const currentLat = row[1] ?? ''; 
-    const currentLon = row[2] ?? '';
-    // Handle history: check if row[3] exists, otherwise empty string.
     const currentHistory = row[3] ? String(row[3]) : '';
-    // Handle current comment
     const currentComment = row[4] ? String(row[4]) : '';
 
     const rowNumber = rowIndex + 1;
 
-    // 3) Check if address actually changed
     if (normalizeForComparison(currentAddress) === newNorm) {
-        // Address matches. Check if we need to update comment.
         if (comment !== undefined && comment !== currentComment) {
-             console.log(`[updateAddressInCache] Updating comment for "${currentAddress}".`);
-             // Only update Column E
              await sheets.spreadsheets.values.update({
                 spreadsheetId: CACHE_SPREADSHEET_ID,
                 range: `'${actualSheetTitle}'!E${rowNumber}`,
@@ -600,7 +519,6 @@ export async function updateAddressInCache(
         return;
     }
 
-    // 4) Address Changed: Construct new history
     const valueToArchive = currentAddress || oldAddress;
     const historyEntry = `${valueToArchive} [${timestamp}]`;
     
@@ -608,31 +526,16 @@ export async function updateAddressInCache(
         ? `${currentHistory}\n${historyEntry}`
         : historyEntry;
 
-    // 5) Update the row (A, B, C, D, E). 
-    // CRITICAL UPDATE: Clear existing coordinates (Col B, C) when the address (Col A) changes.
-    // Update Comment (Col E).
-    
-    console.log(`[updateAddressInCache] Updating Row ${rowNumber}. Old: "${currentAddress}" -> New: "${newAddress}". Clearing Coords. Updating Comment.`);
-
     await sheets.spreadsheets.values.update({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
-            // Set Col B (Lat) and Col C (Lon) to empty strings. Update History and Comment.
-            // Use fallback to currentComment if comment param is undefined.
             values: [[newAddress, "", "", newHistory, comment !== undefined ? comment : currentComment]], 
         },
     });
 }
 
-/**
- * Deletes an address row from the cache.
- * Performs a "Soft Delete" by writing 'DELETED' to the coordinate columns.
- * This preserves the address in Col A (and potentially history in Col D) but marks it as ignored.
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param address The address to be deleted.
- */
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
@@ -648,13 +551,12 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     
     for (let i = 0; i < addressesInSheet.length; i++) {
         if (normalizeForComparison(String(addressesInSheet[i])) === addressNorm) {
-            rowIndex = i + 1; // 1-based index
+            rowIndex = i + 1; 
             break;
         }
     }
 
     if (rowIndex !== -1) {
-        // Update columns B and C (coords) to 'DELETED'
         await sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`,
@@ -666,15 +568,6 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     }
 }
 
-
-/**
- * Retrieves a single address row from a specific RM's cache sheet (case-insensitively).
- * Returns the full object including history from Column D and comment from Column E.
- * Supports finding the row even if the requested 'address' is in the history (renamed).
- * @param rmName The name of the Regional Manager (and the sheet).
- * @param address The address to search for.
- * @returns An object with address, lat, lon, history, and comment, or null if not found.
- */
 export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string; comment?: string } | null> {
     const sheets = await getGoogleSheetsClient();
     
@@ -683,11 +576,10 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
     
     if (!existingSheet || !existingSheet.properties?.title) {
-        return null; // Sheet doesn't exist
+        return null; 
     }
     const actualSheetTitle = existingSheet.properties.title;
 
-    // Fetch A:E to include history (Column D) and comment (Column E)
     const response = await sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:E`,
@@ -700,10 +592,8 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
 
     const addressNorm = normalizeForComparison(address);
     
-    // 1. Try exact match in Column A (Current Address)
     let foundRow = values.find(row => normalizeForComparison(row[0]) === addressNorm);
 
-    // 2. If not found, search in Column D (History) to see if this address was renamed
     if (!foundRow) {
         foundRow = values.find(row => isAddressInHistory(String(row[3] || ''), addressNorm));
     }
@@ -714,7 +604,6 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
         const history = foundRow[3] ? String(foundRow[3]).trim() : undefined;
         const comment = foundRow[4] ? String(foundRow[4]).trim() : undefined;
         
-        // Check if marked as deleted
         if (latStr === 'DELETED' || lonStr === 'DELETED') {
              return null; 
         }
