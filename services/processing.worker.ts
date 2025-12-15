@@ -349,6 +349,7 @@ self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[
             
             // 1. Find the real header row
             const headerRowIndex = findHeaderRowIndex(rawSheetData);
+            console.log("Header detected at index:", headerRowIndex);
             
             // 2. Slice data starting from the header
             const effectiveData = rawSheetData.slice(headerRowIndex);
@@ -486,8 +487,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const row = jsonData[i];
         
         // STRICT USER DEFINED FIELDS SEARCH
-        const rm = findValueInRow(row, ['рм']); // Strict "РМ"
-        const dm = findValueInRow(row, ['дм']); // Strict "ДМ" (if needed)
+        // FIX: Add 'pm' (Latin) support as fallback if file uses mixed encodings
+        const rm = findValueInRow(row, ['рм', 'pm']); 
         
         // Strict "Адрес ТТ LimKorm" priority
         let clientAddress = findValueInRow(row, ['адрес тт limkorm']) || findAddressInRow(row);
@@ -702,7 +703,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     const resultPayload: WorkerResultPayload = { 
         aggregatedData: finalData, 
         plottableActiveClients, 
-        unidentifiedRows, 
+        // CRITICAL FIX: Limit the size of unidentified rows payload to prevent "Out of Memory" crash when serialization fails for huge arrays.
+        unidentifiedRows: unidentifiedRows.slice(0, 1000), 
         okbRegionCounts,
         dateRange 
     };
