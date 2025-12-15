@@ -359,15 +359,16 @@ const App: React.FC = () => {
                             if (errorData.details) errorMsg = errorData.details;
                             else if (errorData.error) errorMsg = errorData.error;
                         } catch (e) { /* ignore */ }
-                        throw new Error(errorMsg);
+                        // Allow specific quarters to fail if they don't exist yet
+                        console.warn(`Warn: ${errorMsg}`);
+                        return { q, data: [] }; 
                     }
                     const data = await response.json();
                     return { q, data };
                 } catch (error) {
                     console.error(`Failed to fetch Q${q}:`, error);
-                    // Return empty array to allow partial success, or re-throw to fail hard
-                    // Let's re-throw to alert user if any part fails
-                    throw error;
+                    // Return empty data on error to prevent total failure
+                    return { q, data: [] };
                 }
             };
 
@@ -382,10 +383,6 @@ const App: React.FC = () => {
 
             results.forEach(({ q, data }) => {
                 if (Array.isArray(data) && data.length > 0) {
-                    // Assuming first row is header. 
-                    // The backend `getAkbData` logic aggregates sources and keeps headers in the first row of result.
-                    // But if we call it 4 times, we get 4 results each with a header row.
-                    
                     if (!headers) {
                         headers = data[0];
                         mergedData.push(headers); // Add header row once
@@ -398,7 +395,7 @@ const App: React.FC = () => {
             });
 
             if (mergedData.length <= 1) { // Only header or empty
-                throw new Error('No data found for any quarter.');
+                throw new Error('Данные за выбранный год не найдены или папки пусты.');
             }
 
             // Hand over to worker

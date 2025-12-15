@@ -176,9 +176,9 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     // 3. Filter Month Folders by Quarter (if provided)
     if (quarter) {
         const monthMap: Record<number, string[]> = {
-            1: ['january', 'february', 'march', 'январь', 'февраль', 'март', '01', '02', '03'],
-            2: ['april', 'may', 'june', 'апрель', 'май', 'июнь', '04', '05', '06'],
-            3: ['july', 'august', 'september', 'июль', 'август', 'сентябрь', '07', '08', '09'],
+            1: ['january', 'february', 'march', 'январь', 'февраль', 'март', '01', '1', '02', '2', '03', '3'],
+            2: ['april', 'may', 'june', 'апрель', 'май', 'июнь', '04', '4', '05', '5', '06', '6'],
+            3: ['july', 'august', 'september', 'июль', 'август', 'сентябрь', '07', '7', '08', '8', '09', '9'],
             4: ['october', 'november', 'december', 'октябрь', 'ноябрь', 'декабрь', '10', '11', '12']
         };
         const targetMonths = monthMap[quarter];
@@ -190,8 +190,13 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         }
     }
 
+    // FIX: If no folders found for a specific quarter, just return empty data.
+    // This allows parallel requests for future quarters (empty) to succeed without crashing the app.
     if (monthFolders.length === 0) {
-        throw new Error(`Нет папок месяцев для ${targetYear} Q${quarter || 'All'}`);
+        if (quarter) {
+            return []; // Valid empty result for a specific quarter
+        }
+        throw new Error(`Нет папок месяцев внутри папки ${targetYear}`);
     }
 
     // 4. Find all spreadsheet files inside the selected month folders
@@ -216,8 +221,10 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         });
     }));
 
+    // If we found folders but no files inside them
     if (sourcesToFetch.length === 0) {
-        throw new Error(`Не найдено файлов таблиц в папках за ${targetYear} Q${quarter || 'All'}`);
+        if (quarter) return []; // Valid empty result
+        throw new Error(`Папки месяцев найдены, но в них нет файлов Excel/Google Sheets за ${targetYear}`);
     }
 
     console.log(`Found ${sourcesToFetch.length} files to fetch for ${targetYear} Q${quarter || 'All'}`);
@@ -261,7 +268,8 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         }
     }
 
-    if (allData.length === 0) {
+    // Only throw error if we tried to fetch files but got absolutely nothing and it wasn't an empty quarter scenario
+    if (allData.length === 0 && sourcesToFetch.length > 0) {
         let email = "unknown";
         try {
              const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
