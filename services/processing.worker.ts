@@ -28,6 +28,7 @@ type CommonProcessArgs = {
 };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// ... (getCanonicalRegion and createOkbCoordIndex remain the same) ...
 /**
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
  */
@@ -120,10 +121,7 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-/**
- * Optimized: Finds potential clients from a pre-filtered list of OKB rows for a specific region.
- * Uses Geo-Radius matching (150m) and robust string normalization to exclude existing clients.
- */
+// ... (findPotentialClients remains same) ...
 function findPotentialClients(
     regionOkbRows: OkbDataRow[] | undefined, 
     activeClientsInRegion: MapPoint[] | undefined
@@ -190,7 +188,6 @@ function findPotentialClients(
     return potential;
 }
 
-
 const findClientNameHeader = (headers: string[]): string | undefined => {
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
 
@@ -220,25 +217,18 @@ const findClientNameHeader = (headers: string[]): string | undefined => {
     return undefined;
 };
 
-// --- DATE RANGE DETECTION LOGIC ---
+// ... (Date range utils remain same) ...
 const parseDateValue = (val: any): number | null => {
     if (!val) return null;
-    
-    // 1. Excel Serial Date (numbers > 20000, usually around 45000 for current years)
     if (typeof val === 'number') {
         if (val > 30000 && val < 60000) {
-            // Excel epoch is 1899-12-30
             const date = new Date((val - 25569) * 86400 * 1000);
             return date.getTime();
         }
         return null;
     }
-
     const strVal = String(val).trim();
     if (!strVal) return null;
-
-    // 2. String Format DD.MM.YYYY or YYYY-MM-DD
-    // Regex for DD.MM.YYYY
     const dmy = strVal.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
     if (dmy) {
         const d = parseInt(dmy[1], 10);
@@ -247,8 +237,6 @@ const parseDateValue = (val: any): number | null => {
         const date = new Date(y, m, d);
         if (!isNaN(date.getTime())) return date.getTime();
     }
-
-    // Regex for YYYY-MM-DD
     const ymd = strVal.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
     if (ymd) {
         const y = parseInt(ymd[1], 10);
@@ -257,30 +245,21 @@ const parseDateValue = (val: any): number | null => {
         const date = new Date(y, m, d);
         if (!isNaN(date.getTime())) return date.getTime();
     }
-
     return null;
 };
 
 const findDateRange = (data: any[]): string | undefined => {
     if (data.length === 0) return undefined;
-    
-    // 1. Find columns that look like "Date"
     const row0 = data[0];
     const keys = Object.keys(row0);
     const dateKeys = keys.filter(k => {
         const lower = k.toLowerCase();
         return lower.includes('дата') || lower.includes('date') || lower.includes('период') || lower.includes('месяц');
     });
-
     if (dateKeys.length === 0) return undefined;
-
-    // 2. Scan rows for min/max values
     let minTs = Infinity;
     let maxTs = -Infinity;
-    
-    // Scan a sample of rows to performance
     const sample = data.length > 500 ? data.slice(0, 500) : data;
-
     for (const row of sample) {
         for (const key of dateKeys) {
             const val = row[key];
@@ -291,15 +270,52 @@ const findDateRange = (data: any[]): string | undefined => {
             }
         }
     }
-
     if (minTs === Infinity || maxTs === -Infinity) return undefined;
-
     const minDate = new Date(minTs);
     const maxDate = new Date(maxTs);
-    
     const fmt = (d: Date) => d.toLocaleDateString('ru-RU');
     return `${fmt(minDate)} - ${fmt(maxDate)}`;
 };
+
+/**
+ * INTELLIGENT HEADER SEARCH
+ * Scans the first 20 rows of a dataset to find the most likely header row.
+ * It looks for rows containing critical keywords like "РМ", "Адрес", "Клиент".
+ * This prevents the "All Unidentified" issue when files have metadata rows at the top.
+ */
+function findHeaderRowIndex(rawRows: any[][]): number {
+    const CRITICAL_KEYWORDS = ['рм', 'региональный менеджер', 'менеджер', 'адрес', 'клиент', 'контрагент', 'вес', 'факт', 'бренд'];
+    const MAX_SCAN_ROWS = 25; // Limit scanning to top 25 rows
+
+    for (let i = 0; i < Math.min(rawRows.length, MAX_SCAN_ROWS); i++) {
+        const row = rawRows[i];
+        if (!Array.isArray(row)) continue;
+
+        // Check if this row contains multiple critical keywords
+        let matchCount = 0;
+        const rowStr = row.map(cell => String(cell || '').toLowerCase());
+        
+        for (const cell of rowStr) {
+            for (const keyword of CRITICAL_KEYWORDS) {
+                if (cell.includes(keyword)) {
+                    matchCount++;
+                    // Found a strong match for this keyword, break to avoid double counting same keyword in same cell
+                    break; 
+                }
+            }
+        }
+
+        // If we found at least 2 relevant column names, this is likely the header
+        if (matchCount >= 2) {
+            console.log(`Smart Header Detection: Found headers at row index ${i}`);
+            return i;
+        }
+    }
+
+    // Default to 0 if no better candidate found
+    console.log(`Smart Header Detection: Defaulting to row 0`);
+    return 0;
+}
 
 
 self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
@@ -311,15 +327,27 @@ self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[
         
         // Mode 1: Processing raw data from Google Sheet
         if (rawSheetData && rawSheetData.length > 0) {
-            postMessage({ type: 'progress', payload: { percentage: 5, message: 'Обработка данных из облака...' } });
+            postMessage({ type: 'progress', payload: { percentage: 5, message: 'Анализ структуры данных...' } });
             
-            const headers = rawSheetData[0].map(h => String(h || ''));
-            const rows = rawSheetData.slice(1);
+            // 1. Find the real header row
+            const headerRowIndex = findHeaderRowIndex(rawSheetData);
             
-            // Convert 2D array to Array of Objects
+            // 2. Slice data starting from the header
+            const effectiveData = rawSheetData.slice(headerRowIndex);
+            
+            if (effectiveData.length < 2) {
+                 throw new Error('Файл не содержит данных после заголовков.');
+            }
+
+            const headers = effectiveData[0].map(h => String(h || ''));
+            const rows = effectiveData.slice(1);
+            
+            // 3. Convert to Objects
             const jsonData = rows.map(rowArray => {
                 const obj: any = {};
                 headers.forEach((h, i) => {
+                    // Use index to map value to header. 
+                    // Important: rowArray might be shorter than headers array if trailing cells are empty.
                     if (h) obj[h] = rowArray[i];
                 });
                 return obj;
@@ -347,8 +375,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-    // Relaxed check: Allow files even if "Weight" is missing, but prefer it for calculations
-    // if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
     // NEW: Detect Date Range
@@ -451,7 +477,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
+        
+        // Filter out empty rows or garbage rows that slipped through
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
+        
+        // If RM is missing, it's definitely unidentified.
         if (!rm) {
             unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
             continue;
@@ -501,15 +531,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
         // Reject only if we know NOTHING about location and have no cached coordinates
-        // Reverted the strict check for cache. Now we allow rows if we at least know the Region/City, 
-        // even if coordinates are missing (they will just not show on map but appear in charts).
         if (!isCityFound && !isRegionFound && !isCached) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
         const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
-        // If city is unknown but we proceed (due to Region or Cache), default group name to Region or generic fallback
         const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
         
         // We use the enriched final address for display if available, otherwise the potentially redirected one
@@ -542,8 +569,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // We rely on normalizedRaw for cache lookup consistency
-        
         // Use normalizedRaw as key to avoid duplicates if finalAddress varies slightly but means the same
         if (!uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;
@@ -608,6 +633,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
     }
 
+    // ... (rest of the file remains same: ABC Analysis, Potential Matching, Result Message) ...
     postMessage({ type: 'progress', payload: { percentage: 90, message: 'ABC-анализ клиентов...' } });
     
     const plottableActiveClients = Array.from(uniquePlottableClients.values());
@@ -628,14 +654,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Анализ пересечений с ОКБ...' } });
     
-    // Group Active Clients by Region for efficient matching
     const activeClientsByRegion = new Map<string, MapPoint[]>();
     plottableActiveClients.forEach(c => {
         if (!activeClientsByRegion.has(c.region)) activeClientsByRegion.set(c.region, []);
         activeClientsByRegion.get(c.region)!.push(c);
     });
     
-    // Cache for potential clients to avoid re-calculating for the same region multiple times
     const potentialClientsCache = new Map<string, PotentialClient[]>();
 
     const finalData: AggregatedDataRow[] = [];
@@ -644,10 +668,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
         
-        // OPTIMIZATION: Memoize potential clients lookup
         let regionPotentialClients = potentialClientsCache.get(item.region);
         if (!regionPotentialClients) {
-            // Pass both the OKB rows for this region AND the Active Clients for this region
             const activeInRegion = activeClientsByRegion.get(item.region);
             regionPotentialClients = findPotentialClients(okbByRegion[item.region], activeInRegion);
             potentialClientsCache.set(item.region, regionPotentialClients);
@@ -662,7 +684,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    // Include dateRange in the result
     const resultPayload: WorkerResultPayload = { 
         aggregatedData: finalData, 
         plottableActiveClients, 
@@ -672,7 +693,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     };
     postMessage({ type: 'result', payload: resultPayload });
 
-    // --- BACKGROUND TASKS ---
+    // --- BACKGROUND TASKS (Cache update & Geocoding) ---
     const newAddressRMs = Object.keys(newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
@@ -725,7 +746,11 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
+    // Use raw: false to get formatted values if possible, but raw: true is faster
+    // defval: '' is crucial to ensure empty cells are keys
     const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
+    
+    // Extract headers manually from the first row of json data for simplicity in processFile logic
     const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
     
     await processFile(jsonData, headers, args);

@@ -376,37 +376,27 @@ const App: React.FC = () => {
 
             const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
             
-            // Merge results
+            // Merge results safely
             let mergedData: any[] = [];
-            // Preserve headers from the first successful chunk
-            let headers: any[] | null = null;
-
+            
+            // Just push ALL rows from ALL successful chunks.
+            // We do NOT strip headers here because we don't know where the real headers are yet.
+            // The worker will be responsible for finding the header row and filtering garbage.
             results.forEach(({ q, data }) => {
                 if (Array.isArray(data) && data.length > 0) {
-                    if (!headers) {
-                        headers = data[0];
-                        mergedData.push(headers); // Add header row once
-                        // FIX: Use loop instead of spread to prevent RangeError: Maximum call stack size exceeded
-                        // when dealing with large datasets (e.g. > 100k rows)
-                        for (let i = 1; i < data.length; i++) {
-                            mergedData.push(data[i]);
-                        }
-                    } else {
-                        // Skip header row for subsequent chunks
-                        // FIX: Use loop instead of spread
-                        for (let i = 1; i < data.length; i++) {
-                            mergedData.push(data[i]);
-                        }
+                    // Use simple loop to avoid stack overflow with large arrays
+                    for (let i = 0; i < data.length; i++) {
+                        mergedData.push(data[i]);
                     }
                 }
             });
 
-            if (mergedData.length <= 1) { // Only header or empty
+            if (mergedData.length === 0) { 
                 throw new Error('Данные за выбранный год не найдены или папки пусты.');
             }
 
             // Hand over to worker
-            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, запуск обработки...', `Cloud: AKB Sheet ${year}`);
+            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, поиск заголовков...', `Cloud: AKB Sheet ${year}`);
 
         } catch (error) {
             console.error("Cloud load error:", error);
