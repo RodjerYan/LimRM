@@ -127,7 +127,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
  * IMPROVED: Uses a tiered approach (Exact > Word Boundary > Loose) to avoid false positives.
- * FIX: Removed length restriction that caused "РМ" to be ignored.
+ * FIX: Disabled loose match for short keywords (<= 2 chars) to avoid matching "RM" inside "Korm".
  * 
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
@@ -138,7 +138,7 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
     const rowKeys = Object.keys(row);
 
     // 1. Priority: Exact Match (ignoring case/whitespace)
-    // Ensures "РМ" finds "РМ", but not "Корм"
+    // Ensures "РМ" finds "РМ"
     for (const keyword of keywords) {
         const k = keyword.toLowerCase().trim();
         const exactKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === k);
@@ -159,9 +159,11 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
     }
 
     // 3. Fallback: Loose Partial Match
-    // Re-enabled for all lengths to ensure finding non-standard headers,
-    // but relies on the calling code to provide specific enough keywords.
+    // CRITICAL FIX: Skip this for short keywords like "РМ" or "ДМ".
+    // "РМ" inside "Специализация корма" was causing the issue.
     for (const keyword of keywords) {
+        if (keyword.length <= 2) continue; // Skip loose match for short keys
+
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword.toLowerCase().trim()));
         if (foundKey && row[foundKey] != null) {
             return String(row[foundKey]);

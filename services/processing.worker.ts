@@ -279,10 +279,25 @@ const findDateRange = (data: any[]): string | undefined => {
 
 /**
  * INTELLIGENT HEADER SEARCH
- * Scans the first 20 rows of a dataset to find the most likely header row.
- * IT LOOKS FOR EXACT USER SPECIFIED HEADERS.
+ * Scans the first 25 rows of a dataset to find the most likely header row.
+ * PRIORITIZES 'Адрес ТТ LimKorm' as the golden anchor.
  */
 function findHeaderRowIndex(rawRows: any[][]): number {
+    const ANCHOR_KEYWORD = 'адрес тт limkorm';
+    
+    // 1. Scan for the specific anchor column first (Highest Priority)
+    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
+        const row = rawRows[i];
+        if (!Array.isArray(row)) continue;
+        const rowStr = row.map(cell => String(cell || '').toLowerCase());
+        
+        if (rowStr.includes(ANCHOR_KEYWORD)) {
+            console.log(`Smart Header Detection: Found EXACT Anchor at row ${i}`);
+            return i;
+        }
+    }
+
+    // 2. Fallback to multi-keyword matching if anchor not found
     const CRITICAL_KEYWORDS = [
         'дистрибьютор', 
         'торговая марка',
@@ -290,18 +305,16 @@ function findHeaderRowIndex(rawRows: any[][]): number {
         'фасовка',
         'вес, кг', 'вес кг', 'вес',
         'месяц',
-        'адрес тт limkorm', 'адрес',
+        'адрес',
         'канал продаж',
         'рм',
         'дм'
     ];
-    const MAX_SCAN_ROWS = 25; // Limit scanning to top 25 rows
-
-    for (let i = 0; i < Math.min(rawRows.length, MAX_SCAN_ROWS); i++) {
+    
+    for (let i = 0; i < Math.min(rawRows.length, 25); i++) {
         const row = rawRows[i];
         if (!Array.isArray(row)) continue;
 
-        // Check if this row contains multiple critical keywords
         let matchCount = 0;
         const rowStr = row.map(cell => String(cell || '').toLowerCase());
         
@@ -309,21 +322,17 @@ function findHeaderRowIndex(rawRows: any[][]): number {
             for (const keyword of CRITICAL_KEYWORDS) {
                 if (cell.includes(keyword)) {
                     matchCount++;
-                    // Found a strong match for this keyword, break to avoid double counting same keyword in same cell
                     break; 
                 }
             }
         }
 
-        // If we found at least 2 relevant column names, this is likely the header
         if (matchCount >= 2) {
             console.log(`Smart Header Detection: Found headers at row index ${i}`);
             return i;
         }
     }
 
-    // Default to 0 if no better candidate found
-    console.log(`Smart Header Detection: Defaulting to row 0`);
     return 0;
 }
 
