@@ -294,12 +294,13 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </div>
 
                         <div className="flex justify-between items-center text-xs pt-1">
-                            <p className="text-gray-400 truncate max-w-[65%]">{message}</p>
+                            {/* FIX: Ensure the progress message is visible and not aggressively truncated during detailed steps */}
+                            <p className="text-gray-400 max-w-[85%] overflow-hidden whitespace-nowrap text-ellipsis" title={message}>{message}</p>
                             {isProcessing && etr !== null && (
-                                <p className="text-indigo-300 font-mono">{formatETR(etr)}</p>
+                                <p className="text-indigo-300 font-mono ml-2 flex-shrink-0">{formatETR(etr)}</p>
                             )}
                             {progress === 100 && message.includes("заверш") && (
-                                <p className="text-emerald-400 font-bold flex items-center gap-1">
+                                <p className="text-emerald-400 font-bold flex items-center gap-1 ml-2 flex-shrink-0">
                                     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
                                     Готово
                                 </p>
@@ -309,7 +310,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         {backgroundMessage && (
                             <div className="mt-2 text-[10px] text-cyan-300 bg-cyan-900/20 px-2 py-1 rounded border border-cyan-500/20 flex items-center gap-2">
                                <div className="animate-spin w-2 h-2 border border-cyan-400 border-t-transparent rounded-full"></div> 
-                               {backgroundMessage}
+                               <span className="truncate max-w-full">{backgroundMessage}</span>
                             </div>
                         )}
                     </div>

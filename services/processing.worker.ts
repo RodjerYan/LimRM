@@ -607,7 +607,8 @@ async function finalizeStream(postMessage: PostMessageFn) {
         });
     }
 
-    postMessage({ type: 'progress', payload: { percentage: 95, message: 'Анализ пересечений с ОКБ...' } });
+    // Progress 90 -> 95: Aggregation Loop
+    postMessage({ type: 'progress', payload: { percentage: 92, message: 'Анализ пересечений с ОКБ...' } });
     
     const activeClientsByRegion = new Map<string, MapPoint[]>();
     plottableActiveClients.forEach(c => {
@@ -624,12 +625,13 @@ async function finalizeStream(postMessage: PostMessageFn) {
     for (let i = 0; i < totalGroups; i++) {
         const item = aggregationValues[i];
         
-        // Granular Progress Report
-        if (i % 50 === 0) {
+        // Granular Progress Report for Aggregation Phase (92 -> 95)
+        if (i % 200 === 0) {
+             const aggProgress = 92 + (i / totalGroups) * 3;
              postMessage({ 
                  type: 'progress', 
                  payload: { 
-                     percentage: 95 + Math.round((i/totalGroups) * 2), 
+                     percentage: aggProgress, 
                      message: `Анализ региона: ${item.region} (${i}/${totalGroups})` 
                  } 
              });
@@ -656,25 +658,37 @@ async function finalizeStream(postMessage: PostMessageFn) {
     }
 
     // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
+    // Progress 95 -> 99: Saving Phase
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 97, message: `Подготовка к сохранению адресов...` } });
+        postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
         
-        const BATCH_SIZE = 100; // Small batch size to prevent Vercel timeout (4.5MB limit / 10s execution)
+        const BATCH_SIZE = 50; // VERY SAFE batch size to ensure saving works on any connection/limit.
+        
+        // Calculate total batches for smooth progress bar
+        let totalBatchesGlobal = 0;
+        for(const rm of newAddressRMs) {
+             totalBatchesGlobal += Math.ceil(state_newAddressesToCache[rm].length / BATCH_SIZE);
+        }
+        
+        let currentBatchGlobal = 0;
 
-        for (let i = 0; i < newAddressRMs.length; i++) {
-            const rmName = newAddressRMs[i];
+        for (const rmName of newAddressRMs) {
             const allRows = state_newAddressesToCache[rmName];
             const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
 
             for (let b = 0; b < totalBatches; b++) {
                 const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+                currentBatchGlobal++;
+                
+                // Calculate dynamic percentage from 95 to 99
+                const dynamicProgress = 95 + (currentBatchGlobal / totalBatchesGlobal) * 4;
                 
                 postMessage({ 
                     type: 'progress', 
                     payload: { 
-                        percentage: 97, 
-                        message: `Запись АКБ: ${rmName} (пакет ${b+1}/${totalBatches})...` 
+                        percentage: dynamicProgress, 
+                        message: `Запись АКБ: ${rmName} (пакет ${b+1}/${totalBatches})` 
                     } 
                 });
 
@@ -684,6 +698,8 @@ async function finalizeStream(postMessage: PostMessageFn) {
                         headers: { 'Content-Type': 'application/json' }, 
                         body: JSON.stringify({ rmName, rows: chunk }) 
                     });
+                    // Small delay to allow UI updates and prevent rate limits
+                    await sleep(50);
                 } catch (e) { 
                     console.error(`Failed to add batch ${b} to cache for ${rmName}:`, e); 
                     // Continue to next batch even if one fails
