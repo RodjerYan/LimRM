@@ -48,6 +48,16 @@ let state_dateRange: string | undefined = undefined;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- HELPER: Sheet Name Sanitization ---
+// Google Sheets disallows: [ ] * ? : / \ and names longer than ~100 chars
+const sanitizeSheetName = (name: string): string => {
+    return String(name || 'Unknown')
+        .replace(/[\/\\\?\*\[\]\:]/g, ' ') // Replace invalid chars with space
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
+        .trim()
+        .slice(0, 99); // Truncate to safe length
+};
+
 // --- HELPER: Aggressive Key Normalization ---
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -148,31 +158,64 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
+// Optimized findPotentialClients with Pre-check
 function findPotentialClients(regionOkbRows: OkbDataRow[] | undefined, activeClientsInRegion: MapPoint[] | undefined): PotentialClient[] {
     if (!regionOkbRows || regionOkbRows.length === 0) return [];
+    
     const potential: PotentialClient[] = [];
     const activeAddressSet = new Set<string>();
     const activeCoords: { lat: number, lon: number }[] = [];
+    
+    // Bounds for fast exclusion
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    let hasActiveCoords = false;
+
     if (activeClientsInRegion) {
         activeClientsInRegion.forEach(c => {
             activeAddressSet.add(normalizeAddress(c.address));
-            if (c.lat && c.lon) activeCoords.push({ lat: c.lat, lon: c.lon });
+            if (c.lat && c.lon) {
+                activeCoords.push({ lat: c.lat, lon: c.lon });
+                if (c.lat < minLat) minLat = c.lat;
+                if (c.lat > maxLat) maxLat = c.lat;
+                if (c.lon < minLon) minLon = c.lon;
+                if (c.lon > maxLon) maxLon = c.lon;
+                hasActiveCoords = true;
+            }
         });
     }
+    
+    // Add small buffer (~20km) to bounds for proximity check
+    const BUFFER = 0.2; 
+    minLat -= BUFFER; maxLat += BUFFER;
+    minLon -= BUFFER; maxLon += BUFFER;
+
     for (const okbRow of regionOkbRows) {
         const okbAddress = findAddressInRow(okbRow) || '';
         if (!okbAddress) continue;
+        
         let isMatch = false;
-        if (okbRow.lat && okbRow.lon && !isNaN(okbRow.lat) && !isNaN(okbRow.lon)) {
-            for (const activeCoord of activeCoords) {
-                const dist = getDistanceKm(okbRow.lat, okbRow.lon, activeCoord.lat, activeCoord.lon);
-                if (dist < 0.15) { isMatch = true; break; }
+        
+        // 1. Coordinate Match (Fast Filter + Precision)
+        if (hasActiveCoords && okbRow.lat && okbRow.lon && !isNaN(okbRow.lat) && !isNaN(okbRow.lon)) {
+            // Fast bounding box check
+            if (okbRow.lat >= minLat && okbRow.lat <= maxLat && okbRow.lon >= minLon && okbRow.lon <= maxLon) {
+                // Precise distance check
+                for (const activeCoord of activeCoords) {
+                    const dist = getDistanceKm(okbRow.lat, okbRow.lon, activeCoord.lat, activeCoord.lon);
+                    if (dist < 0.15) { // 150 meters
+                        isMatch = true; 
+                        break; 
+                    }
+                }
             }
         }
+        
+        // 2. String Match (Fallback)
         if (!isMatch) {
             const normalizedOkb = normalizeAddress(okbAddress);
             if (activeAddressSet.has(normalizedOkb)) isMatch = true;
         }
+        
         if (!isMatch) {
             const client: PotentialClient = {
                 name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
@@ -182,6 +225,7 @@ function findPotentialClients(regionOkbRows: OkbDataRow[] | undefined, activeCli
             if(okbRow.lat && okbRow.lon) { client.lat = okbRow.lat; client.lon = okbRow.lon; }
             potential.push(client);
         }
+        
         if (potential.length >= 200) break;
     }
     return potential;
@@ -315,7 +359,6 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
     state_addressesToGeocode = {};
     state_unidentifiedRows = [];
     state_headers = [];
-    // Reset forced header state
     state_forcedRmHeader = undefined;
     state_forcedDmHeader = undefined;
     
@@ -387,9 +430,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
         state_clientNameHeader = findClientNameHeader(state_headers);
 
-        // FORCED DETECTION FOR GOOGLE SHEETS
-        // Check if this appears to be a cloud file (Month_*)
-        // BQ is column index 68 (A=0, Z=25, AA=26... BQ=68).
         if (fileName && fileName.startsWith('Month_') && state_headers.length >= 69) {
             state_forcedRmHeader = state_headers[68];
             state_forcedDmHeader = state_headers[69];
@@ -411,7 +451,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         
         // --- RM/DM DETECTION LOGIC ---
-        // 1. Try Forced Columns First (if configured)
         let rm = '';
         let dm = '';
 
@@ -429,7 +468,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             }
         }
 
-        // 2. Fallback to Standard Heuristics if forced columns failed or weren't set
         if (!rm) {
             rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
         }
@@ -471,14 +509,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // --- CACHE FILLING LOGIC (MOVED UP - CRITICAL FIX) ---
-        // Add to cache list even if it is Unidentified later. 
-        // This ensures bad addresses are sent to DB for manual fix.
-        // Use raw clientAddress as the key to ensure subsequent imports hit the cache correctly.
+        // --- CACHE FILLING LOGIC ---
+        // Add to cache list to be saved to Google Sheets
         if (!isCached && clientAddress && finalRm) {
              const addrToCache = clientAddress;
              if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
-             // Prevent duplicates within the current batch state
              if (!state_newAddressesToCache[finalRm].some(item => item.address === addrToCache)) {
                  state_newAddressesToCache[finalRm].push({ address: addrToCache });
              }
@@ -607,7 +642,9 @@ async function finalizeStream(postMessage: PostMessageFn) {
         });
     }
 
-    // Progress 90 -> 95: Aggregation Loop
+    const lastTime = Date.now();
+    const shouldReport = () => Date.now() - lastTime > 100; // Throttle UI updates
+
     postMessage({ type: 'progress', payload: { percentage: 92, message: 'Анализ пересечений с ОКБ...' } });
     
     const activeClientsByRegion = new Map<string, MapPoint[]>();
@@ -625,7 +662,6 @@ async function finalizeStream(postMessage: PostMessageFn) {
     for (let i = 0; i < totalGroups; i++) {
         const item = aggregationValues[i];
         
-        // Granular Progress Report for Aggregation Phase (92 -> 95)
         if (i % 200 === 0) {
              const aggProgress = 92 + (i / totalGroups) * 3;
              postMessage({ 
@@ -658,14 +694,12 @@ async function finalizeStream(postMessage: PostMessageFn) {
     }
 
     // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
-    // Progress 95 -> 99: Saving Phase
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
         
-        const BATCH_SIZE = 50; // VERY SAFE batch size to ensure saving works on any connection/limit.
+        const BATCH_SIZE = 50; 
         
-        // Calculate total batches for smooth progress bar
         let totalBatchesGlobal = 0;
         for(const rm of newAddressRMs) {
              totalBatchesGlobal += Math.ceil(state_newAddressesToCache[rm].length / BATCH_SIZE);
@@ -676,34 +710,44 @@ async function finalizeStream(postMessage: PostMessageFn) {
         for (const rmName of newAddressRMs) {
             const allRows = state_newAddressesToCache[rmName];
             const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
+            const sanitizedRmName = sanitizeSheetName(rmName); // Sanitize once per RM
 
             for (let b = 0; b < totalBatches; b++) {
                 const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
                 currentBatchGlobal++;
                 
-                // Calculate dynamic percentage from 95 to 99
                 const dynamicProgress = 95 + (currentBatchGlobal / totalBatchesGlobal) * 4;
                 
                 postMessage({ 
                     type: 'progress', 
                     payload: { 
                         percentage: dynamicProgress, 
-                        message: `Запись АКБ: ${rmName} (пакет ${b+1}/${totalBatches})` 
+                        message: `Запись АКБ: ${sanitizedRmName} (пакет ${b+1}/${totalBatches})` 
                     } 
                 });
 
-                try {
-                    await fetch('/api/add-to-cache', { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify({ rmName, rows: chunk }) 
-                    });
-                    // Small delay to allow UI updates and prevent rate limits
-                    await sleep(50);
-                } catch (e) { 
-                    console.error(`Failed to add batch ${b} to cache for ${rmName}:`, e); 
-                    // Continue to next batch even if one fails
+                // RETRY LOGIC for stability
+                let success = false;
+                for (let attempt = 0; attempt < 3; attempt++) {
+                    try {
+                        await fetch('/api/add-to-cache', { 
+                            method: 'POST', 
+                            headers: { 'Content-Type': 'application/json' }, 
+                            body: JSON.stringify({ rmName: sanitizedRmName, rows: chunk }) 
+                        });
+                        success = true;
+                        break; // Success
+                    } catch (e) { 
+                        console.error(`Attempt ${attempt+1} failed for ${sanitizedRmName}:`, e); 
+                        await sleep(1000 * (attempt + 1)); // Backoff
+                    }
                 }
+                
+                if (!success) {
+                    postMessage({ type: 'error', payload: `ОШИБКА записи для ${sanitizedRmName}. Данные могут быть неполными.` });
+                }
+
+                await sleep(300); // Increased delay to 300ms to be safe with Google API rate limits
             }
         }
     }
