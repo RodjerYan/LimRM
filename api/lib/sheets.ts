@@ -258,12 +258,19 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
                 if (rows.length === 0) continue;
                 loadedFiles.push(fileName || 'Unknown');
 
+                // FIX: Use explicit loop instead of spread operator to avoid stack overflow with large arrays
                 if (!headersSet) {
-                    allData.push(...rows);
+                    // Include headers from the first file
+                    for (let i = 0; i < rows.length; i++) {
+                        allData.push(rows[i]);
+                    }
                     headersSet = true;
                 } else {
+                    // Skip headers (row 0) for subsequent files
                     if (rows.length > 1) {
-                        allData.push(...rows.slice(1));
+                        for (let i = 1; i < rows.length; i++) {
+                            allData.push(rows[i]);
+                        }
                     }
                 }
             }

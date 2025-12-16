@@ -404,15 +404,20 @@ const App: React.FC = () => {
             // Preserve headers from the first successful chunk
             let headers: any[] | null = null;
 
+            // FIX: Avoid spread operator `...` on potentially large arrays to prevent "Maximum call stack size exceeded"
             results.forEach(({ m, data }) => {
                 if (Array.isArray(data) && data.length > 0) {
                     if (!headers) {
                         headers = data[0];
-                        mergedData.push(headers); // Add header row once
-                        mergedData.push(...data.slice(1));
+                        // Add all rows including header
+                        for(let i = 0; i < data.length; i++) {
+                            mergedData.push(data[i]);
+                        }
                     } else {
-                        // Skip header row for subsequent chunks
-                        mergedData.push(...data.slice(1));
+                        // Skip header row (index 0) for subsequent chunks
+                        for(let i = 1; i < data.length; i++) {
+                            mergedData.push(data[i]);
+                        }
                     }
                 }
             });
