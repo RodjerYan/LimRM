@@ -242,7 +242,9 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
                 try {
                     const res = await sheets.spreadsheets.values.get({
                         spreadsheetId: file.id!,
-                        range: 'A:Z', 
+                        // FIX: Expanded range to A:ZZ to ensure columns BQ (69) and BR (70) are fetched.
+                        // Previously 'A:Z' truncated data at column 26.
+                        range: 'A:ZZ', 
                         valueRenderOption: 'UNFORMATTED_VALUE',
                     });
                     return { fileName: file.name, rows: res.data.values || [] };

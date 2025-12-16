@@ -31,6 +31,10 @@ let state_newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
 let state_addressesToGeocode: { [rmName: string]: string[] } = {};
 let state_unidentifiedRows: UnidentifiedRow[] = [];
 let state_headers: string[] = [];
+// State variables for Forced Columns (BQ/BR)
+let state_forcedRmHeader: string | undefined;
+let state_forcedDmHeader: string | undefined;
+
 let state_hasPotentialColumn = false;
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
@@ -45,14 +49,13 @@ let state_dateRange: string | undefined = undefined;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- HELPER: Aggressive Key Normalization ---
-// Forces match for "PM", "ДМ" even if they contain NBSP (\u00A0) or spaces.
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
     return String(key)
         .toLowerCase()
-        .replace(/\u00A0/g, ' ') // Replace NBSP with normal space first
-        .replace(/[\r\n\t]/g, '') // Remove control characters
-        .replace(/\s+/g, '') // Remove ALL whitespace to ensure 'PM ' == 'pm'
+        .replace(/\u00A0/g, ' ') 
+        .replace(/[\r\n\t]/g, '') 
+        .replace(/\s+/g, '') 
         .trim();
 };
 
@@ -61,8 +64,7 @@ const isValidManagerValue = (val: string): boolean => {
     const v = String(val).trim().toLowerCase();
     const stopWords = ['нет специализации', 'нет', 'для ', 'без ', 'корм', 'кошек', 'собак', 'стерилиз', 'чувствител', 'пород', 'weight', 'adult', 'junior', 'kitten', 'puppy', 'специализ', 'продук', 'товар'];
     if (stopWords.some(w => v.includes(w))) return false;
-    if (v.length < 2) return false; // Allow short names/initials
-    // if (!/[a-zа-яё]{2,}/i.test(v)) return false; // Relaxed check for PM codes
+    if (v.length < 2) return false; 
     return true;
 };
 
@@ -70,26 +72,20 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     if (!row) return '';
     const rowKeys = Object.keys(row);
     
-    // Normalize target keys once for comparison
     const targetStrict = strictKeys.map(k => normalizeHeaderKey(k));
     const targetLoose = looseKeys.map(k => normalizeHeaderKey(k));
     
-    // 1. Strict Search (Exact Match of Normalized Key)
-    // This effectively finds "PM" even if the sheet has "PM " or "PM\n"
     for (const key of rowKeys) {
         const normKey = normalizeHeaderKey(key);
-        
         if (targetStrict.includes(normKey)) {
              const val = String(row[key] || '');
              if (isValidManagerValue(val)) return val;
         }
     }
 
-    // 2. Loose Search (Contains)
     for (const key of rowKeys) {
         const normKey = normalizeHeaderKey(key);
         
-        // Exclude common data columns to avoid false positives
         if (normKey.includes('product') || normKey.includes('category') || 
             normKey.includes('brand') || normKey.includes('sales') || 
             normKey.includes('field') || normKey.includes('area') ||
@@ -269,19 +265,16 @@ const findDateRange = (data: any[]): string | undefined => {
 };
 
 const detectHeaderRowIndex = (rows: any[][]): number => {
-    // Added 'PM' and 'ДМ' specifically for this use case
     const keywords = ['адрес', 'address', 'рм', 'rm', 'pm', 'дм', 'dm', 'вес', 'weight', 'фасовка', 'packaging', 'бренд', 'brand', 'товар', 'product', 'дистрибьютор', 'distributor', 'канал', 'channel'];
     const limit = Math.min(rows.length, 20);
     let bestRowIndex = 0;
     let maxMatches = 0;
     
     for (let i = 0; i < limit; i++) {
-        // Use normalized check here too
         const row = rows[i].map(cell => normalizeHeaderKey(String(cell || '')));
         
         let matches = 0;
         for (const k of keywords) {
-            // Check if normalized cell contains keyword
             if (row.some(cell => cell.includes(k))) matches++;
         }
         if (matches > maxMatches) {
@@ -300,7 +293,6 @@ const convertRawDataToObjects = (rawData: any[][], predefinedHeaders?: string[])
     
     if (!headers) {
         const headerRowIndex = detectHeaderRowIndex(rawData);
-        // Trim headers immediately upon extraction
         headers = rawData[headerRowIndex].map(h => String(h || '').trim());
         dataRows = rawData.slice(headerRowIndex + 1);
     }
@@ -323,6 +315,10 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
     state_addressesToGeocode = {};
     state_unidentifiedRows = [];
     state_headers = [];
+    // Reset forced header state
+    state_forcedRmHeader = undefined;
+    state_forcedDmHeader = undefined;
+    
     state_hasPotentialColumn = false;
     state_clientNameHeader = undefined;
     state_okbRegionCounts = {};
@@ -390,6 +386,15 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
         state_clientNameHeader = findClientNameHeader(state_headers);
+
+        // FORCED DETECTION FOR GOOGLE SHEETS
+        // Check if this appears to be a cloud file (Month_*)
+        // BQ is column index 68 (A=0, Z=25, AA=26... BQ=68).
+        if (fileName && fileName.startsWith('Month_') && state_headers.length >= 69) {
+            state_forcedRmHeader = state_headers[68];
+            state_forcedDmHeader = state_headers[69];
+            console.log(`Cloud Processing detected. Enforcing RM column: ${state_forcedRmHeader} (BQ), DM column: ${state_forcedDmHeader} (BR)`);
+        }
     } else {
         const result = convertRawDataToObjects(rawData, state_headers);
         jsonData = result.jsonData;
@@ -405,10 +410,33 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        // --- KEY FIX: Added 'pm' and 'дм' to strict keys ---
-        // findManagerValue uses normalizeHeaderKey, so "PM " will match "pm".
-        const rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
-        const dm = findManagerValue(row, ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'], ['дм', 'dm', 'director', 'директор']);
+        // --- RM/DM DETECTION LOGIC ---
+        // 1. Try Forced Columns First (if configured)
+        let rm = '';
+        let dm = '';
+
+        if (state_forcedRmHeader) {
+            const val = row[state_forcedRmHeader];
+            if (val && isValidManagerValue(String(val))) {
+                rm = String(val);
+            }
+        }
+
+        if (state_forcedDmHeader) {
+            const val = row[state_forcedDmHeader];
+            if (val && isValidManagerValue(String(val))) {
+                dm = String(val);
+            }
+        }
+
+        // 2. Fallback to Standard Heuristics if forced columns failed or weren't set
+        if (!rm) {
+            rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
+        }
+        if (!dm) {
+            dm = findManagerValue(row, ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'], ['дм', 'dm', 'director', 'директор']);
+        }
+
         let finalRm = rm || dm;
 
         let clientAddress = findAddressInRow(row);
