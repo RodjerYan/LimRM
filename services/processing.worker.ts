@@ -474,8 +474,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         // --- CACHE FILLING LOGIC (MOVED UP - CRITICAL FIX) ---
         // Add to cache list even if it is Unidentified later. 
         // This ensures bad addresses are sent to DB for manual fix.
+        // Use raw clientAddress as the key to ensure subsequent imports hit the cache correctly.
         if (!isCached && clientAddress && finalRm) {
-             const addrToCache = parsedAddress.finalAddress || clientAddress;
+             const addrToCache = clientAddress;
              if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
              // Prevent duplicates within the current batch state
              if (!state_newAddressesToCache[finalRm].some(item => item.address === addrToCache)) {
