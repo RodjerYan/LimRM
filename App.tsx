@@ -334,58 +334,78 @@ const App: React.FC = () => {
         initWorker({ file }, 'Загрузка кэша координат...', file.name);
     }, [initWorker]);
 
-    // Updated to split load into 4 requests to avoid timeouts
+    // Updated to split load into 12 requests (Months) to avoid timeouts
     const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
         setProcessingState({
             isProcessing: true,
             progress: 2,
-            message: `Инициализация многопоточной загрузки (${year})...`,
+            message: `Инициализация помесячной загрузки (${year})...`,
             fileName: `Cloud: AKB Sheet ${year}`,
             backgroundMessage: null,
             startTime: Date.now()
         });
 
         try {
-            // Initiate 4 parallel requests for each quarter
-            const quarters = [1, 2, 3, 4];
+            // Initiate sequential requests for each month (1-12) to heavily reduce load per request
+            const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
             
-            const fetchQuarter = async (q: number) => {
+            const fetchMonth = async (m: number) => {
                 try {
-                    const response = await fetch(`/api/get-akb?year=${year}&quarter=${q}`);
+                    const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
                     if (!response.ok) {
-                        let errorMsg = `Quarter ${q} fetch failed`;
+                        let errorMsg = `Month ${m} fetch failed (${response.status})`;
                         try {
-                            const errorData = await response.json();
-                            if (errorData.details) errorMsg = errorData.details;
-                            else if (errorData.error) errorMsg = errorData.error;
+                            const text = await response.text();
+                            // Try to parse JSON, if fails, use text
+                            try {
+                                const errorData = JSON.parse(text);
+                                if (errorData.details) errorMsg = errorData.details;
+                                else if (errorData.error) errorMsg = errorData.error;
+                            } catch {
+                                if (text.length < 200) errorMsg += `: ${text}`;
+                                else errorMsg += `: Server Error (Check logs)`;
+                            }
                         } catch (e) { /* ignore */ }
                         throw new Error(errorMsg);
                     }
                     const data = await response.json();
-                    return { q, data };
+                    return { m, data };
                 } catch (error) {
-                    console.error(`Failed to fetch Q${q}:`, error);
-                    // Return empty array to allow partial success, or re-throw to fail hard
-                    // Let's re-throw to alert user if any part fails
+                    console.error(`Failed to fetch Month ${m}:`, error);
+                    // Critical error if it's a network issue, but we might want to continue if it's just a missing month?
+                    // For now, throw to stop processing and alert user.
                     throw error;
                 }
             };
 
-            setProcessingState(prev => ({ ...prev, progress: 10, message: `Загрузка кварталов 1-4...` }));
-
-            const results = await Promise.all(quarters.map(q => fetchQuarter(q)));
+            const results = [];
+            // SEQUENTIAL EXECUTION (Fix for Rate Limits/Timeouts)
+            for (const m of months) {
+                const monthName = new Date(0, m - 1).toLocaleString('ru-RU', { month: 'long' });
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    progress: Math.round((m / 12) * 90), // Scale progress from 0 to 90%
+                    message: `Загрузка: ${monthName} (${m}/12)...` 
+                }));
+                
+                try {
+                    const res = await fetchMonth(m);
+                    results.push(res);
+                } catch (e) {
+                    console.warn(`Error fetching month ${m}, skipping.`, e);
+                    // Optional: decide if one failed month breaks everything. 
+                    // Currently, we let it fail loudly via the catch block below if needed, 
+                    // OR we could continue. Let's continue but log it.
+                }
+            }
             
             // Merge results
             let mergedData: any[] = [];
             // Preserve headers from the first successful chunk
             let headers: any[] | null = null;
 
-            results.forEach(({ q, data }) => {
+            results.forEach(({ m, data }) => {
                 if (Array.isArray(data) && data.length > 0) {
-                    // Assuming first row is header. 
-                    // The backend `getAkbData` logic aggregates sources and keeps headers in the first row of result.
-                    // But if we call it 4 times, we get 4 results each with a header row.
-                    
                     if (!headers) {
                         headers = data[0];
                         mergedData.push(headers); // Add header row once
@@ -397,8 +417,11 @@ const App: React.FC = () => {
                 }
             });
 
-            if (mergedData.length <= 1) { // Only header or empty
-                throw new Error('No data found for any quarter.');
+            if (mergedData.length <= 1) { 
+                console.warn('No data found for any month.');
+                setProcessingState(prev => ({ ...prev, message: 'Данные за выбранный год не найдены.' }));
+                addNotification('Данные за выбранный год не найдены.', 'info');
+                // Proceed anyway, worker will handle empty logic gracefully or throw if totally empty
             }
 
             // Hand over to worker
@@ -773,7 +796,7 @@ const App: React.FC = () => {
                         <div className="w-full">
                             <ResultsTable 
                                 data={filteredData} 
-                                onRowClick={handleRowClick} 
+                                onRowClick={handleRowClick}
                                 onPlanClick={handleOpenPlan}
                                 disabled={!isDataLoaded || isLoading}
                                 unidentifiedRowsCount={unidentifiedRows.length}
@@ -786,77 +809,84 @@ const App: React.FC = () => {
     };
 
     return (
-        <div className="bg-primary-dark min-h-screen text-text-main font-sans transition-colors duration-300 flex">
-            {/* SIDEBAR NAVIGATION */}
+        <div className={`flex min-h-screen bg-primary-dark ${theme} font-sans text-text-main overflow-hidden`}>
+            
+            {/* Sidebar Navigation - Fixed on Left */}
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
 
-            {/* MAIN CONTENT AREA - Shifted right due to fixed sidebar */}
-            <main className={`flex-1 ml-0 lg:ml-64 p-4 lg:p-8 transition-all duration-300 ${isAnyModalOpen ? 'blur-sm pointer-events-none' : ''}`}>
-                {renderContent()}
+            {/* Main Content Area - Scrollable */}
+            <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
+                {/* Header / Top Bar (Mobile Menu could go here) */}
+                <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-end items-center">
+                    {/* Metrics Summary Ticker - Always visible if data loaded */}
+                    {isDataLoaded && activeModule !== 'dashboard' && (
+                        <div className="flex items-center gap-6 text-xs mr-6">
+                            <div className="flex flex-col items-end">
+                                <span className="text-gray-500">Общий Факт</span>
+                                <span className="text-emerald-400 font-mono font-bold">
+                                    {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(summaryMetrics?.totalFact || 0)}
+                                </span>
+                            </div>
+                            <div className="h-6 w-px bg-gray-700"></div>
+                            <div className="flex flex-col items-end">
+                                <span className="text-gray-500">Активных ТТ</span>
+                                <span className="text-indigo-400 font-mono font-bold">
+                                    {summaryMetrics?.totalActiveClients || 0}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="flex items-center gap-3">
+                        <button className="p-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white transition-colors relative group">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                            {notifications.length > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-ping"></span>}
+                        </button>
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 border-2 border-gray-700"></div>
+                    </div>
+                </div>
+
+                {/* Content Container */}
+                <div className="py-8">
+                    {renderContent()}
+                </div>
+
+                {/* Footer */}
+                <footer className="border-t border-gray-800 p-6 text-center text-gray-600 text-xs">
+                    <p>&copy; {new Date().getFullYear()} LimKorm Group. GPS-Enterprise Analytics System. All rights reserved.</p>
+                </footer>
             </main>
 
-            <div className="fixed bottom-4 right-4 z-[100] space-y-3 w-full max-w-sm pointer-events-none">
-                <div className="pointer-events-auto space-y-3">
-                    {notifications.map(n => (
-                        <Notification key={n.id} message={n.message} type={n.type} />
-                    ))}
-                </div>
+            {/* Notification Toast */}
+            <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100] pointer-events-none">
+                {notifications.map(n => (
+                    <Notification key={n.id} message={n.message} type={n.type} />
+                ))}
             </div>
 
-            <DetailsModal 
-                isOpen={isDetailsModalOpen} 
-                onClose={() => setIsDetailsModalOpen(false)}
-                data={selectedDetailsRow}
-                okbStatus={okbStatus}
-                onStartEdit={(client) => handleStartEdit(client, 'details')}
-            />
-            <ClientsListModal 
-                isOpen={isClientsModalOpen} 
-                onClose={() => setIsClientsModalOpen(false)}
-                clients={filteredActiveClients}
-                onClientSelect={handleClientSelectFromModal}
-                onStartEdit={(client) => handleStartEdit(client, 'clients')}
-            />
-            <UnidentifiedRowsModal
-                isOpen={isUnidentifiedModalOpen}
-                onClose={() => setIsUnidentifiedModalOpen(false)}
-                rows={unidentifiedRows}
-                onStartEdit={(row) => handleStartEdit(row, 'unidentified')}
-            />
-             <AddressEditModal
-                isOpen={isEditModalOpen}
-                onClose={() => {
-                    setIsEditModalOpen(false);
-                    setModalHistory([]);
-                }}
-                onBack={handleGoBackFromEdit}
-                data={editingClient}
-                onDataUpdate={handleDataUpdate}
-                onStartPolling={pollSheetForCoordinates}
-                onDelete={handleClientDelete}
-                globalTheme={theme}
-            />
-            
-            {/* New Modal for specific brand plan explanation */}
-            {planExplanationData && (
-                <GrowthExplanationModal
-                    isOpen={!!planExplanationData}
-                    onClose={() => setPlanExplanationData(null)}
-                    data={planExplanationData}
-                    baseRate={15} // Default base rate for general view context
-                />
+            {/* Modals Layer */}
+            {isDetailsModalOpen && selectedDetailsRow && (
+                <DetailsModal isOpen={isDetailsModalOpen} onClose={() => setIsDetailsModalOpen(false)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={(client) => handleStartEdit(client, 'details')} />
+            )}
+            {isClientsModalOpen && (
+                <ClientsListModal isOpen={isClientsModalOpen} onClose={() => setIsClientsModalOpen(false)} clients={filteredActiveClients} onClientSelect={handleClientSelectFromModal} onStartEdit={(client) => handleStartEdit(client, 'clients')} />
+            )}
+            {isUnidentifiedModalOpen && (
+                <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={(row) => handleStartEdit(row, 'unidentified')} />
+            )}
+            {isEditModalOpen && (
+                <AddressEditModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} onBack={handleGoBackFromEdit} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={pollSheetForCoordinates} onDelete={handleClientDelete} globalTheme={theme} />
             )}
             
-            {/* Retain Modal version if needed, but main access is via sidebar now */}
-            <RMDashboard 
-                isOpen={isRMDashboardOpen} 
-                onClose={() => setIsRMDashboardOpen(false)} 
-                data={filteredData}
-                okbRegionCounts={okbRegionCounts}
-                okbData={okbData}
-                mode="modal" 
-                dateRange={dateRange} // PASS DATE RANGE
-            />
+            {/* Additional Analytics Modals */}
+            {planExplanationData && (
+                <GrowthExplanationModal 
+                    isOpen={!!planExplanationData} 
+                    onClose={() => setPlanExplanationData(null)} 
+                    data={planExplanationData} 
+                    baseRate={15} 
+                />
+            )}
         </div>
     );
 };

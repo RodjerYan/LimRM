@@ -9,7 +9,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        // Extract year from query parameter, default to '2025' if not provided for safety
+        // Extract year from query parameter, default to '2025' if not provided
         const year = (req.query.year as string) || '2025';
         
         // Extract optional quarter parameter (1, 2, 3, 4)
@@ -21,13 +21,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 quarter = q;
             }
         }
-        
-        const akbData = await getAkbData(year, quarter);
-        
-        // FIX: Removed the check that throws an error if data is empty.
-        // It is perfectly valid for a future quarter (e.g. Q4 2025) to be empty.
-        // The frontend will handle merging valid data from other quarters.
 
+        // Extract optional month parameter (1-12)
+        const monthStr = req.query.month as string;
+        let month: number | undefined;
+        if (monthStr) {
+            const m = parseInt(monthStr, 10);
+            if (!isNaN(m) && m >= 1 && m <= 12) {
+                month = m;
+            }
+        }
+        
+        // Pass month (if present) to getAkbData. It will take precedence logic inside if needed.
+        const akbData = await getAkbData(year, quarter, month);
+        
         // Prevent caching for this data as it might change frequently
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.status(200).json(akbData || []);

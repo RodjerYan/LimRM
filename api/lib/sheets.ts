@@ -29,6 +29,11 @@ const MONTH_MAP: Record<string, string> = {
     'Декабрь': 'December'
 };
 
+const RUSSIAN_MONTHS_ORDER = [
+    'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+];
+
 /**
  * Creates an authenticated Google Auth client.
  */
@@ -158,8 +163,9 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 
 /**
  * DYNAMICALLY fetches AKB data by traversing Google Drive folders.
+ * Supports filtering by Year, Quarter, or specific Month index.
  */
-export async function getAkbData(year?: string, quarter?: number): Promise<any[][]> {
+export async function getAkbData(year?: string, quarter?: number, month?: number): Promise<any[][]> {
     const drive = await getGoogleDriveClient();
     const sheets = await getGoogleSheetsClient();
     
@@ -170,9 +176,15 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         throw new Error(`Папка для года ${targetYear} не настроена в системе.`);
     }
 
-    // Determine target months based on quarter
+    // Determine target months based on Month param OR Quarter param
     let targetMonthNames: string[] = [];
-    if (quarter) {
+    
+    if (month && month >= 1 && month <= 12) {
+        // Specific month requested (1 = January)
+        const mName = RUSSIAN_MONTHS_ORDER[month - 1];
+        if (mName) targetMonthNames = [mName];
+    } else if (quarter) {
+        // Fallback to quarter if month not specified
         const quarterMap: Record<number, string[]> = {
             1: ['Январь', 'Февраль', 'Март'],
             2: ['Апрель', 'Май', 'Июнь'],
@@ -181,6 +193,7 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         };
         targetMonthNames = quarterMap[quarter] || [];
     } else {
+        // Fallback to all
         targetMonthNames = Object.keys(MONTH_MAP);
     }
 
@@ -200,7 +213,6 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     // If we can't find the year folder structure at all, that's a config error.
     if (yearFolders.length === 0) {
         console.warn(`В папке ${targetYear} не найдено подпапок.`);
-        // Don't throw here, just return empty. Maybe user hasn't created structure yet.
         return [];
     }
 
@@ -260,7 +272,8 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
 
     // FIX: If no data found (e.g. future quarters), return empty array instead of throwing.
     if (allData.length === 0) {
-        console.warn(`[getAkbData] No data found for ${targetYear} Q${quarter || 'All'}. Returning empty.`);
+        const timeFrame = month ? `Month ${month}` : (quarter ? `Q${quarter}` : 'All');
+        console.warn(`[getAkbData] No data found for ${targetYear} ${timeFrame}. Returning empty.`);
         return [];
     }
 
