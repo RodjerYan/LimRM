@@ -25,13 +25,18 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 </div>
                 <div>
                     <h1 className="font-bold text-white tracking-tight">
-                        <span className="relative inline-block">
+                        <span className="relative inline-block mr-0.5">
                             GP
-                            <div className="absolute -top-3.5 -right-2 w-5 h-5 pointer-events-none transform rotate-12 filter drop-shadow-md">
-                                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M16.5 13C16.5 13 16 4 10.5 4C5 4 4.5 13 4.5 13H16.5Z" fill="#EF4444"/>
-                                    <circle cx="10.5" cy="3.5" r="2.5" fill="white"/>
-                                    <rect x="3.5" y="13" width="14" height="3.5" rx="1.75" fill="white"/>
+                            <div className="absolute -top-6 -right-4 w-10 h-10 pointer-events-none transform -rotate-6 filter drop-shadow-lg z-20">
+                                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    {/* Red Hat Body - Tilted and floppy */}
+                                    <path d="M12 50 L 30 6 C 40 4 52 18 54 32 L 48 50 Z" fill="#EF4444" />
+                                    
+                                    {/* White Fur Trim */}
+                                    <rect x="6" y="48" width="48" height="12" rx="6" fill="white" />
+                                    
+                                    {/* White Pom Pom */}
+                                    <circle cx="54" cy="32" r="7" fill="white" />
                                 </svg>
                             </div>
                         </span>

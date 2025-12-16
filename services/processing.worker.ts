@@ -28,6 +28,50 @@ type CommonProcessArgs = {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * Validates if a string value looks like a valid Manager Name (RM/DM).
+ * Filters out common product attributes, "empty" placeholders, and too short strings.
+ */
+const isValidManagerValue = (val: string): boolean => {
+    if (!val) return false;
+    const v = String(val).trim().toLowerCase();
+    
+    // 1. Check for Garbage / Product Context
+    // Common terms found in "PM"/"RM" columns when the header detection is slightly off or columns are shifted
+    const stopWords = [
+        'нет специализации', 
+        'нет', 
+        'для ', 
+        'без ', 
+        'корм', 
+        'кошек', 
+        'собак', 
+        'стерилиз', 
+        'чувствител', 
+        'пород', 
+        'weight', 
+        'adult', 
+        'junior', 
+        'kitten', 
+        'puppy',
+        'специализ',
+        'продук',
+        'товар'
+    ];
+    
+    if (stopWords.some(w => v.includes(w))) return false;
+
+    // 2. Length Check
+    // "Ivanov" is 6 chars. "Kim" is 3. Initials "I.I." add length. 
+    // Anything less than 3 is likely noise or initials without context.
+    if (v.length < 3) return false;
+
+    // 3. Must contain at least 2 letters (excludes "123", "---", etc.)
+    if (!/[a-zа-яё]{2,}/i.test(v)) return false;
+
+    return true;
+};
+
+/**
  * Determines the Canonical Region Name for a given data row (Sales or OKB).
  */
 const getCanonicalRegion = (row: any): string => {
@@ -516,13 +560,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // Strict keyword matching for RM to avoid picking up "Специализация корма"
         // Updated list to include Latin/Cyrillic variants and full names
-        let rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm']);
+        let rmRaw = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm']);
         
+        // VALIDATION: Ensure the extracted value is a person/manager and not a product category
+        if (!isValidManagerValue(rmRaw)) {
+            rmRaw = '';
+        }
+
         // IMPROVED: Fallback to DM if RM is not found.
         // Often 'DM' or 'Director' columns contain the necessary grouping key if 'RM' is empty.
-        const dm = findValueInRow(row, ['дм', 'dm', 'дивизиональный', 'директор', 'director']);
-        if (!rm && dm) {
-             rm = dm;
+        let dmRaw = findValueInRow(row, ['дм', 'dm', 'дивизиональный', 'директор', 'director']);
+        if (!isValidManagerValue(dmRaw)) {
+            dmRaw = '';
+        }
+
+        let rm = rmRaw;
+        if (!rm && dmRaw) {
+             rm = dmRaw;
         }
 
         if (i > 0 && i % 5000 === 0) {
