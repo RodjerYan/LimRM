@@ -300,6 +300,79 @@ const findDateRange = (data: any[]): string | undefined => {
     return `${fmt(minDate)} - ${fmt(maxDate)}`;
 };
 
+/**
+ * Intelligent Header Detection
+ * Scans the first N rows to find the row that most likely contains the column headers.
+ * Matches against known critical columns like 'address', 'rm', 'weight'.
+ */
+const detectHeaderRowIndex = (rows: any[][]): number => {
+    const keywords = [
+        'адрес', 'address', 
+        'рм', 'rm', 'pm',
+        'дм', 'dm',
+        'вес', 'weight', 
+        'фасовка', 'packaging', 
+        'бренд', 'brand', 
+        'товар', 'product', 
+        'дистрибьютор', 'distributor', 
+        'канал', 'channel'
+    ];
+    
+    // Scan up to the first 20 rows
+    const limit = Math.min(rows.length, 20);
+    
+    for (let i = 0; i < limit; i++) {
+        const row = rows[i].map(cell => String(cell || '').toLowerCase());
+        let matches = 0;
+        
+        // Count how many keywords are present in this row
+        for (const k of keywords) {
+            // Check if any cell contains the keyword
+            if (row.some(cell => cell.includes(k))) {
+                matches++;
+            }
+        }
+        
+        // If we found at least 2 matching headers, this is likely the header row.
+        // We need > 1 because sometimes a title row might contain one keyword (e.g. "Sales Report by Brand")
+        if (matches >= 2) {
+            return i;
+        }
+    }
+    
+    return 0; // Default to first row if no better candidate found
+};
+
+/**
+ * Helper to converting a raw 2D array (from XLSX/CSV) into an Array of Objects using a specific header row.
+ */
+const convertRawDataToObjects = (rawData: any[][]): { jsonData: any[], headers: string[] } => {
+    if (!rawData || rawData.length === 0) return { jsonData: [], headers: [] };
+
+    // 1. Detect Header Row
+    const headerRowIndex = detectHeaderRowIndex(rawData);
+    
+    // 2. Extract Headers
+    const headers = rawData[headerRowIndex].map(h => String(h || '').trim());
+    
+    // 3. Slice data rows (everything after header)
+    const dataRows = rawData.slice(headerRowIndex + 1);
+    
+    // 4. Map to objects
+    const jsonData = dataRows.map(rowArray => {
+        const obj: any = {};
+        headers.forEach((h, i) => {
+            // Skip empty headers
+            if (h) {
+                obj[h] = rowArray[i];
+            }
+        });
+        return obj;
+    });
+
+    return { jsonData, headers };
+};
+
 
 self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const { file, rawSheetData, okbData, cacheData } = e.data;
@@ -312,17 +385,8 @@ self.onmessage = async (e: MessageEvent<{ file: File | null, rawSheetData?: any[
         if (rawSheetData && rawSheetData.length > 0) {
             postMessage({ type: 'progress', payload: { percentage: 5, message: 'Обработка данных из облака...' } });
             
-            const headers = rawSheetData[0].map(h => String(h || ''));
-            const rows = rawSheetData.slice(1);
-            
-            // Convert 2D array to Array of Objects
-            const jsonData = rows.map(rowArray => {
-                const obj: any = {};
-                headers.forEach((h, i) => {
-                    if (h) obj[h] = rowArray[i];
-                });
-                return obj;
-            });
+            // Use common conversion logic with header detection
+            const { jsonData, headers } = convertRawDataToObjects(rawSheetData);
             
             await processFile(jsonData, headers, commonArgs);
         } 
@@ -439,7 +503,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const row = jsonData[i];
         
         // Strict keyword matching for RM to avoid picking up "Специализация корма"
-        const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер']);
+        // Updated list to include Latin/Cyrillic variants and full names
+        const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам']);
 
         if (i > 0 && i % 5000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
@@ -731,8 +796,11 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
     const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    const jsonData: any[] = xlsx.utils.sheet_to_json(worksheet, { raw: false, defval: '' });
-    const headers = (xlsx.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || []).map(h => String(h || ''));
+    // READ AS ARRAY OF ARRAYS to enable header detection
+    const rawData: any[][] = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+    
+    // Process with intelligent header detection
+    const { jsonData, headers } = convertRawDataToObjects(rawData);
     
     await processFile(jsonData, headers, args);
 }
@@ -741,22 +809,25 @@ async function processXlsx(file: File, args: CommonProcessArgs) {
 async function processCsv(file: File, args: CommonProcessArgs) {
     args.postMessage({ type: 'progress', payload: { percentage: 0, message: 'Чтение файла CSV...' } });
     
-    const parsePromise = new Promise<{ data: any[], meta: ParseMeta }>((resolve, reject) => {
+    const parsePromise = new Promise<{ rawData: any[][], meta: ParseMeta }>((resolve, reject) => {
         PapaParse(file, {
-            header: true,
+            header: false, // READ AS ARRAY OF ARRAYS
             skipEmptyLines: true,
             complete: (results: ParseResult<any>) => {
                 if (results.errors.length > 0) console.warn('CSV parsing errors:', results.errors);
-                resolve({ data: results.data, meta: results.meta });
+                resolve({ rawData: results.data, meta: results.meta });
             },
             error: (error: Error) => reject(error)
         });
     });
 
     try {
-        const { data: jsonData, meta } = await parsePromise;
-        if (!jsonData || jsonData.length === 0) throw new Error("CSV файл пуст или не удалось его прочитать.");
-        const headers = meta.fields || Object.keys(jsonData[0] || {});
+        const { rawData } = await parsePromise;
+        if (!rawData || rawData.length === 0) throw new Error("CSV файл пуст или не удалось его прочитать.");
+        
+        // Process with intelligent header detection
+        const { jsonData, headers } = convertRawDataToObjects(rawData);
+        
         await processFile(jsonData, headers, args);
     } catch (error) {
         throw new Error(`Failed to parse CSV file: ${(error as Error).message}`);

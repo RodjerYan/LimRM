@@ -127,7 +127,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
  * IMPROVED: Uses a tiered approach (Exact > Word Boundary > Loose) to avoid false positives.
- * This fixes issues where "РМ" matched "Специализация корма".
+ * Updated to allow short keywords if they match exactly (critical for "RM", "PM").
  * 
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
@@ -159,7 +159,8 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
     }
 
     // 3. Fallback: Loose Partial Match (ONLY for keywords > 2 chars)
-    // We skip short keywords here to prevent "РМ" matching "Корм" if regex failed
+    // We skip short keywords here to prevent "РМ" matching "Корм" if regex failed.
+    // Exception: If strict mode fails, we might miss "PM_" prefix. But step 2 handles prefixes/suffixes with separators.
     for (const keyword of keywords) {
         if (keyword.length <= 2) continue; 
         
@@ -207,6 +208,7 @@ export const findAddressInRow = (row: { [key: string]: any }): string | null => 
     return null;
 };
 
+// ... (rest of the file remains unchanged) ...
 // --- UNIVERSAL REGION MATCHER GENERATOR ---
 // This generates a list of "root" words for regions to allow flexible matching.
 // Example: "Владимирская область" -> root "владимирская".
