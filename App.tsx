@@ -222,7 +222,7 @@ const App: React.FC = () => {
 
     // --- WORKER SETUP & COMMUNICATION ---
 
-    // MOVED UP: handleResultFinished needs to be defined before initWorker uses it
+    // MOVED UP: Definition of handleResultFinished must come before initWorker uses it
     const handleResultFinished = useCallback(() => {
         const aggregated = [...aggregatedDataBuffer.current];
         const unidentified = [...unidentifiedBuffer.current];

@@ -25,7 +25,6 @@ type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'pote
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 
 // --- WORKER STATE ---
-// These variables persist between messages to allow chunked processing
 let state_aggregatedData: AggregationMap = {};
 let state_uniquePlottableClients = new Map<string, MapPoint>();
 let state_newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
@@ -46,14 +45,14 @@ let state_dateRange: string | undefined = undefined;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- HELPER: Aggressive Key Normalization ---
-// Removes NBSP (\u00A0), tabs, newlines, and ALL spaces to match "PM " or "PM\u00A0" as "pm"
+// Forces match for "PM", "ДМ" even if they contain NBSP (\u00A0) or spaces.
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
     return String(key)
         .toLowerCase()
         .replace(/\u00A0/g, ' ') // Replace NBSP with normal space first
         .replace(/[\r\n\t]/g, '') // Remove control characters
-        .replace(/\s+/g, '') // Remove ALL whitespace
+        .replace(/\s+/g, '') // Remove ALL whitespace to ensure 'PM ' == 'pm'
         .trim();
 };
 
@@ -62,8 +61,8 @@ const isValidManagerValue = (val: string): boolean => {
     const v = String(val).trim().toLowerCase();
     const stopWords = ['нет специализации', 'нет', 'для ', 'без ', 'корм', 'кошек', 'собак', 'стерилиз', 'чувствител', 'пород', 'weight', 'adult', 'junior', 'kitten', 'puppy', 'специализ', 'продук', 'товар'];
     if (stopWords.some(w => v.includes(w))) return false;
-    if (v.length < 5) return false;
-    if (!/[a-zа-яё]{2,}/i.test(v)) return false;
+    if (v.length < 2) return false; // Allow short names/initials
+    // if (!/[a-zа-яё]{2,}/i.test(v)) return false; // Relaxed check for PM codes
     return true;
 };
 
@@ -71,30 +70,18 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     if (!row) return '';
     const rowKeys = Object.keys(row);
     
-    // Normalize target keys once
+    // Normalize target keys once for comparison
     const targetStrict = strictKeys.map(k => normalizeHeaderKey(k));
     const targetLoose = looseKeys.map(k => normalizeHeaderKey(k));
     
-    // 1. Strict Search (Exact Match or Key+Suffix)
+    // 1. Strict Search (Exact Match of Normalized Key)
+    // This effectively finds "PM" even if the sheet has "PM " or "PM\n"
     for (const key of rowKeys) {
         const normKey = normalizeHeaderKey(key);
         
-        // Direct exact match (e.g. "PM " -> "pm" === "pm")
         if (targetStrict.includes(normKey)) {
              const val = String(row[key] || '');
              if (isValidManagerValue(val)) return val;
-        }
-        
-        // Suffix check (e.g. "PM Name" -> "pmname")
-        // Check if normKey starts with a strict key followed by a known suffix
-        const suffixes = ['фио', 'name', 'ф.и.о', 'ф.и.о.', 'manager', 'менеджер'];
-        for (const s of targetStrict) {
-             for (const suf of suffixes) {
-                 if (normKey === s + suf) {
-                     const val = String(row[key] || '');
-                     if (isValidManagerValue(val)) return val;
-                 }
-             }
         }
     }
 
@@ -282,19 +269,19 @@ const findDateRange = (data: any[]): string | undefined => {
 };
 
 const detectHeaderRowIndex = (rows: any[][]): number => {
-    // Normalizing keywords to match our aggressive normalization strategy
+    // Added 'PM' and 'ДМ' specifically for this use case
     const keywords = ['адрес', 'address', 'рм', 'rm', 'pm', 'дм', 'dm', 'вес', 'weight', 'фасовка', 'packaging', 'бренд', 'brand', 'товар', 'product', 'дистрибьютор', 'distributor', 'канал', 'channel'];
     const limit = Math.min(rows.length, 20);
     let bestRowIndex = 0;
     let maxMatches = 0;
     
     for (let i = 0; i < limit; i++) {
-        // Aggressively clean the row cells for checking
+        // Use normalized check here too
         const row = rows[i].map(cell => normalizeHeaderKey(String(cell || '')));
         
         let matches = 0;
         for (const k of keywords) {
-            // Check if cleaned cell contains cleaned keyword
+            // Check if normalized cell contains keyword
             if (row.some(cell => cell.includes(k))) matches++;
         }
         if (matches > maxMatches) {
@@ -313,6 +300,7 @@ const convertRawDataToObjects = (rawData: any[][], predefinedHeaders?: string[])
     
     if (!headers) {
         const headerRowIndex = detectHeaderRowIndex(rawData);
+        // Trim headers immediately upon extraction
         headers = rawData[headerRowIndex].map(h => String(h || '').trim());
         dataRows = rawData.slice(headerRowIndex + 1);
     }
@@ -329,7 +317,6 @@ const convertRawDataToObjects = (rawData: any[][], predefinedHeaders?: string[])
 
 // --- LOGIC: INITIALIZE STREAM ---
 function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: CoordsCache }, postMessage: PostMessageFn) {
-    // Reset state
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
     state_newAddressesToCache = {};
@@ -345,7 +332,6 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
 
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Инициализация и индексация...' } });
 
-    // Process OKB
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     if (okbData) {
         okbData.forEach(row => {
@@ -358,7 +344,6 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
         });
     }
 
-    // Process Cache
     state_cacheAddressMap = new Map();
     state_cacheRedirectMap = new Map();
     state_deletedAddresses = new Set();
@@ -397,36 +382,31 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk, fileName } = payload;
     
-    // 1. Convert to Objects
     let jsonData: any[] = [];
     if (isFirstChunk) {
         const result = convertRawDataToObjects(rawData);
         jsonData = result.jsonData;
         state_headers = result.headers;
         
-        // Init header-based config once
         state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
         state_clientNameHeader = findClientNameHeader(state_headers);
     } else {
-        // Use existing headers
         const result = convertRawDataToObjects(rawData, state_headers);
         jsonData = result.jsonData;
     }
 
     if (jsonData.length === 0) return;
 
-    // 2. Date Range Detection (Best Effort - accumulate min/max)
-    // For now, we just check the first chunk for efficiency, or update if not set
     if (!state_dateRange) {
         const range = findDateRange(jsonData);
         if (range) state_dateRange = range;
     }
 
-    // 3. Process Rows
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        // FIX: Added 'pm' to keys and normalizeHeaderKey usage inside findManagerValue ensures match
+        // --- KEY FIX: Added 'pm' and 'дм' to strict keys ---
+        // findManagerValue uses normalizeHeaderKey, so "PM " will match "pm".
         const rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
         const dm = findManagerValue(row, ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'], ['дм', 'dm', 'director', 'директор']);
         let finalRm = rm || dm;
@@ -441,7 +421,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
-        // Redirects & Deletes
         let normalizedRaw = clientAddress ? normalizeAddress(clientAddress) : '';
         if (clientAddress) {
             if (state_deletedAddresses.has(normalizedRaw)) continue;
@@ -458,7 +437,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             }
         }
 
-        // Region / City / Cache Logic
         const regionFromColumns = getCanonicalRegion(row);
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         const cacheEntry = state_cacheAddressMap.get(normalizedRaw);
@@ -506,7 +484,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             if (!isNaN(potential)) state_aggregatedData[key].potential += potential;
         }
 
-        // Map Point Logic
         if (!state_uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -570,7 +547,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     }
     
     state_processedRowsCount += jsonData.length;
-    // Release JSON data memory
     jsonData = [];
 }
 
@@ -697,14 +673,12 @@ async function finalizeStream(postMessage: PostMessageFn) {
     postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
-// --- MAIN HANDLER ---
 self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | WorkerInputChunk | WorkerInputFinalize | { file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const msg = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
     try {
         if ('type' in msg) {
-            // New Stream API
             switch(msg.type) {
                 case 'INIT_STREAM':
                     initStream(msg.payload, postMessage);
@@ -717,7 +691,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | Worker
                     break;
             }
         } else {
-            // Legacy Handler (for file upload)
+            // Legacy Handler
             const { file, rawSheetData, okbData, cacheData } = msg as any;
             initStream({ okbData, cacheData }, postMessage);
             
