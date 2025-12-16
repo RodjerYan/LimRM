@@ -220,14 +220,71 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
+    // --- HELPER: Background Geocoding Runner ---
+    const handleBackgroundGeocoding = useCallback(async (tasks: { [rmName: string]: string[] }) => {
+        const geocodeRMs = Object.keys(tasks);
+        if (geocodeRMs.length === 0) return;
+
+        setProcessingState(prev => ({ ...prev, backgroundMessage: 'Запуск геокодирования...' }));
+
+        for (const rmName of geocodeRMs) {
+            const updates: { address: string, lat: number, lon: number }[] = [];
+            const addresses = tasks[rmName];
+            
+            for (let i = 0; i < addresses.length; i++) {
+                const address = addresses[i];
+                
+                // Update UI state occasionally
+                if (i % 5 === 0) {
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        backgroundMessage: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...` 
+                    }));
+                }
+                
+                let coords: { lat: number, lon: number } | null = null;
+                // Retry loop for geocoding service
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
+                        if (response.ok) {
+                            coords = await response.json();
+                            break;
+                        }
+                    } catch (e) { 
+                        console.error(`Geocode attempt ${attempt} failed for ${address}:`, e); 
+                    }
+                    if (attempt < 3) await new Promise(r => setTimeout(r, 5000));
+                }
+                
+                if (coords) {
+                    updates.push({ address, ...coords });
+                }
+            }
+
+            if (updates.length > 0) {
+                setProcessingState(prev => ({ ...prev, backgroundMessage: `Обновление координат для ${rmName}...` }));
+                try {
+                     await fetch('/api/update-coords', { 
+                         method: 'POST', 
+                         headers: { 'Content-Type': 'application/json' }, 
+                         body: JSON.stringify({ rmName, updates }) 
+                     });
+                } catch (e) { 
+                    console.error(`Failed to update coords for ${rmName}:`, e); 
+                }
+            }
+        }
+        setProcessingState(prev => ({ ...prev, backgroundMessage: null }));
+        addNotification('Фоновое геокодирование завершено.', 'success');
+    }, [addNotification]);
+
     // --- WORKER SETUP & COMMUNICATION ---
 
-    // MOVED UP: Definition of handleResultFinished must come before initWorker uses it
     const handleResultFinished = useCallback(() => {
         const aggregated = [...aggregatedDataBuffer.current];
         const unidentified = [...unidentifiedBuffer.current];
         
-        // Reconstruct flat list of active clients from aggregated groups to save memory/transfer
         const activeClientsFlat = aggregated.flatMap(row => row.clients || []);
 
         setAllData(aggregated);
@@ -286,7 +343,7 @@ const App: React.FC = () => {
 
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
 
-        workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
+        workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
             switch (msg.type) {
                 case 'progress':
@@ -330,6 +387,59 @@ const App: React.FC = () => {
                     }));
                     break;
 
+                // Handle delegated background tasks
+                case 'background':
+                    if (msg.payload && 'type' in msg.payload) {
+                        // Task: Save Cache Batch
+                        if (msg.payload.type === 'save_cache_batch') {
+                            const { rmName, rows, batchId } = msg.payload.payload;
+                            // Perform fetch in main thread
+                            for (let attempt = 0; attempt < 3; attempt++) {
+                                try {
+                                    const res = await fetch('/api/add-to-cache', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        credentials: 'include', // Ensure cookies are sent if needed
+                                        body: JSON.stringify({ rmName, rows })
+                                    });
+                                    if (!res.ok) {
+                                        const text = await res.text();
+                                        throw new Error(`API Error: ${text}`);
+                                    }
+                                    
+                                    // SUCCESS: Send ACK
+                                    workerRef.current?.postMessage({
+                                        type: 'ACK',
+                                        payload: { batchId }
+                                    });
+                                    break; 
+                                } catch (err) {
+                                    console.error(`Save cache failed attempt ${attempt+1} for ${rmName}:`, err);
+                                    if (attempt === 2) {
+                                        addNotification(`Ошибка сохранения адресов для ${rmName}`, 'error');
+                                        // Even on failure, might want to ACK to prevent worker hang, 
+                                        // or implement robust error handling in worker.
+                                        // For now, let's ACK to proceed, but log error.
+                                        workerRef.current?.postMessage({
+                                            type: 'ACK',
+                                            payload: { batchId }
+                                        });
+                                    } else {
+                                        // Wait before retry
+                                        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Task: Start Geocoding
+                        if (msg.payload.type === 'start_geocoding_tasks') {
+                            const { tasks } = msg.payload.payload;
+                            handleBackgroundGeocoding(tasks);
+                        }
+                    }
+                    break;
+
                 case 'error':
                     setProcessingState(prev => ({ 
                         ...prev, 
@@ -361,7 +471,7 @@ const App: React.FC = () => {
         };
         workerRef.current.postMessage(initMsg);
 
-    }, [okbData, handleResultFinished, addNotification]);
+    }, [okbData, handleResultFinished, addNotification, handleBackgroundGeocoding]);
 
 
     const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
@@ -369,32 +479,7 @@ const App: React.FC = () => {
     }, []);
 
     const handleStartFileProcessing = useCallback((file: File) => {
-        // Legacy file processing triggers worker immediately with the file object
-        // We reuse initWorker but pass the file as legacy payload
-        // Ideally, we should refactor this to use stream too, but for simplicity we keep legacy path for local files
         initWorker('Загрузка кэша и файла...', file.name).then(() => {
-             // For legacy file handling, we post the file object directly
-             // The worker's 'onmessage' will catch this because it checks for 'file' property
-             // Note: cacheData is already in worker state from initStream, but legacy handler re-inits. 
-             // Ideally we should refactor worker to separate cache init from file processing completely.
-             // But for now, we just pass empty cache/okb here relying on worker logic or just re-pass them if needed.
-             // Actually, looking at worker code: if msg has 'file', it calls initStream again.
-             // So we should pass cacheData again if we want it to work in legacy mode.
-             // However, `initWorker` is async and fetches cache.
-             // Let's simplified: we just post the file. The worker's `onmessage` handles `file` property.
-             // BUT wait, `initWorker` above posts `INIT_STREAM`. The worker is now stateful.
-             // If we post `file` afterwards, the worker legacy handler will run.
-             // The legacy handler calls `initStream` again!
-             // So we need to pass `okbData` and `cacheData` again or refactor worker legacy handler to use existing state.
-             // For safety and minimal changes to legacy flow, let's just let it re-init.
-             // We need to fetch cache again or store it in `initWorker`.
-             // Actually `initWorker` fetches cache locally. 
-             // Let's just update `initWorker` to return the cacheData it fetched so we can use it.
-             // OR, better: `handleStartFileProcessing` should just use the new streaming protocol too!
-             // Reading file in chunk? PapaParse supports chunking.
-             // For now, to keep it simple and fix the OOM for CLOUD, I will leave file upload as legacy
-             // and just ensure `initWorker` doesn't break it.
-             
              // Re-fetch cache for legacy payload construction (a bit redundant but safe)
              fetch(`/api/get-full-cache?t=${Date.now()}`).then(r => r.json()).then(cacheData => {
                  workerRef.current?.postMessage({ file, okbData, cacheData });

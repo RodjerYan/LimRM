@@ -11,7 +11,8 @@ import {
     UnidentifiedRow,
     WorkerInputInit,
     WorkerInputChunk,
-    WorkerInputFinalize
+    WorkerInputFinalize,
+    WorkerInputAck
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
@@ -47,11 +48,26 @@ let state_dateRange: string | undefined = undefined;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- HELPER: Sheet Name Sanitization ---
-// Google Sheets disallows: [ ] * ? : / \ and names longer than ~100 chars
-// Also apostrophes at start/end are problematic.
+// --- ACK Mechanism ---
+const pendingAcks = new Set<string>();
+
+const waitForAck = (id: string) => {
+    pendingAcks.add(id);
+    return new Promise<void>(resolve => {
+        const interval = setInterval(() => {
+            if (!pendingAcks.has(id)) {
+                clearInterval(interval);
+                resolve();
+            }
+        }, 50);
+    });
+};
+
+// --- HELPER: Sheet Name Sanitization with Hash Fallback ---
+const hash = (s: string) => Math.abs(s.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)).toString(36);
+
 const sanitizeSheetName = (name: string): string => {
-    if (!name || name.trim() === '') return 'Unknown_RM';
+    if (!name || name.trim() === '') return `Unknown_RM_${hash('empty')}`;
     
     // 1. Remove invalid chars
     let sanitized = String(name)
@@ -59,13 +75,13 @@ const sanitizeSheetName = (name: string): string => {
         .replace(/\s+/g, ' ') // Collapse multiple spaces
         .trim();
     
-    // 2. Ensure name is not empty after cleanup
-    if (sanitized === '') {
-        return 'Unknown_RM';
-    }
-    
-    // 3. Remove leading/trailing apostrophes (Google Sheets restriction)
+    // 2. Remove leading/trailing apostrophes (Google Sheets restriction)
     sanitized = sanitized.replace(/^'+|'+$/g, '');
+    
+    // 3. Robust fallback if name becomes empty or 'Unknown'
+    if (sanitized === '' || sanitized === 'Unknown_RM') {
+        return `Unknown_RM_${hash(name)}`;
+    }
     
     // 4. Truncate to 99 chars (safe limit)
     if (sanitized.length > 99) {
@@ -498,16 +514,18 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         // Trim whitespace for consistency
         if (finalRm) finalRm = finalRm.trim();
 
+        // FIX: Default empty RM to 'Unknown_RM' instead of skipping, ensuring we capture data.
+        if (!finalRm || finalRm === '') {
+            finalRm = 'Unknown_RM';
+            // Also push to unidentified for visibility, but allow processing to continue
+            state_unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: state_processedRowsCount + i });
+        }
+
         let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         
-        if (!finalRm || finalRm === '') {
-            state_unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: state_processedRowsCount + i });
-            continue;
-        }
-
         let normalizedRaw = clientAddress ? normalizeAddress(clientAddress) : '';
         if (clientAddress) {
             if (state_deletedAddresses.has(normalizedRaw)) continue;
@@ -713,7 +731,9 @@ async function finalizeStream(postMessage: PostMessageFn) {
     }
 
     // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
-    // Progress 95 -> 99: Saving Phase with RETRY Logic
+    // Progress 95 -> 99: Saving Phase
+    // FIX: Delegate actual saving to the main thread via postMessage to avoid worker fetch issues.
+    // FIX: Implement ACK mechanism for robust flow control.
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
@@ -743,8 +763,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
 
             const sanitizedRmName = sanitizeSheetName(rmName); 
             // Check sanitized
-            if (sanitizedRmName === '' || sanitizedRmName === 'Unknown_RM') {
-                 // Try to save to Unknown_RM if data is valuable, but log warning
+            if (sanitizedRmName === '' || sanitizedRmName.includes('Unknown_RM')) {
                  console.warn(`RM "${rmName}" sanitized to "${sanitizedRmName}"`);
             }
 
@@ -765,36 +784,24 @@ async function finalizeStream(postMessage: PostMessageFn) {
                     } 
                 });
 
-                // RETRY LOGIC for stability
-                let success = false;
-                for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                        console.log(`[Batch ${b+1}/${totalBatches}] Sending ${chunk.length} rows for ${sanitizedRmName}...`);
-                        const response = await fetch('/api/add-to-cache', { 
-                            method: 'POST', 
-                            headers: { 'Content-Type': 'application/json' }, 
-                            body: JSON.stringify({ rmName: sanitizedRmName, rows: chunk }) 
-                        });
-                        
-                        if (!response.ok) {
-                            const txt = await response.text();
-                            throw new Error(`API Error ${response.status}: ${txt}`);
+                // Generate ID for ACK
+                const batchId = `${sanitizedRmName}_${b}_${Date.now()}`;
+
+                // DELEGATE TO MAIN THREAD
+                postMessage({
+                    type: 'background',
+                    payload: {
+                        type: 'save_cache_batch',
+                        payload: {
+                            rmName: sanitizedRmName,
+                            rows: chunk,
+                            batchId: batchId
                         }
-
-                        success = true;
-                        break; // Success!
-                    } catch (e) { 
-                        console.error(`Attempt ${attempt+1} failed for ${sanitizedRmName}:`, e); 
-                        await sleep(1000 * (attempt + 1)); // Exponential Backoff
                     }
-                }
-                
-                if (!success) {
-                    postMessage({ type: 'error', payload: `ОШИБКА записи для ${sanitizedRmName}. Данные могут быть неполными.` });
-                }
+                });
 
-                // Small delay to allow UI updates and prevent Google API rate limits
-                await sleep(300);
+                // Wait for Main Thread to confirm receipt/processing
+                await waitForAck(batchId);
             }
         }
     }
@@ -827,42 +834,25 @@ async function finalizeStream(postMessage: PostMessageFn) {
     postMessage({ type: 'result_finished' });
 
     // Background Tasks (Only geocoding left)
-    const geocodeRMs = Object.keys(state_addressesToGeocode);
-    if (geocodeRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
-        for (const rmName of geocodeRMs) {
-            const updates: { address: string, lat: number, lon: number }[] = [];
-            const addresses = state_addressesToGeocode[rmName];
-            for (let i = 0; i < addresses.length; i++) {
-                const address = addresses[i];
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Геокодирование (${i + 1}/${addresses.length}): ${address.substring(0, 30)}...`, isBackground: true } });
-                
-                let coords: { lat: number, lon: number } | null = null;
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        const response = await fetch(`/api/geocode?address=${encodeURIComponent(address)}`);
-                        if (response.ok) {
-                            coords = await response.json();
-                            break;
-                        }
-                    } catch (e) { console.error(`Geocode attempt ${attempt} failed for ${address}:`, e); }
-                    if (attempt < 3) await sleep(5000);
+    // FIX: Delegate geocoding task management to main thread
+    if (Object.keys(state_addressesToGeocode).length > 0) {
+        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования (фоновый режим)...', isBackground: true } });
+        
+        postMessage({
+            type: 'background',
+            payload: {
+                type: 'start_geocoding_tasks',
+                payload: {
+                    tasks: state_addressesToGeocode
                 }
-                if (coords) updates.push({ address, ...coords });
             }
-
-            if (updates.length > 0) {
-                postMessage({ type: 'progress', payload: { percentage: 99, message: `Обновление ${updates.length} координат для ${rmName}...`, isBackground: true } });
-                try {
-                     await fetch('/api/update-coords', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, updates }) });
-                } catch (e) { console.error(`Failed to update coords for ${rmName}:`, e); }
-            }
-        }
+        });
+    } else {
+        postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
     }
-    postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
 }
 
-self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | WorkerInputChunk | WorkerInputFinalize | { file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
+self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | WorkerInputChunk | WorkerInputFinalize | WorkerInputAck | { file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
     const msg = e.data;
     const postMessage: PostMessageFn = (message) => self.postMessage(message);
 
@@ -877,6 +867,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | Worker
                     break;
                 case 'FINALIZE_STREAM':
                     await finalizeStream(postMessage);
+                    break;
+                case 'ACK':
+                    pendingAcks.delete(msg.payload.batchId);
                     break;
             }
         } else {

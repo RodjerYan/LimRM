@@ -142,9 +142,8 @@ export type WorkerResultPayload = {
 export type WorkerErrorPayload = string;
 
 export type WorkerBackgroundMessage = 
-    | { type: 'cache-update', payload: { rmName: string, rows: { address: string }[] } }
-    | { type: 'geocode-request', payload: { rmName: string, addresses: string[] } }
-    | { type: 'geocode-result', payload: { rmName: string, updates: { address: string, lat: number, lon: number }[] } };
+    | { type: 'save_cache_batch', payload: { rmName: string, rows: { address: string }[], batchId: string } }
+    | { type: 'start_geocoding_tasks', payload: { tasks: { [rmName: string]: string[] } } };
 
 // --- NEW STREAMING TYPES FOR OUTPUT ---
 export type WorkerStreamInit = {
@@ -185,6 +184,14 @@ export type WorkerInputChunk = {
 
 export type WorkerInputFinalize = {
     type: 'FINALIZE_STREAM';
+};
+
+// Flow Control ACK
+export type WorkerInputAck = {
+    type: 'ACK';
+    payload: {
+        batchId: string;
+    };
 };
 
 // Legacy input for file processing
