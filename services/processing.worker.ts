@@ -51,13 +51,19 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- ACK Mechanism ---
 const pendingAcks = new Set<string>();
 
-const waitForAck = (id: string) => {
+const waitForAck = (id: string, timeoutMs = 15000) => {
     pendingAcks.add(id);
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve, reject) => {
+        const started = Date.now();
         const interval = setInterval(() => {
             if (!pendingAcks.has(id)) {
                 clearInterval(interval);
                 resolve();
+            } else if (Date.now() - started > timeoutMs) {
+                pendingAcks.delete(id);
+                clearInterval(interval);
+                // Fail safe: Rejecting allows catch block to log and continue
+                reject(new Error(`ACK timeout for batch ${id}`));
             }
         }, 50);
     });
@@ -798,10 +804,15 @@ async function finalizeStream(postMessage: PostMessageFn) {
                             batchId: batchId
                         }
                     }
-                });
+                } as any);
 
                 // Wait for Main Thread to confirm receipt/processing
-                await waitForAck(batchId);
+                try {
+                    await waitForAck(batchId);
+                } catch (e) {
+                    console.warn((e as Error).message);
+                    // Continue processing next batches even if one fails or times out
+                }
             }
         }
     }
@@ -846,7 +857,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
                     tasks: state_addressesToGeocode
                 }
             }
-        });
+        } as any);
     } else {
         postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
     }

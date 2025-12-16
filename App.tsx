@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import L from 'leaflet';
+import * as XLSX from 'xlsx';
+import Papa from 'papaparse';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -393,6 +395,19 @@ const App: React.FC = () => {
                         // Task: Save Cache Batch
                         if (msg.payload.type === 'save_cache_batch') {
                             const { rmName, rows, batchId } = msg.payload.payload;
+                            
+                            // --- NEW: Logging & Safety Check ---
+                            console.log('[SAVE_CACHE]', rmName, rows?.length);
+                            
+                            if (!rows || rows.length === 0) {
+                                workerRef.current?.postMessage({
+                                    type: 'ACK',
+                                    payload: { batchId }
+                                });
+                                break;
+                            }
+                            // ------------------------------------
+
                             // Perform fetch in main thread
                             for (let attempt = 0; attempt < 3; attempt++) {
                                 try {
@@ -478,14 +493,60 @@ const App: React.FC = () => {
         // Legacy, ignored.
     }, []);
 
-    const handleStartFileProcessing = useCallback((file: File) => {
-        initWorker('Загрузка кэша и файла...', file.name).then(() => {
-             // Re-fetch cache for legacy payload construction (a bit redundant but safe)
-             fetch(`/api/get-full-cache?t=${Date.now()}`).then(r => r.json()).then(cacheData => {
-                 workerRef.current?.postMessage({ file, okbData, cacheData });
-             });
-        });
-    }, [initWorker, okbData]);
+    const handleStartFileProcessing = useCallback(async (file: File) => {
+        await initWorker('Обработка файла...', file.name);
+        
+        setProcessingState(prev => ({ ...prev, message: 'Чтение файла...' }));
+
+        // Parse File
+        let rawData: any[][] = [];
+        
+        try {
+            if (file.name.toLowerCase().endsWith('.csv')) {
+                await new Promise<void>((resolve, reject) => {
+                    Papa.parse(file, {
+                        header: false,
+                        skipEmptyLines: true,
+                        complete: (results) => {
+                            rawData = results.data as any[][];
+                            resolve();
+                        },
+                        error: (err) => reject(err)
+                    });
+                });
+            } else {
+                const buffer = await file.arrayBuffer();
+                const workbook = XLSX.read(buffer, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+            }
+
+            if (!rawData || rawData.length === 0) throw new Error("Файл пуст");
+
+            // Send to Worker
+            setProcessingState(prev => ({ ...prev, message: 'Анализ данных...' }));
+            
+            const chunkMsg: WorkerInputChunk = {
+                type: 'PROCESS_CHUNK',
+                payload: {
+                    rawData: rawData,
+                    isFirstChunk: true,
+                    fileName: file.name
+                }
+            };
+            workerRef.current?.postMessage(chunkMsg);
+
+            // Finalize
+            const finalizeMsg: WorkerInputFinalize = { type: 'FINALIZE_STREAM' };
+            workerRef.current?.postMessage(finalizeMsg);
+
+        } catch (error) {
+            console.error("File parse error:", error);
+            addNotification(`Ошибка чтения файла: ${(error as Error).message}`, 'error');
+            setProcessingState(prev => ({ ...prev, isProcessing: false }));
+        }
+    }, [initWorker, addNotification]);
 
     // Updated to split load into 12 requests (Months) to avoid timeouts
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
@@ -740,6 +801,14 @@ const App: React.FC = () => {
         const processKey = `${rmName}-${address}`;
         if (processingQueue.current.has(processKey)) return;
         processingQueue.current.add(processKey);
+
+        // Safety timeout to ensure the queue lock is released eventually
+        setTimeout(() => {
+            if (processingQueue.current.has(processKey)) {
+                console.warn(`Force clearing processing queue for ${processKey}`);
+                processingQueue.current.delete(processKey);
+            }
+        }, MAX_POLL_TIME + 5000);
 
         const startTime = Date.now();
 
