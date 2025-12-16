@@ -548,7 +548,8 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // Updated to split load into 12 requests (Months) to avoid timeouts
+    // Updated to split load into individual files to avoid Vercel timeouts (500 error)
+    // New flow: Client iterates Month -> List Files -> Fetch each file -> Send to Worker
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -576,71 +577,68 @@ const App: React.FC = () => {
                 months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
             }
             
-            const totalTasks = months.length;
             let hasProcessedHeaders = false;
             let totalFetchedRows = 0;
 
-            const fetchMonth = async (m: number) => {
-                const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
-                if (!response.ok) {
-                    let errorMsg = `Month ${m} fetch failed (${response.status})`;
-                    try {
-                        const text = await response.text();
-                        try {
-                            const errorData = JSON.parse(text);
-                            if (errorData.details) errorMsg = errorData.details;
-                            else if (errorData.error) errorMsg = errorData.error;
-                        } catch {
-                            if (text.length < 200) errorMsg += `: ${text}`;
-                            else errorMsg += `: Server Error (Check logs)`;
-                        }
-                    } catch (e) { /* ignore */ }
-                    throw new Error(errorMsg);
-                }
-                return await response.json();
-            };
-
-            // SEQUENTIAL EXECUTION & STREAMING TO WORKER
+            // SEQUENTIAL EXECUTION FOR MONTHS
             for (let i = 0; i < months.length; i++) {
                 const m = months[i];
                 const monthName = new Date(0, m - 1).toLocaleString('ru-RU', { month: 'long' });
                 
                 setProcessingState(prev => ({ 
                     ...prev, 
-                    progress: Math.round(((i) / totalTasks) * 90), // Scale progress 0-90 during fetch
-                    message: `Загрузка: ${monthName} (${i + 1}/${totalTasks})...` 
+                    message: `Получение списка файлов: ${monthName}...` 
                 }));
-                
-                try {
-                    let chunkData: any[][] = await fetchMonth(m);
-                    
-                    if (Array.isArray(chunkData) && chunkData.length > 0) {
-                        // FIX: Since api/lib/sheets.ts now returns headers for EVERY file (including subsequent months),
-                        // we must strip the header row (index 0) if headers have already been processed by the worker.
-                        // Otherwise, the worker tries to map the header row using itself as keys, resulting in a garbage row
-                        // and potentially messing up column detection logic.
-                        if (hasProcessedHeaders) {
-                            chunkData = chunkData.slice(1);
-                        }
 
-                        if (chunkData.length > 0) {
-                            totalFetchedRows += chunkData.length;
-                            // Send to worker immediately
-                            const chunkMsg: WorkerInputChunk = {
-                                type: 'PROCESS_CHUNK',
-                                payload: {
-                                    rawData: chunkData,
-                                    isFirstChunk: !hasProcessedHeaders,
-                                    fileName: `Month_${m}`
-                                }
-                            };
-                            workerRef.current?.postMessage(chunkMsg);
-                            hasProcessedHeaders = true;
+                // Step A: Get List of Files for this Month
+                const listResponse = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
+                if (!listResponse.ok) {
+                    console.warn(`Could not list files for month ${m}, skipping.`);
+                    continue;
+                }
+                const fileList: { id: string, name: string }[] = await listResponse.json();
+                
+                if (fileList.length === 0) continue;
+
+                // Step B: Fetch Content for Each File
+                for (let j = 0; j < fileList.length; j++) {
+                    const file = fileList[j];
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        message: `Загрузка: ${monthName} (${j + 1}/${fileList.length}) - ${file.name}...` 
+                    }));
+
+                    try {
+                        const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
+                        if (!contentRes.ok) throw new Error(`Failed to download file ${file.name}`);
+                        
+                        let chunkData: any[][] = await contentRes.json();
+                        
+                        if (Array.isArray(chunkData) && chunkData.length > 0) {
+                            // Strip headers for subsequent files to avoid treating them as data
+                            if (hasProcessedHeaders) {
+                                chunkData = chunkData.slice(1);
+                            }
+
+                            if (chunkData.length > 0) {
+                                totalFetchedRows += chunkData.length;
+                                // Send to worker immediately
+                                const chunkMsg: WorkerInputChunk = {
+                                    type: 'PROCESS_CHUNK',
+                                    payload: {
+                                        rawData: chunkData,
+                                        isFirstChunk: !hasProcessedHeaders,
+                                        fileName: file.name
+                                    }
+                                };
+                                workerRef.current?.postMessage(chunkMsg);
+                                hasProcessedHeaders = true;
+                            }
                         }
+                    } catch (e) {
+                        console.error(`Error loading file ${file.name}:`, e);
+                        // Continue to next file
                     }
-                } catch (e) {
-                    console.warn(`Error fetching month ${m}`, e);
-                    if (month) throw e; // Specific request failed
                 }
             }
             

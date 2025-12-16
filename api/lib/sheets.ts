@@ -70,9 +70,6 @@ async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     return google.drive({ version: 'v3', auth });
 }
 
-/**
- * Fetches the entire OKB (Общая Клиентская База) from the Google Sheet.
- */
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
   const res = await sheets.spreadsheets.values.get({
@@ -161,47 +158,24 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     });
 }
 
+// --- NEW GRANULAR METHODS ---
+
 /**
- * DYNAMICALLY fetches AKB data by traversing Google Drive folders.
- * Supports filtering by Year, Quarter, or specific Month index.
+ * Returns a list of file IDs and names for a specific year/month.
  */
-export async function getAkbData(year?: string, quarter?: number, month?: number): Promise<any[][]> {
+export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
-    const sheets = await getGoogleSheetsClient();
+    const rootFolderId = ROOT_FOLDERS[year];
     
-    const targetYear = year || '2025';
-    const rootFolderId = ROOT_FOLDERS[targetYear];
+    if (!rootFolderId) throw new Error(`Folder for year ${year} not configured.`);
+
+    const mName = RUSSIAN_MONTHS_ORDER[month - 1];
+    if (!mName) throw new Error(`Invalid month index: ${month}`);
     
-    if (!rootFolderId) {
-        throw new Error(`Папка для года ${targetYear} не настроена в системе.`);
-    }
+    const engMonthName = MONTH_MAP[mName];
+    if (!engMonthName) return []; // Should not happen based on maps
 
-    // Determine target months based on Month param OR Quarter param
-    let targetMonthNames: string[] = [];
-    
-    if (month && month >= 1 && month <= 12) {
-        // Specific month requested (1 = January)
-        const mName = RUSSIAN_MONTHS_ORDER[month - 1];
-        if (mName) targetMonthNames = [mName];
-    } else if (quarter) {
-        // Fallback to quarter if month not specified
-        const quarterMap: Record<number, string[]> = {
-            1: ['Январь', 'Февраль', 'Март'],
-            2: ['Апрель', 'Май', 'Июнь'],
-            3: ['Июль', 'Август', 'Сентябрь'],
-            4: ['Октябрь', 'Ноябрь', 'Декабрь']
-        };
-        targetMonthNames = quarterMap[quarter] || [];
-    } else {
-        // Fallback to all
-        targetMonthNames = Object.keys(MONTH_MAP);
-    }
-
-    const allData: any[][] = [];
-    let headersSet = false;
-    const loadedFiles: string[] = [];
-
-    // 1. List folders inside the Root Year Folder
+    // 1. Find Month Folder
     const folderListRes = await drive.files.list({
         q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
         fields: 'files(id, name)',
@@ -209,82 +183,82 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
     });
     
     const yearFolders = folderListRes.data.files || [];
-    
-    // If we can't find the year folder structure at all, that's a config error.
-    if (yearFolders.length === 0) {
-        console.warn(`В папке ${targetYear} не найдено подпапок.`);
+    const monthFolder = yearFolders.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
+
+    if (!monthFolder || !monthFolder.id) {
         return [];
     }
 
-    // 2. Iterate through target months and find matching folders
-    for (const rusMonth of targetMonthNames) {
-        const engMonthName = MONTH_MAP[rusMonth];
-        if (!engMonthName) continue;
+    // 2. List Spreadsheets in Month Folder
+    const fileListRes = await drive.files.list({
+        q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+        fields: 'files(id, name)',
+        pageSize: 100 // Limit to 100 files per month
+    });
 
-        const monthFolder = yearFolders.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
-        
-        if (monthFolder && monthFolder.id) {
-            // 3. List Spreadsheets inside the Month Folder
-            const fileListRes = await drive.files.list({
-                q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
-                fields: 'files(id, name)',
-                pageSize: 50 
-            });
-            
-            const spreadsheets = fileListRes.data.files || [];
-            
-            if (spreadsheets.length === 0) {
-                continue;
-            }
+    return (fileListRes.data.files || []).map(f => ({
+        id: f.id!,
+        name: f.name || 'Untitled'
+    }));
+}
 
-            // 4. Fetch data from each spreadsheet found in the folder SEQUENTIALLY
-            // Use sequential loop instead of Promise.all to avoid Vercel Function timeouts/OOM on large ranges
-            for (const file of spreadsheets) {
-                try {
-                    // Fetch a wide, contiguous range (A:BZ) to ensure RM columns are captured.
-                    // Doing this sequentially is slower but reliable against timeouts.
-                    const res = await sheets.spreadsheets.values.get({
-                        spreadsheetId: file.id!,
-                        range: 'A:BZ', 
-                        valueRenderOption: 'UNFORMATTED_VALUE',
-                    });
+/**
+ * Fetches content of a specific spreadsheet file.
+ */
+export async function fetchFileContent(fileId: string): Promise<any[][]> {
+    const sheets = await getGoogleSheetsClient();
+    
+    // Fetch a wide range to ensure we capture all data including potentially shifted columns
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: fileId,
+        range: 'A:BZ', 
+        valueRenderOption: 'UNFORMATTED_VALUE',
+    });
 
-                    const rows = res.data.values || [];
-                    
-                    if (rows.length > 0) {
-                        loadedFiles.push(file.name || 'Unknown');
+    return res.data.values || [];
+}
 
-                        if (!headersSet) {
-                            // Include headers from the first file
-                            for (let i = 0; i < rows.length; i++) {
-                                allData.push(rows[i]);
-                            }
-                            headersSet = true;
-                        } else {
-                            // Skip headers (row 0) for subsequent files
-                            if (rows.length > 1) {
-                                for (let i = 1; i < rows.length; i++) {
-                                    allData.push(rows[i]);
-                                }
-                            }
-                        }
+/**
+ * Legacy support - kept but deprecated.
+ * DYNAMICALLY fetches AKB data by traversing Google Drive folders.
+ */
+export async function getAkbData(year?: string, quarter?: number, month?: number): Promise<any[][]> {
+    // This function is kept for backward compatibility but the frontend should move to 
+    // listFilesForMonth and fetchFileContent to avoid timeouts.
+    const fileList: { id: string, name: string }[] = [];
+    
+    let targetMonths: number[] = [];
+    if (month) targetMonths = [month];
+    else if (quarter) targetMonths = [(quarter - 1) * 3 + 1, (quarter - 1) * 3 + 2, (quarter - 1) * 3 + 3];
+    else targetMonths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
+    for (const m of targetMonths) {
+        const files = await listFilesForMonth(year || '2025', m);
+        fileList.push(...files);
+    }
+
+    const allData: any[][] = [];
+    let headersSet = false;
+
+    // Sequential fetch to be safe
+    for (const file of fileList) {
+        try {
+            const rows = await fetchFileContent(file.id);
+            if (rows.length > 0) {
+                if (!headersSet) {
+                    for(let i=0; i<rows.length; i++) allData.push(rows[i]);
+                    headersSet = true;
+                } else {
+                    if (rows.length > 1) {
+                        for(let i=1; i<rows.length; i++) allData.push(rows[i]);
                     }
-                } catch (e) {
-                    console.error(`Error loading file ${file.name}:`, e);
-                    // Continue to next file instead of crashing entire batch
                 }
             }
+        } catch (e) {
+            console.error(`Error fetching file ${file.name}`, e);
         }
     }
-
-    // FIX: If no data found (e.g. future quarters), return empty array instead of throwing.
-    if (allData.length === 0) {
-        const timeFrame = month ? `Month ${month}` : (quarter ? `Q${quarter}` : 'All');
-        console.warn(`[getAkbData] No data found for ${targetYear} ${timeFrame}. Returning empty.`);
-        return [];
-    }
-
-    console.log(`[Cloud Load] Loaded ${loadedFiles.length} files from Drive folders.`);
+    
     return allData;
 }
 

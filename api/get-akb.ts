@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAkbData } from './lib/sheets.js';
+import { getAkbData, listFilesForMonth, fetchFileContent } from './lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') {
@@ -9,37 +9,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        // Extract year from query parameter, default to '2025' if not provided
         const year = (req.query.year as string) || '2025';
+        const mode = req.query.mode as string; // 'list' or 'content'
         
-        // Extract optional quarter parameter (1, 2, 3, 4)
-        const quarterStr = req.query.quarter as string;
-        let quarter: number | undefined;
-        if (quarterStr) {
-            const q = parseInt(quarterStr, 10);
-            if (!isNaN(q) && q >= 1 && q <= 4) {
-                quarter = q;
+        // Mode 1: List Files for a specific month
+        if (mode === 'list') {
+            const monthStr = req.query.month as string;
+            const month = parseInt(monthStr, 10);
+            
+            if (isNaN(month) || month < 1 || month > 12) {
+                return res.status(400).json({ error: 'Valid month (1-12) is required for list mode.' });
             }
+
+            const files = await listFilesForMonth(year, month);
+            res.setHeader('Cache-Control', 'no-store');
+            return res.status(200).json(files);
         }
 
-        // Extract optional month parameter (1-12)
-        const monthStr = req.query.month as string;
-        let month: number | undefined;
-        if (monthStr) {
-            const m = parseInt(monthStr, 10);
-            if (!isNaN(m) && m >= 1 && m <= 12) {
-                month = m;
-            }
+        // Mode 2: Fetch Content for a specific File ID
+        if (req.query.fileId) {
+            const fileId = req.query.fileId as string;
+            const data = await fetchFileContent(fileId);
+            res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+            return res.status(200).json(data);
         }
+
+        // Legacy Fallback (Dangerous for large folders)
+        const quarterStr = req.query.quarter as string;
+        const monthStr = req.query.month as string;
+        let quarter: number | undefined;
+        let month: number | undefined;
+
+        if (quarterStr) quarter = parseInt(quarterStr, 10);
+        if (monthStr) month = parseInt(monthStr, 10);
         
-        // Pass month (if present) to getAkbData. It will take precedence logic inside if needed.
         const akbData = await getAkbData(year, quarter, month);
         
-        // Prevent caching for this data as it might change frequently
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Cache-Control', 'no-store');
         res.status(200).json(akbData || []);
+
     } catch (error) {
-        console.error('Error fetching AKB data from Google Sheets:', error);
+        console.error('Error in /api/get-akb:', error);
         
         let detailedMessage = 'An unknown server error occurred.';
         if (error instanceof Error) {
