@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
-import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState } from '../../types';
+import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams } from '../../types';
 import { CheckIcon, WarningIcon, AlertIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
@@ -11,8 +11,8 @@ interface AdaptaProps {
     // Global Processing Props
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
-    // Updated: Accept function taking a year string
-    onStartCloudProcessing?: (year: string) => void;
+    // Updated: Accept function taking CloudLoadParams
+    onStartCloudProcessing?: (params: CloudLoadParams) => void;
 
     // Legacy/Data Props
     onFileProcessed: (data: WorkerResultPayload) => void;

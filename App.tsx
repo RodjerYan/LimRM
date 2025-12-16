@@ -38,7 +38,11 @@ import {
     FileProcessingState,
     WorkerMessage,
     CoordsCache,
-    PlanMetric
+    PlanMetric,
+    CloudLoadParams,
+    WorkerInputInit,
+    WorkerInputChunk,
+    WorkerInputFinalize
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { TargetIcon } from './components/icons';
@@ -216,8 +220,9 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
-    // --- FILE PROCESSING LOGIC (Updated for Streaming) ---
-    
+    // --- WORKER SETUP & COMMUNICATION ---
+
+    // MOVED UP: handleResultFinished needs to be defined before initWorker uses it
     const handleResultFinished = useCallback(() => {
         const aggregated = [...aggregatedDataBuffer.current];
         const unidentified = [...unidentifiedBuffer.current];
@@ -239,18 +244,10 @@ const App: React.FC = () => {
         
         setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
-
-    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
-        // This is a legacy handler to satisfy interface requirements.
-        // It is no longer used for data processing as we switched to streaming.
-    }, []);
-
-    // --- WORKER SETUP & COMMUNICATION ---
     
     // Initialize Worker logic (abstracted to be reused by both file and cloud flow)
     const initWorker = useCallback(async (
-        payload: { file?: File, rawSheetData?: any[][] },
-        messageStart: string, 
+        startMessage: string,
         fileNameForState: string
     ) => {
         // Reset buffers
@@ -261,7 +258,7 @@ const App: React.FC = () => {
         setProcessingState({
             isProcessing: true,
             progress: 0,
-            message: messageStart,
+            message: startMessage,
             fileName: fileNameForState,
             backgroundMessage: null,
             startTime: Date.now()
@@ -357,113 +354,151 @@ const App: React.FC = () => {
             addNotification(`Критическая ошибка воркера: ${e.message}`, 'error');
         };
         
-        // Start Worker
-        workerRef.current.postMessage({ ...payload, okbData, cacheData });
+        // Start Worker State with Init Message
+        const initMsg: WorkerInputInit = {
+            type: 'INIT_STREAM',
+            payload: { okbData, cacheData }
+        };
+        workerRef.current.postMessage(initMsg);
 
     }, [okbData, handleResultFinished, addNotification]);
 
 
+    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
+        // Legacy, ignored.
+    }, []);
+
     const handleStartFileProcessing = useCallback((file: File) => {
-        initWorker({ file }, 'Загрузка кэша координат...', file.name);
-    }, [initWorker]);
+        // Legacy file processing triggers worker immediately with the file object
+        // We reuse initWorker but pass the file as legacy payload
+        // Ideally, we should refactor this to use stream too, but for simplicity we keep legacy path for local files
+        initWorker('Загрузка кэша и файла...', file.name).then(() => {
+             // For legacy file handling, we post the file object directly
+             // The worker's 'onmessage' will catch this because it checks for 'file' property
+             // Note: cacheData is already in worker state from initStream, but legacy handler re-inits. 
+             // Ideally we should refactor worker to separate cache init from file processing completely.
+             // But for now, we just pass empty cache/okb here relying on worker logic or just re-pass them if needed.
+             // Actually, looking at worker code: if msg has 'file', it calls initStream again.
+             // So we should pass cacheData again if we want it to work in legacy mode.
+             // However, `initWorker` is async and fetches cache.
+             // Let's simplified: we just post the file. The worker's `onmessage` handles `file` property.
+             // BUT wait, `initWorker` above posts `INIT_STREAM`. The worker is now stateful.
+             // If we post `file` afterwards, the worker legacy handler will run.
+             // The legacy handler calls `initStream` again!
+             // So we need to pass `okbData` and `cacheData` again or refactor worker legacy handler to use existing state.
+             // For safety and minimal changes to legacy flow, let's just let it re-init.
+             // We need to fetch cache again or store it in `initWorker`.
+             // Actually `initWorker` fetches cache locally. 
+             // Let's just update `initWorker` to return the cacheData it fetched so we can use it.
+             // OR, better: `handleStartFileProcessing` should just use the new streaming protocol too!
+             // Reading file in chunk? PapaParse supports chunking.
+             // For now, to keep it simple and fix the OOM for CLOUD, I will leave file upload as legacy
+             // and just ensure `initWorker` doesn't break it.
+             
+             // Re-fetch cache for legacy payload construction (a bit redundant but safe)
+             fetch(`/api/get-full-cache?t=${Date.now()}`).then(r => r.json()).then(cacheData => {
+                 workerRef.current?.postMessage({ file, okbData, cacheData });
+             });
+        });
+    }, [initWorker, okbData]);
 
     // Updated to split load into 12 requests (Months) to avoid timeouts
-    const handleStartCloudProcessing = useCallback(async (year: string = '2025') => {
-        setProcessingState({
-            isProcessing: true,
-            progress: 2,
-            message: `Инициализация помесячной загрузки (${year})...`,
-            fileName: `Cloud: AKB Sheet ${year}`,
-            backgroundMessage: null,
-            startTime: Date.now()
-        });
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
+        const { year, quarter, month } = params;
+        
+        let label = `Cloud: ${year}`;
+        if (month) {
+            const monthName = new Date(0, month - 1).toLocaleString('ru-RU', { month: 'long' });
+            label += ` (${monthName})`;
+        } else if (quarter) {
+            label += ` (Q${quarter})`;
+        }
+
+        // 1. Initialize Worker & UI
+        await initWorker(`Инициализация загрузки (${label})...`, label);
 
         try {
-            // Initiate sequential requests for each month (1-12) to heavily reduce load per request
-            const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            // Determine which months to fetch based on params
+            let months: number[] = [];
+            if (month) {
+                months = [month];
+            } else if (quarter) {
+                const startMonth = (quarter - 1) * 3 + 1;
+                months = [startMonth, startMonth + 1, startMonth + 2];
+            } else {
+                // All months
+                months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+            }
             
+            const totalTasks = months.length;
+            let hasProcessedHeaders = false;
+            let totalFetchedRows = 0;
+
             const fetchMonth = async (m: number) => {
-                try {
-                    const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
-                    if (!response.ok) {
-                        let errorMsg = `Month ${m} fetch failed (${response.status})`;
+                const response = await fetch(`/api/get-akb?year=${year}&month=${m}`);
+                if (!response.ok) {
+                    let errorMsg = `Month ${m} fetch failed (${response.status})`;
+                    try {
+                        const text = await response.text();
                         try {
-                            const text = await response.text();
-                            // Try to parse JSON, if fails, use text
-                            try {
-                                const errorData = JSON.parse(text);
-                                if (errorData.details) errorMsg = errorData.details;
-                                else if (errorData.error) errorMsg = errorData.error;
-                            } catch {
-                                if (text.length < 200) errorMsg += `: ${text}`;
-                                else errorMsg += `: Server Error (Check logs)`;
-                            }
-                        } catch (e) { /* ignore */ }
-                        throw new Error(errorMsg);
-                    }
-                    const data = await response.json();
-                    return { m, data };
-                } catch (error) {
-                    console.error(`Failed to fetch Month ${m}:`, error);
-                    // Critical error if it's a network issue, but we might want to continue if it's just a missing month?
-                    // For now, throw to stop processing and alert user.
-                    throw error;
+                            const errorData = JSON.parse(text);
+                            if (errorData.details) errorMsg = errorData.details;
+                            else if (errorData.error) errorMsg = errorData.error;
+                        } catch {
+                            if (text.length < 200) errorMsg += `: ${text}`;
+                            else errorMsg += `: Server Error (Check logs)`;
+                        }
+                    } catch (e) { /* ignore */ }
+                    throw new Error(errorMsg);
                 }
+                return await response.json();
             };
 
-            const results = [];
-            // SEQUENTIAL EXECUTION (Fix for Rate Limits/Timeouts)
-            for (const m of months) {
+            // SEQUENTIAL EXECUTION & STREAMING TO WORKER
+            for (let i = 0; i < months.length; i++) {
+                const m = months[i];
                 const monthName = new Date(0, m - 1).toLocaleString('ru-RU', { month: 'long' });
+                
                 setProcessingState(prev => ({ 
                     ...prev, 
-                    progress: Math.round((m / 12) * 90), // Scale progress from 0 to 90%
-                    message: `Загрузка: ${monthName} (${m}/12)...` 
+                    progress: Math.round(((i) / totalTasks) * 90), // Scale progress 0-90 during fetch
+                    message: `Загрузка: ${monthName} (${i + 1}/${totalTasks})...` 
                 }));
                 
                 try {
-                    const res = await fetchMonth(m);
-                    results.push(res);
+                    const chunkData = await fetchMonth(m);
+                    
+                    if (Array.isArray(chunkData) && chunkData.length > 0) {
+                        totalFetchedRows += chunkData.length;
+                        // Send to worker immediately
+                        const chunkMsg: WorkerInputChunk = {
+                            type: 'PROCESS_CHUNK',
+                            payload: {
+                                rawData: chunkData,
+                                isFirstChunk: !hasProcessedHeaders,
+                                fileName: `Month_${m}`
+                            }
+                        };
+                        workerRef.current?.postMessage(chunkMsg);
+                        hasProcessedHeaders = true;
+                    }
                 } catch (e) {
-                    console.warn(`Error fetching month ${m}, skipping.`, e);
-                    // Optional: decide if one failed month breaks everything. 
-                    // Currently, we let it fail loudly via the catch block below if needed, 
-                    // OR we could continue. Let's continue but log it.
+                    console.warn(`Error fetching month ${m}`, e);
+                    if (month) throw e; // Specific request failed
                 }
             }
             
-            // Merge results
-            let mergedData: any[] = [];
-            // Preserve headers from the first successful chunk
-            let headers: any[] | null = null;
-
-            // FIX: Avoid spread operator `...` on potentially large arrays to prevent "Maximum call stack size exceeded"
-            results.forEach(({ m, data }) => {
-                if (Array.isArray(data) && data.length > 0) {
-                    if (!headers) {
-                        headers = data[0];
-                        // Add all rows including header
-                        for(let i = 0; i < data.length; i++) {
-                            mergedData.push(data[i]);
-                        }
-                    } else {
-                        // Skip header row (index 0) for subsequent chunks
-                        for(let i = 1; i < data.length; i++) {
-                            mergedData.push(data[i]);
-                        }
-                    }
-                }
-            });
-
-            if (mergedData.length <= 1) { 
-                console.warn('No data found for any month.');
-                setProcessingState(prev => ({ ...prev, message: 'Данные за выбранный год не найдены.' }));
-                addNotification('Данные за выбранный год не найдены.', 'info');
-                // Proceed anyway, worker will handle empty logic gracefully or throw if totally empty
+            if (totalFetchedRows === 0) { 
+                console.warn('No data found for requested period.');
+                setProcessingState(prev => ({ ...prev, message: 'Данные за выбранный период не найдены.' }));
+                addNotification('Данные за выбранный период не найдены.', 'info');
+                // Even if empty, finalize to clear state
             }
 
-            // Hand over to worker
-            initWorker({ rawSheetData: mergedData }, 'Сборка данных завершена, запуск обработки...', `Cloud: AKB Sheet ${year}`);
+            // Finalize Worker Processing
+            setProcessingState(prev => ({ ...prev, message: 'Финализация данных...', progress: 95 }));
+            const finalizeMsg: WorkerInputFinalize = { type: 'FINALIZE_STREAM' };
+            workerRef.current?.postMessage(finalizeMsg);
 
         } catch (error) {
             console.error("Cloud load error:", error);
@@ -476,14 +511,6 @@ const App: React.FC = () => {
             addNotification(`Ошибка загрузки: ${msg}`, 'error');
         }
     }, [initWorker, addNotification]);
-
-
-    // Cleanup worker on unmount of App (page close)
-    useEffect(() => {
-        return () => {
-            workerRef.current?.terminate();
-        }
-    }, []);
 
 
     // --- Legacy / Shared Handlers ---

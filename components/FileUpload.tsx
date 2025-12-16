@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback } from 'react';
-import { OkbStatus, FileProcessingState } from '../types';
+import { OkbStatus, FileProcessingState, CloudLoadParams } from '../types';
 import { formatETR } from '../utils/timeUtils';
 import { DataIcon } from './icons';
 
@@ -8,17 +8,24 @@ interface FileUploadProps {
     // New Props from Global State
     processingState: FileProcessingState;
     onStartProcessing: (file: File) => void;
-    // Updated: Callback for cloud processing now accepts a year
-    onStartCloudProcessing?: (year: string) => void;
+    // Updated: Callback for cloud processing takes an object
+    onStartCloudProcessing?: (params: CloudLoadParams) => void;
     
     okbStatus: OkbStatus | null;
     disabled: boolean;
 }
 
+type PeriodType = 'year' | 'quarter' | 'month';
+
 const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcessing, onStartCloudProcessing, okbStatus, disabled }) => {
     const [isDragging, setIsDragging] = useState(false);
     const [mode, setMode] = useState<'file' | 'cloud'>('file');
+    
+    // Cloud Selection State
     const [selectedYear, setSelectedYear] = useState<string>('2025');
+    const [periodType, setPeriodType] = useState<PeriodType>('year');
+    const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+    const [selectedMonth, setSelectedMonth] = useState<number>(1); // 1 = Jan
 
     const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -52,6 +59,27 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
         }
     }, [onStartProcessing, disabled, mode]);
 
+    const handleLoadClick = () => {
+        if (!onStartCloudProcessing) return;
+        
+        const params: CloudLoadParams = { year: selectedYear };
+        
+        if (periodType === 'quarter') {
+            params.quarter = selectedQuarter;
+        } else if (periodType === 'month') {
+            params.month = selectedMonth;
+        }
+        
+        onStartCloudProcessing(params);
+    };
+
+    const getLoadButtonText = () => {
+        if (periodType === 'year') return `Загрузить ${selectedYear} год`;
+        if (periodType === 'quarter') return `Загрузить Q${selectedQuarter} ${selectedYear}`;
+        const monthName = new Date(0, selectedMonth - 1).toLocaleString('ru-RU', { month: 'long' });
+        return `Загрузить ${monthName} ${selectedYear}`;
+    };
+
     // Derived state from global props
     const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
@@ -64,6 +92,13 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
         const totalTime = (elapsedTime / progress) * 100;
         etr = totalTime - elapsedTime;
     }
+
+    const months = [
+        { id: 1, name: 'Январь' }, { id: 2, name: 'Февраль' }, { id: 3, name: 'Март' },
+        { id: 4, name: 'Апрель' }, { id: 5, name: 'Май' }, { id: 6, name: 'Июнь' },
+        { id: 7, name: 'Июль' }, { id: 8, name: 'Август' }, { id: 9, name: 'Сентябрь' },
+        { id: 10, name: 'Октябрь' }, { id: 11, name: 'Ноябрь' }, { id: 12, name: 'Декабрь' }
+    ];
 
     return (
         <div className={`relative group transition-all duration-500 ${isBlocked ? 'opacity-50 grayscale' : ''}`}>
@@ -78,7 +113,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-white leading-tight">Загрузка данных</h2>
-                            <p className="text-xs text-gray-400">Источник: {mode === 'file' ? 'Локальный файл (XLSX)' : `Google Sheets (${selectedYear})`}</p>
+                            <p className="text-xs text-gray-400">Источник: {mode === 'file' ? 'Локальный файл (XLSX)' : `Google Sheets`}</p>
                         </div>
                     </div>
                     
@@ -144,51 +179,86 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         </label>
                     </div>
                 ) : (
-                    <div className="flex flex-col items-center justify-center w-full min-h-[12rem] border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-6 relative overflow-hidden transition-all">
+                    <div className="flex flex-col w-full border-2 border-dashed border-emerald-500/20 bg-emerald-900/5 rounded-xl p-4 relative overflow-hidden transition-all min-h-[160px]">
                         {/* Background decoration */}
                         <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
                         <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
 
                         {isProcessing ? (
-                            <div className="flex flex-col items-center animate-pulse z-10">
+                            <div className="flex flex-col items-center justify-center h-full animate-pulse z-10 py-6">
                                 <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
-                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком ({selectedYear})...</p>
+                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком...</p>
                             </div>
                         ) : (
-                            <div className="text-center z-10 flex flex-col items-center gap-4">
-                                <div className="w-12 h-12 bg-emerald-500/10 text-emerald-400 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-lg shadow-emerald-900/20">
-                                    <DataIcon />
-                                </div>
-                                
-                                <div className="space-y-1">
-                                    <h3 className="text-sm font-bold text-emerald-100">Google Sheets Источник</h3>
-                                    <p className="text-xs text-gray-400 max-w-[280px] mx-auto leading-relaxed">
-                                        Выберите год для загрузки базы АКБ.
-                                    </p>
+                            <div className="z-10 flex flex-col gap-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-emerald-500/10 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/20 shrink-0">
+                                        <DataIcon small/>
+                                    </div>
+                                    <div className="flex-grow">
+                                        <h3 className="text-sm font-bold text-emerald-100">Параметры загрузки</h3>
+                                        <p className="text-[10px] text-gray-400">Выберите период для анализа продаж</p>
+                                    </div>
                                 </div>
 
-                                {/* Year Selection Buttons */}
-                                <div className="flex bg-gray-800/80 p-1 rounded-lg border border-emerald-500/20 backdrop-blur-sm">
-                                    <button 
-                                        onClick={() => setSelectedYear('2025')}
-                                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${selectedYear === '2025' ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-                                    >
-                                        2025
-                                    </button>
-                                    <button 
-                                        onClick={() => setSelectedYear('2026')}
-                                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all ${selectedYear === '2026' ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-                                    >
-                                        2026
-                                    </button>
+                                <div className="grid grid-cols-2 gap-3">
+                                    {/* Year Selector */}
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">Год</label>
+                                        <div className="flex bg-gray-800/80 p-1 rounded-lg border border-emerald-500/20 backdrop-blur-sm">
+                                            <button onClick={() => setSelectedYear('2025')} className={`flex-1 py-1 text-xs font-bold rounded-md transition-all ${selectedYear === '2025' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>2025</button>
+                                            <button onClick={() => setSelectedYear('2026')} className={`flex-1 py-1 text-xs font-bold rounded-md transition-all ${selectedYear === '2026' ? 'bg-emerald-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>2026</button>
+                                        </div>
+                                    </div>
+
+                                    {/* Period Type Selector */}
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">Период</label>
+                                        <select 
+                                            value={periodType} 
+                                            onChange={(e) => setPeriodType(e.target.value as PeriodType)}
+                                            className="w-full bg-gray-800/80 border border-emerald-500/20 rounded-lg p-1 text-xs text-white focus:ring-1 focus:ring-emerald-500 outline-none h-[26px]"
+                                        >
+                                            <option value="year">Весь год</option>
+                                            <option value="quarter">Квартал</option>
+                                            <option value="month">Месяц</option>
+                                        </select>
+                                    </div>
                                 </div>
+
+                                {/* Dynamic Selector based on Type */}
+                                {periodType === 'quarter' && (
+                                    <div className="flex gap-2">
+                                        {[1, 2, 3, 4].map(q => (
+                                            <button
+                                                key={q}
+                                                onClick={() => setSelectedQuarter(q)}
+                                                className={`flex-1 py-1.5 rounded-lg border text-xs font-medium transition-all ${selectedQuarter === q ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-800'}`}
+                                            >
+                                                Q{q}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {periodType === 'month' && (
+                                    <select 
+                                        value={selectedMonth}
+                                        onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                                        className="w-full bg-gray-800/80 border border-gray-700 rounded-lg p-1.5 text-xs text-white focus:ring-1 focus:ring-emerald-500 outline-none"
+                                    >
+                                        {months.map(m => (
+                                            <option key={m.id} value={m.id}>{m.name}</option>
+                                        ))}
+                                    </select>
+                                )}
 
                                 <button 
-                                    onClick={() => onStartCloudProcessing && onStartCloudProcessing(selectedYear)}
+                                    onClick={handleLoadClick}
                                     disabled={disabled}
-                                    className="group bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-2.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-emerald-900/30 hover:shadow-emerald-500/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                                    className="group bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold py-2.5 px-6 rounded-lg transition-all duration-200 shadow-lg shadow-emerald-900/30 hover:shadow-emerald-500/20 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none w-full mt-2"
                                 >
-                                    <span>Загрузить {selectedYear}</span>
+                                    <span className="capitalize">{getLoadButtonText()}</span>
                                     <svg className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                                 </button>
                             </div>
@@ -211,7 +281,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                     <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-2">
                         <div className="flex justify-between items-center text-sm">
                             <p className="text-gray-200 font-medium truncate max-w-[70%]" title={fileName || 'Cloud Data'}>
-                                {fileName || `Google Sheets (${selectedYear})`}
+                                {fileName || `Google Sheets Load`}
                             </p>
                             <span className="text-xs font-mono text-purple-300 bg-purple-900/30 px-1.5 py-0.5 rounded">{Math.round(progress)}%</span>
                         </div>

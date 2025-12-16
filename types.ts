@@ -146,7 +146,7 @@ export type WorkerBackgroundMessage =
     | { type: 'geocode-request', payload: { rmName: string, addresses: string[] } }
     | { type: 'geocode-result', payload: { rmName: string, updates: { address: string, lat: number, lon: number }[] } };
 
-// --- NEW STREAMING TYPES ---
+// --- NEW STREAMING TYPES FOR OUTPUT ---
 export type WorkerStreamInit = {
     type: 'result_init';
     payload: {
@@ -163,6 +163,36 @@ export type WorkerStreamChunk = {
 
 export type WorkerStreamFinish = {
     type: 'result_finished';
+};
+
+// --- NEW TYPES FOR INPUT (Streaming to Worker) ---
+export type WorkerInputInit = {
+    type: 'INIT_STREAM';
+    payload: {
+        okbData: OkbDataRow[];
+        cacheData: CoordsCache;
+    };
+};
+
+export type WorkerInputChunk = {
+    type: 'PROCESS_CHUNK';
+    payload: {
+        rawData: any[][];
+        isFirstChunk: boolean;
+        fileName?: string;
+    };
+};
+
+export type WorkerInputFinalize = {
+    type: 'FINALIZE_STREAM';
+};
+
+// Legacy input for file processing
+export type WorkerInputLegacy = {
+    file?: File;
+    rawSheetData?: any[][];
+    okbData: OkbDataRow[];
+    cacheData: CoordsCache;
 };
 
 export type WorkerMessage =
@@ -258,6 +288,13 @@ export interface FileProcessingState {
     fileName: string | null;
     backgroundMessage: string | null;
     startTime: number | null;
+}
+
+// Interface for Cloud Loading Parameters
+export interface CloudLoadParams {
+    year: string;
+    quarter?: number; // 1-4
+    month?: number;   // 1-12
 }
 
 // --- NEW TYPES FOR UPGRADES ---
