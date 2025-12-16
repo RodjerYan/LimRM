@@ -45,6 +45,18 @@ let state_dateRange: string | undefined = undefined;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- HELPER: Aggressive Key Normalization ---
+// Removes NBSP (\u00A0), tabs, newlines, and ALL spaces to match "PM " or "PM\u00A0" as "pm"
+const normalizeHeaderKey = (key: string): string => {
+    if (!key) return '';
+    return String(key)
+        .toLowerCase()
+        .replace(/\u00A0/g, ' ') // Replace NBSP with normal space first
+        .replace(/[\r\n\t]/g, '') // Remove control characters
+        .replace(/\s+/g, '') // Remove ALL whitespace
+        .trim();
+};
+
 const isValidManagerValue = (val: string): boolean => {
     if (!val) return false;
     const v = String(val).trim().toLowerCase();
@@ -58,20 +70,48 @@ const isValidManagerValue = (val: string): boolean => {
 const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
+    
+    // Normalize target keys once
+    const targetStrict = strictKeys.map(k => normalizeHeaderKey(k));
+    const targetLoose = looseKeys.map(k => normalizeHeaderKey(k));
+    
+    // 1. Strict Search (Exact Match or Key+Suffix)
     for (const key of rowKeys) {
-        const k = key.toLowerCase().trim();
-        const isStrict = strictKeys.some(s => {
-             const sLower = s.toLowerCase();
-             return k === sLower || k === sLower + '.' || k === sLower + ':' || k === sLower + ' фио' || k === sLower + ' name';
-        });
-        if (isStrict) {
-            const val = String(row[key] || '');
-            if (isValidManagerValue(val)) return val;
+        const normKey = normalizeHeaderKey(key);
+        
+        // Direct exact match (e.g. "PM " -> "pm" === "pm")
+        if (targetStrict.includes(normKey)) {
+             const val = String(row[key] || '');
+             if (isValidManagerValue(val)) return val;
+        }
+        
+        // Suffix check (e.g. "PM Name" -> "pmname")
+        // Check if normKey starts with a strict key followed by a known suffix
+        const suffixes = ['фио', 'name', 'ф.и.о', 'ф.и.о.', 'manager', 'менеджер'];
+        for (const s of targetStrict) {
+             for (const suf of suffixes) {
+                 if (normKey === s + suf) {
+                     const val = String(row[key] || '');
+                     if (isValidManagerValue(val)) return val;
+                 }
+             }
         }
     }
+
+    // 2. Loose Search (Contains)
     for (const key of rowKeys) {
-        const k = key.toLowerCase().trim();
-        if (looseKeys.some(s => k.includes(s.toLowerCase())) && !k.includes('product') && !k.includes('category') && !k.includes('brand') && !k.includes('sales') && !k.includes('field') && !k.includes('area')) {
+        const normKey = normalizeHeaderKey(key);
+        
+        // Exclude common data columns to avoid false positives
+        if (normKey.includes('product') || normKey.includes('category') || 
+            normKey.includes('brand') || normKey.includes('sales') || 
+            normKey.includes('field') || normKey.includes('area') ||
+            normKey.includes('id') || normKey.includes('code') || 
+            normKey.includes('sku') || normKey.includes('weight')) {
+            continue;
+        }
+
+        if (targetLoose.some(s => normKey.includes(s))) {
             const val = String(row[key] || '');
             if (isValidManagerValue(val)) return val;
         }
@@ -165,8 +205,8 @@ function findPotentialClients(regionOkbRows: OkbDataRow[] | undefined, activeCli
 }
 
 const findClientNameHeader = (headers: string[]): string | undefined => {
-    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
-    const priorityTerms = ['название магазина limkorm', 'название клиента', 'наименование клиента', 'контрагент', 'клиент', 'уникальное наименование товара'];
+    const lowerHeaders = headers.map(h => normalizeHeaderKey(h));
+    const priorityTerms = ['названиемагазинаlimkorm', 'названиеклиента', 'наименованиеклиента', 'контрагент', 'клиент', 'уникальноенаименованиетовара'];
     for (const term of priorityTerms) {
         const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
         if (foundIndex !== -1) return headers[foundIndex];
@@ -242,14 +282,19 @@ const findDateRange = (data: any[]): string | undefined => {
 };
 
 const detectHeaderRowIndex = (rows: any[][]): number => {
-    const keywords = ['адрес', 'address', 'рм', 'rm', 'дм', 'dm', 'вес', 'weight', 'фасовка', 'packaging', 'бренд', 'brand', 'товар', 'product', 'дистрибьютор', 'distributor', 'канал', 'channel'];
+    // Normalizing keywords to match our aggressive normalization strategy
+    const keywords = ['адрес', 'address', 'рм', 'rm', 'pm', 'дм', 'dm', 'вес', 'weight', 'фасовка', 'packaging', 'бренд', 'brand', 'товар', 'product', 'дистрибьютор', 'distributor', 'канал', 'channel'];
     const limit = Math.min(rows.length, 20);
     let bestRowIndex = 0;
     let maxMatches = 0;
+    
     for (let i = 0; i < limit; i++) {
-        const row = rows[i].map(cell => String(cell || '').toLowerCase());
+        // Aggressively clean the row cells for checking
+        const row = rows[i].map(cell => normalizeHeaderKey(String(cell || '')));
+        
         let matches = 0;
         for (const k of keywords) {
+            // Check if cleaned cell contains cleaned keyword
             if (row.some(cell => cell.includes(k))) matches++;
         }
         if (matches > maxMatches) {
@@ -360,7 +405,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         state_headers = result.headers;
         
         // Init header-based config once
-        state_hasPotentialColumn = state_headers.some(h => (h || '').toLowerCase().includes('потенциал'));
+        state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
         state_clientNameHeader = findClientNameHeader(state_headers);
     } else {
         // Use existing headers
@@ -381,7 +426,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        const rm = findManagerValue(row, ['рм', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'manager']);
+        // FIX: Added 'pm' to keys and normalizeHeaderKey usage inside findManagerValue ensures match
+        const rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
         const dm = findManagerValue(row, ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'], ['дм', 'dm', 'director', 'директор']);
         let finalRm = rm || dm;
 
