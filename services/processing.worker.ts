@@ -655,21 +655,39 @@ async function finalizeStream(postMessage: PostMessageFn) {
         });
     }
 
-    // --- CRITICAL: SAVE ADDRESSES TO CACHE *BEFORE* FINISHING ---
+    // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 97, message: `Подготовка к сохранению адресов...` } });
+        
+        const BATCH_SIZE = 100; // Small batch size to prevent Vercel timeout (4.5MB limit / 10s execution)
+
         for (let i = 0; i < newAddressRMs.length; i++) {
             const rmName = newAddressRMs[i];
-            postMessage({ type: 'progress', payload: { percentage: 97, message: `Запись АКБ: ${rmName} (${i+1}/${newAddressRMs.length})...` } });
-            try {
-                await fetch('/api/add-to-cache', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ rmName, rows: state_newAddressesToCache[rmName] }) 
+            const allRows = state_newAddressesToCache[rmName];
+            const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
+
+            for (let b = 0; b < totalBatches; b++) {
+                const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+                
+                postMessage({ 
+                    type: 'progress', 
+                    payload: { 
+                        percentage: 97, 
+                        message: `Запись АКБ: ${rmName} (пакет ${b+1}/${totalBatches})...` 
+                    } 
                 });
-            } catch (e) { 
-                console.error(`Failed to add to cache for ${rmName}:`, e); 
+
+                try {
+                    await fetch('/api/add-to-cache', { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify({ rmName, rows: chunk }) 
+                    });
+                } catch (e) { 
+                    console.error(`Failed to add batch ${b} to cache for ${rmName}:`, e); 
+                    // Continue to next batch even if one fails
+                }
             }
         }
     }
