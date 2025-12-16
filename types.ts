@@ -129,13 +129,16 @@ export type WorkerProgressPayload = {
     message: string;
     isBackground?: boolean;
 };
+
+// Deprecated single-payload type (kept for backward compat if needed, but not used in streaming)
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     plottableActiveClients: MapPoint[];
     unidentifiedRows: UnidentifiedRow[];
     okbRegionCounts: { [key: string]: number };
-    dateRange?: string; // NEW: Detected date range from the file (e.g., "01.01.2024 - 31.03.2024")
+    dateRange?: string; 
 };
+
 export type WorkerErrorPayload = string;
 
 export type WorkerBackgroundMessage = 
@@ -143,11 +146,33 @@ export type WorkerBackgroundMessage =
     | { type: 'geocode-request', payload: { rmName: string, addresses: string[] } }
     | { type: 'geocode-result', payload: { rmName: string, updates: { address: string, lat: number, lon: number }[] } };
 
+// --- NEW STREAMING TYPES ---
+export type WorkerStreamInit = {
+    type: 'result_init';
+    payload: {
+        okbRegionCounts: { [key: string]: number };
+        dateRange?: string;
+        totalUnidentified: number; // Just count for progress
+    }
+};
+
+export type WorkerStreamChunk = {
+    type: 'result_chunk_aggregated' | 'result_chunk_unidentified';
+    payload: any[]; // AggregatedDataRow[] or UnidentifiedRow[]
+};
+
+export type WorkerStreamFinish = {
+    type: 'result_finished';
+};
+
 export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
-    | { type: 'result', payload: WorkerResultPayload }
+    | { type: 'result', payload: WorkerResultPayload } // Legacy
     | { type: 'error', payload: WorkerErrorPayload }
-    | { type: 'background', payload: WorkerBackgroundMessage };
+    | { type: 'background', payload: WorkerBackgroundMessage }
+    | WorkerStreamInit
+    | WorkerStreamChunk
+    | WorkerStreamFinish;
 
 
 // Type for the coordinate cache data structure from Google Sheets

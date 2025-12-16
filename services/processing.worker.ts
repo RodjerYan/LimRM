@@ -6,7 +6,6 @@ import {
     OkbDataRow, 
     WorkerMessage, 
     PotentialClient, 
-    WorkerResultPayload, 
     MapPoint, 
     CoordsCache,
     EnrichedParsedAddress,
@@ -347,8 +346,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (jsonData.length === 0) throw new Error('Файл пуст или имеет неверный формат.');
 
     const hasPotentialColumn = headers.some(h => (h || '').toLowerCase().includes('потенциал'));
-    // Relaxed check: Allow files even if "Weight" is missing, but prefer it for calculations
-    // if (!headers.some(h => (h || '').toLowerCase().includes('вес'))) throw new Error('Файл должен содержать колонку "Вес".');
     const clientNameHeader = findClientNameHeader(headers);
     
     // NEW: Detect Date Range
@@ -486,7 +483,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         
         // 3. Check Cache availability
-        // We re-use normalizedRaw which is derived from the (potentially redirected) clientAddress
         const cacheEntry = cacheAddressMap.get(normalizedRaw);
         
         // Check if the cached entry is explicitly invalid (e.g. "Не найдено" in sheet)
@@ -500,22 +496,16 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // Reject only if we know NOTHING about location and have no cached coordinates
-        // Reverted the strict check for cache. Now we allow rows if we at least know the Region/City, 
-        // even if coordinates are missing (they will just not show on map but appear in charts).
         if (!isCityFound && !isRegionFound && !isCached) {
             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
             continue;
         }
 
         const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
-        // If city is unknown but we proceed (due to Region or Cache), default group name to Region or generic fallback
         const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
         
-        // We use the enriched final address for display if available, otherwise the potentially redirected one
         const finalAddress = parsedAddress.finalAddress || clientAddress || '';
         
-        // Updated Weight logic to prioritize explicit 'Вес, кг' or just 'Вес'
         const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес кг', 'вес', 'сумма отгрузки, руб', 'количество, кг', 'нетто']) || '0').replace(/\s/g, '').replace(',', '.'));
         
         const clientName = (clientNameHeader && row[clientNameHeader]) ? String(row[clientNameHeader]) : 'Без названия';
@@ -524,7 +514,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (isNaN(weight)) continue;
         
-        // Updated Key to include Packaging
         const key = `${regionForAggregation}-${brand}-${packaging}-${rm}`.toLowerCase();
         
         if (!aggregatedData[key]) {
@@ -542,9 +531,6 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         }
 
         // --- Map Point Logic ---
-        // We rely on normalizedRaw for cache lookup consistency
-        
-        // Use normalizedRaw as key to avoid duplicates if finalAddress varies slightly but means the same
         if (!uniquePlottableClients.has(normalizedRaw)) {
             let lat: number | undefined;
             let lon: number | undefined;
@@ -628,14 +614,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
     postMessage({ type: 'progress', payload: { percentage: 95, message: 'Анализ пересечений с ОКБ...' } });
     
-    // Group Active Clients by Region for efficient matching
     const activeClientsByRegion = new Map<string, MapPoint[]>();
     plottableActiveClients.forEach(c => {
         if (!activeClientsByRegion.has(c.region)) activeClientsByRegion.set(c.region, []);
         activeClientsByRegion.get(c.region)!.push(c);
     });
     
-    // Cache for potential clients to avoid re-calculating for the same region multiple times
     const potentialClientsCache = new Map<string, PotentialClient[]>();
 
     const finalData: AggregatedDataRow[] = [];
@@ -644,10 +628,8 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         if (!hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
         
-        // OPTIMIZATION: Memoize potential clients lookup
         let regionPotentialClients = potentialClientsCache.get(item.region);
         if (!regionPotentialClients) {
-            // Pass both the OKB rows for this region AND the Active Clients for this region
             const activeInRegion = activeClientsByRegion.get(item.region);
             regionPotentialClients = findPotentialClients(okbByRegion[item.region], activeInRegion);
             potentialClientsCache.set(item.region, regionPotentialClients);
@@ -662,15 +644,39 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         });
     }
 
-    // Include dateRange in the result
-    const resultPayload: WorkerResultPayload = { 
-        aggregatedData: finalData, 
-        plottableActiveClients, 
-        unidentifiedRows, 
-        okbRegionCounts,
-        dateRange 
-    };
-    postMessage({ type: 'result', payload: resultPayload });
+    // --- STREAMING OUTPUT IMPLEMENTATION ---
+    // Instead of sending one massive payload, we send chunks.
+    
+    postMessage({ 
+        type: 'result_init', 
+        payload: { 
+            okbRegionCounts, 
+            dateRange,
+            totalUnidentified: unidentifiedRows.length
+        } 
+    });
+
+    const CHUNK_SIZE = 2000;
+
+    // 1. Stream Aggregated Data (contains Client objects)
+    for (let i = 0; i < finalData.length; i += CHUNK_SIZE) {
+        postMessage({
+            type: 'result_chunk_aggregated',
+            payload: finalData.slice(i, i + CHUNK_SIZE)
+        });
+    }
+
+    // 2. Stream Unidentified Rows (if any)
+    for (let i = 0; i < unidentifiedRows.length; i += CHUNK_SIZE) {
+        postMessage({
+            type: 'result_chunk_unidentified',
+            payload: unidentifiedRows.slice(i, i + CHUNK_SIZE)
+        });
+    }
+
+    // 3. Signal Finish
+    postMessage({ type: 'result_finished' });
+
 
     // --- BACKGROUND TASKS ---
     const newAddressRMs = Object.keys(newAddressesToCache);

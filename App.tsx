@@ -86,6 +86,10 @@ const App: React.FC = () => {
         startTime: null
     });
     const workerRef = useRef<Worker | null>(null);
+    
+    // --- BUFFERS FOR WORKER STREAMING ---
+    const aggregatedDataBuffer = useRef<AggregatedDataRow[]>([]);
+    const unidentifiedBuffer = useRef<UnidentifiedRow[]>([]);
 
     // Modal States
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -212,26 +216,34 @@ const App: React.FC = () => {
         }
     }, [flyToClientKey]);
 
-    // --- FILE PROCESSING LOGIC (Moved from FileUpload.tsx) ---
+    // --- FILE PROCESSING LOGIC (Updated for Streaming) ---
     
-    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
-        setAllData(data.aggregatedData);
-        setAllActiveClients(data.plottableActiveClients);
-        setUnidentifiedRows(data.unidentifiedRows);
-        setOkbRegionCounts(data.okbRegionCounts);
-        setDateRange(data.dateRange); // Store date range
+    const handleResultFinished = useCallback(() => {
+        const aggregated = [...aggregatedDataBuffer.current];
+        const unidentified = [...unidentifiedBuffer.current];
+        
+        // Reconstruct flat list of active clients from aggregated groups to save memory/transfer
+        const activeClientsFlat = aggregated.flatMap(row => row.clients || []);
+
+        setAllData(aggregated);
+        setAllActiveClients(activeClientsFlat);
+        setUnidentifiedRows(unidentified);
+        
         setFilters({ rm: '', brand: [], packaging: [], region: [] });
-        addNotification(`Данные загружены. ${data.aggregatedData.length} групп, ${data.plottableActiveClients.length} активных точек.`, 'success');
-        if (data.dateRange) {
-            addNotification(`Определен период данных: ${data.dateRange}`, 'info');
-        }
-        if (data.unidentifiedRows.length > 0) {
-            addNotification(`${data.unidentifiedRows.length} неопознанных записей помечено в ADAPTA.`, 'info');
+        
+        addNotification(`Данные загружены. ${aggregated.length} групп, ${activeClientsFlat.length} активных точек.`, 'success');
+        
+        if (unidentified.length > 0) {
+            addNotification(`${unidentified.length} неопознанных записей помечено в ADAPTA.`, 'info');
         }
         
-        // Auto-switch to Analytics if data loaded, but give a small delay so user sees 100% progress
         setTimeout(() => setActiveModule('amp'), 1000);
     }, [addNotification]);
+
+    const handleFileProcessed = useCallback((data: WorkerResultPayload) => {
+        // This is a legacy handler to satisfy interface requirements.
+        // It is no longer used for data processing as we switched to streaming.
+    }, []);
 
     // --- WORKER SETUP & COMMUNICATION ---
     
@@ -241,6 +253,10 @@ const App: React.FC = () => {
         messageStart: string, 
         fileNameForState: string
     ) => {
+        // Reset buffers
+        aggregatedDataBuffer.current = [];
+        unidentifiedBuffer.current = [];
+
         // Reset State
         setProcessingState({
             isProcessing: true,
@@ -274,40 +290,57 @@ const App: React.FC = () => {
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
 
         workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
-            const { type, payload } = e.data;
-            switch (type) {
+            const msg = e.data;
+            switch (msg.type) {
                 case 'progress':
-                    if (payload.isBackground) {
-                        if (payload.percentage === 100 || payload.message.toLowerCase().includes('завершен')) {
+                    if (msg.payload.isBackground) {
+                        if (msg.payload.percentage === 100 || msg.payload.message.toLowerCase().includes('завершен')) {
                             setProcessingState(prev => ({ ...prev, backgroundMessage: null }));
                         } else {
-                            setProcessingState(prev => ({ ...prev, backgroundMessage: payload.message }));
+                            setProcessingState(prev => ({ ...prev, backgroundMessage: msg.payload.message }));
                         }
                     } else {
                         setProcessingState(prev => ({ 
                             ...prev, 
-                            progress: payload.percentage, 
-                            message: payload.message 
+                            progress: msg.payload.percentage, 
+                            message: msg.payload.message 
                         }));
                     }
                     break;
-                case 'result':
-                    handleFileProcessed(payload);
+                
+                // NEW STREAMING HANDLERS
+                case 'result_init':
+                    setOkbRegionCounts(msg.payload.okbRegionCounts);
+                    setDateRange(msg.payload.dateRange);
+                    if (msg.payload.dateRange) {
+                        addNotification(`Определен период данных: ${msg.payload.dateRange}`, 'info');
+                    }
+                    break;
+                case 'result_chunk_aggregated':
+                    // Accumulate chunks
+                    aggregatedDataBuffer.current.push(...(msg.payload as AggregatedDataRow[]));
+                    break;
+                case 'result_chunk_unidentified':
+                    unidentifiedBuffer.current.push(...(msg.payload as UnidentifiedRow[]));
+                    break;
+                case 'result_finished':
+                    handleResultFinished();
                     setProcessingState(prev => ({ 
                         ...prev, 
-                        isProcessing: false, // Keep file name but stop processing flag
+                        isProcessing: false, 
                         progress: 100, 
                         message: 'Обработка завершена!' 
                     }));
                     break;
+
                 case 'error':
                     setProcessingState(prev => ({ 
                         ...prev, 
                         isProcessing: false, 
-                        message: `Ошибка: ${payload}`,
+                        message: `Ошибка: ${msg.payload}`,
                         backgroundMessage: null
                     }));
-                    addNotification(`Ошибка при обработке файла: ${payload}`, 'error');
+                    addNotification(`Ошибка при обработке файла: ${msg.payload}`, 'error');
                     break;
                 default:
                     break;
@@ -327,7 +360,7 @@ const App: React.FC = () => {
         // Start Worker
         workerRef.current.postMessage({ ...payload, okbData, cacheData });
 
-    }, [okbData, handleFileProcessed, addNotification]);
+    }, [okbData, handleResultFinished, addNotification]);
 
 
     const handleStartFileProcessing = useCallback((file: File) => {
@@ -702,7 +735,7 @@ const App: React.FC = () => {
                             onStartProcessing={handleStartFileProcessing}
                             onStartCloudProcessing={handleStartCloudProcessing}
                             // Legacy props (some might be deprecated in FileUpload but kept for compatibility if needed)
-                            onFileProcessed={handleFileProcessed} // Redundant if handled via state but good for clear interface
+                            onFileProcessed={handleFileProcessed} // NOW DEFINED
                             onProcessingStateChange={handleProcessingStateChange} // Legacy, could be removed
                             okbData={okbData}
                             okbStatus={okbStatus}
