@@ -612,21 +612,31 @@ const App: React.FC = () => {
                 }));
                 
                 try {
-                    const chunkData = await fetchMonth(m);
+                    let chunkData: any[][] = await fetchMonth(m);
                     
                     if (Array.isArray(chunkData) && chunkData.length > 0) {
-                        totalFetchedRows += chunkData.length;
-                        // Send to worker immediately
-                        const chunkMsg: WorkerInputChunk = {
-                            type: 'PROCESS_CHUNK',
-                            payload: {
-                                rawData: chunkData,
-                                isFirstChunk: !hasProcessedHeaders,
-                                fileName: `Month_${m}`
-                            }
-                        };
-                        workerRef.current?.postMessage(chunkMsg);
-                        hasProcessedHeaders = true;
+                        // FIX: Since api/lib/sheets.ts now returns headers for EVERY file (including subsequent months),
+                        // we must strip the header row (index 0) if headers have already been processed by the worker.
+                        // Otherwise, the worker tries to map the header row using itself as keys, resulting in a garbage row
+                        // and potentially messing up column detection logic.
+                        if (hasProcessedHeaders) {
+                            chunkData = chunkData.slice(1);
+                        }
+
+                        if (chunkData.length > 0) {
+                            totalFetchedRows += chunkData.length;
+                            // Send to worker immediately
+                            const chunkMsg: WorkerInputChunk = {
+                                type: 'PROCESS_CHUNK',
+                                payload: {
+                                    rawData: chunkData,
+                                    isFirstChunk: !hasProcessedHeaders,
+                                    fileName: `Month_${m}`
+                                }
+                            };
+                            workerRef.current?.postMessage(chunkMsg);
+                            hasProcessedHeaders = true;
+                        }
                     }
                 } catch (e) {
                     console.warn(`Error fetching month ${m}`, e);

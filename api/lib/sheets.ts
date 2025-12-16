@@ -240,39 +240,17 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
             // 4. Fetch data from each spreadsheet found in the folder
             const sheetPromises = spreadsheets.map(async (file) => {
                 try {
-                    // OPTIMIZATION: Use batchGet to fetch two specific ranges instead of one massive continuous range.
-                    // Range 1: 'A:AM' (approx 40 cols) - Contains all main data (Client, Region, Product, Fact, etc.)
-                    // Range 2: 'BQ:BR' (cols 69-70) - Contains PM and DM names specifically.
-                    // This avoids fetching the empty/irrelevant columns between AM and BQ, reducing payload size by ~40-50%.
-                    const res = await sheets.spreadsheets.values.batchGet({
+                    // CRITICAL FIX: Fetch a wide, contiguous range (A:BZ) instead of split ranges (A:AM, BQ:BR).
+                    // Split ranges failed when column positions shifted (e.g. RM moved to column 50).
+                    // fetching up to 'BZ' (col ~78) ensures we capture RM/DM columns even if they drift.
+                    const res = await sheets.spreadsheets.values.get({
                         spreadsheetId: file.id!,
-                        ranges: ['A:AM', 'BQ:BR'], 
+                        range: 'A:BZ', 
                         valueRenderOption: 'UNFORMATTED_VALUE',
                     });
 
-                    const mainData = res.data.valueRanges?.[0]?.values || [];
-                    const managerData = res.data.valueRanges?.[1]?.values || [];
-                    
-                    // Merge the two ranges into a single sparse row structure that matches the Worker's expectations.
-                    // The worker expects PM at index 68 (BQ) and DM at index 69 (BR).
-                    const mergedRows: any[][] = [];
-                    const rowCount = Math.max(mainData.length, managerData.length);
-
-                    for (let i = 0; i < rowCount; i++) {
-                        const row = mainData[i] || [];
-                        const mgr = managerData[i] || [];
-                        
-                        // Copy main data
-                        // Using a sparse array approach: we just assign indices 68 and 69.
-                        // We do NOT fill the gap with nulls to save memory.
-                        if (mgr.length > 0) {
-                            row[68] = mgr[0]; // BQ -> Index 68
-                            row[69] = mgr[1]; // BR -> Index 69
-                        }
-                        mergedRows.push(row);
-                    }
-
-                    return { fileName: file.name, rows: mergedRows };
+                    const rows = res.data.values || [];
+                    return { fileName: file.name, rows: rows };
                 } catch (e) {
                     console.error(`Error loading file ${file.name}:`, e);
                     return { fileName: file.name, rows: [] };
