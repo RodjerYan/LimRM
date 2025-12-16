@@ -127,7 +127,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
 /**
  * A robust helper to find a value in a row by searching for keywords in its keys.
  * IMPROVED: Uses a tiered approach (Exact > Word Boundary > Loose) to avoid false positives.
- * Updated to allow short keywords if they match exactly (critical for "RM", "PM").
+ * Updated to allow short keywords if they match exactly or partially (critical for "RM", "PM").
  * 
  * @param row The data row object.
  * @param keywords An array of lowercase keywords to search for.
@@ -158,12 +158,11 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
         if (boundaryKey && row[boundaryKey] != null) return String(row[boundaryKey]);
     }
 
-    // 3. Fallback: Loose Partial Match (ONLY for keywords > 2 chars)
-    // We skip short keywords here to prevent "РМ" matching "Корм" if regex failed.
-    // Exception: If strict mode fails, we might miss "PM_" prefix. But step 2 handles prefixes/suffixes with separators.
+    // 3. Fallback: Loose Partial Match
+    // FIX: Removed length check restriction. Previously (len <= 2) skip caused "RM", "DM" columns
+    // not to be found if they were part of a longer string but didn't match the strict regex above.
+    // This allows "RM" to match "RM Name" or "DM/RM" even if strict regex fails.
     for (const keyword of keywords) {
-        if (keyword.length <= 2) continue; 
-        
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword.toLowerCase().trim()));
         if (foundKey && row[foundKey] != null) {
             return String(row[foundKey]);

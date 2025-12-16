@@ -303,6 +303,7 @@ const findDateRange = (data: any[]): string | undefined => {
 /**
  * Intelligent Header Detection
  * Scans the first N rows to find the row that most likely contains the column headers.
+ * IMPROVED: Instead of picking the *first* row with >=2 matches, picking the row with the *MAX* matches.
  * Matches against known critical columns like 'address', 'rm', 'weight'.
  */
 const detectHeaderRowIndex = (rows: any[][]): number => {
@@ -320,6 +321,8 @@ const detectHeaderRowIndex = (rows: any[][]): number => {
     
     // Scan up to the first 20 rows
     const limit = Math.min(rows.length, 20);
+    let bestRowIndex = 0;
+    let maxMatches = 0;
     
     for (let i = 0; i < limit; i++) {
         const row = rows[i].map(cell => String(cell || '').toLowerCase());
@@ -333,14 +336,20 @@ const detectHeaderRowIndex = (rows: any[][]): number => {
             }
         }
         
-        // If we found at least 2 matching headers, this is likely the header row.
-        // We need > 1 because sometimes a title row might contain one keyword (e.g. "Sales Report by Brand")
-        if (matches >= 2) {
-            return i;
+        // Use the row with the MOST header matches
+        if (matches > maxMatches) {
+            maxMatches = matches;
+            bestRowIndex = i;
         }
     }
     
-    return 0; // Default to first row if no better candidate found
+    // Ensure we found at least a minimal number of matches to consider it a valid header row.
+    // If not, fall back to row 0.
+    if (maxMatches >= 2) {
+        return bestRowIndex;
+    }
+    
+    return 0; // Default to first row if no good candidate found
 };
 
 /**
@@ -417,6 +426,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     if (dateRange) {
         console.log(`Detected Date Range: ${dateRange}`);
     }
+
+    // DEBUG: Log Headers to help diagnosis
+    console.log('[HEADERS]', headers);
 
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Индексация данных...' } });
     const okbCoordIndex = createOkbCoordIndex(okbData);
@@ -504,7 +516,14 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // Strict keyword matching for RM to avoid picking up "Специализация корма"
         // Updated list to include Latin/Cyrillic variants and full names
-        const rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам']);
+        let rm = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm']);
+        
+        // IMPROVED: Fallback to DM if RM is not found.
+        // Often 'DM' or 'Director' columns contain the necessary grouping key if 'RM' is empty.
+        const dm = findValueInRow(row, ['дм', 'dm', 'дивизиональный', 'директор', 'director']);
+        if (!rm && dm) {
+             rm = dm;
+        }
 
         if (i > 0 && i % 5000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
@@ -514,7 +533,12 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
+        
         if (!rm) {
+            // Debug log for the first few errors to help identify file structure issues
+            if (unidentifiedRows.length < 5) {
+                console.warn('[RM NOT FOUND]', row);
+            }
             unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: i });
             continue;
         }
