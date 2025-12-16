@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
 
@@ -23,7 +24,19 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                     G
                 </div>
                 <div>
-                    <h1 className="font-bold text-white tracking-tight">GPS-Enterprise</h1>
+                    <h1 className="font-bold text-white tracking-tight">
+                        <span className="relative inline-block">
+                            GP
+                            <div className="absolute -top-3.5 -right-2 w-5 h-5 pointer-events-none transform rotate-12 filter drop-shadow-md">
+                                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M16.5 13C16.5 13 16 4 10.5 4C5 4 4.5 13 4.5 13H16.5Z" fill="#EF4444"/>
+                                    <circle cx="10.5" cy="3.5" r="2.5" fill="white"/>
+                                    <rect x="3.5" y="13" width="14" height="3.5" rx="1.75" fill="white"/>
+                                </svg>
+                            </div>
+                        </span>
+                        S-Enterprise
+                    </h1>
                     <p className="text-[10px] text-gray-500 uppercase tracking-widest">Коммерческая аналитика LimKorm</p>
                 </div>
             </div>
