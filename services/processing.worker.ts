@@ -469,6 +469,20 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         const cacheEntry = state_cacheAddressMap.get(normalizedRaw);
 
+        const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
+
+        // --- CACHE FILLING LOGIC (MOVED UP) ---
+        // Add to cache list even if it is Unidentified later. 
+        // This ensures bad addresses are sent to DB for manual fix.
+        if (!isCached && clientAddress && finalRm) {
+             const addrToCache = parsedAddress.finalAddress || clientAddress;
+             if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
+             // Prevent duplicates within the current batch state
+             if (!state_newAddressesToCache[finalRm].some(item => item.address === addrToCache)) {
+                 state_newAddressesToCache[finalRm].push({ address: addrToCache });
+             }
+        }
+
         if (cacheEntry && cacheEntry.isInvalid) {
              state_unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: state_processedRowsCount + i });
              continue;
@@ -476,7 +490,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const isCityFound = parsedAddress.city !== 'Город не определен';
         const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');
-        const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
         if (!isCityFound && !isRegionFound && !isCached) {
             state_unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: state_processedRowsCount + i });
@@ -529,11 +542,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     displayAddress = cacheEntry.originalAddress;
                 }
             } else {
-                if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
-                if (finalAddress && !state_newAddressesToCache[finalRm].some(item => item.address === finalAddress)) {
-                    state_newAddressesToCache[finalRm].push({ address: finalAddress });
-                }
-
                 const okbEntry = state_okbCoordIndex.get(normalizedRaw);
                 if (okbEntry) {
                     lat = okbEntry.lat;
