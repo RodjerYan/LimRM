@@ -237,12 +237,12 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
                 continue;
             }
 
-            // 4. Fetch data from each spreadsheet found in the folder
-            const sheetPromises = spreadsheets.map(async (file) => {
+            // 4. Fetch data from each spreadsheet found in the folder SEQUENTIALLY
+            // Use sequential loop instead of Promise.all to avoid Vercel Function timeouts/OOM on large ranges
+            for (const file of spreadsheets) {
                 try {
-                    // CRITICAL FIX: Fetch a wide, contiguous range (A:BZ) instead of split ranges (A:AM, BQ:BR).
-                    // Split ranges failed when column positions shifted (e.g. RM moved to column 50).
-                    // fetching up to 'BZ' (col ~78) ensures we capture RM/DM columns even if they drift.
+                    // Fetch a wide, contiguous range (A:BZ) to ensure RM columns are captured.
+                    // Doing this sequentially is slower but reliable against timeouts.
                     const res = await sheets.spreadsheets.values.get({
                         spreadsheetId: file.id!,
                         range: 'A:BZ', 
@@ -250,33 +250,28 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
                     });
 
                     const rows = res.data.values || [];
-                    return { fileName: file.name, rows: rows };
-                } catch (e) {
-                    console.error(`Error loading file ${file.name}:`, e);
-                    return { fileName: file.name, rows: [] };
-                }
-            });
-            
-            const results = await Promise.all(sheetPromises);
-            
-            for (const { fileName, rows } of results) {
-                if (rows.length === 0) continue;
-                loadedFiles.push(fileName || 'Unknown');
+                    
+                    if (rows.length > 0) {
+                        loadedFiles.push(file.name || 'Unknown');
 
-                // FIX: Use explicit loop instead of spread operator to avoid stack overflow with large arrays
-                if (!headersSet) {
-                    // Include headers from the first file
-                    for (let i = 0; i < rows.length; i++) {
-                        allData.push(rows[i]);
-                    }
-                    headersSet = true;
-                } else {
-                    // Skip headers (row 0) for subsequent files
-                    if (rows.length > 1) {
-                        for (let i = 1; i < rows.length; i++) {
-                            allData.push(rows[i]);
+                        if (!headersSet) {
+                            // Include headers from the first file
+                            for (let i = 0; i < rows.length; i++) {
+                                allData.push(rows[i]);
+                            }
+                            headersSet = true;
+                        } else {
+                            // Skip headers (row 0) for subsequent files
+                            if (rows.length > 1) {
+                                for (let i = 1; i < rows.length; i++) {
+                                    allData.push(rows[i]);
+                                }
+                            }
                         }
                     }
+                } catch (e) {
+                    console.error(`Error loading file ${file.name}:`, e);
+                    // Continue to next file instead of crashing entire batch
                 }
             }
         }
