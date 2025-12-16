@@ -14,7 +14,6 @@ const ROOT_FOLDERS: Record<string, string> = {
 };
 
 // Маппинг названий месяцев (Русский -> Название папки на Google Drive)
-// Основано на ваших скриншотах (папки на английском: January, February...)
 const MONTH_MAP: Record<string, string> = {
     'Январь': 'January',
     'Февраль': 'February',
@@ -32,7 +31,6 @@ const MONTH_MAP: Record<string, string> = {
 
 /**
  * Creates an authenticated Google Auth client.
- * Now includes Drive scope to list folders/files.
  */
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -52,7 +50,7 @@ async function getAuthClient() {
         credentials,
         scopes: [
             'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive.readonly' // Added Drive scope
+            'https://www.googleapis.com/auth/drive.readonly' 
         ],
     });
 }
@@ -160,10 +158,6 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 
 /**
  * DYNAMICALLY fetches AKB data by traversing Google Drive folders.
- * 1. Finds the Year Folder.
- * 2. Finds Month Folders inside it based on the requested quarter.
- * 3. Finds ALL spreadsheets inside each Month Folder.
- * 4. Aggregates data from all found files.
  */
 export async function getAkbData(year?: string, quarter?: number): Promise<any[][]> {
     const drive = await getGoogleDriveClient();
@@ -173,7 +167,7 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     const rootFolderId = ROOT_FOLDERS[targetYear];
     
     if (!rootFolderId) {
-        throw new Error(`Папка для года ${targetYear} не настроена в системе (api/lib/sheets.ts).`);
+        throw new Error(`Папка для года ${targetYear} не настроена в системе.`);
     }
 
     // Determine target months based on quarter
@@ -187,7 +181,6 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         };
         targetMonthNames = quarterMap[quarter] || [];
     } else {
-        // If no quarter specified, try to load all (this might be heavy!)
         targetMonthNames = Object.keys(MONTH_MAP);
     }
 
@@ -196,7 +189,6 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     const loadedFiles: string[] = [];
 
     // 1. List folders inside the Root Year Folder
-    // "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     const folderListRes = await drive.files.list({
         q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
         fields: 'files(id, name)',
@@ -205,8 +197,11 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     
     const yearFolders = folderListRes.data.files || [];
     
+    // If we can't find the year folder structure at all, that's a config error.
     if (yearFolders.length === 0) {
-        throw new Error(`В папке ${targetYear} не найдено подпапок с месяцами. Проверьте права доступа.`);
+        console.warn(`В папке ${targetYear} не найдено подпапок.`);
+        // Don't throw here, just return empty. Maybe user hasn't created structure yet.
+        return [];
     }
 
     // 2. Iterate through target months and find matching folders
@@ -214,7 +209,6 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         const engMonthName = MONTH_MAP[rusMonth];
         if (!engMonthName) continue;
 
-        // Case-insensitive match for folder name (e.g. "February" or "february")
         const monthFolder = yearFolders.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
         
         if (monthFolder && monthFolder.id) {
@@ -222,13 +216,12 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
             const fileListRes = await drive.files.list({
                 q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
                 fields: 'files(id, name)',
-                pageSize: 50 // Assuming max 50 parts per month
+                pageSize: 50 
             });
             
             const spreadsheets = fileListRes.data.files || [];
             
             if (spreadsheets.length === 0) {
-                console.warn(`Folder ${engMonthName} exists but is empty.`);
                 continue;
             }
 
@@ -237,12 +230,12 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
                 try {
                     const res = await sheets.spreadsheets.values.get({
                         spreadsheetId: file.id!,
-                        range: 'A:Z', // Load full first sheet
+                        range: 'A:Z', 
                         valueRenderOption: 'UNFORMATTED_VALUE',
                     });
                     return { fileName: file.name, rows: res.data.values || [] };
                 } catch (e) {
-                    console.error(`Error loading file ${file.name} (${file.id}):`, e);
+                    console.error(`Error loading file ${file.name}:`, e);
                     return { fileName: file.name, rows: [] };
                 }
             });
@@ -254,11 +247,9 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
                 loadedFiles.push(fileName || 'Unknown');
 
                 if (!headersSet) {
-                    // First valid file: take headers and data
                     allData.push(...rows);
                     headersSet = true;
                 } else {
-                    // Subsequent files: skip header (row 0), take data
                     if (rows.length > 1) {
                         allData.push(...rows.slice(1));
                     }
@@ -267,20 +258,10 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         }
     }
 
+    // FIX: If no data found (e.g. future quarters), return empty array instead of throwing.
     if (allData.length === 0) {
-        let email = "unknown";
-        try {
-             const key = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}');
-             email = key.client_email;
-        } catch(e) {}
-        
-        throw new Error(
-            `Не удалось загрузить данные из папок Google Drive за ${targetYear} Q${quarter || 'All'}. \n` +
-            `Проверьте:\n` +
-            `1. Сервисный аккаунт (${email}) имеет доступ к папке "${targetYear}".\n` +
-            `2. Внутри папки "${targetYear}" есть папки с английскими названиями месяцев (January, February...).\n` +
-            `3. Внутри папок месяцев есть файлы Google Таблиц.`
-        );
+        console.warn(`[getAkbData] No data found for ${targetYear} Q${quarter || 'All'}. Returning empty.`);
+        return [];
     }
 
     console.log(`[Cloud Load] Loaded ${loadedFiles.length} files from Drive folders.`);
@@ -288,7 +269,7 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
 }
 
 
-// --- COORDINATE CACHE FUNCTIONS (Unchanged logic, just ensure imports work) ---
+// --- COORDINATE CACHE FUNCTIONS ---
 
 function normalizeForComparison(str: string): string {
     return String(str || '')
