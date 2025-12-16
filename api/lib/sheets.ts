@@ -218,9 +218,9 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
     // Helper function to fetch data from a batch of sources
     const processBatch = async (batch: typeof AKB_SOURCES) => {
         const promises = batch.map(async (source) => {
+            // Strategy 1: Try the explicitly defined spreadsheet ID for the month
             try {
                 // Optimization: Directly request range 'A:Z' which typically works for the first sheet.
-                // This avoids an extra API call to get sheet metadata/name.
                 const res = await sheets.spreadsheets.values.get({
                     spreadsheetId: source.id,
                     range: 'A:Z', 
@@ -229,11 +229,24 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
 
                 return res.data.values || [];
             } catch (error) {
-                const msg = error instanceof Error ? error.message : String(error);
-                console.error(`Error fetching AKB data for ${source.month}:`, msg);
-                errors.push(`${source.month}: ${msg}`);
-                // Return empty array to allow other sheets to proceed even if one fails
-                return [];
+                // Strategy 2: Fallback to the MAIN Spreadsheet ID using the Month Name as the Tab Name.
+                // This handles the case where the user consolidated separate files into tabs of the main file.
+                try {
+                    console.log(`Fallback: Trying to find tab '${source.month}' in main spreadsheet...`);
+                    const res = await sheets.spreadsheets.values.get({
+                        spreadsheetId: SPREADSHEET_ID, // Use the Global/Main Spreadsheet ID
+                        range: `'${source.month}'!A:Z`, // Try to access the tab by month name
+                        valueRenderOption: 'UNFORMATTED_VALUE',
+                    });
+                    return res.data.values || [];
+                } catch (fallbackError) {
+                    // Both strategies failed. Log the original error.
+                    const msg = error instanceof Error ? error.message : String(error);
+                    console.error(`Error fetching AKB data for ${source.month}:`, msg);
+                    errors.push(`${source.month}: ${msg}`);
+                    // Return empty array to allow other sheets to proceed even if one fails
+                    return [];
+                }
             }
         });
         return Promise.all(promises);
@@ -273,7 +286,9 @@ export async function getAkbData(year?: string, quarter?: number): Promise<any[]
         throw new Error(
             `Не удалось загрузить данные ни из одной таблицы за ${year || 'все годы'} Q${quarter || 'All'}. \n` +
             `Вероятно, у сервисного аккаунта нет доступа. \n` +
-            `ПРОВЕРЬТЕ: Вы должны открыть доступ "Редактор" к этим таблицам для email: \n${email}\n\n` +
+            `РЕШЕНИЕ: Добавьте email ${email} как "Редактора" в таблицу: \n` +
+            `1. С ID "${SPREADSHEET_ID}" (если вы добавили вкладки по месяцам туда) \n` +
+            `2. ИЛИ в отдельные таблицы для каждого месяца (если используете разные файлы). \n\n` +
             `Детали ошибок: ${errors.slice(0, 3).join('; ')}...`
         );
     }
