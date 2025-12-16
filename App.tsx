@@ -409,7 +409,8 @@ const App: React.FC = () => {
                             // ------------------------------------
 
                             // Perform fetch in main thread
-                            for (let attempt = 0; attempt < 3; attempt++) {
+                            // Enhanced Retry Logic for 500/429 Quota Errors
+                            for (let attempt = 0; attempt < 5; attempt++) {
                                 try {
                                     const res = await fetch('/api/add-to-cache', {
                                         method: 'POST',
@@ -417,6 +418,7 @@ const App: React.FC = () => {
                                         credentials: 'include', // Ensure cookies are sent if needed
                                         body: JSON.stringify({ rmName, rows })
                                     });
+                                    
                                     if (!res.ok) {
                                         const text = await res.text();
                                         throw new Error(`API Error: ${text}`);
@@ -430,18 +432,26 @@ const App: React.FC = () => {
                                     break; 
                                 } catch (err) {
                                     console.error(`Save cache failed attempt ${attempt+1} for ${rmName}:`, err);
-                                    if (attempt === 2) {
-                                        addNotification(`Ошибка сохранения адресов для ${rmName}`, 'error');
-                                        // Even on failure, might want to ACK to prevent worker hang, 
-                                        // or implement robust error handling in worker.
-                                        // For now, let's ACK to proceed, but log error.
+                                    
+                                    // Check if it's likely a quota or rate limit error
+                                    const errorMessage = String(err);
+                                    const isQuotaError = errorMessage.includes('Quota exceeded') || errorMessage.includes('429') || errorMessage.includes('500');
+                                    
+                                    if (attempt === 4) {
+                                        addNotification(`Ошибка сохранения адресов для ${rmName} (пакет ${batchId})`, 'error');
+                                        // Even on failure, ACK to prevent worker hang. Data won't be cached this run, but app continues.
                                         workerRef.current?.postMessage({
                                             type: 'ACK',
                                             payload: { batchId }
                                         });
                                     } else {
-                                        // Wait before retry
-                                        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                                        // Exponential Backoff: 2s, 4s, 8s, 16s...
+                                        // If confirmed quota/500 error, add base padding
+                                        const baseDelay = 2000 * Math.pow(2, attempt);
+                                        const delay = isQuotaError ? baseDelay + 3000 : baseDelay;
+                                        
+                                        console.warn(`[Retry] Waiting ${delay}ms before next attempt...`);
+                                        await new Promise(r => setTimeout(r, delay));
                                     }
                                 }
                             }
@@ -826,7 +836,7 @@ const App: React.FC = () => {
                 if (coords) {
                      fetch('/api/update-coords', {
                          method: 'POST',
-                         headers: { 'Content-Type': 'application/json' },
+                         headers: { 'Content-Type': 'application/json' }, 
                          body: JSON.stringify({ rmName, updates: [{ address, lat: coords.lat, lon: coords.lon }] })
                     }).catch(console.error);
                 }

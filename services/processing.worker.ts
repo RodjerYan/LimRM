@@ -1,3 +1,4 @@
+
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -51,7 +52,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // --- ACK Mechanism ---
 const pendingAcks = new Set<string>();
 
-const waitForAck = (id: string, timeoutMs = 15000) => {
+const waitForAck = (id: string, timeoutMs = 30000) => { // Increased timeout for larger batches
     pendingAcks.add(id);
     return new Promise<void>((resolve, reject) => {
         const started = Date.now();
@@ -738,13 +739,11 @@ async function finalizeStream(postMessage: PostMessageFn) {
 
     // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
     // Progress 95 -> 99: Saving Phase
-    // FIX: Delegate actual saving to the main thread via postMessage to avoid worker fetch issues.
-    // FIX: Implement ACK mechanism for robust flow control.
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
         
-        const BATCH_SIZE = 50; 
+        const BATCH_SIZE = 500; // Increased to 500 to minimize API calls (Quota Exceeded Fix)
         
         // Calculate total batches for smooth progress bar
         let totalBatchesGlobal = 0;
@@ -845,7 +844,6 @@ async function finalizeStream(postMessage: PostMessageFn) {
     postMessage({ type: 'result_finished' });
 
     // Background Tasks (Only geocoding left)
-    // FIX: Delegate geocoding task management to main thread
     if (Object.keys(state_addressesToGeocode).length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования (фоновый режим)...', isBackground: true } });
         
