@@ -618,7 +618,23 @@ async function finalizeStream(postMessage: PostMessageFn) {
     const potentialClientsCache = new Map<string, PotentialClient[]>();
 
     const finalData: AggregatedDataRow[] = [];
-    for (const item of Object.values(state_aggregatedData)) {
+    const aggregationValues = Object.values(state_aggregatedData);
+    const totalGroups = aggregationValues.length;
+
+    for (let i = 0; i < totalGroups; i++) {
+        const item = aggregationValues[i];
+        
+        // Granular Progress Report
+        if (i % 50 === 0) {
+             postMessage({ 
+                 type: 'progress', 
+                 payload: { 
+                     percentage: 95 + Math.round((i/totalGroups) * 2), 
+                     message: `Анализ региона: ${item.region} (${i}/${totalGroups})` 
+                 } 
+             });
+        }
+
         let potential = item.potential;
         if (!state_hasPotentialColumn) potential = item.fact * 1.15;
         else if (potential < item.fact) potential = item.fact;
@@ -637,6 +653,25 @@ async function finalizeStream(postMessage: PostMessageFn) {
             potentialClients: regionPotentialClients,
             clients: Array.from(item.clients.values()) 
         });
+    }
+
+    // --- CRITICAL: SAVE ADDRESSES TO CACHE *BEFORE* FINISHING ---
+    const newAddressRMs = Object.keys(state_newAddressesToCache);
+    if (newAddressRMs.length > 0) {
+        postMessage({ type: 'progress', payload: { percentage: 97, message: `Подготовка к сохранению адресов...` } });
+        for (let i = 0; i < newAddressRMs.length; i++) {
+            const rmName = newAddressRMs[i];
+            postMessage({ type: 'progress', payload: { percentage: 97, message: `Запись АКБ: ${rmName} (${i+1}/${newAddressRMs.length})...` } });
+            try {
+                await fetch('/api/add-to-cache', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ rmName, rows: state_newAddressesToCache[rmName] }) 
+                });
+            } catch (e) { 
+                console.error(`Failed to add to cache for ${rmName}:`, e); 
+            }
+        }
     }
 
     // Stream Results
@@ -662,21 +697,11 @@ async function finalizeStream(postMessage: PostMessageFn) {
             payload: state_unidentifiedRows.slice(i, i + CHUNK_SIZE)
         });
     }
+    
+    // Finalize
     postMessage({ type: 'result_finished' });
 
-    // Background Tasks
-    const newAddressRMs = Object.keys(state_newAddressesToCache);
-    if (newAddressRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: `Подготовка кэша: ${newAddressRMs.length} менеджеров...`, isBackground: true } });
-        for (let i = 0; i < newAddressRMs.length; i++) {
-            const rmName = newAddressRMs[i];
-            postMessage({ type: 'progress', payload: { percentage: 99, message: `Сохранение адресов: ${rmName} (${i+1}/${newAddressRMs.length})`, isBackground: true } });
-            try {
-                await fetch('/api/add-to-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, rows: state_newAddressesToCache[rmName] }) });
-            } catch (e) { console.error(`Failed to add to cache for ${rmName}:`, e); }
-        }
-    }
-
+    // Background Tasks (Only geocoding left)
     const geocodeRMs = Object.keys(state_addressesToGeocode);
     if (geocodeRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования...', isBackground: true } });
