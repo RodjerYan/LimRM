@@ -1,4 +1,3 @@
-
 import * as xlsx from 'xlsx';
 import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
@@ -359,6 +358,7 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
     state_addressesToGeocode = {};
     state_unidentifiedRows = [];
     state_headers = [];
+    // Reset forced header state
     state_forcedRmHeader = undefined;
     state_forcedDmHeader = undefined;
     
@@ -430,6 +430,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
         state_clientNameHeader = findClientNameHeader(state_headers);
 
+        // FORCED DETECTION FOR GOOGLE SHEETS
         if (fileName && fileName.startsWith('Month_') && state_headers.length >= 69) {
             state_forcedRmHeader = state_headers[68];
             state_forcedDmHeader = state_headers[69];
@@ -509,8 +510,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // --- CACHE FILLING LOGIC ---
-        // Add to cache list to be saved to Google Sheets
+        // --- CACHE FILLING LOGIC (CRITICAL FIX) ---
+        // Add to cache list even if it is Unidentified later. 
         if (!isCached && clientAddress && finalRm) {
              const addrToCache = clientAddress;
              if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
@@ -642,9 +643,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         });
     }
 
-    const lastTime = Date.now();
-    const shouldReport = () => Date.now() - lastTime > 100; // Throttle UI updates
-
+    // Progress 90 -> 95: Aggregation Loop
     postMessage({ type: 'progress', payload: { percentage: 92, message: 'Анализ пересечений с ОКБ...' } });
     
     const activeClientsByRegion = new Map<string, MapPoint[]>();
@@ -694,12 +693,14 @@ async function finalizeStream(postMessage: PostMessageFn) {
     }
 
     // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
+    // Progress 95 -> 99: Saving Phase with RETRY Logic
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
         postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
         
         const BATCH_SIZE = 50; 
         
+        // Calculate total batches for smooth progress bar
         let totalBatchesGlobal = 0;
         for(const rm of newAddressRMs) {
              totalBatchesGlobal += Math.ceil(state_newAddressesToCache[rm].length / BATCH_SIZE);
@@ -710,7 +711,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         for (const rmName of newAddressRMs) {
             const allRows = state_newAddressesToCache[rmName];
             const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
-            const sanitizedRmName = sanitizeSheetName(rmName); // Sanitize once per RM
+            const sanitizedRmName = sanitizeSheetName(rmName); // Sanitize the RM name!
 
             for (let b = 0; b < totalBatches; b++) {
                 const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
@@ -736,10 +737,10 @@ async function finalizeStream(postMessage: PostMessageFn) {
                             body: JSON.stringify({ rmName: sanitizedRmName, rows: chunk }) 
                         });
                         success = true;
-                        break; // Success
+                        break; // Success!
                     } catch (e) { 
                         console.error(`Attempt ${attempt+1} failed for ${sanitizedRmName}:`, e); 
-                        await sleep(1000 * (attempt + 1)); // Backoff
+                        await sleep(1000 * (attempt + 1)); // Exponential Backoff
                     }
                 }
                 
@@ -747,7 +748,8 @@ async function finalizeStream(postMessage: PostMessageFn) {
                     postMessage({ type: 'error', payload: `ОШИБКА записи для ${sanitizedRmName}. Данные могут быть неполными.` });
                 }
 
-                await sleep(300); // Increased delay to 300ms to be safe with Google API rate limits
+                // Small delay to allow UI updates and prevent Google API rate limits
+                await sleep(300);
             }
         }
     }
