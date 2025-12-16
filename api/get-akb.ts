@@ -24,13 +24,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         const akbData = await getAkbData(year, quarter);
         
-        if (!akbData || akbData.length === 0) {
-             throw new Error('No data found for year ' + year + (quarter ? ` Q${quarter}` : ''));
-        }
+        // FIX: Removed the check that throws an error if data is empty.
+        // It is perfectly valid for a future quarter (e.g. Q4 2025) to be empty.
+        // The frontend will handle merging valid data from other quarters.
 
         // Prevent caching for this data as it might change frequently
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.status(200).json(akbData);
+        res.status(200).json(akbData || []);
     } catch (error) {
         console.error('Error fetching AKB data from Google Sheets:', error);
         
