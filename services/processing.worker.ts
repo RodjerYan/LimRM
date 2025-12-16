@@ -471,7 +471,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // --- CACHE FILLING LOGIC (MOVED UP) ---
+        // --- CACHE FILLING LOGIC (MOVED UP - CRITICAL FIX) ---
         // Add to cache list even if it is Unidentified later. 
         // This ensures bad addresses are sent to DB for manual fix.
         if (!isCached && clientAddress && finalRm) {
@@ -666,8 +666,10 @@ async function finalizeStream(postMessage: PostMessageFn) {
     // Background Tasks
     const newAddressRMs = Object.keys(state_newAddressesToCache);
     if (newAddressRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Добавление новых адресов в кэш...', isBackground: true } });
-        for (const rmName of newAddressRMs) {
+        postMessage({ type: 'progress', payload: { percentage: 99, message: `Подготовка кэша: ${newAddressRMs.length} менеджеров...`, isBackground: true } });
+        for (let i = 0; i < newAddressRMs.length; i++) {
+            const rmName = newAddressRMs[i];
+            postMessage({ type: 'progress', payload: { percentage: 99, message: `Сохранение адресов: ${rmName} (${i+1}/${newAddressRMs.length})`, isBackground: true } });
             try {
                 await fetch('/api/add-to-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, rows: state_newAddressesToCache[rmName] }) });
             } catch (e) { console.error(`Failed to add to cache for ${rmName}:`, e); }
