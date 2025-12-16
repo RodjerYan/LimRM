@@ -49,12 +49,30 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- HELPER: Sheet Name Sanitization ---
 // Google Sheets disallows: [ ] * ? : / \ and names longer than ~100 chars
+// Also apostrophes at start/end are problematic.
 const sanitizeSheetName = (name: string): string => {
-    return String(name || 'Unknown')
+    if (!name || name.trim() === '') return 'Unknown_RM';
+    
+    // 1. Remove invalid chars
+    let sanitized = String(name)
         .replace(/[\/\\\?\*\[\]\:]/g, ' ') // Replace invalid chars with space
         .replace(/\s+/g, ' ') // Collapse multiple spaces
-        .trim()
-        .slice(0, 99); // Truncate to safe length
+        .trim();
+    
+    // 2. Ensure name is not empty after cleanup
+    if (sanitized === '') {
+        return 'Unknown_RM';
+    }
+    
+    // 3. Remove leading/trailing apostrophes (Google Sheets restriction)
+    sanitized = sanitized.replace(/^'+|'+$/g, '');
+    
+    // 4. Truncate to 99 chars (safe limit)
+    if (sanitized.length > 99) {
+        sanitized = sanitized.substring(0, 99);
+    }
+    
+    return sanitized;
 };
 
 // --- HELPER: Aggressive Key Normalization ---
@@ -477,13 +495,15 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
 
         let finalRm = rm || dm;
+        // Trim whitespace for consistency
+        if (finalRm) finalRm = finalRm.trim();
 
         let clientAddress = findAddressInRow(row);
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         
-        if (!finalRm) {
+        if (!finalRm || finalRm === '') {
             state_unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: state_processedRowsCount + i });
             continue;
         }
@@ -703,15 +723,33 @@ async function finalizeStream(postMessage: PostMessageFn) {
         // Calculate total batches for smooth progress bar
         let totalBatchesGlobal = 0;
         for(const rm of newAddressRMs) {
+             if (!state_newAddressesToCache[rm] || state_newAddressesToCache[rm].length === 0) continue;
+             // Check for valid RM name key
+             if (!rm || rm.trim() === '') continue;
              totalBatchesGlobal += Math.ceil(state_newAddressesToCache[rm].length / BATCH_SIZE);
         }
         
         let currentBatchGlobal = 0;
 
         for (const rmName of newAddressRMs) {
+            // Check
+            if (!rmName || rmName.trim() === '') {
+                console.warn('Skipping empty RM name in save queue');
+                continue;
+            }
+
             const allRows = state_newAddressesToCache[rmName];
+            if (!allRows || allRows.length === 0) continue;
+
+            const sanitizedRmName = sanitizeSheetName(rmName); 
+            // Check sanitized
+            if (sanitizedRmName === '' || sanitizedRmName === 'Unknown_RM') {
+                 // Try to save to Unknown_RM if data is valuable, but log warning
+                 console.warn(`RM "${rmName}" sanitized to "${sanitizedRmName}"`);
+            }
+
             const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
-            const sanitizedRmName = sanitizeSheetName(rmName); // Sanitize the RM name!
+            console.log(`Saving ${allRows.length} rows for RM: ${sanitizedRmName} (${totalBatches} batches)`);
 
             for (let b = 0; b < totalBatches; b++) {
                 const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
@@ -731,11 +769,18 @@ async function finalizeStream(postMessage: PostMessageFn) {
                 let success = false;
                 for (let attempt = 0; attempt < 3; attempt++) {
                     try {
-                        await fetch('/api/add-to-cache', { 
+                        console.log(`[Batch ${b+1}/${totalBatches}] Sending ${chunk.length} rows for ${sanitizedRmName}...`);
+                        const response = await fetch('/api/add-to-cache', { 
                             method: 'POST', 
                             headers: { 'Content-Type': 'application/json' }, 
                             body: JSON.stringify({ rmName: sanitizedRmName, rows: chunk }) 
                         });
+                        
+                        if (!response.ok) {
+                            const txt = await response.text();
+                            throw new Error(`API Error ${response.status}: ${txt}`);
+                        }
+
                         success = true;
                         break; // Success!
                     } catch (e) { 
