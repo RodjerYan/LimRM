@@ -36,7 +36,6 @@ const isValidManagerValue = (val: string): boolean => {
     const v = String(val).trim().toLowerCase();
     
     // 1. Check for Garbage / Product Context
-    // Common terms found in "PM"/"RM" columns when the header detection is slightly off or columns are shifted
     const stopWords = [
         'нет специализации', 
         'нет', 
@@ -61,14 +60,64 @@ const isValidManagerValue = (val: string): boolean => {
     if (stopWords.some(w => v.includes(w))) return false;
 
     // 2. Length Check
-    // "Ivanov" is 6 chars. "Kim" is 3. Initials "I.I." add length. 
-    // Anything less than 3 is likely noise or initials without context.
-    if (v.length < 3) return false;
+    // Increased to 5 to avoid "PM", "RM", "IO", "OK" and other noise.
+    // Real names/emails are generally >= 5 chars.
+    if (v.length < 5) return false;
 
     // 3. Must contain at least 2 letters (excludes "123", "---", etc.)
     if (!/[a-zа-яё]{2,}/i.test(v)) return false;
 
     return true;
+};
+
+/**
+ * Finds a valid manager name in the row by checking specific keys.
+ * Iterates through keys and validates the value *before* accepting it.
+ * This prevents picking up columns like "PM Specialization" where the key matches "PM" but value is invalid.
+ */
+const findManagerValue = (
+    row: any,
+    strictKeys: string[],
+    looseKeys: string[]
+): string => {
+    if (!row) return '';
+    const rowKeys = Object.keys(row);
+
+    // 1. STRICT — look for keys that strictly match or look like specific columns
+    for (const key of rowKeys) {
+        const k = key.toLowerCase().trim();
+        const isStrict = strictKeys.some(s => {
+             const sLower = s.toLowerCase();
+             // Strict matches: Exact, Dot suffix, Colon suffix, or explicit FIO/Name suffix
+             // Example: "RM", "RM.", "RM:", "RM FIO", "RM Name"
+             return k === sLower || k === sLower + '.' || k === sLower + ':' || k === sLower + ' фио' || k === sLower + ' name';
+        });
+        
+        if (isStrict) {
+            const val = String(row[key] || '');
+            if (isValidManagerValue(val)) return val;
+        }
+    }
+
+    // 2. LOOSE — fallback partial match
+    // Explicitly exclude product-related and functional manager columns
+    for (const key of rowKeys) {
+        const k = key.toLowerCase().trim();
+        if (
+            looseKeys.some(s => k.includes(s.toLowerCase())) &&
+            !k.includes('product') &&
+            !k.includes('category') &&
+            !k.includes('brand') &&
+            !k.includes('sales') && 
+            !k.includes('field') && 
+            !k.includes('area')
+        ) {
+            const val = String(row[key] || '');
+            if (isValidManagerValue(val)) return val;
+        }
+    }
+
+    return '';
 };
 
 /**
@@ -353,7 +402,7 @@ const findDateRange = (data: any[]): string | undefined => {
 const detectHeaderRowIndex = (rows: any[][]): number => {
     const keywords = [
         'адрес', 'address', 
-        'рм', 'rm', 'pm',
+        'рм', 'rm', 
         'дм', 'dm',
         'вес', 'weight', 
         'фасовка', 'packaging', 
@@ -558,26 +607,23 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         
-        // Strict keyword matching for RM to avoid picking up "Специализация корма"
-        // Updated list to include Latin/Cyrillic variants and full names
-        let rmRaw = findValueInRow(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm']);
+        // --- 1. Find RM with strict/loose checking and Value Validation ---
+        // STRICT: looks for specific column names
+        // Removed 'rm' from strict keys to ensure it goes through the LOOSE check with product/category exclusion
+        const rm = findManagerValue(
+            row,
+            ['рм', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], 
+            ['рм', 'rm', 'manager'] 
+        );
         
-        // VALIDATION: Ensure the extracted value is a person/manager and not a product category
-        if (!isValidManagerValue(rmRaw)) {
-            rmRaw = '';
-        }
+        // --- 2. Find DM with strict/loose checking and Value Validation ---
+        const dm = findManagerValue(
+            row,
+            ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'],
+            ['дм', 'dm', 'director', 'директор']
+        );
 
-        // IMPROVED: Fallback to DM if RM is not found.
-        // Often 'DM' or 'Director' columns contain the necessary grouping key if 'RM' is empty.
-        let dmRaw = findValueInRow(row, ['дм', 'dm', 'дивизиональный', 'директор', 'director']);
-        if (!isValidManagerValue(dmRaw)) {
-            dmRaw = '';
-        }
-
-        let rm = rmRaw;
-        if (!rm && dmRaw) {
-             rm = dmRaw;
-        }
+        let finalRm = rm || dm;
 
         if (i > 0 && i % 5000 === 0) {
             const percentage = 10 + Math.round((i / jsonData.length) * 85);
@@ -588,7 +634,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         
-        if (!rm) {
+        if (!finalRm) {
             // Debug log for the first few errors to help identify file structure issues
             if (unidentifiedRows.length < 5) {
                 console.warn('[RM NOT FOUND]', row);
@@ -630,7 +676,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         
         // Check if the cached entry is explicitly invalid (e.g. "Не найдено" in sheet)
         if (cacheEntry && cacheEntry.isInvalid) {
-             unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+             unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: i });
              continue;
         }
 
@@ -640,7 +686,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
         if (!isCityFound && !isRegionFound && !isCached) {
-            unidentifiedRows.push({ rm, rowData: row, originalIndex: i });
+            unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: i });
             continue;
         }
 
@@ -657,11 +703,11 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
 
         if (isNaN(weight)) continue;
         
-        const key = `${regionForAggregation}-${brand}-${packaging}-${rm}`.toLowerCase();
+        const key = `${regionForAggregation}-${brand}-${packaging}-${finalRm}`.toLowerCase();
         
         if (!aggregatedData[key]) {
             aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand} - ${packaging})`, brand, packaging, rm, city: groupNameForAggregation,
+                key, clientName: `${regionForAggregation} (${brand} - ${packaging})`, brand, packaging, rm: finalRm, city: groupNameForAggregation,
                 region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
                 clients: new Map<string, MapPoint>(),
             };
@@ -691,10 +737,10 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     displayAddress = cacheEntry.originalAddress;
                 }
             } else {
-                if (!newAddressesToCache[rm]) newAddressesToCache[rm] = [];
+                if (!newAddressesToCache[finalRm]) newAddressesToCache[finalRm] = [];
                 // Cache the display address for future consistency
-                if (finalAddress && !newAddressesToCache[rm].some(item => item.address === finalAddress)) {
-                    newAddressesToCache[rm].push({ address: finalAddress });
+                if (finalAddress && !newAddressesToCache[finalRm].some(item => item.address === finalAddress)) {
+                    newAddressesToCache[finalRm].push({ address: finalAddress });
                 }
 
                 const okbEntry = okbCoordIndex.get(normalizedRaw);
@@ -702,9 +748,9 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
                 } else if (finalAddress && !isCachedFlag) {
-                    if (!addressesToGeocode[rm]) addressesToGeocode[rm] = [];
-                    if (!addressesToGeocode[rm].includes(finalAddress)) {
-                        addressesToGeocode[rm].push(finalAddress);
+                    if (!addressesToGeocode[finalRm]) addressesToGeocode[finalRm] = [];
+                    if (!addressesToGeocode[finalRm].includes(finalAddress)) {
+                        addressesToGeocode[finalRm].push(finalAddress);
                     }
                 }
             }
@@ -717,7 +763,7 @@ async function processFile(jsonData: any[], headers: string[], { okbData, cacheD
                 address: displayAddress, 
                 city: groupNameForAggregation,
                 region: regionForAggregation, 
-                rm, brand, packaging,
+                rm: finalRm, brand, packaging,
                 type: findValueInRow(row, ['канал продаж', 'канал']),
                 contacts: findValueInRow(row, ['контакты', 'телефон']),
                 originalRow: row,
