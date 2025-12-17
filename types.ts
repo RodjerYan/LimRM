@@ -112,7 +112,7 @@ export interface SummaryMetrics {
 export interface NotificationMessage {
     id: number;
     message: string;
-    type: 'success' | 'error' | 'info';
+    type: 'success' | 'error' | 'info' | 'warning';
 }
 
 export type OkbStatus = {

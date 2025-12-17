@@ -1,6 +1,7 @@
+
 import React from 'react';
 import { NotificationMessage } from '../types';
-import { InfoIcon, SuccessIcon, ErrorIcon } from './icons';
+import { InfoIcon, SuccessIcon, ErrorIcon, WarningIcon } from './icons';
 
 type NotificationProps = Omit<NotificationMessage, 'id'>;
 
@@ -8,7 +9,8 @@ const Notification: React.FC<NotificationProps> = ({ message, type }) => {
     const config = {
         success: { bg: 'bg-green-500/20', border: 'border-green-500/30', text: 'text-success', icon: <SuccessIcon /> },
         error: { bg: 'bg-red-500/20', border: 'border-red-500/30', text: 'text-danger', icon: <ErrorIcon /> },
-        info: { bg: 'bg-yellow-500/20', border: 'border-yellow-500/30', text: 'text-warning', icon: <InfoIcon /> },
+        info: { bg: 'bg-blue-500/20', border: 'border-blue-500/30', text: 'text-blue-400', icon: <InfoIcon /> },
+        warning: { bg: 'bg-yellow-500/20', border: 'border-yellow-500/30', text: 'text-warning', icon: <WarningIcon /> },
     };
 
     const { bg, border, text, icon } = config[type];

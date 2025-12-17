@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAkbData, listFilesForMonth, fetchFileContent, exportFileAsCsv } from './lib/sheets.js';
+import { getAkbData, listFilesForMonth, fetchFileContent } from './lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') {
@@ -29,20 +29,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json(files);
         }
 
-        // Mode 2: Fetch Content for a specific File ID via CSV Streaming
+        // Mode 2: Fetch Content for a specific File ID via JSON
         if (req.query.fileId) {
             const fileId = req.query.fileId as string;
             
-            // NEW STRATEGY: Export as CSV stream from Drive API
-            // This bypasses Vercel's body size limits by piping the stream directly to the client
-            const csvStream = await exportFileAsCsv(fileId);
+            // Switch to fetchFileContent (JSON) instead of export (Stream)
+            // This avoids "Readable stream" timeouts on Vercel
+            const content = await fetchFileContent(fileId);
+            
+            // Safety Limit: 5000 rows max per file to fit in Vercel function payload limits (~4.5MB)
+            const limit = 5000;
+            const limitedContent = content.slice(0, limit);
             
             res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${fileId}.csv"`);
-            
-            // Pipe the CSV stream to the response
-            csvStream.pipe(res);
+            res.status(200).json({
+                fileId,
+                rows: limitedContent,
+                totalRows: content.length,
+                truncated: content.length > limit
+            });
             return;
         }
 

@@ -571,7 +571,7 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED SEQUENTIAL CLOUD LOADER (SEQUENTIAL, NOT PARALLEL)
+    // OPTIMIZED SEQUENTIAL CLOUD LOADER (JSON, SEQUENTIAL)
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -627,7 +627,7 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content SEQUENTIALLY
+            // Step 3: Fetch Content SEQUENTIALLY as JSON
             let processedCount = 0;
             const total = allFiles.length;
             
@@ -642,8 +642,6 @@ const App: React.FC = () => {
                 }));
 
                 // Add delay between files to respect API quotas
-                // Google Sheets API has a read quota (approx 60/min per user project). 
-                // Exporting is heavy. 1.5 seconds delay + processing time should be safe.
                 if (processedCount > 1) {
                     await new Promise(r => setTimeout(r, 1500));
                 }
@@ -664,38 +662,35 @@ const App: React.FC = () => {
                             }
                         }
                         
-                        const blob = await contentRes.blob();
+                        // NEW: Parse as JSON directly (No blob/PapaParse)
+                        const result = await contentRes.json();
                         
-                        await new Promise<void>((resolve, reject) => {
-                            Papa.parse(blob as unknown as File, {
-                                header: false,
-                                skipEmptyLines: true,
-                                chunk: (results) => {
-                                    let isFirst = false;
-                                    if (!cloudHeadersProcessed.current) {
-                                        cloudHeadersProcessed.current = true;
-                                        isFirst = true;
-                                    } 
-                                    
-                                    const chunkMsg: WorkerInputChunk = {
-                                        type: 'PROCESS_CHUNK',
-                                        payload: {
-                                            rawData: results.data as any[][],
-                                            isFirstChunk: isFirst,
-                                            fileName: file.name
-                                        }
-                                    };
-                                    workerRef.current?.postMessage(chunkMsg);
-                                },
-                                complete: () => resolve(),
-                                error: (err) => {
-                                    console.error(`CSV Parse Error for ${file.name}:`, err);
-                                    resolve(); // Resolve anyway to proceed to next file
-                                }
-                            });
-                        });
+                        if (result.rows && Array.isArray(result.rows)) {
+                             // Logic to detect headers (first chunk of first file)
+                             let isFirst = false;
+                             if (!cloudHeadersProcessed.current) {
+                                 cloudHeadersProcessed.current = true;
+                                 isFirst = true;
+                             }
+
+                             const chunkMsg: WorkerInputChunk = {
+                                 type: 'PROCESS_CHUNK',
+                                 payload: {
+                                     rawData: result.rows,
+                                     isFirstChunk: isFirst,
+                                     fileName: file.name
+                                 }
+                             };
+                             workerRef.current?.postMessage(chunkMsg);
+
+                             if (result.truncated) {
+                                 addNotification(`Файл ${file.name} урезан (${result.totalRows} строк, загружено 5000).`, 'warning');
+                             }
+                             success = true;
+                        } else {
+                            throw new Error('Invalid response format: rows array missing');
+                        }
                         
-                        success = true;
                         break; // Exit retry loop on success
 
                     } catch (e) {
@@ -705,8 +700,8 @@ const App: React.FC = () => {
                         if (attempt === 3 || isFatal) {
                             addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
                         } else {
-                            // Exponential backoff: 2s, 4s, 6s
-                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                            // Exponential backoff: 3s, 6s, 9s
+                            await new Promise(r => setTimeout(r, 3000 * attempt));
                         }
                     }
                 }
