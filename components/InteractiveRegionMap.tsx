@@ -60,6 +60,37 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
+// Manual definitions for regions missing in standard open-source maps (e.g. new territories)
+const EXTRA_REGIONS_GEOJSON: any[] = [
+    {
+        "type": "Feature",
+        "properties": { "name": "Донецкая Народная Республика" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [37.86, 49.20], [38.20, 48.95], [38.55, 48.55], [38.90, 48.20], 
+                [39.25, 47.90], [38.80, 47.60], [38.50, 47.20], [38.20, 47.10], 
+                [37.80, 47.05], [37.30, 46.95], [36.90, 46.85], [36.80, 47.10], 
+                [36.90, 47.40], [37.20, 47.70], [37.50, 48.00], [37.30, 48.30], 
+                [37.50, 48.70], [37.86, 49.20]
+            ]]
+        }
+    },
+    {
+        "type": "Feature",
+        "properties": { "name": "Луганская Народная Республика" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [38.20, 48.95], [38.50, 49.30], [38.90, 49.60], [39.30, 49.80],
+                [39.80, 49.60], [40.20, 49.30], [40.00, 48.80], [39.80, 48.40],
+                [39.60, 48.00], [39.25, 47.90], [38.90, 48.20], [38.55, 48.55],
+                [38.20, 48.95]
+            ]]
+        }
+    }
+];
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -263,10 +294,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     });
                 }
 
-                // Merge collections: Russia Regions + CIS Countries
+                // Merge collections: Russia Regions + CIS Countries + Extra Regions (Donetsk/Lugansk)
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [...russiaData.features, ...cisFeatures]
+                    features: [
+                        ...russiaData.features, 
+                        ...cisFeatures, 
+                        ...EXTRA_REGIONS_GEOJSON
+                    ]
                 });
 
             } catch (error) {
