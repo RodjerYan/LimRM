@@ -71,29 +71,83 @@ async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     return google.drive({ version: 'v3', auth });
 }
 
+// --- HELPER: API CALL WRAPPER WITH RETRY & THROTTLE ---
+
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 250; // Throttle requests (ms)
+
+async function throttle() {
+    const now = Date.now();
+    const timeSinceLast = now - lastRequestTime;
+    if (timeSinceLast < MIN_REQUEST_INTERVAL) {
+        await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLast));
+    }
+    lastRequestTime = Date.now();
+}
+
+async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
+    const MAX_RETRIES = 5;
+    let attempt = 0;
+    
+    while (true) {
+        try {
+            await throttle();
+            return await fn();
+        } catch (error: any) {
+            attempt++;
+            const status = error.response?.status || error.code;
+            const msg = error.message || '';
+            
+            // Check for quota/rate limit/server errors
+            const isRetryable = 
+                status === 429 || 
+                status === 500 || 
+                status === 502 || 
+                status === 503 || 
+                status === 504 ||
+                (status === 403 && (msg.includes('usage') || msg.includes('quota') || msg.includes('rate')));
+            
+            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) {
+                console.error(`[${context}] Failed permanently after ${attempt} attempts. Status: ${status}. Error: ${msg}`);
+                throw error;
+            }
+
+            // Exponential backoff: 2s, 4s, 8s, 16s... + Jitter
+            const baseDelay = 2000 * Math.pow(2, attempt - 1);
+            const jitter = Math.random() * 1000;
+            const delay = Math.min(baseDelay + jitter, 30000); // Max wait 30s
+
+            console.warn(`[${context}] Attempt ${attempt} failed (Status ${status}). Retrying in ${Math.round(delay)}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+}
+
+// --- PUBLIC METHODS ---
+
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
-  const res = await sheets.spreadsheets.values.get({
+  const res = await callWithRetry(() => sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
     range: `${SHEET_NAME}!A:P`, 
-  });
+  }), 'getOKBData') as any;
 
   const rows = res.data.values;
   if (!rows || rows.length < 2) {
     return []; 
   }
 
-  const header = rows[0].map(h => String(h || '').trim());
+  const header = rows[0].map((h: any) => String(h || '').trim());
   const dataRows = rows.slice(1);
 
   const okbData: OkbDataRow[] = dataRows
-    .map(rowArray => {
+    .map((rowArray: any[]) => {
         if (rowArray.every(cell => cell === null || cell === '' || cell === undefined)) {
             return null;
         }
 
         const row: { [key: string]: any } = {};
-        header.forEach((key, index) => {
+        header.forEach((key: string, index: number) => {
             if (key) {
                 row[key] = rowArray[index] || null;
             }
@@ -124,20 +178,20 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
 
         return row as OkbDataRow;
     })
-    .filter((row): row is OkbDataRow => row !== null);
+    .filter((row: any): row is OkbDataRow => row !== null);
 
   return okbData;
 }
 
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
-    const res = await sheets.spreadsheets.values.get({
+    const res = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
         range: `${SHEET_NAME}!C2:C`,
-    });
+    }), 'getOKBAddresses') as any;
 
     const rows = res.data.values || [];
-    return rows.flat().map(address => String(address || '').trim()).filter(Boolean);
+    return rows.flat().map((address: any) => String(address || '').trim()).filter(Boolean);
 }
 
 export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: string }[]) {
@@ -150,13 +204,13 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
         values: [[update.status]],
     }));
 
-    await sheets.spreadsheets.values.batchUpdate({
+    await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
             valueInputOption: 'RAW',
             data: data,
         },
-    });
+    }), 'batchUpdateOKBStatus');
 }
 
 // --- NEW GRANULAR METHODS ---
@@ -176,31 +230,33 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
     const engMonthName = MONTH_MAP[mName];
     if (!engMonthName) return []; // Should not happen based on maps
 
-    // 1. Find Month Folder
-    const folderListRes = await drive.files.list({
-        q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-        fields: 'files(id, name)',
-        pageSize: 50
-    });
-    
-    const yearFolders = folderListRes.data.files || [];
-    const monthFolder = yearFolders.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
+    return callWithRetry(async () => {
+        // 1. Find Month Folder
+        const folderListRes = await drive.files.list({
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 50
+        });
+        
+        const yearFolders = folderListRes.data.files || [];
+        const monthFolder = yearFolders.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
 
-    if (!monthFolder || !monthFolder.id) {
-        return [];
-    }
+        if (!monthFolder || !monthFolder.id) {
+            return [];
+        }
 
-    // 2. List Spreadsheets in Month Folder
-    const fileListRes = await drive.files.list({
-        q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
-        fields: 'files(id, name)',
-        pageSize: 100 // Limit to 100 files per month
-    });
+        // 2. List Spreadsheets in Month Folder
+        const fileListRes = await drive.files.list({
+            q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 100 // Limit to 100 files per month
+        });
 
-    return (fileListRes.data.files || []).map(f => ({
-        id: f.id!,
-        name: f.name || 'Untitled'
-    }));
+        return (fileListRes.data.files || []).map(f => ({
+            id: f.id!,
+            name: f.name || 'Untitled'
+        }));
+    }, `listFilesForMonth-${year}-${month}`);
 }
 
 /**
@@ -211,26 +267,14 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
 export async function exportFileAsCsv(fileId: string): Promise<Readable> {
     const drive = await getGoogleDriveClient();
     
-    let lastError: any;
-    // Retry logic: 5 attempts with exponential backoff (increased from 3)
-    const MAX_ATTEMPTS = 5;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        try {
-            const res = await drive.files.export({
-                fileId: fileId,
-                mimeType: 'text/csv',
-            }, { responseType: 'stream' });
+    return callWithRetry(async () => {
+        const res = await drive.files.export({
+            fileId: fileId,
+            mimeType: 'text/csv',
+        }, { responseType: 'stream' });
 
-            return res.data as unknown as Readable;
-        } catch (error) {
-            lastError = error;
-            console.warn(`exportFileAsCsv attempt ${attempt} failed for ${fileId}:`, error);
-            // Wait: 2s, 4s, 6s, 8s...
-            if (attempt < MAX_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
-        }
-    }
-    
-    throw lastError || new Error(`Failed to export file ${fileId} after ${MAX_ATTEMPTS} attempts`);
+        return res.data as unknown as Readable;
+    }, `exportFileAsCsv-${fileId}`);
 }
 
 /**
@@ -240,12 +284,11 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
 export async function fetchFileContent(fileId: string): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     
-    // Fetch a wide range to ensure we capture all data including potentially shifted columns
-    const res = await sheets.spreadsheets.values.get({
+    const res = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: fileId,
         range: 'A:BZ', 
         valueRenderOption: 'UNFORMATTED_VALUE',
-    });
+    }), `fetchFileContent-${fileId}`) as any;
 
     return res.data.values || [];
 }
@@ -317,30 +360,30 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
 
 export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheet = await sheets.spreadsheets.get({
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
-    });
+    }), 'getFullCoordsCache-meta') as any;
 
-    const sheetTitles = spreadsheet.data.sheets?.map(s => s.properties?.title).filter(Boolean) as string[] || [];
+    const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
 
-    const ranges = sheetTitles.map(title => `'${title}'!A:E`); 
-    const response = await sheets.spreadsheets.values.batchGet({
+    const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
+    const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         ranges,
-    });
+    }), 'getFullCoordsCache-data') as any;
     
     const cache: Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]> = {};
     const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
 
-    response.data.valueRanges?.forEach((valueRange) => {
+    response.data.valueRanges?.forEach((valueRange: any) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) {
              title = title.substring(1, title.length - 1); 
         }
         const values = valueRange.values || [];
         if (values.length > 1) { 
-            cache[title] = values.slice(1).map(row => {
+            cache[title] = values.slice(1).map((row: any) => {
                 const latStr = String(row[1] || '').trim(); 
                 const lonStr = String(row[2] || '').trim();
                 const latStrLower = latStr.toLowerCase();
@@ -364,7 +407,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                     isInvalid: isInvalid,
                     comment: comment
                 };
-            }).filter(item => item.address); 
+            }).filter((item: any) => item.address); 
         }
     });
 
@@ -372,29 +415,29 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 }
 
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
-    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
     const lowerRmName = rmName.toLowerCase();
-    const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === lowerRmName);
 
     if (existingSheet && existingSheet.properties?.title) {
         return existingSheet.properties.title; 
     }
     
-    await sheets.spreadsheets.batchUpdate({
+    await callWithRetry(() => sheets.spreadsheets.batchUpdate({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         requestBody: {
             requests: [{ addSheet: { properties: { title: rmName } } }],
         },
-    });
+    }), 'addSheet');
     
-    await sheets.spreadsheets.values.append({
+    await callWithRetry(() => sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${rmName}'!A1`,
         valueInputOption: 'RAW',
         requestBody: {
             values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии']],
         },
-    });
+    }), 'initSheetHeader');
     return rmName; 
 }
 
@@ -404,12 +447,12 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    const existingAddressesResponse = await sheets.spreadsheets.values.get({
+    const existingAddressesResponse = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A2:A`,
-    });
+    }), 'checkExistingAddr') as any;
 
-    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map(a => normalizeForComparison(String(a))) || []);
+    const existingAddresses = new Set(existingAddressesResponse.data.values?.flat().map((a: any) => normalizeForComparison(String(a))) || []);
 
     const uniqueRowsToAppend = rowsToAppend.filter(row => {
         const address = String(row[0] || '').trim();
@@ -420,7 +463,7 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
         return;
     }
 
-    await sheets.spreadsheets.values.append({
+    await callWithRetry(() => sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A1`,
         valueInputOption: 'USER_ENTERED',
@@ -428,7 +471,7 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
         requestBody: {
             values: uniqueRowsToAppend,
         },
-    });
+    }), 'appendRows');
 }
 
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
@@ -437,14 +480,14 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     
-    const response = await sheets.spreadsheets.values.get({
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:A`,
-    });
+    }), 'getAddrForUpdate') as any;
 
     const addressesInSheet = response.data.values?.flat() || [];
     const addressIndexMap = new Map<string, number>();
-    addressesInSheet.forEach((addr, i) => {
+    addressesInSheet.forEach((addr: any, i: number) => {
         if(addr) addressIndexMap.set(normalizeForComparison(String(addr)), i + 1)
     });
 
@@ -458,13 +501,13 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     }).filter((item): item is NonNullable<typeof item> => item !== null);
     
     if (dataForUpdate.length > 0) {
-        await sheets.spreadsheets.values.batchUpdate({
+        await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             requestBody: {
                 valueInputOption: 'USER_ENTERED',
                 data: dataForUpdate,
             },
-        });
+        }), 'batchUpdateCoords');
     }
 }
 
@@ -477,20 +520,20 @@ export async function updateAddressInCache(
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    const response = await sheets.spreadsheets.values.get({
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:E`,
-    });
+    }), 'getAddrForUpdate2') as any;
 
     const rows = response.data.values || [];
     const oldNorm = normalizeForComparison(oldAddress);
     const newNorm = normalizeForComparison(newAddress);
 
     let rowIndex = -1;
-    rowIndex = rows.findIndex(r => normalizeForComparison(r[0]) === oldNorm);
+    rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === oldNorm);
 
     if (rowIndex === -1) {
-        rowIndex = rows.findIndex(r => isAddressInHistory(String(r[3] || ''), oldNorm));
+        rowIndex = rows.findIndex((r: any) => isAddressInHistory(String(r[3] || ''), oldNorm));
     }
 
     const timestamp = new Date().toLocaleString('ru-RU', {
@@ -498,7 +541,7 @@ export async function updateAddressInCache(
     });
 
     if (rowIndex === -1) {
-        await sheets.spreadsheets.values.append({
+        await callWithRetry(() => sheets.spreadsheets.values.append({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!A1`,
             valueInputOption: 'USER_ENTERED',
@@ -506,7 +549,7 @@ export async function updateAddressInCache(
             requestBody: {
                 values: [[newAddress, '', '', `${oldAddress} [${timestamp}]`, comment || ""]],
             },
-        });
+        }), 'appendNewUpdate');
         return;
     }
 
@@ -518,12 +561,12 @@ export async function updateAddressInCache(
 
     if (normalizeForComparison(currentAddress) === newNorm) {
         if (comment !== undefined && comment !== currentComment) {
-             await sheets.spreadsheets.values.update({
+             await callWithRetry(() => sheets.spreadsheets.values.update({
                 spreadsheetId: CACHE_SPREADSHEET_ID,
                 range: `'${actualSheetTitle}'!E${rowNumber}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [[comment]] },
-            });
+            }), 'updateComment');
         }
         return;
     }
@@ -532,24 +575,24 @@ export async function updateAddressInCache(
     const historyEntry = `${valueToArchive} [${timestamp}]`;
     const newHistory = currentHistory ? `${currentHistory}\n${historyEntry}` : historyEntry;
 
-    await sheets.spreadsheets.values.update({
+    await callWithRetry(() => sheets.spreadsheets.values.update({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`,
         valueInputOption: 'USER_ENTERED',
         requestBody: {
             values: [[newAddress, "", "", newHistory, comment !== undefined ? comment : currentComment]], 
         },
-    });
+    }), 'updateFullRow');
 }
 
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
 
-    const response = await sheets.spreadsheets.values.get({
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:A`,
-    });
+    }), 'getAddrForDelete') as any;
 
     const addressesInSheet = response.data.values?.flat() || [];
     let rowIndex = -1;
@@ -563,32 +606,32 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     }
 
     if (rowIndex !== -1) {
-        await sheets.spreadsheets.values.update({
+        await callWithRetry(() => sheets.spreadsheets.values.update({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
                 values: [['DELETED', 'DELETED']],
             },
-        });
+        }), 'markDeleted');
     }
 }
 
 export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string; comment?: string } | null> {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID });
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
     const lowerRmName = rmName.toLowerCase();
-    const existingSheet = spreadsheet.data.sheets?.find(s => s.properties?.title?.toLowerCase() === lowerRmName);
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === lowerRmName);
     
     if (!existingSheet || !existingSheet.properties?.title) {
         return null; 
     }
     const actualSheetTitle = existingSheet.properties.title;
 
-    const response = await sheets.spreadsheets.values.get({
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${actualSheetTitle}'!A:E`,
-    });
+    }), 'getAddrData') as any;
 
     const values = response.data.values || [];
     if (values.length < 2) {
@@ -596,10 +639,10 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     }
 
     const addressNorm = normalizeForComparison(address);
-    let foundRow = values.find(row => normalizeForComparison(row[0]) === addressNorm);
+    let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);
 
     if (!foundRow) {
-        foundRow = values.find(row => isAddressInHistory(String(row[3] || ''), addressNorm));
+        foundRow = values.find((row: any) => isAddressInHistory(String(row[3] || ''), addressNorm));
     }
 
     if (foundRow) {

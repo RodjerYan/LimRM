@@ -641,7 +641,7 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content in Parallel (Concurrency: 5 -> 2)
+            // Step 3: Fetch Content in Parallel (Concurrency: 2)
             // Reduced to 2 to prevent "429 Too Many Requests" or "500 Internal Server Error" from Google API
             const downloadConcurrency = 2; 
             let processedCount = 0;
@@ -654,6 +654,11 @@ const App: React.FC = () => {
                     while (queue.length > 0) {
                         const file = queue.shift();
                         if (!file) break;
+
+                        // NEW: Throttle start of requests to space them out
+                        if (processedCount > 0) {
+                             await new Promise(r => setTimeout(r, 1000));
+                        }
 
                         setProcessingState(prev => ({ 
                             ...prev, 
