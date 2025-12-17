@@ -571,8 +571,7 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED PARALLEL CLOUD LOADER (CSV STREAMING)
-    // Splits load into parallel streams: File Listing -> Parallel Downloads (CSV Blobs) -> Worker
+    // OPTIMIZED SEQUENTIAL CLOUD LOADER (SEQUENTIAL, NOT PARALLEL)
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -604,35 +603,22 @@ const App: React.FC = () => {
 
             setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
 
-            // Step 2: Fetch File Lists in Parallel (Concurrency: 5)
-            // This is lightweight, so we can do it faster.
-            const fileListConcurrency = 5;
+            // Step 2: Fetch File Lists SEQUENTIALLY
             const allFiles: { id: string, name: string, monthIndex: number }[] = [];
             
-            // Helper to process list fetching
-            const processListQueue = async () => {
-                const queue = [...months];
-                const workers = Array(Math.min(months.length, fileListConcurrency)).fill(null).map(async () => {
-                    while (queue.length > 0) {
-                        const m = queue.shift();
-                        if (m === undefined) break;
-
-                        try {
-                            const res = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
-                            if (res.ok) {
-                                const files = await res.json();
-                                // Tag with monthIndex for sorting if needed, though strictly not required
-                                files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
-                            }
-                        } catch (e) {
-                            console.warn(`Failed to list files for month ${m}`, e);
-                        }
+            for (const m of months) {
+                try {
+                    const res = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
+                    if (res.ok) {
+                        const files = await res.json();
+                        files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
                     }
-                });
-                await Promise.all(workers);
-            };
-
-            await processListQueue();
+                    // Wait between requests
+                    await new Promise(r => setTimeout(r, 500));
+                } catch (e) {
+                    console.warn(`Failed to list files for month ${m}`, e);
+                }
+            }
 
             if (allFiles.length === 0) {
                 console.warn('No data found for requested period.');
@@ -641,105 +627,90 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content in Parallel (Concurrency: 2)
-            // Reduced to 2 to prevent "429 Too Many Requests" or "500 Internal Server Error" from Google API
-            const downloadConcurrency = 2; 
+            // Step 3: Fetch Content SEQUENTIALLY
             let processedCount = 0;
+            const total = allFiles.length;
             
-            const processDownloadQueue = async () => {
-                const queue = [...allFiles];
-                const total = allFiles.length;
+            // Use a simple for...of loop for strict sequential processing
+            for (const file of allFiles) {
+                processedCount++;
+                
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...`,
+                    progress: Math.round((processedCount / total) * 80)
+                }));
 
-                const workers = Array(Math.min(total, downloadConcurrency)).fill(null).map(async () => {
-                    while (queue.length > 0) {
-                        const file = queue.shift();
-                        if (!file) break;
+                // Add delay between files to respect API quotas
+                // Google Sheets API has a read quota (approx 60/min per user project). 
+                // Exporting is heavy. 1.5 seconds delay + processing time should be safe.
+                if (processedCount > 1) {
+                    await new Promise(r => setTimeout(r, 1500));
+                }
 
-                        // NEW: Throttle start of requests to space them out
-                        if (processedCount > 0) {
-                             await new Promise(r => setTimeout(r, 1000));
-                        }
-
-                        setProcessingState(prev => ({ 
-                            ...prev, 
-                            // Map 0-100 of download phase to 0-80 of total process
-                            message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...`,
-                            progress: Math.round((processedCount / total) * 80)
-                        }));
-
-                        // Retry loop for robustness
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                            try {
-                                const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
-                                if (!contentRes.ok) {
-                                    // If 500/502/503/504, throw to trigger retry. 
-                                    // If 4xx (except 429), break (fatal error).
-                                    if (contentRes.status >= 500 || contentRes.status === 429) {
-                                        throw new Error(`HTTP ${contentRes.status}`);
-                                    } else {
-                                        throw new Error(`Fatal HTTP ${contentRes.status}`); // Non-retryable
-                                    }
-                                }
-                                
-                                // STREAMING PARSE: Download as Blob (streams efficiently) then use Papa.parse on Blob
-                                const blob = await contentRes.blob();
-                                
-                                await new Promise<void>((resolve, reject) => {
-                                    Papa.parse(blob as unknown as File, {
-                                        header: false,
-                                        skipEmptyLines: true,
-                                        chunk: (results) => {
-                                            // Detect if this specific chunk is the very first one globally (for headers)
-                                            let isFirst = false;
-                                            if (!cloudHeadersProcessed.current) {
-                                                cloudHeadersProcessed.current = true;
-                                                isFirst = true;
-                                            } 
-                                            
-                                            // Send chunk to worker
-                                            const chunkMsg: WorkerInputChunk = {
-                                                type: 'PROCESS_CHUNK',
-                                                payload: {
-                                                    rawData: results.data as any[][],
-                                                    isFirstChunk: isFirst,
-                                                    fileName: file.name
-                                                }
-                                            };
-                                            workerRef.current?.postMessage(chunkMsg);
-                                        },
-                                        complete: () => {
-                                            resolve();
-                                        },
-                                        error: (err) => {
-                                            console.error(`CSV Parse Error for ${file.name}:`, err);
-                                            // Log error but resolve to continue queue
-                                            addNotification(`Ошибка парсинга ${file.name}`, 'error');
-                                            resolve(); 
-                                        }
-                                    });
-                                });
-                                break; // Success, exit retry loop
-
-                            } catch (e) {
-                                console.error(`Error loading file ${file.name} (Attempt ${attempt}):`, e);
-                                const isFatal = (e as Error).message.includes('Fatal');
-                                
-                                if (attempt === 3 || isFatal) {
-                                    addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
-                                } else {
-                                    // Wait before retry (exponential backoff)
-                                    // Increased backoff: 2s, 4s, 6s
-                                    await new Promise(r => setTimeout(r, 2000 * attempt));
-                                }
+                let success = false;
+                // Retry logic per file
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
+                        
+                        if (!contentRes.ok) {
+                            if (contentRes.status === 429 || contentRes.status >= 500) {
+                                // Quota/Server error - throw to trigger retry
+                                throw new Error(`HTTP ${contentRes.status}`);
+                            } else {
+                                // Client error - fatal
+                                throw new Error(`Fatal HTTP ${contentRes.status}`);
                             }
                         }
-                        processedCount++;
-                    }
-                });
-                await Promise.all(workers);
-            };
+                        
+                        const blob = await contentRes.blob();
+                        
+                        await new Promise<void>((resolve, reject) => {
+                            Papa.parse(blob as unknown as File, {
+                                header: false,
+                                skipEmptyLines: true,
+                                chunk: (results) => {
+                                    let isFirst = false;
+                                    if (!cloudHeadersProcessed.current) {
+                                        cloudHeadersProcessed.current = true;
+                                        isFirst = true;
+                                    } 
+                                    
+                                    const chunkMsg: WorkerInputChunk = {
+                                        type: 'PROCESS_CHUNK',
+                                        payload: {
+                                            rawData: results.data as any[][],
+                                            isFirstChunk: isFirst,
+                                            fileName: file.name
+                                        }
+                                    };
+                                    workerRef.current?.postMessage(chunkMsg);
+                                },
+                                complete: () => resolve(),
+                                error: (err) => {
+                                    console.error(`CSV Parse Error for ${file.name}:`, err);
+                                    resolve(); // Resolve anyway to proceed to next file
+                                }
+                            });
+                        });
+                        
+                        success = true;
+                        break; // Exit retry loop on success
 
-            await processDownloadQueue();
+                    } catch (e) {
+                        console.error(`Error loading ${file.name} (Attempt ${attempt}):`, e);
+                        const isFatal = (e as Error).message.includes('Fatal');
+                        
+                        if (attempt === 3 || isFatal) {
+                            addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
+                        } else {
+                            // Exponential backoff: 2s, 4s, 6s
+                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                        }
+                    }
+                }
+            }
 
             // Finalize
             setProcessingState(prev => ({ ...prev, message: 'Запуск алгоритмов анализа...', progress: 81 }));

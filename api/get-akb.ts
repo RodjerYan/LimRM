@@ -9,6 +9,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
+        // Add artificial delay to prevent hammering Google API
+        await new Promise(resolve => setTimeout(resolve, 300));
+
         const year = (req.query.year as string) || '2025';
         const mode = req.query.mode as string; // 'list' or 'content'
         
