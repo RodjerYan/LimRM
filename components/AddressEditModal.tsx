@@ -6,7 +6,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon, BrainIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
@@ -300,43 +300,38 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         return (item as UnidentifiedRow).originalIndex !== undefined;
     };
 
-    const getEnrichedAddress = (originalRow: any) => {
-        const rawAddress = findAddressInRow(originalRow) || '';
-        
-        // Expanded keyword list to catch 'Distributor' (English) which caused failures before
-        // Also added explicit fallback: if no distributor found by keys, check for any value containing "(" and ")" 
-        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
-        
-        if (!distributor) {
-            // Last resort: search all values for a pattern like "Name (City)"
-            const values = Object.values(originalRow);
-            const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
-            if (possibleDistributor) {
-                distributor = String(possibleDistributor);
-            }
-        }
-        
-        // Use the parser to attempt enrichment (e.g. inject city from distributor)
-        const parsed = parseRussianAddress(rawAddress, distributor);
-        return parsed.finalAddress || rawAddress;
-    };
-
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
             
-            // --- LOGIC UPDATE START: Robust Smart Address Population ---
+            // --- LOGIC UPDATE: Aggressive Smart Address Population on Mount ---
             let currentAddress = '';
 
             // If it's an UnidentifiedRow, we MUST recalculate the address from source,
-            // because these rows by definition failed the worker's processing and don't have a clean address property.
+            // scanning for Distributor info even if columns are named weirdly or info is inside value strings.
             if (isUnidentified(data)) {
-                currentAddress = getEnrichedAddress(originalRow);
+                const rawAddress = findAddressInRow(originalRow) || '';
+                
+                // 1. Standard search by column name
+                let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
+                
+                // 2. Aggressive fallback: search ALL values for typical patterns (e.g. "Name (City)")
+                if (!distributor) {
+                    const values = Object.values(originalRow);
+                    const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
+                    if (possibleDistributor) {
+                        distributor = String(possibleDistributor);
+                    }
+                }
+                
+                // Use the parser to attempt enrichment (e.g. inject city from distributor)
+                const parsed = parseRussianAddress(rawAddress, distributor);
+                currentAddress = parsed.finalAddress || rawAddress;
             } else {
                 // For MapPoints (already matched), use the existing address which might have been edited/enriched
                 currentAddress = (data as MapPoint).address;
             }
-            // --- LOGIC UPDATE END ---
+            // --- END LOGIC UPDATE ---
 
             setEditedAddress(currentAddress);
             setComment((data as MapPoint).comment || ''); 
@@ -372,20 +367,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             }
         }
     }, [isOpen, data]);
-
-    const handleAutoEnrich = () => {
-        if (!data) return;
-        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-        const enriched = getEnrichedAddress(originalRow);
-        setEditedAddress(enriched);
-        addFlashNotification("Адрес обновлен на основе данных дистрибьютора");
-    };
-
-    const addFlashNotification = (msg: string) => {
-        // Simple internal notification logic or hook into parent
-        // For now just logging, the UI update of the textarea is the feedback
-        console.log(msg);
-    };
 
     const handleSave = async () => {
         if (!data) return;
@@ -453,7 +434,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 justSaved.current = true;
             }
 
-            // Expanded keywords here as well for consistency
+            // Same aggressive search here to ensure parsed result is consistent
             let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor']);
             if (!distributor) {
                  const values = Object.values(originalRow);
@@ -706,12 +687,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </div>
                         <div className="space-y-3">
                             <div className="relative">
-                                <div className="flex justify-between items-center mb-1">
-                                    <label htmlFor="address-input" className="block text-sm font-medium text-text-muted">Адрес ТТ LimKorm</label>
-                                    <button onClick={handleAutoEnrich} className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300" title="Попытаться снова определить адрес через Дистрибьютора">
-                                        <BrainIcon small /> Авто-обогащение
-                                    </button>
-                                </div>
+                                <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
                                 <textarea
                                     id="address-input"
                                     rows={2}
