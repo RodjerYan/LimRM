@@ -533,15 +533,30 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
         
-        let normalizedRaw = clientAddress ? normalizeAddress(clientAddress) : '';
-        if (clientAddress) {
+        // --- CORE ADDRESS PROCESSING WITH ENRICHMENT ---
+        // 1. Parse and enrich. This logic extracts city/region from Distributor if missing in address.
+        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
+        
+        // 2. Determine the "Effective" address for all subsequent operations (Cache, Normalization, Geocoding)
+        // If the parser modified the address (e.g. added city), use that. Otherwise use the original.
+        const effectiveAddress = parsedAddress.finalAddress || clientAddress || '';
+        
+        // 3. Normalize based on the EFFECTIVE address, not the potentially incomplete raw one.
+        let normalizedRaw = normalizeAddress(effectiveAddress);
+
+        // --- CACHE & REDIRECT HANDLING ---
+        if (effectiveAddress) {
             if (state_deletedAddresses.has(normalizedRaw)) continue;
+            
             if (state_cacheRedirectMap.has(normalizedRaw)) {
                 const newNormalizedTarget = state_cacheRedirectMap.get(normalizedRaw)!;
                 const targetEntry = state_cacheAddressMap.get(newNormalizedTarget);
                 if (targetEntry) {
-                    clientAddress = targetEntry.originalAddress || clientAddress;
-                    normalizedRaw = newNormalizedTarget;
+                    // Update display address to matched cache entry, but keep enriched data
+                    // Note: If cache has "better" address, we use it.
+                    if (targetEntry.originalAddress) {
+                        normalizedRaw = newNormalizedTarget;
+                    }
                 } else {
                     normalizedRaw = newNormalizedTarget;
                 }
@@ -550,16 +565,16 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
 
         const regionFromColumns = getCanonicalRegion(row);
-        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
         const cacheEntry = state_cacheAddressMap.get(normalizedRaw);
-
         const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
 
-        // --- CACHE FILLING LOGIC (CRITICAL FIX) ---
-        // Add to cache list even if it is Unidentified later. 
-        if (!isCached && clientAddress && finalRm) {
-             const addrToCache = clientAddress;
+        // --- CACHE FILLING LOGIC (UPDATED) ---
+        // Push the ENRICHED (effective) address to the cache queue.
+        // This ensures the Google Sheet receives the full "Region, City, Address" string.
+        if (!isCached && effectiveAddress && finalRm) {
+             const addrToCache = effectiveAddress;
              if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
+             // Check against current batch
              if (!state_newAddressesToCache[finalRm].some(item => item.address === addrToCache)) {
                  state_newAddressesToCache[finalRm].push({ address: addrToCache });
              }
@@ -581,7 +596,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
         const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
         
-        const finalAddress = parsedAddress.finalAddress || clientAddress || '';
+        // Use effective address for display unless cache overrides it
+        let displayAddress = effectiveAddress;
         
         const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес кг', 'вес', 'сумма отгрузки, руб', 'количество, кг', 'нетто']) || '0').replace(/\s/g, '').replace(',', '.'));
         
@@ -613,8 +629,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             let isCachedFlag = false;
             let comment: string | undefined; 
             
-            let displayAddress = finalAddress;
-
             if (isCached && cacheEntry) {
                 lat = cacheEntry.lat;
                 lon = cacheEntry.lon;
@@ -628,10 +642,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 if (okbEntry) {
                     lat = okbEntry.lat;
                     lon = okbEntry.lon;
-                } else if (finalAddress && !isCachedFlag) {
+                } else if (displayAddress && !isCachedFlag) {
+                    // Queue the EFFECTIVE address for geocoding
                     if (!state_addressesToGeocode[finalRm]) state_addressesToGeocode[finalRm] = [];
-                    if (!state_addressesToGeocode[finalRm].includes(finalAddress)) {
-                        state_addressesToGeocode[finalRm].push(finalAddress);
+                    if (!state_addressesToGeocode[finalRm].includes(displayAddress)) {
+                        state_addressesToGeocode[finalRm].push(displayAddress);
                     }
                 }
             }
