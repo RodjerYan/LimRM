@@ -2,7 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { OkbStatus, FileProcessingState, CloudLoadParams } from '../types';
 import { formatETR } from '../utils/timeUtils';
-import { DataIcon } from './icons';
+import { DataIcon, LoaderIcon } from './icons';
 
 interface FileUploadProps {
     // New Props from Global State
@@ -81,7 +81,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
     };
 
     // Derived state from global props
-    const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
+    const { isProcessing, progress, message, fileName, backgroundMessage, startTime, logs, loadedCount } = processingState;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
     const showBaseMissingOverlay = (!okbStatus || okbStatus.status !== 'ready') && !isProcessing && !fileName;
 
@@ -278,7 +278,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
 
                 {/* Status & Progress Details */}
                 {(fileName || (mode === 'cloud' && isProcessing)) && (
-                    <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-2">
+                    <div className="mt-4 bg-gray-800/40 rounded-xl p-3 border border-white/5 space-y-3">
                         <div className="flex justify-between items-center text-sm">
                             <p className="text-gray-200 font-medium truncate max-w-[70%]" title={fileName || 'Cloud Data'}>
                                 {fileName || `Google Sheets Load`}
@@ -293,17 +293,30 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                             ></div>
                         </div>
 
-                        <div className="flex justify-between items-center text-xs pt-1">
-                            {/* FIX: Ensure the progress message is visible and not aggressively truncated during detailed steps */}
-                            <p className="text-gray-400 max-w-[85%] overflow-hidden whitespace-nowrap text-ellipsis" title={message}>{message}</p>
-                            {isProcessing && etr !== null && (
-                                <p className="text-indigo-300 font-mono ml-2 flex-shrink-0">{formatETR(etr)}</p>
-                            )}
-                            {progress === 100 && message.includes("заверш") && (
-                                <p className="text-emerald-400 font-bold flex items-center gap-1 ml-2 flex-shrink-0">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>
-                                    Готово
-                                </p>
+                        {/* DETAILED VISUALIZATION SECTION */}
+                        {logs && logs.length > 0 && (
+                            <div className="bg-black/30 rounded-lg p-2 border border-white/5 mt-2 font-mono">
+                                {/* Live Counter */}
+                                <div className="flex justify-between items-center border-b border-gray-700 pb-2 mb-2">
+                                    <span className="text-[10px] text-gray-400 uppercase">Обработано строк</span>
+                                    <span className="text-emerald-400 text-xs font-bold">{new Intl.NumberFormat('ru-RU').format(loadedCount || 0)}</span>
+                                </div>
+                                {/* Scrollable Log */}
+                                <div className="space-y-1 overflow-hidden h-[60px] flex flex-col justify-end">
+                                    {logs.map((log, idx) => (
+                                        <div key={idx} className="text-[10px] text-gray-300 truncate flex items-center gap-2 animate-fade-in-up">
+                                            <span className="text-gray-600">›</span> {log}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex justify-between items-center text-xs pt-1 border-t border-gray-700/50 mt-1">
+                            {isProcessing && etr !== null ? (
+                                <p className="text-indigo-300 font-mono ml-auto flex-shrink-0">{formatETR(etr)}</p>
+                            ) : (
+                                <div className="h-4"></div> 
                             )}
                         </div>
                         
