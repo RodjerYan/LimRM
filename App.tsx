@@ -558,8 +558,8 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // Updated to split load into individual files to avoid Vercel timeouts (500 error)
-    // New flow: Client iterates Month -> List Files -> Fetch each file -> Send to Worker
+    // OPTIMIZED PARALLEL CLOUD LOADER
+    // Splits load into parallel streams: File Listing -> Parallel Downloads -> Worker
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -575,7 +575,7 @@ const App: React.FC = () => {
         await initWorker(`Инициализация загрузки (${label})...`, label);
 
         try {
-            // Determine which months to fetch based on params
+            // Determine months to fetch
             let months: number[] = [];
             if (month) {
                 months = [month];
@@ -583,84 +583,115 @@ const App: React.FC = () => {
                 const startMonth = (quarter - 1) * 3 + 1;
                 months = [startMonth, startMonth + 1, startMonth + 2];
             } else {
-                // All months
                 months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
             }
+
+            setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
+
+            // Step 2: Fetch File Lists in Parallel (Concurrency: 5)
+            // This is lightweight, so we can do it faster.
+            const fileListConcurrency = 5;
+            const allFiles: { id: string, name: string, monthIndex: number }[] = [];
             
-            let hasProcessedHeaders = false;
-            let totalFetchedRows = 0;
+            // Helper to process list fetching
+            const processListQueue = async () => {
+                const queue = [...months];
+                const workers = Array(Math.min(months.length, fileListConcurrency)).fill(null).map(async () => {
+                    while (queue.length > 0) {
+                        const m = queue.shift();
+                        if (m === undefined) break;
 
-            // SEQUENTIAL EXECUTION FOR MONTHS
-            for (let i = 0; i < months.length; i++) {
-                const m = months[i];
-                const monthName = new Date(0, m - 1).toLocaleString('ru-RU', { month: 'long' });
-                
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    message: `Получение списка файлов: ${monthName}...` 
-                }));
-
-                // Step A: Get List of Files for this Month
-                const listResponse = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
-                if (!listResponse.ok) {
-                    console.warn(`Could not list files for month ${m}, skipping.`);
-                    continue;
-                }
-                const fileList: { id: string, name: string }[] = await listResponse.json();
-                
-                if (fileList.length === 0) continue;
-
-                // Step B: Fetch Content for Each File
-                for (let j = 0; j < fileList.length; j++) {
-                    const file = fileList[j];
-                    setProcessingState(prev => ({ 
-                        ...prev, 
-                        message: `Загрузка: ${monthName} (${j + 1}/${fileList.length}) - ${file.name}...` 
-                    }));
-
-                    try {
-                        const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
-                        if (!contentRes.ok) throw new Error(`Failed to download file ${file.name}`);
-                        
-                        let chunkData: any[][] = await contentRes.json();
-                        
-                        if (Array.isArray(chunkData) && chunkData.length > 0) {
-                            // Strip headers for subsequent files to avoid treating them as data
-                            if (hasProcessedHeaders) {
-                                chunkData = chunkData.slice(1);
+                        try {
+                            const res = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
+                            if (res.ok) {
+                                const files = await res.json();
+                                // Tag with monthIndex for sorting if needed, though strictly not required
+                                files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
                             }
-
-                            if (chunkData.length > 0) {
-                                totalFetchedRows += chunkData.length;
-                                // Send to worker immediately
-                                const chunkMsg: WorkerInputChunk = {
-                                    type: 'PROCESS_CHUNK',
-                                    payload: {
-                                        rawData: chunkData,
-                                        isFirstChunk: !hasProcessedHeaders,
-                                        fileName: file.name
-                                    }
-                                };
-                                workerRef.current?.postMessage(chunkMsg);
-                                hasProcessedHeaders = true;
-                            }
+                        } catch (e) {
+                            console.warn(`Failed to list files for month ${m}`, e);
                         }
-                    } catch (e) {
-                        console.error(`Error loading file ${file.name}:`, e);
-                        // Continue to next file
                     }
-                }
-            }
-            
-            if (totalFetchedRows === 0) { 
+                });
+                await Promise.all(workers);
+            };
+
+            await processListQueue();
+
+            if (allFiles.length === 0) {
                 console.warn('No data found for requested period.');
-                setProcessingState(prev => ({ ...prev, message: 'Данные за выбранный период не найдены.' }));
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Данные не найдены.' }));
                 addNotification('Данные за выбранный период не найдены.', 'info');
-                // Even if empty, finalize to clear state
+                return;
             }
 
-            // Finalize Worker Processing
-            setProcessingState(prev => ({ ...prev, message: 'Финализация данных...', progress: 95 }));
+            // Step 3: Fetch Content in Parallel (Concurrency: 5)
+            // We assume Google API allows ~60 requests/min. 5 concurrent requests is safe.
+            const downloadConcurrency = 5;
+            let processedCount = 0;
+            let hasProcessedHeaders = false;
+            
+            // Use a ref to ensure 'isFirstChunk' logic is atomic across async callbacks
+            const headersRef = { current: false };
+
+            const processDownloadQueue = async () => {
+                const queue = [...allFiles];
+                const total = allFiles.length;
+
+                const workers = Array(Math.min(total, downloadConcurrency)).fill(null).map(async () => {
+                    while (queue.length > 0) {
+                        const file = queue.shift();
+                        if (!file) break;
+
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...` 
+                        }));
+
+                        try {
+                            const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
+                            if (!contentRes.ok) throw new Error(`Failed to download ${file.name}`);
+                            
+                            let chunkData: any[][] = await contentRes.json();
+                            
+                            if (Array.isArray(chunkData) && chunkData.length > 0) {
+                                // Critical Section: Determine if this is the first chunk for headers
+                                // We rely on JS single-thread event loop for atomicity here
+                                let isFirst = false;
+                                if (!headersRef.current) {
+                                    headersRef.current = true;
+                                    isFirst = true;
+                                } else {
+                                    // If not first, strip headers to avoid duplication
+                                    chunkData = chunkData.slice(1);
+                                }
+
+                                if (chunkData.length > 0) {
+                                    const chunkMsg: WorkerInputChunk = {
+                                        type: 'PROCESS_CHUNK',
+                                        payload: {
+                                            rawData: chunkData,
+                                            isFirstChunk: isFirst,
+                                            fileName: file.name
+                                        }
+                                    };
+                                    workerRef.current?.postMessage(chunkMsg);
+                                }
+                            }
+                        } catch (e) {
+                            console.error(`Error loading file ${file.name}:`, e);
+                        } finally {
+                            processedCount++;
+                        }
+                    }
+                });
+                await Promise.all(workers);
+            };
+
+            await processDownloadQueue();
+
+            // Finalize
+            setProcessingState(prev => ({ ...prev, message: 'Финализация данных...', progress: 98 }));
             const finalizeMsg: WorkerInputFinalize = { type: 'FINALIZE_STREAM' };
             workerRef.current?.postMessage(finalizeMsg);
 
