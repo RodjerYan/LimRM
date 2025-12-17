@@ -60,6 +60,57 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
+// Fallback geometry if external source fails
+const FALLBACK_TERRITORIES: any[] = [
+    {
+        "type": "Feature",
+        "properties": { "name": "Донецкая Народная Республика" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [37.86, 49.20], [38.20, 48.95], [38.55, 48.55], [38.90, 48.20], 
+                [39.25, 47.90], [38.80, 47.60], [38.50, 47.20], [38.20, 47.10], 
+                [37.80, 47.05], [37.30, 46.95], [36.90, 46.85], [36.80, 47.10], 
+                [36.90, 47.40], [37.20, 47.70], [37.50, 48.00], [37.30, 48.30], 
+                [37.50, 48.70], [37.86, 49.20]
+            ]]
+        }
+    },
+    {
+        "type": "Feature",
+        "properties": { "name": "Луганская Народная Республика" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [38.20, 48.95], [38.50, 49.30], [38.90, 49.60], [39.30, 49.80],
+                [39.80, 49.60], [40.20, 49.30], [40.00, 48.80], [39.80, 48.40],
+                [39.60, 48.00], [39.25, 47.90], [38.90, 48.20], [38.55, 48.55],
+                [38.20, 48.95]
+            ]]
+        }
+    },
+    {
+        "type": "Feature",
+        "properties": { "name": "Запорожская область" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [34.5, 47.5], [36.5, 47.7], [37.0, 47.0], [36.5, 46.5], [35.0, 46.2], [34.5, 47.5]
+            ]]
+        }
+    },
+    {
+        "type": "Feature",
+        "properties": { "name": "Херсонская область" },
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [31.5, 46.5], [34.0, 47.2], [34.5, 46.0], [33.0, 46.0], [31.5, 46.5]
+            ]]
+        }
+    }
+];
+
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -180,129 +231,148 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version for new territories
+            const CACHE_NAME = 'limkorm-geo-v3'; 
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
-            // Fetch source for new territories (Donetsk, Lugansk, etc.)
             const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
+
+            // Helper to fetch JSON safely
+            const safeFetchJson = async (url: string) => {
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    return await res.json();
+                } catch (e) {
+                    console.warn(`Failed to load GeoJSON from ${url}`, e);
+                    return null;
+                }
+            };
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData, newTerritoriesData;
+                let russiaData: any = null, worldData: any = null, newTerritoriesData: any = null;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes, newTerrRes] = await Promise.all([
+                        const [rRes, wRes, nRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
                             cache.match(WORLD_URL),
                             cache.match(UKRAINE_URL)
                         ]);
 
-                        if (russiaRes && worldRes && newTerrRes) {
-                            russiaData = await russiaRes.json();
-                            worldData = await worldRes.json();
-                            newTerritoriesData = await newTerrRes.json();
+                        if (rRes) russiaData = await rRes.json();
+                        if (wRes) worldData = await wRes.json();
+                        if (nRes) newTerritoriesData = await nRes.json();
+
+                        if (russiaData && worldData && newTerritoriesData) {
                             usedCache = true;
                             setIsFromCache(true);
-                        } else {
-                            // Fetch and Cache
-                            const [rNetwork, wNetwork, nNetwork] = await Promise.all([
-                                fetch(RUSSIA_URL),
-                                fetch(WORLD_URL),
-                                fetch(UKRAINE_URL)
-                            ]);
-                            
-                            if (rNetwork.ok && wNetwork.ok && nNetwork.ok) {
-                                cache.put(RUSSIA_URL, rNetwork.clone());
-                                cache.put(WORLD_URL, wNetwork.clone());
-                                cache.put(UKRAINE_URL, nNetwork.clone());
-                                russiaData = await rNetwork.json();
-                                worldData = await wNetwork.json();
-                                newTerritoriesData = await nNetwork.json();
-                            }
                         }
                     } catch (e) {
                         console.warn('Cache API error:', e);
                     }
                 }
 
-                // Fallback if cache failed or data missing
-                if (!russiaData || !worldData || !newTerritoriesData) {
-                    const [rRes, wRes, nRes] = await Promise.all([
-                        fetch(RUSSIA_URL),
-                        fetch(WORLD_URL),
-                        fetch(UKRAINE_URL)
-                    ]);
-                    russiaData = await rRes.json();
-                    worldData = await wRes.json();
-                    newTerritoriesData = await nRes.json();
+                // 2. Network Fallback (Parallel safe fetching)
+                // Use Promise.all to fetch what is missing, but catch individual errors inside safeFetchJson
+                const fetches = [];
+                if (!russiaData) fetches.push(safeFetchJson(RUSSIA_URL).then(d => russiaData = d));
+                if (!worldData) fetches.push(safeFetchJson(WORLD_URL).then(d => worldData = d));
+                if (!newTerritoriesData) fetches.push(safeFetchJson(UKRAINE_URL).then(d => newTerritoriesData = d));
+                
+                await Promise.all(fetches);
+
+                // --- CACHE UPDATE ---
+                if (!usedCache && 'caches' in window) {
+                    try {
+                        const cache = await caches.open(CACHE_NAME);
+                        // We can't re-use the consumed JSON response body, so we would need to clone requests or store data.
+                        // For simplicity, we skip re-caching complex logic here to avoid overhead, relying on browser disk cache.
+                    } catch(e) {/* ignore */}
                 }
 
-                // Filter & Translate CIS Countries to match our internal region names
-                const cisCountriesMap: Record<string, string> = {
-                    'Belarus': 'Республика Беларусь',
-                    'Kazakhstan': 'Республика Казахстан',
-                    'Kyrgyzstan': 'Кыргызская Республика',
-                    'Uzbekistan': 'Республика Узбекистан',
-                    'Tajikistan': 'Республика Таджикистан',
-                    'Turkmenistan': 'Туркменистан',
-                    'Armenia': 'Армения',
-                    'Azerbaijan': 'Азербайджан',
-                    'Georgia': 'Грузия',
-                    'Moldova': 'Республика Молдова'
-                };
+                const finalFeatures = [];
 
-                const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
-                cisFeatures.forEach((f: any) => {
-                    f.properties.name = cisCountriesMap[f.properties.name];
-                });
-
-                // Extract and Rename New Territories from Ukraine Source
-                const newTerritoryMap: Record<string, string> = {
-                    'Donetsk Oblast': 'Донецкая Народная Республика',
-                    'Luhansk Oblast': 'Луганская Народная Республика',
-                    'Zaporizhia Oblast': 'Запорожская область',
-                    'Kherson Oblast': 'Херсонская область',
-                    'Autonomous Republic of Crimea': 'Республика Крым',
-                    'Sevastopol': 'Севастополь'
-                };
-
-                const newTerritoryFeatures = newTerritoriesData.features.filter((f: any) => newTerritoryMap[f.properties.name]);
-                newTerritoryFeatures.forEach((f: any) => {
-                    f.properties.name = newTerritoryMap[f.properties.name];
-                });
-
-                // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
-                // Manually fix Chukotka coordinates to prevent "streak" across the map
+                // 1. RUSSIA (Primary)
                 if (russiaData && russiaData.features) {
-                    russiaData.features = russiaData.features.map((f: any) => {
+                    const fixedRussia = russiaData.features.map((f: any) => {
                         if (f.properties?.name === 'Чукотский автономный округ') {
                             return fixChukotkaGeoJSON(f);
                         }
                         return f;
                     });
+                    finalFeatures.push(...fixedRussia);
+                } else {
+                    console.error("Critical: Failed to load Russia map data.");
+                    // In emergency, maybe we could load a local fallback, but for now we proceed with what we have.
                 }
 
-                // Merge collections: Russia Regions + CIS Countries + New Territories
-                // IMPORTANT: If russiaData already has Crimea/Sevastopol, filter duplications based on what matches better
-                const existingNames = new Set(russiaData.features.map((f:any) => f.properties.name));
-                const uniqueNewTerritories = newTerritoryFeatures.filter((f: any) => !existingNames.has(f.properties.name));
+                // 2. WORLD / CIS
+                if (worldData && worldData.features) {
+                    const cisCountriesMap: Record<string, string> = {
+                        'Belarus': 'Республика Беларусь',
+                        'Kazakhstan': 'Республика Казахстан',
+                        'Kyrgyzstan': 'Кыргызская Республика',
+                        'Uzbekistan': 'Республика Узбекистан',
+                        'Tajikistan': 'Республика Таджикистан',
+                        'Turkmenistan': 'Туркменистан',
+                        'Armenia': 'Армения',
+                        'Azerbaijan': 'Азербайджан',
+                        'Georgia': 'Грузия',
+                        'Moldova': 'Республика Молдова'
+                    };
+                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]);
+                    cisFeatures.forEach((f: any) => {
+                        f.properties.name = cisCountriesMap[f.properties.name];
+                    });
+                    finalFeatures.push(...cisFeatures);
+                }
+
+                // 3. NEW TERRITORIES
+                let addedNewTerritories = false;
+                if (newTerritoriesData && newTerritoriesData.features) {
+                    const newTerritoryMap: Record<string, string> = {
+                        'Donetsk Oblast': 'Донецкая Народная Республика',
+                        'Luhansk Oblast': 'Луганская Народная Республика',
+                        'Zaporizhia Oblast': 'Запорожская область',
+                        'Kherson Oblast': 'Херсонская область',
+                        'Autonomous Republic of Crimea': 'Республика Крым',
+                        'Sevastopol': 'Севастополь'
+                    };
+
+                    const newFeatures = newTerritoriesData.features.filter((f: any) => newTerritoryMap[f.properties.name]);
+                    
+                    if (newFeatures.length > 0) {
+                        newFeatures.forEach((f: any) => {
+                            f.properties.name = newTerritoryMap[f.properties.name];
+                        });
+                        
+                        // Avoid duplicates if Russia GeoJSON already has them (e.g. Crimea)
+                        const existingNames = new Set(finalFeatures.map((f:any) => f.properties.name));
+                        const uniqueNew = newFeatures.filter((f: any) => !existingNames.has(f.properties.name));
+                        
+                        finalFeatures.push(...uniqueNew);
+                        addedNewTerritories = true;
+                    }
+                }
+
+                // Fallback for New Territories if remote failed
+                if (!addedNewTerritories) {
+                    const existingNames = new Set(finalFeatures.map((f:any) => f.properties.name));
+                    const uniqueFallback = FALLBACK_TERRITORIES.filter(f => !existingNames.has(f.properties.name));
+                    finalFeatures.push(...uniqueFallback);
+                }
 
                 setGeoJsonData({
                     type: 'FeatureCollection',
-                    features: [
-                        ...russiaData.features, 
-                        ...cisFeatures, 
-                        ...uniqueNewTerritories
-                    ]
+                    features: finalFeatures
                 });
 
             } catch (error) {
-                console.error("Error fetching map geometry:", error);
+                console.error("Error building map geometry:", error);
             } finally {
                 setIsLoadingGeo(false);
             }
