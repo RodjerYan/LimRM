@@ -6,7 +6,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon, BrainIcon } from './icons';
 
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
@@ -251,7 +251,7 @@ const SinglePointMap: React.FC<{
 
 const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme }) => {
     const [editedAddress, setEditedAddress] = useState('');
-    const [comment, setComment] = useState(''); // New state for comment
+    const [comment, setComment] = useState('');
     const [status, setStatus] = useState<Status>('idle');
     const [error, setError] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -260,10 +260,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     
-    // State for manually selected coordinates
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
-    
-    // UI States for map
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
 
@@ -287,7 +284,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
                     setHistory(historyArray);
                 }
-                // Refresh comment from cache if needed (though local state might be newer)
                 if (result.comment && !comment) {
                     setComment(result.comment);
                 }
@@ -299,29 +295,52 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     };
 
+    // Helper to determine if we are editing a fresh Unidentified Row or an existing MapPoint
+    const isUnidentified = (item: EditableData): item is UnidentifiedRow => {
+        return (item as UnidentifiedRow).originalIndex !== undefined;
+    };
+
+    const getEnrichedAddress = (originalRow: any) => {
+        const rawAddress = findAddressInRow(originalRow) || '';
+        
+        // Expanded keyword list to catch 'Distributor' (English) which caused failures before
+        // Also added explicit fallback: if no distributor found by keys, check for any value containing "(" and ")" 
+        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
+        
+        if (!distributor) {
+            // Last resort: search all values for a pattern like "Name (City)"
+            const values = Object.values(originalRow);
+            const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
+            if (possibleDistributor) {
+                distributor = String(possibleDistributor);
+            }
+        }
+        
+        // Use the parser to attempt enrichment (e.g. inject city from distributor)
+        const parsed = parseRussianAddress(rawAddress, distributor);
+        return parsed.finalAddress || rawAddress;
+    };
+
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
             
-            // --- LOGIC UPDATE START: Smart Address Population ---
-            // 1. Check if we already have a processed address in MapPoint
-            let currentAddress = (data as MapPoint).address;
+            // --- LOGIC UPDATE START: Robust Smart Address Population ---
+            let currentAddress = '';
 
-            // 2. If no processed address (Unidentified Row case), use parser logic to enrich
-            if (!currentAddress) {
-                const rawAddress = findAddressInRow(originalRow) || '';
-                const distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер']);
-                // Use the core parser logic. It will check distributor for City/Region if address is incomplete.
-                const parsed = parseRussianAddress(rawAddress, distributor);
-                // Use enriched address if available, otherwise raw
-                currentAddress = parsed.finalAddress || rawAddress;
+            // If it's an UnidentifiedRow, we MUST recalculate the address from source,
+            // because these rows by definition failed the worker's processing and don't have a clean address property.
+            if (isUnidentified(data)) {
+                currentAddress = getEnrichedAddress(originalRow);
+            } else {
+                // For MapPoints (already matched), use the existing address which might have been edited/enriched
+                currentAddress = (data as MapPoint).address;
             }
             // --- LOGIC UPDATE END ---
 
             setEditedAddress(currentAddress);
-            setComment((data as MapPoint).comment || ''); // Initialize comment
+            setComment((data as MapPoint).comment || ''); 
             
-            // Reset manual coords on open
             setManualCoords(null);
             setIsMapExpanded(false);
             
@@ -354,16 +373,27 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     }, [isOpen, data]);
 
+    const handleAutoEnrich = () => {
+        if (!data) return;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const enriched = getEnrichedAddress(originalRow);
+        setEditedAddress(enriched);
+        addFlashNotification("Адрес обновлен на основе данных дистрибьютора");
+    };
+
+    const addFlashNotification = (msg: string) => {
+        // Simple internal notification logic or hook into parent
+        // For now just logging, the UI update of the textarea is the feedback
+        console.log(msg);
+    };
+
     const handleSave = async () => {
         if (!data) return;
         
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         
-        // CRITICAL: Derive oldAddress from the CURRENT data state.
-        // If 'data' was updated by parent after last save, (data as MapPoint).address holds the NEW value.
-        // We use this new value as the 'oldAddress' for the NEXT save.
-        // Fallback to originalRow only for the very first edit.
+        // Use current state for comparison, fallback to re-parsing raw if needed (though editedAddress should be populated)
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
         
@@ -374,7 +404,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             oldKey = normalizeAddress(oldAddress);
         }
 
-        // Determine what changed
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
         const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -402,7 +431,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         rmName: rm, 
                         oldAddress, 
                         newAddress: editedAddress,
-                        comment: comment // Pass comment
+                        comment: comment
                     }),
                 });
                 if (!res.ok) {
@@ -410,7 +439,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     throw new Error(err.details || 'Ошибка при сохранении адреса/комментария.');
                 }
                 
-                // Optimistic history update - Visual only
                 const timestamp = new Date().toLocaleString('ru-RU', {
                     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
                 });
@@ -419,32 +447,33 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const newHistoryEntry = `${oldAddress} [${timestamp}]`;
                     setHistory(prev => [newHistoryEntry, ...prev]);
                 } else if (isCommentChanged) {
-                    // Just show the entered comment in history as requested
                     const commentEntry = `Комментарий: "${comment}" [${timestamp}]`;
                     setHistory(prev => [commentEntry, ...prev]);
                 }
                 justSaved.current = true;
             }
 
-            // Updated to be consistent with worker keys
-            const distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер']);
+            // Expanded keywords here as well for consistency
+            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor']);
+            if (!distributor) {
+                 const values = Object.values(originalRow);
+                 const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
+                 if (possibleDistributor) distributor = String(possibleDistributor);
+            }
+
             const parsed = parseRussianAddress(editedAddress, distributor);
             
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
             
-            // Determine if we need to enter geocoding state
-            // We only geocode if the address changed AND we haven't manually set coordinates.
-            // If only comment changed, this remains false.
             let isGeocodingState = isAddressChanged && !manualCoords;
 
             // 2. Handle Manual Coordinates Update
             if (manualCoords) {
                 currentLat = manualCoords.lat;
                 currentLon = manualCoords.lon;
-                isGeocodingState = false; // Coordinates are known/manual, no polling needed
+                isGeocodingState = false;
 
-                // Save explicit coordinates to cache
                 await fetch('/api/update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -476,14 +505,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 fact: (data as MapPoint).fact,
                 isGeocoding: isGeocodingState,
                 lastUpdated: updateTimestamp,
-                comment: comment // Update comment in local state
+                comment: comment
             };
             
-            // Update parent state immediately so 'data' prop updates for next edit
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
-            // Only poll if we didn't manually set coords AND the address changed (requiring new geocoding)
-            // If only comment changed, we skip this block and go straight to idle
             if (!manualCoords && isAddressChanged) {
                 setStatus('geocoding');
                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
@@ -541,8 +567,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
-    // Display current address from map point state to reflect recent edits
-    // Note: This 'currentDisplayAddress' is for comparison logic, the 'editedAddress' state is for input
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
@@ -556,11 +580,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     
-    // Display coordinates: prefer manual selection if active, otherwise fallback to current data
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
 
-    // Determine save button text
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -684,7 +706,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </div>
                         <div className="space-y-3">
                             <div className="relative">
-                                <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label htmlFor="address-input" className="block text-sm font-medium text-text-muted">Адрес ТТ LimKorm</label>
+                                    <button onClick={handleAutoEnrich} className="text-xs flex items-center gap-1 text-indigo-400 hover:text-indigo-300" title="Попытаться снова определить адрес через Дистрибьютора">
+                                        <BrainIcon small /> Авто-обогащение
+                                    </button>
+                                </div>
                                 <textarea
                                     id="address-input"
                                     rows={2}
