@@ -302,8 +302,22 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-            // Use data.address directly if available (for edited points), otherwise fall back to raw parsing
-            const currentAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
+            
+            // --- LOGIC UPDATE START: Smart Address Population ---
+            // 1. Check if we already have a processed address in MapPoint
+            let currentAddress = (data as MapPoint).address;
+
+            // 2. If no processed address (Unidentified Row case), use parser logic to enrich
+            if (!currentAddress) {
+                const rawAddress = findAddressInRow(originalRow) || '';
+                const distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер']);
+                // Use the core parser logic. It will check distributor for City/Region if address is incomplete.
+                const parsed = parseRussianAddress(rawAddress, distributor);
+                // Use enriched address if available, otherwise raw
+                currentAddress = parsed.finalAddress || rawAddress;
+            }
+            // --- LOGIC UPDATE END ---
+
             setEditedAddress(currentAddress);
             setComment((data as MapPoint).comment || ''); // Initialize comment
             
@@ -412,7 +426,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 justSaved.current = true;
             }
 
-            const distributor = findValueInRow(originalRow, ['дистрибьютор']);
+            // Updated to be consistent with worker keys
+            const distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер']);
             const parsed = parseRussianAddress(editedAddress, distributor);
             
             let currentLat = (data as MapPoint).lat;
@@ -527,6 +542,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
     // Display current address from map point state to reflect recent edits
+    // Note: This 'currentDisplayAddress' is for comparison logic, the 'editedAddress' state is for input
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
