@@ -652,9 +652,17 @@ const App: React.FC = () => {
 
                         try {
                             const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
-                            if (!contentRes.ok) throw new Error(`Failed to download ${file.name}`);
+                            if (!contentRes.ok) throw new Error(`Failed to download ${file.name} (Status: ${contentRes.status})`);
                             
-                            let chunkData: any[][] = await contentRes.json();
+                            // Parse JSON with error handling for large file truncation
+                            let chunkData: any[][];
+                            try {
+                                chunkData = await contentRes.json();
+                            } catch (parseError) {
+                                console.error(`JSON Parse Error for ${file.name}:`, parseError);
+                                addNotification(`Ошибка обработки файла ${file.name}: файл слишком большой или соединение прервано.`, 'error');
+                                continue; // Skip this file and proceed to next
+                            }
                             
                             if (Array.isArray(chunkData) && chunkData.length > 0) {
                                 // Critical Section: Determine if this is the first chunk for headers

@@ -30,8 +30,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.query.fileId) {
             const fileId = req.query.fileId as string;
             const data = await fetchFileContent(fileId);
+            
+            // Enable streaming response to bypass Vercel's 4.5MB body limit
             res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-            return res.status(200).json(data);
+            res.setHeader('Content-Type', 'application/json');
+            
+            // Manually stream the array as JSON
+            res.write('[');
+            for (let i = 0; i < data.length; i++) {
+                // Write row with comma if not last
+                res.write(JSON.stringify(data[i]));
+                if (i < data.length - 1) {
+                    res.write(',');
+                }
+            }
+            res.write(']');
+            res.end();
+            return;
         }
 
         // Legacy Fallback (Dangerous for large folders)
@@ -62,6 +77,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             detailedMessage = `Google API Error ${code} (${status}): ${message}`;
         }
 
-        res.status(500).json({ error: 'Failed to retrieve AKB data', details: detailedMessage });
+        // If headers sent, we can't send JSON error, just end.
+        if (res.headersSent) {
+            res.end();
+        } else {
+            res.status(500).json({ error: 'Failed to retrieve AKB data', details: detailedMessage });
+        }
     }
 }
