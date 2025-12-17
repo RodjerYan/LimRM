@@ -50,9 +50,9 @@ import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInR
 import { TargetIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 
-delete (L.Icon.Default.prototype as any)._getIconUrl;
+const LEAFLET_CDN_URL = "https://unpkg.com/leaflet@1.9.4/dist/images/";
 
-const LEAFLET_CDN_URL = 'https://aistudiocdn.com/leaflet@1.9.4/dist/images/';
+delete (L.Icon.Default.prototype as any)._getIconUrl;
 
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: `${LEAFLET_CDN_URL}marker-icon-2x.png`,
@@ -96,6 +96,9 @@ const App: React.FC = () => {
     // --- BUFFERS FOR WORKER STREAMING ---
     const aggregatedDataBuffer = useRef<AggregatedDataRow[]>([]);
     const unidentifiedBuffer = useRef<UnidentifiedRow[]>([]);
+    
+    // Ref for Cloud Headers State to ensure persistence across async chunk processing
+    const cloudHeadersProcessed = useRef(false);
 
     // Modal States
     const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
@@ -135,6 +138,13 @@ const App: React.FC = () => {
             document.documentElement.classList.remove('light-mode');
         }
     }, [theme]);
+
+    // WORKER CLEANUP
+    useEffect(() => {
+        return () => {
+            workerRef.current?.terminate();
+        };
+    }, []);
 
     const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
@@ -547,6 +557,9 @@ const App: React.FC = () => {
             };
             workerRef.current?.postMessage(chunkMsg);
 
+            // Fix: Short delay to ensure worker loop can process chunk before finalize arrives (prevent race condition in local flow)
+            await new Promise(r => setTimeout(r, 100));
+
             // Finalize
             const finalizeMsg: WorkerInputFinalize = { type: 'FINALIZE_STREAM' };
             workerRef.current?.postMessage(finalizeMsg);
@@ -573,6 +586,9 @@ const App: React.FC = () => {
 
         // 1. Initialize Worker & UI
         await initWorker(`Инициализация загрузки (${label})...`, label);
+        
+        // Reset header state for this new run
+        cloudHeadersProcessed.current = false;
 
         try {
             // Determine months to fetch
@@ -625,14 +641,11 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content in Parallel (Concurrency: 5)
-            // We assume Google API allows ~60 requests/min. 5 concurrent requests is safe.
-            const downloadConcurrency = 5;
+            // Step 3: Fetch Content in Parallel (Concurrency: 5 -> 3)
+            // Reduced to 3 to prevent "429 Too Many Requests" or "500 Internal Server Error" from Google API
+            const downloadConcurrency = 3; 
             let processedCount = 0;
             
-            // Use a ref to ensure 'isFirstChunk' logic is atomic across async callbacks
-            const headersRef = { current: false };
-
             const processDownloadQueue = async () => {
                 const queue = [...allFiles];
                 const total = allFiles.length;
@@ -649,55 +662,72 @@ const App: React.FC = () => {
                             progress: Math.round((processedCount / total) * 80)
                         }));
 
-                        try {
-                            const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
-                            if (!contentRes.ok) throw new Error(`Failed to download ${file.name} (Status: ${contentRes.status})`);
-                            
-                            // STREAMING PARSE: Download as Blob (streams efficiently) then use Papa.parse on Blob
-                            // This avoids massive JSON strings in memory
-                            const blob = await contentRes.blob();
-                            
-                            await new Promise<void>((resolve, reject) => {
-                                Papa.parse(blob as unknown as File, {
-                                    header: false,
-                                    skipEmptyLines: true,
-                                    chunk: (results) => {
-                                        // Detect if this specific chunk is the very first one globally (for headers)
-                                        let isFirst = false;
-                                        if (!headersRef.current) {
-                                            headersRef.current = true;
-                                            isFirst = true;
-                                        } 
-                                        
-                                        // Send chunk to worker
-                                        const chunkMsg: WorkerInputChunk = {
-                                            type: 'PROCESS_CHUNK',
-                                            payload: {
-                                                rawData: results.data as any[][],
-                                                isFirstChunk: isFirst,
-                                                fileName: file.name
-                                            }
-                                        };
-                                        workerRef.current?.postMessage(chunkMsg);
-                                    },
-                                    complete: () => {
-                                        resolve();
-                                    },
-                                    error: (err) => {
-                                        console.error(`CSV Parse Error for ${file.name}:`, err);
-                                        // Log error but resolve to continue queue
-                                        addNotification(`Ошибка парсинга ${file.name}`, 'error');
-                                        resolve(); 
+                        // Retry loop for robustness
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            try {
+                                const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
+                                if (!contentRes.ok) {
+                                    // If 500/502/503/504, throw to trigger retry. 
+                                    // If 4xx (except 429), break (fatal error).
+                                    if (contentRes.status >= 500 || contentRes.status === 429) {
+                                        throw new Error(`HTTP ${contentRes.status}`);
+                                    } else {
+                                        throw new Error(`Fatal HTTP ${contentRes.status}`); // Non-retryable
                                     }
+                                }
+                                
+                                // STREAMING PARSE: Download as Blob (streams efficiently) then use Papa.parse on Blob
+                                const blob = await contentRes.blob();
+                                
+                                await new Promise<void>((resolve, reject) => {
+                                    Papa.parse(blob as unknown as File, {
+                                        header: false,
+                                        skipEmptyLines: true,
+                                        chunk: (results) => {
+                                            // Detect if this specific chunk is the very first one globally (for headers)
+                                            let isFirst = false;
+                                            if (!cloudHeadersProcessed.current) {
+                                                cloudHeadersProcessed.current = true;
+                                                isFirst = true;
+                                            } 
+                                            
+                                            // Send chunk to worker
+                                            const chunkMsg: WorkerInputChunk = {
+                                                type: 'PROCESS_CHUNK',
+                                                payload: {
+                                                    rawData: results.data as any[][],
+                                                    isFirstChunk: isFirst,
+                                                    fileName: file.name
+                                                }
+                                            };
+                                            workerRef.current?.postMessage(chunkMsg);
+                                        },
+                                        complete: () => {
+                                            resolve();
+                                        },
+                                        error: (err) => {
+                                            console.error(`CSV Parse Error for ${file.name}:`, err);
+                                            // Log error but resolve to continue queue
+                                            addNotification(`Ошибка парсинга ${file.name}`, 'error');
+                                            resolve(); 
+                                        }
+                                    });
                                 });
-                            });
+                                break; // Success, exit retry loop
 
-                        } catch (e) {
-                            console.error(`Error loading file ${file.name}:`, e);
-                            addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
-                        } finally {
-                            processedCount++;
+                            } catch (e) {
+                                console.error(`Error loading file ${file.name} (Attempt ${attempt}):`, e);
+                                const isFatal = (e as Error).message.includes('Fatal');
+                                
+                                if (attempt === 3 || isFatal) {
+                                    addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
+                                } else {
+                                    // Wait before retry (exponential backoff)
+                                    await new Promise(r => setTimeout(r, 1000 * attempt));
+                                }
+                            }
                         }
+                        processedCount++;
                     }
                 });
                 await Promise.all(workers);
@@ -907,7 +937,7 @@ const App: React.FC = () => {
                 console.error("Polling stopped:", e);
                 const failedPoint = { ...basePoint, isGeocoding: false };
                 handleDataUpdate(tempKey, failedPoint, originalIndex);
-                addNotification(`Geocoding timeout: ${address}`, 'error');
+                // Ensure queue is cleared on error/timeout
                 processingQueue.current.delete(processKey);
             }
         };
@@ -961,7 +991,9 @@ const App: React.FC = () => {
         return () => clearTimeout(timer);
     }, [smartData, filters]);
 
-    const isControlPanelLocked = isLoading;
+    // Corrected isControlPanelLocked to use either state
+    const isControlPanelLocked = isLoading || processingState.isProcessing;
+    
     const isAnyModalOpen = isDetailsModalOpen || isClientsModalOpen || isUnidentifiedModalOpen || isEditModalOpen || isRMDashboardOpen;
 
     // --- RENDER CONTENT BASED ON ACTIVE TAB ---

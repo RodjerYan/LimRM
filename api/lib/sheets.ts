@@ -206,16 +206,30 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
 /**
  * Exports a spreadsheet file as a CSV stream.
  * This is efficient for large files as it pipes data directly.
+ * Added retry logic to handle potential 500 errors from Google Drive API.
  */
 export async function exportFileAsCsv(fileId: string): Promise<Readable> {
     const drive = await getGoogleDriveClient();
     
-    const res = await drive.files.export({
-        fileId: fileId,
-        mimeType: 'text/csv',
-    }, { responseType: 'stream' });
+    let lastError: any;
+    // Retry logic: 3 attempts with exponential backoff
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const res = await drive.files.export({
+                fileId: fileId,
+                mimeType: 'text/csv',
+            }, { responseType: 'stream' });
 
-    return res.data as unknown as Readable;
+            return res.data as unknown as Readable;
+        } catch (error) {
+            lastError = error;
+            console.warn(`exportFileAsCsv attempt ${attempt} failed for ${fileId}:`, error);
+            // Wait: 1.5s, 3s, then fail
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+        }
+    }
+    
+    throw lastError || new Error(`Failed to export file ${fileId} after 3 attempts`);
 }
 
 /**
