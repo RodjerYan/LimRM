@@ -295,8 +295,8 @@ export interface FileProcessingState {
     fileName: string | null;
     backgroundMessage: string | null;
     startTime: number | null;
-    logs: string[]; // NEW: For detailed visualization
-    loadedCount: number; // NEW: Real-time row counter
+    logs: string[]; // NEW: History of log messages
+    loadedCount: number; // NEW: Real-time counter of processed items
 }
 
 // Interface for Cloud Loading Parameters
