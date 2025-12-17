@@ -558,8 +558,8 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED PARALLEL CLOUD LOADER
-    // Splits load into parallel streams: File Listing -> Parallel Downloads -> Worker
+    // OPTIMIZED PARALLEL CLOUD LOADER (CSV STREAMING)
+    // Splits load into parallel streams: File Listing -> Parallel Downloads (CSV Blobs) -> Worker
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -629,7 +629,6 @@ const App: React.FC = () => {
             // We assume Google API allows ~60 requests/min. 5 concurrent requests is safe.
             const downloadConcurrency = 5;
             let processedCount = 0;
-            let hasProcessedHeaders = false;
             
             // Use a ref to ensure 'isFirstChunk' logic is atomic across async callbacks
             const headersRef = { current: false };
@@ -654,42 +653,48 @@ const App: React.FC = () => {
                             const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
                             if (!contentRes.ok) throw new Error(`Failed to download ${file.name} (Status: ${contentRes.status})`);
                             
-                            // Parse JSON with error handling for large file truncation
-                            let chunkData: any[][];
-                            try {
-                                chunkData = await contentRes.json();
-                            } catch (parseError) {
-                                console.error(`JSON Parse Error for ${file.name}:`, parseError);
-                                addNotification(`Ошибка обработки файла ${file.name}: файл слишком большой или соединение прервано.`, 'error');
-                                continue; // Skip this file and proceed to next
-                            }
+                            // STREAMING PARSE: Download as Blob (streams efficiently) then use Papa.parse on Blob
+                            // This avoids massive JSON strings in memory
+                            const blob = await contentRes.blob();
                             
-                            if (Array.isArray(chunkData) && chunkData.length > 0) {
-                                // Critical Section: Determine if this is the first chunk for headers
-                                // We rely on JS single-thread event loop for atomicity here
-                                let isFirst = false;
-                                if (!headersRef.current) {
-                                    headersRef.current = true;
-                                    isFirst = true;
-                                } else {
-                                    // If not first, strip headers to avoid duplication
-                                    chunkData = chunkData.slice(1);
-                                }
+                            await new Promise<void>((resolve, reject) => {
+                                Papa.parse(blob as unknown as File, {
+                                    header: false,
+                                    skipEmptyLines: true,
+                                    chunk: (results) => {
+                                        // Detect if this specific chunk is the very first one globally (for headers)
+                                        let isFirst = false;
+                                        if (!headersRef.current) {
+                                            headersRef.current = true;
+                                            isFirst = true;
+                                        } 
+                                        
+                                        // Send chunk to worker
+                                        const chunkMsg: WorkerInputChunk = {
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: results.data as any[][],
+                                                isFirstChunk: isFirst,
+                                                fileName: file.name
+                                            }
+                                        };
+                                        workerRef.current?.postMessage(chunkMsg);
+                                    },
+                                    complete: () => {
+                                        resolve();
+                                    },
+                                    error: (err) => {
+                                        console.error(`CSV Parse Error for ${file.name}:`, err);
+                                        // Log error but resolve to continue queue
+                                        addNotification(`Ошибка парсинга ${file.name}`, 'error');
+                                        resolve(); 
+                                    }
+                                });
+                            });
 
-                                if (chunkData.length > 0) {
-                                    const chunkMsg: WorkerInputChunk = {
-                                        type: 'PROCESS_CHUNK',
-                                        payload: {
-                                            rawData: chunkData,
-                                            isFirstChunk: isFirst,
-                                            fileName: file.name
-                                        }
-                                    };
-                                    workerRef.current?.postMessage(chunkMsg);
-                                }
-                            }
                         } catch (e) {
                             console.error(`Error loading file ${file.name}:`, e);
+                            addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
                         } finally {
                             processedCount++;
                         }

@@ -1,6 +1,7 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OkbDataRow } from '../../types';
+import { Readable } from 'stream';
 
 // Основные таблицы (ОКБ и Кэш) остаются статичными, так как это справочники
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
@@ -203,7 +204,23 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
 }
 
 /**
- * Fetches content of a specific spreadsheet file.
+ * Exports a spreadsheet file as a CSV stream.
+ * This is efficient for large files as it pipes data directly.
+ */
+export async function exportFileAsCsv(fileId: string): Promise<Readable> {
+    const drive = await getGoogleDriveClient();
+    
+    const res = await drive.files.export({
+        fileId: fileId,
+        mimeType: 'text/csv',
+    }, { responseType: 'stream' });
+
+    return res.data as unknown as Readable;
+}
+
+/**
+ * Fetches content of a specific spreadsheet file (Legacy JSON method).
+ * Kept for backward compatibility or small files if needed.
  */
 export async function fetchFileContent(fileId: string): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();

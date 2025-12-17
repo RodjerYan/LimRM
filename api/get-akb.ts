@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAkbData, listFilesForMonth, fetchFileContent } from './lib/sheets.js';
+import { getAkbData, listFilesForMonth, fetchFileContent, exportFileAsCsv } from './lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') {
@@ -26,30 +26,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json(files);
         }
 
-        // Mode 2: Fetch Content for a specific File ID
+        // Mode 2: Fetch Content for a specific File ID via CSV Streaming
         if (req.query.fileId) {
             const fileId = req.query.fileId as string;
-            const data = await fetchFileContent(fileId);
             
-            // Enable streaming response to bypass Vercel's 4.5MB body limit
+            // NEW STRATEGY: Export as CSV stream from Drive API
+            // This bypasses Vercel's body size limits by piping the stream directly to the client
+            const csvStream = await exportFileAsCsv(fileId);
+            
             res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${fileId}.csv"`);
             
-            // Manually stream the array as JSON
-            res.write('[');
-            for (let i = 0; i < data.length; i++) {
-                // Write row with comma if not last
-                res.write(JSON.stringify(data[i]));
-                if (i < data.length - 1) {
-                    res.write(',');
-                }
-            }
-            res.write(']');
-            res.end();
+            // Pipe the CSV stream to the response
+            csvStream.pipe(res);
             return;
         }
 
-        // Legacy Fallback (Dangerous for large folders)
+        // Legacy Fallback (Dangerous for large folders, should be avoided)
         const quarterStr = req.query.quarter as string;
         const monthStr = req.query.month as string;
         let quarter: number | undefined;
