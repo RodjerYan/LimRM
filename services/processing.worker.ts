@@ -685,7 +685,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
 // --- LOGIC: FINALIZE STREAM ---
 async function finalizeStream(postMessage: PostMessageFn) {
-    postMessage({ type: 'progress', payload: { percentage: 90, message: 'ABC-анализ клиентов...' } });
+    postMessage({ type: 'progress', payload: { percentage: 81, message: 'Старт финализации: ABC-анализ...' } });
     
     const plottableActiveClients = Array.from(state_uniquePlottableClients.values());
     
@@ -703,8 +703,8 @@ async function finalizeStream(postMessage: PostMessageFn) {
         });
     }
 
-    // Progress 90 -> 95: Aggregation Loop
-    postMessage({ type: 'progress', payload: { percentage: 92, message: 'Анализ пересечений с ОКБ...' } });
+    // Progress Update before Aggregation Loop
+    postMessage({ type: 'progress', payload: { percentage: 82, message: 'Анализ пересечений с ОКБ...' } });
     
     const activeClientsByRegion = new Map<string, MapPoint[]>();
     plottableActiveClients.forEach(c => {
@@ -721,13 +721,14 @@ async function finalizeStream(postMessage: PostMessageFn) {
     for (let i = 0; i < totalGroups; i++) {
         const item = aggregationValues[i];
         
-        if (i % 200 === 0) {
-             const aggProgress = 92 + (i / totalGroups) * 3;
+        // INCREASED UPDATE FREQUENCY (Every 50 groups)
+        if (i % 50 === 0 || i === totalGroups - 1) {
+             const aggProgress = 82 + (i / totalGroups) * 13; // Map to 82-95 range
              postMessage({ 
                  type: 'progress', 
                  payload: { 
                      percentage: aggProgress, 
-                     message: `Анализ региона: ${item.region} (${i}/${totalGroups})` 
+                     message: `Анализ групп: ${i}/${totalGroups} (Регион: ${item.region})` 
                  } 
              });
         }

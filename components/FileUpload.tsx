@@ -2,7 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { OkbStatus, FileProcessingState, CloudLoadParams } from '../types';
 import { formatETR } from '../utils/timeUtils';
-import { DataIcon } from './icons';
+import { DataIcon, BrainIcon } from './icons';
 
 interface FileUploadProps {
     // New Props from Global State
@@ -84,6 +84,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
     const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
     const isBlocked = disabled || !okbStatus || okbStatus.status !== 'ready';
     const showBaseMissingOverlay = (!okbStatus || okbStatus.status !== 'ready') && !isProcessing && !fileName;
+    
+    // NEW: Check if we are in the analysis phase
+    const isAnalyzing = isProcessing && progress >= 80;
 
     // Calculate ETR locally based on startTime passed from global state
     let etr: number | null = null;
@@ -153,9 +156,18 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         >
                             <div className="flex flex-col items-center justify-center text-center z-10 p-4">
                                 {isProcessing ? (
-                                    <div className="flex flex-col items-center animate-pulse">
-                                        <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mb-3"></div>
-                                        <p className="text-sm font-medium text-white">Обработка файла...</p>
+                                    <div className="flex flex-col items-center">
+                                        {isAnalyzing ? (
+                                            <div className="flex flex-col items-center animate-pulse">
+                                                <div className="w-10 h-10 text-indigo-400 mb-2"><BrainIcon /></div>
+                                                <p className="text-sm font-bold text-indigo-300">Анализ данных...</p>
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col items-center animate-pulse">
+                                                <div className="border-4 border-indigo-400 border-t-transparent rounded-full w-10 h-10 animate-spin mb-3"></div>
+                                                <p className="text-sm font-medium text-white">Обработка файла...</p>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : (
                                     <>
@@ -169,13 +181,12 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                                 )}
                             </div>
                             {/* Progress Background */}
-                            {progress > 0 && (
+                            {progress > 0 && !isAnalyzing && (
                                 <div 
                                     className="absolute bottom-0 left-0 h-1 bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300 ease-out"
                                     style={{ width: `${progress}%` }}
                                 />
                             )}
-                            <input id="dropzone-file" type="file" className="hidden" onChange={handleFileChange} accept=".xlsx, .xls, .csv" disabled={isProcessing || isBlocked} />
                         </label>
                     </div>
                 ) : (
@@ -186,8 +197,17 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
 
                         {isProcessing ? (
                             <div className="flex flex-col items-center justify-center h-full animate-pulse z-10 py-6">
-                                <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
-                                <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком...</p>
+                                {isAnalyzing ? (
+                                    <div className="flex flex-col items-center">
+                                        <div className="w-12 h-12 text-emerald-400 mb-2"><BrainIcon /></div>
+                                        <p className="text-sm font-bold text-emerald-300">Финализация данных...</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center">
+                                        <div className="w-12 h-12 border-4 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin mb-3"></div>
+                                        <p className="text-sm font-medium text-emerald-100">Синхронизация с облаком...</p>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="z-10 flex flex-col gap-4">
@@ -265,7 +285,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         )}
                         
                         {/* Progress Background for Cloud */}
-                        {progress > 0 && (
+                        {progress > 0 && !isAnalyzing && (
                             <div className="absolute bottom-0 left-0 w-full h-1 bg-gray-700/50">
                                 <div 
                                     className="bg-gradient-to-r from-emerald-400 to-teal-400 h-full transition-all duration-300 ease-linear shadow-[0_0_10px_rgba(52,211,153,0.5)]"
@@ -288,15 +308,18 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onStartProcess
                         
                         <div className="w-full bg-gray-700/50 rounded-full h-1.5 overflow-hidden">
                             <div 
-                                className={`h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect ${mode === 'cloud' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-indigo-400 to-purple-500'}`}
+                                className={`h-full rounded-full transition-all duration-300 ease-linear relative shimmer-effect ${
+                                    isAnalyzing 
+                                        ? 'bg-gradient-to-r from-cyan-400 to-blue-500' // Analysis color
+                                        : (mode === 'cloud' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-indigo-400 to-purple-500')
+                                }`}
                                 style={{ width: `${progress}%` }}
                             ></div>
                         </div>
 
                         <div className="flex justify-between items-center text-xs pt-1">
-                            {/* FIX: Ensure the progress message is visible and not aggressively truncated during detailed steps */}
                             <p className="text-gray-400 max-w-[85%] overflow-hidden whitespace-nowrap text-ellipsis" title={message}>{message}</p>
-                            {isProcessing && etr !== null && (
+                            {isProcessing && etr !== null && !isAnalyzing && (
                                 <p className="text-indigo-300 font-mono ml-2 flex-shrink-0">{formatETR(etr)}</p>
                             )}
                             {progress === 100 && message.includes("заверш") && (

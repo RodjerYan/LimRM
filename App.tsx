@@ -645,7 +645,9 @@ const App: React.FC = () => {
 
                         setProcessingState(prev => ({ 
                             ...prev, 
-                            message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...` 
+                            // Map 0-100 of download phase to 0-80 of total process
+                            message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...`,
+                            progress: Math.round((processedCount / total) * 80)
                         }));
 
                         try {
@@ -691,7 +693,7 @@ const App: React.FC = () => {
             await processDownloadQueue();
 
             // Finalize
-            setProcessingState(prev => ({ ...prev, message: 'Финализация данных...', progress: 98 }));
+            setProcessingState(prev => ({ ...prev, message: 'Запуск алгоритмов анализа...', progress: 81 }));
             const finalizeMsg: WorkerInputFinalize = { type: 'FINALIZE_STREAM' };
             workerRef.current?.postMessage(finalizeMsg);
 
@@ -709,7 +711,7 @@ const App: React.FC = () => {
 
 
     // --- Legacy / Shared Handlers ---
-    
+    // ... (rest of component remains same) ...
     const handleProcessingStateChange = useCallback((loading: boolean, message: string) => {
         setIsLoading(loading);
         setLoadingMessage(message);
