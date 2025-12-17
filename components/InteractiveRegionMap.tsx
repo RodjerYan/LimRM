@@ -60,37 +60,6 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
-// Manual definitions for regions missing in standard open-source maps (e.g. new territories)
-const EXTRA_REGIONS_GEOJSON: any[] = [
-    {
-        "type": "Feature",
-        "properties": { "name": "Донецкая Народная Республика" },
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [[
-                [37.86, 49.20], [38.20, 48.95], [38.55, 48.55], [38.90, 48.20], 
-                [39.25, 47.90], [38.80, 47.60], [38.50, 47.20], [38.20, 47.10], 
-                [37.80, 47.05], [37.30, 46.95], [36.90, 46.85], [36.80, 47.10], 
-                [36.90, 47.40], [37.20, 47.70], [37.50, 48.00], [37.30, 48.30], 
-                [37.50, 48.70], [37.86, 49.20]
-            ]]
-        }
-    },
-    {
-        "type": "Feature",
-        "properties": { "name": "Луганская Народная Республика" },
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [[
-                [38.20, 48.95], [38.50, 49.30], [38.90, 49.60], [39.30, 49.80],
-                [39.80, 49.60], [40.20, 49.30], [40.00, 48.80], [39.80, 48.40],
-                [39.60, 48.00], [39.25, 47.90], [38.90, 48.20], [38.55, 48.55],
-                [38.20, 48.95]
-            ]]
-        }
-    }
-];
-
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
         return (
@@ -211,42 +180,49 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v3'; // Bump version for new territories
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
             // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
+            // Fetch source for new territories (Donetsk, Lugansk, etc.)
+            const UKRAINE_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/ukraine.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData, worldData;
+                let russiaData, worldData, newTerritoriesData;
                 let usedCache = false;
 
                 // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes] = await Promise.all([
+                        const [russiaRes, worldRes, newTerrRes] = await Promise.all([
                             cache.match(RUSSIA_URL),
-                            cache.match(WORLD_URL)
+                            cache.match(WORLD_URL),
+                            cache.match(UKRAINE_URL)
                         ]);
 
-                        if (russiaRes && worldRes) {
+                        if (russiaRes && worldRes && newTerrRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
+                            newTerritoriesData = await newTerrRes.json();
                             usedCache = true;
                             setIsFromCache(true);
                         } else {
                             // Fetch and Cache
-                            const [rNetwork, wNetwork] = await Promise.all([
+                            const [rNetwork, wNetwork, nNetwork] = await Promise.all([
                                 fetch(RUSSIA_URL),
-                                fetch(WORLD_URL)
+                                fetch(WORLD_URL),
+                                fetch(UKRAINE_URL)
                             ]);
                             
-                            if (rNetwork.ok && wNetwork.ok) {
+                            if (rNetwork.ok && wNetwork.ok && nNetwork.ok) {
                                 cache.put(RUSSIA_URL, rNetwork.clone());
                                 cache.put(WORLD_URL, wNetwork.clone());
+                                cache.put(UKRAINE_URL, nNetwork.clone());
                                 russiaData = await rNetwork.json();
                                 worldData = await wNetwork.json();
+                                newTerritoriesData = await nNetwork.json();
                             }
                         }
                     } catch (e) {
@@ -255,13 +231,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 // Fallback if cache failed or data missing
-                if (!russiaData || !worldData) {
-                    const [rRes, wRes] = await Promise.all([
+                if (!russiaData || !worldData || !newTerritoriesData) {
+                    const [rRes, wRes, nRes] = await Promise.all([
                         fetch(RUSSIA_URL),
-                        fetch(WORLD_URL)
+                        fetch(WORLD_URL),
+                        fetch(UKRAINE_URL)
                     ]);
                     russiaData = await rRes.json();
                     worldData = await wRes.json();
+                    newTerritoriesData = await nRes.json();
                 }
 
                 // Filter & Translate CIS Countries to match our internal region names
@@ -283,6 +261,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     f.properties.name = cisCountriesMap[f.properties.name];
                 });
 
+                // Extract and Rename New Territories from Ukraine Source
+                const newTerritoryMap: Record<string, string> = {
+                    'Donetsk Oblast': 'Донецкая Народная Республика',
+                    'Luhansk Oblast': 'Луганская Народная Республика',
+                    'Zaporizhia Oblast': 'Запорожская область',
+                    'Kherson Oblast': 'Херсонская область',
+                    'Autonomous Republic of Crimea': 'Республика Крым',
+                    'Sevastopol': 'Севастополь'
+                };
+
+                const newTerritoryFeatures = newTerritoriesData.features.filter((f: any) => newTerritoryMap[f.properties.name]);
+                newTerritoryFeatures.forEach((f: any) => {
+                    f.properties.name = newTerritoryMap[f.properties.name];
+                });
+
                 // --- FIX FOR CHUKOTKA ANTIMERIDIAN ISSUE ---
                 // Manually fix Chukotka coordinates to prevent "streak" across the map
                 if (russiaData && russiaData.features) {
@@ -294,13 +287,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     });
                 }
 
-                // Merge collections: Russia Regions + CIS Countries + Extra Regions (Donetsk/Lugansk)
+                // Merge collections: Russia Regions + CIS Countries + New Territories
+                // IMPORTANT: If russiaData already has Crimea/Sevastopol, filter duplications based on what matches better
+                const existingNames = new Set(russiaData.features.map((f:any) => f.properties.name));
+                const uniqueNewTerritories = newTerritoryFeatures.filter((f: any) => !existingNames.has(f.properties.name));
+
                 setGeoJsonData({
                     type: 'FeatureCollection',
                     features: [
                         ...russiaData.features, 
                         ...cisFeatures, 
-                        ...EXTRA_REGIONS_GEOJSON
+                        ...uniqueNewTerritories
                     ]
                 });
 
