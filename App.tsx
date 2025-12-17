@@ -641,9 +641,9 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content in Parallel (Concurrency: 5 -> 3)
-            // Reduced to 3 to prevent "429 Too Many Requests" or "500 Internal Server Error" from Google API
-            const downloadConcurrency = 3; 
+            // Step 3: Fetch Content in Parallel (Concurrency: 5 -> 2)
+            // Reduced to 2 to prevent "429 Too Many Requests" or "500 Internal Server Error" from Google API
+            const downloadConcurrency = 2; 
             let processedCount = 0;
             
             const processDownloadQueue = async () => {
@@ -723,7 +723,8 @@ const App: React.FC = () => {
                                     addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
                                 } else {
                                     // Wait before retry (exponential backoff)
-                                    await new Promise(r => setTimeout(r, 1000 * attempt));
+                                    // Increased backoff: 2s, 4s, 6s
+                                    await new Promise(r => setTimeout(r, 2000 * attempt));
                                 }
                             }
                         }

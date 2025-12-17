@@ -212,8 +212,9 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
     const drive = await getGoogleDriveClient();
     
     let lastError: any;
-    // Retry logic: 3 attempts with exponential backoff
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    // Retry logic: 5 attempts with exponential backoff (increased from 3)
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
             const res = await drive.files.export({
                 fileId: fileId,
@@ -224,12 +225,12 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
         } catch (error) {
             lastError = error;
             console.warn(`exportFileAsCsv attempt ${attempt} failed for ${fileId}:`, error);
-            // Wait: 1.5s, 3s, then fail
-            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+            // Wait: 2s, 4s, 6s, 8s...
+            if (attempt < MAX_ATTEMPTS) await new Promise(resolve => setTimeout(resolve, attempt * 2000));
         }
     }
     
-    throw lastError || new Error(`Failed to export file ${fileId} after 3 attempts`);
+    throw lastError || new Error(`Failed to export file ${fileId} after ${MAX_ATTEMPTS} attempts`);
 }
 
 /**
