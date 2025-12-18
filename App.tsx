@@ -571,7 +571,7 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED AUTOMATIC CHUNKED CLOUD LOADER (SPEED: 1 chunk / 2.5s)
+    // OPTIMIZED AUTOMATIC CHUNKED CLOUD LOADER (SPEED: 1 chunk / 1.0s)
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -614,7 +614,7 @@ const App: React.FC = () => {
                         files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
                     }
                     // Wait between metadata requests
-                    await new Promise(r => setTimeout(r, 250));
+                    await new Promise(r => setTimeout(r, 200));
                 } catch (e) {
                     console.warn(`Failed to list files for month ${m}`, e);
                 }
@@ -627,11 +627,11 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content SEQUENTIALLY with 2.5s TARGET INTERVAL
+            // Step 3: Fetch Content SEQUENTIALLY with 1.0s TARGET INTERVAL
             let filesProcessed = 0;
             const totalFiles = allFiles.length;
             const CHUNK_LIMIT = 5000;
-            const TARGET_INTERVAL_MS = 2500; // Целевая скорость: 1 порция в 2.5 секунды
+            const TARGET_INTERVAL_MS = 1000; // Целевая скорость: 1 порция в 1 секунду
             
             for (const file of allFiles) {
                 filesProcessed++;
@@ -704,7 +704,7 @@ const App: React.FC = () => {
                         }
                     }
 
-                    // Регулировка скорости загрузки до 2.5 секунд
+                    // Регулировка скорости загрузки до 1 секунды
                     const timeElapsed = Date.now() - cycleStartTime;
                     const waitTime = Math.max(0, TARGET_INTERVAL_MS - timeElapsed);
                     
