@@ -61,12 +61,14 @@ async function getAuthClient() {
     });
 }
 
-async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
+// FIX: Exported getGoogleSheetsClient to resolve the import error in other modules.
+export async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = await getAuthClient();
     return google.sheets({ version: 'v4', auth });
 }
 
-async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
+// FIX: Exported getGoogleDriveClient to resolve the import error in api/get-akb.ts.
+export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     const auth = await getAuthClient();
     return google.drive({ version: 'v3', auth });
 }
