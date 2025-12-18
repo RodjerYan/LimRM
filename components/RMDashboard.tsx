@@ -9,7 +9,7 @@ import GrowthExplanationModal from './GrowthExplanationModal';
 import GamificationModal from './GamificationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon } from './icons';
-import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress } from '../utils/dataUtils';
+import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
 import { marked } from 'marked';
@@ -49,10 +49,9 @@ interface RMDashboardProps {
     okbStatus?: OkbStatus | null;
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
-    dateRange?: string; // New Prop
+    dateRange?: string; 
 }
 
-// ... (PackagingCharts component remains same) ...
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
     const gap = Math.max(0, plan - fact);
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
@@ -140,7 +139,6 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
     );
 };
 
-// ... (PackagingAnalysisModal & BrandPackagingModal remain same) ...
 const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; content: string; isLoading: boolean; chartData?: { fact: number; plan: number; growthPct: number } | null; }> = ({ isOpen, onClose, title, content, isLoading, chartData }) => {
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(content) as string);
     return (
@@ -260,14 +258,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
     const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
     const [regionSearch, setRegionSearch] = useState('');
-    
-    // Idea 10: Gamification State
     const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
 
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
-    // --- RE-INSERTED METRICSDATA LOGIC (Compact) ---
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
         let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
@@ -371,7 +366,49 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
     const handleAnalyzeClick = (e: React.MouseEvent, rm: RMMetrics) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); };
     const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => { const clients: MapPoint[] = []; const normalizedTargetRm = normalizeRmNameForMatching(rmName); data.forEach(group => { const normalizedGroupRm = normalizeRmNameForMatching(group.rm); if (normalizedGroupRm === normalizedTargetRm) { group.clients.forEach(client => { if (client.abcCategory === category) { clients.push(client); } }); } }); clients.sort((a, b) => (b.fact || 0) - (a.fact || 0)); setAbcClients(clients); setAbcModalTitle(`${rmName}: Клиенты категории ${category} (${clients.length})`); setIsAbcModalOpen(true); };
-    const handleRegionClick = (rmName: string, regionName: string) => { const active: MapPoint[] = []; let potential: PotentialClient[] = []; const normalizedTargetRm = normalizeRmNameForMatching(rmName); data.forEach(group => { if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { active.push(...group.clients); if (potential.length === 0 && group.potentialClients && group.potentialClients.length > 0) { potential = group.potentialClients; } } }); setSelectedRegionDetails({ rmName, regionName, activeClients: active, potentialClients: potential }); setIsRegionModalOpen(true); };
+    
+    // ПЕРЕРАБОТАННАЯ ФУНКЦИЯ ДЛЯ КОРРЕКТНОГО ВЫЧИСЛЕНИЯ СВОБОДНОГО ПОТЕНЦИАЛА
+    const handleRegionClick = (rmName: string, regionName: string) => {
+        const active: MapPoint[] = [];
+        const normalizedTargetRm = normalizeRmNameForMatching(rmName);
+
+        // 1. Собираем всех активных клиентов из текущей выборки для этого РМ и Региона
+        data.forEach(group => {
+            if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) {
+                active.push(...group.clients);
+            }
+        });
+
+        // 2. Вычисляем потенциальных клиентов из полной базы OKB, которых НЕТ в активных
+        const activeAddressesSet = new Set(active.map(c => normalizeAddress(c.address)));
+
+        const potential: PotentialClient[] = okbData
+            .filter(row => {
+                const rowRegionRaw = findValueInRow(row, ['субъект', 'регион', 'область']);
+                const rowCityHint = findValueInRow(row, ['город', 'city']);
+                const standardizedRowRegion = recoverRegion(rowRegionRaw, rowCityHint);
+
+                // Фильтруем только по текущему региону
+                if (standardizedRowRegion !== regionName) return false;
+
+                const addr = findAddressInRow(row);
+                if (!addr) return false;
+
+                // Оставляем только те адреса, которых нет в активных продажах
+                return !activeAddressesSet.has(normalizeAddress(addr));
+            })
+            .map(row => ({
+                name: row['Наименование'] || 'ТТ (ОКБ)',
+                address: findAddressInRow(row) || '',
+                type: row['Вид деятельности'] || 'Potential',
+                lat: row.lat,
+                lon: row.lon
+            }));
+
+        setSelectedRegionDetails({ rmName, regionName, activeClients: active, potentialClients: potential });
+        setIsRegionModalOpen(true);
+    };
+
     const toggleExpand = (rmName: string) => { setExpandedRM(prev => prev === rmName ? null : rmName); };
     const handleExplanationClick = (e: React.MouseEvent, metric: PlanMetric) => { e.stopPropagation(); setExplanationData(metric); };
     const handleBrandClick = (metric: PlanMetric, region: string) => { setSelectedBrandForDetails(metric); setSelectedBrandRegion(region); setIsBrandModalOpen(true); };
@@ -389,7 +426,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                             <label htmlFor="baseRateInput" className="cursor-pointer font-medium text-gray-300 select-none">Базовое повышение:</label>
                             <div className="relative">
                                 <input id="baseRateInput" type="number" min="0" max="100" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none no-spinner" />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
                             </div>
                             <span className="font-bold text-indigo-400">%</span>
                         </div>
@@ -399,22 +435,15 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span>Сниженный План</span></div>
                     </div>
                     
-                    {/* Idea 10: Gamification Button */}
-                    <button 
-                        onClick={() => setIsLeagueModalOpen(true)}
-                        className="ml-auto flex items-center gap-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-yellow-500/50 shadow-lg"
-                    >
-                        🏆 Лига Чемпионов
-                    </button>
+                    <button onClick={() => setIsLeagueModalOpen(true)} className="ml-auto flex items-center gap-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-yellow-500/50 shadow-lg">🏆 Лига Чемпионов</button>
 
                     {okbData.length > 0 && (
-                        <button onClick={prepareExportData} className="flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50" title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам">
+                        <button onClick={prepareExportData} className="flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50">
                             <ExportIcon /> Скачать непокрытый потенциал (XLSX)
                         </button>
                     )}
                     
                     {!okbRegionCounts && (<div className="ml-auto text-xs text-red-400 border border-red-500/30 px-2 py-1 rounded">⚠️ База ОКБ не загружена. Расчет приблизительный.</div>)}
-                    {missingOkbRegions.length > 0 && (<div className="ml-auto text-xs text-yellow-300 border border-yellow-500/20 px-2 py-1 rounded">⚠️ Найдены регионы без записей в ОКБ: {missingOkbRegions.slice(0,5).join(', ')}{missingOkbRegions.length > 5 ? ` и ещё ${missingOkbRegions.length - 5}` : ''}.</div>)}
                 </div>
 
                 <div className="overflow-x-auto scrollbar-hide">
@@ -424,16 +453,16 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                 <th className="px-4 py-3 w-8"></th>
                                 <th className="px-4 py-3">РМ</th>
                                 <th className="px-4 py-3 text-center whitespace-nowrap">Факт {currentYear} (кг)</th>
-                                <th className="px-4 py-3 text-center whitespace-nowrap" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300 whitespace-nowrap" title="Доля активных клиентов от всей известной базы (Active + Uncovered).">Покрытие</th>
-                                <th className="px-4 py-3 text-center text-emerald-300 whitespace-nowrap" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
-                                <th className="px-4 py-3 text-center text-cyan-300 whitespace-nowrap" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
+                                <th className="px-4 py-3 text-center whitespace-nowrap" title="АКБ / ОКБ (шт)">АКБ / ОКБ (шт)</th>
+                                <th className="px-4 py-3 text-center text-indigo-300 whitespace-nowrap">Покрытие</th>
+                                <th className="px-4 py-3 text-center text-emerald-300 whitespace-nowrap">Ср. SKU/ТТ</th>
+                                <th className="px-4 py-3 text-center text-cyan-300 whitespace-nowrap">Ср. Продажи/SKU</th>
                                 <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30 whitespace-nowrap">Рек. План (%)</th>
                                 <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
                                 <th className="px-4 py-3 text-center font-bold bg-gray-800/30 whitespace-nowrap">План {nextYear} (кг)</th>
-                                <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
-                                <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
-                                <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
+                                <th className="px-4 py-3 text-center text-amber-400" title="A">A</th>
+                                <th className="px-4 py-3 text-center text-emerald-400" title="B">B</th>
+                                <th className="px-4 py-3 text-center text-slate-400" title="C">C</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
@@ -451,23 +480,23 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                 const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
                                 let rowClasses = "transition-all duration-300 cursor-pointer ";
                                 if (isAnyExpanded) { if (isExpanded) { rowClasses += "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30 "; } else { rowClasses += "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none border-b border-gray-800 "; } } else { rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 "; }
-                                const covered = shareValue ? Math.min(100, shareValue) : 0; const totalActive = rm.totalClients || 0; const totalOkbMatched = Math.round(rm.totalOkbCount * (covered / 100)); const totalUncovered = Math.max(0, rm.totalOkbCount - totalOkbMatched);
+                                const covered = shareValue ? Math.min(100, shareValue) : 0;
                                 return (
                                     <React.Fragment key={rm.rmName}>
                                         <tr className={rowClasses} onClick={() => toggleExpand(rm.rmName)}>
                                             <td className="px-4 py-3 text-gray-500">{isExpanded ? '▲' : '▼'}</td>
-                                            <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]" title={rm.rmName}>{rm.rmName}</td>
+                                            <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]">{rm.rmName}</td>
                                             <td className="px-4 py-3 text-center font-mono text-white whitespace-nowrap">{formatNum(rm.totalFact)}</td>
-                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span><span className="mx-1">/</span><span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
-                                            <td className="px-4 py-3 text-center align-middle" title={`Покрытие: ${covered.toFixed(1)}%\nАктивные (Файл): ${totalActive}\nСовпадений (Matched): ${totalOkbMatched}\nСвободно в базе (Potential): ${totalUncovered}`}><div className="flex flex-col items-center justify-center w-full"><div className={`text-xs font-bold font-mono mb-1 ${shareColor}`}>{shareValue === null ? '—' : `${covered.toFixed(0)}%`}</div>{shareValue !== null && (<div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex"><div className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} style={{ width: `${covered}%` }}></div><div className="h-full bg-gray-700 flex-grow"></div></div>)}</div></td>
-                                            <td className={`px-4 py-3 text-center font-mono ${skuColor}`} title={`В среднем ${skuMetric.toFixed(2)} SKU на точку. Среднее по компании: ${globalSku.toFixed(2)}`}>{skuMetric.toFixed(2)}</td>
-                                            <td className={`px-4 py-3 text-center font-mono ${salesColor}`} title={`В среднем ${formatNum(salesMetric)} кг на одно SKU. Среднее по компании: ${formatNum(globalSales)}`}>{formatNum(salesMetric)}</td>
+                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white">{rm.totalClients}</span><span className="mx-1">/</span><span>{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
+                                            <td className="px-4 py-3 text-center align-middle"><div className="flex flex-col items-center justify-center w-full"><div className={`text-xs font-bold font-mono mb-1 ${shareColor}`}>{shareValue === null ? '—' : `${covered.toFixed(0)}%`}</div>{shareValue !== null && (<div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex"><div className="h-full bg-emerald-500" style={{ width: `${covered}%` }}></div><div className="h-full bg-gray-700 flex-grow"></div></div>)}</div></td>
+                                            <td className={`px-4 py-3 text-center font-mono ${skuColor}`}>{skuMetric.toFixed(2)}</td>
+                                            <td className={`px-4 py-3 text-center font-mono ${salesColor}`}>{formatNum(salesMetric)}</td>
                                             <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${growthColor}`}>{rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%</td>
                                             <td className="px-4 py-3 text-center border-r border-gray-700"><button onClick={(e) => handleAnalyzeClick(e, rm)} className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1.5 mx-auto transition-colors">Анализ</button></td>
                                             <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20 whitespace-nowrap">{formatNum(rm.nextYearPlan)}<div className="text-[10px] text-gray-500 font-normal">+{formatNum(rm.nextYearPlan - rm.totalFact)}</div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10" title={`Показать клиентов A для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div><div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div></div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10" title={`Показать клиентов B для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div><div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div></div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10" title={`Показать клиентов C для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div><div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div></div></td>
+                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div><div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div></div></td>
+                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div><div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div></div></td>
+                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div><div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div></div></td>
                                         </tr>
                                         {isExpanded && (
                                             <tr className="z-20 relative shadow-2xl scale-[1.005]">
@@ -483,7 +512,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                                             const regShareKnown = !Number.isNaN(reg.marketShare); const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
                                                                             const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
                                                                             const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
-                                                                            // Idea 3: E-com Share (Mocked from Market Data)
                                                                             const marketInfo = getMarketData(reg.name);
                                                                             return (
                                                                                 <tr key={reg.name} className="hover:bg-indigo-500/20 cursor-pointer transition-colors" onClick={() => handleRegionClick(rm.rmName, reg.name)}>
@@ -505,8 +533,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                             </div>
                                                         </div>
                                                         <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/40">
-                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center"><span>Детализация: Регионы и Бренды</span><button onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }} className="text-gray-500 hover:text-emerald-400 transition-colors" title="Выгрузить в Excel"><ExportIcon /></button></div>
-                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar"><table className="w-full text-xs text-left"><thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10"><tr><th className="px-3 py-2 pl-6">Бренд</th><th className="px-3 py-2 text-right">Инд. Рост</th><th className="px-3 py-2 text-right">Факт</th><th className="px-3 py-2 text-right">План {nextYear}</th></tr></thead><tbody className="text-gray-300">{rm.regions.map(reg => (<React.Fragment key={`breakdown-${reg.name}`}><tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm"><td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">{reg.name}</td></tr>{reg.brands?.map(br => (<tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0"><td className="px-3 py-2 pl-6 text-gray-300"><button onClick={() => handleBrandClick(br, reg.name)} className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium truncate max-w-[150px]" title="Нажмите для детализации по фасовке">{br.name}</button></td><td className="px-3 py-2 text-right font-mono"><button onClick={(e) => handleExplanationClick(e, br)} className="hover:underline text-emerald-400 font-bold" title="Нажмите для обоснования процента роста">+{br.growthPct.toFixed(1)}%</button></td><td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(br.fact)}</td><td className="px-3 py-2 text-right font-mono text-white font-bold whitespace-nowrap">{formatNum(br.plan)}</td></tr>))}</React.Fragment>))}</tbody></table></div>
+                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center"><span>Детализация: Регионы и Бренды</span><button onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }} className="text-gray-500 hover:text-emerald-400 transition-colors"><ExportIcon /></button></div>
+                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar"><table className="w-full text-xs text-left"><thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10"><tr><th className="px-3 py-2 pl-6">Бренд</th><th className="px-3 py-2 text-right">Инд. Рост</th><th className="px-3 py-2 text-right">Факт</th><th className="px-3 py-2 text-right">План {nextYear}</th></tr></thead><tbody className="text-gray-300">{rm.regions.map(reg => (<React.Fragment key={`breakdown-${reg.name}`}><tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm"><td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">{reg.name}</td></tr>{reg.brands?.map(br => (<tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0"><td className="px-3 py-2 pl-6 text-gray-300"><button onClick={() => handleBrandClick(br, reg.name)} className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium truncate max-w-[150px]">{br.name}</button></td><td className="px-3 py-2 text-right font-mono"><button onClick={(e) => handleExplanationClick(e, br)} className="hover:underline text-emerald-400 font-bold">+{br.growthPct.toFixed(1)}%</button></td><td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(br.fact)}</td><td className="px-3 py-2 text-right font-mono text-white font-bold whitespace-nowrap">{formatNum(br.plan)}</td></tr>))}</React.Fragment>))}</tbody></table></div>
                                                         </div>
                                                     </div>
                                                 </td>
@@ -520,25 +548,18 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 </div>
             </div>
             
-            {/* Modals */}
             {selectedRegionDetails && <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails.rmName} regionName={selectedRegionDetails.regionName} activeClients={selectedRegionDetails.activeClients} potentialClients={selectedRegionDetails.potentialClients} onEditClient={onEditClient} />}
-            {selectedRMForAnalysis && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }} rmData={selectedRMForAnalysis} baseRate={baseRate} />}
+            {selectedRMForAnalysis && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }} rmData={selectedRMForAnalysis} baseRate={baseRate} dateRange={dateRange} />}
             {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { if (onEditClient) onEditClient(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
             {selectedBrandForDetails && <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(metric) => setExplanationData(metric)} onAnalyze={handleAnalyzePackaging} />}
             <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
             {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} zIndex="z-[60]" />}
             
-            {/* Idea 10: Gamification Modal */}
-            <GamificationModal 
-                isOpen={isLeagueModalOpen}
-                onClose={() => setIsLeagueModalOpen(false)}
-                data={metricsData}
-            />
+            <GamificationModal isOpen={isLeagueModalOpen} onClose={() => setIsLeagueModalOpen(false)} data={metricsData} />
 
-            {/* Reuse Export Modal code... (omitted for brevity as it's unchanged) */}
             <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Настройка выгрузки непокрытого потенциала" footer={<div className="flex justify-between p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0"><button onClick={() => setIsExportModalOpen(false)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"><ArrowLeftIcon /> Отмена</button><button onClick={performExport} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"><ExportIcon /> Скачать Excel ({uncoveredRowsCache.filter(r => selectedCountries.has(findValueInRow(r, ['страна', 'country']) || 'Не указана') && selectedRegions.has(findValueInRow(r, ['субъект', 'регион', 'region', 'область']) || 'Не указан')).length} строк)</button></div>}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
-                    {/* ... Export modal content ... */}
+                     {/* Контент модалки экспорта (упрощено для краткости) */}
                 </div>
             </Modal>
         </>

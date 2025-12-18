@@ -15,6 +15,7 @@ import { RMDashboard } from './components/RMDashboard';
 import Notification from './components/Notification';
 import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
+import AddressEditModal from './components/AddressEditModal'; // Добавлен импорт
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 
 import { 
@@ -74,8 +75,10 @@ const App: React.FC = () => {
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], packaging: [], region: [] });
     
+    // Modals state
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
+    const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); // Для модалки редактирования
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
@@ -83,6 +86,46 @@ const App: React.FC = () => {
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
+
+    // --- LOGIC: Handle Data Updates from Edit Modal ---
+    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
+        // 1. Обновляем плоский список всех активных клиентов (для карты)
+        setAllActiveClients(prev => {
+            const index = prev.findIndex(c => c.key === oldKey);
+            if (index !== -1) {
+                const updated = [...prev];
+                updated[index] = newPoint;
+                return updated;
+            }
+            return [...prev, newPoint];
+        });
+
+        // 2. Обновляем агрегированные данные (для таблиц и расчетов)
+        setAllData(prev => prev.map(group => {
+            const clientIndex = group.clients.findIndex(c => c.key === oldKey);
+            if (clientIndex !== -1) {
+                const updatedClients = [...group.clients];
+                updatedClients[clientIndex] = newPoint;
+                return { ...group, clients: updatedClients };
+            }
+            return group;
+        }));
+
+        // 3. Если это был неопознанный адрес, убираем его из списка неопознанных
+        setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey));
+        
+        addNotification('Данные успешно обновлены локально', 'success');
+    }, [addNotification]);
+
+    const handleDeleteClient = useCallback((key: string) => {
+        setAllActiveClients(prev => prev.filter(c => c.key !== key));
+        setAllData(prev => prev.map(group => ({
+            ...group,
+            clients: group.clients.filter(c => c.key !== key)
+        })));
+        setEditingClient(null);
+        addNotification('Запись удалена', 'info');
+    }, [addNotification]);
 
     // --- STEP 1: RESTORE FROM INDEXED DB ---
     useEffect(() => {
@@ -99,7 +142,6 @@ const App: React.FC = () => {
                     setAllActiveClients((saved.allData || []).flatMap((row: any) => row.clients || []));
                     
                     if (saved.allData?.length > 0) setActiveModule('amp');
-                    console.log('Restored analytics and OKB from IndexedDB');
                 }
             } catch (e) {
                 console.warn('Restore failed:', e);
@@ -112,7 +154,6 @@ const App: React.FC = () => {
 
     // --- STEP 2: CLOUD SYNC ---
     const checkCloudChanges = useCallback(async () => {
-        // КРИТИЧНО: Не запускаем синхронизацию, пока ОКБ не готова (из кеша или сети)
         if (isRestoring || !okbStatus || okbStatus.status !== 'ready') return;
 
         try {
@@ -221,7 +262,7 @@ const App: React.FC = () => {
 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true;
-                let isFirstChunkOfFile = true; // Сбрасываем для каждого файла
+                let isFirstChunkOfFile = true;
 
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
@@ -232,7 +273,7 @@ const App: React.FC = () => {
                             type: 'PROCESS_CHUNK', 
                             payload: { rawData: result.rows, isFirstChunk: isFirstChunkOfFile, fileName: file.name } 
                         });
-                        isFirstChunkOfFile = false; // Последующие чанки ЭТОГО файла не содержат заголовков
+                        isFirstChunkOfFile = false;
                     }
                     hasMore = result.hasMore;
                     offset += 5000;
@@ -263,7 +304,7 @@ const App: React.FC = () => {
     const summaryMetrics = useMemo(() => {
         const baseMetrics = calculateSummaryMetrics(filteredData);
         return baseMetrics ? { ...baseMetrics, totalActiveClients: allActiveClients.length } : null;
-    }, [filteredData, allActiveClients]);
+    }, [filteredData, allActiveClients.length]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
@@ -326,7 +367,7 @@ const App: React.FC = () => {
                                 potentialClients={potentialClients}
                                 activeClients={allActiveClients}
                                 flyToClientKey={flyToClientKey}
-                                onEditClient={() => {}}
+                                onEditClient={setEditingClient} // ПЕРЕДАЕМ ФУНКЦИЮ
                             />
                             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                 <div className="lg:col-span-1">
@@ -340,7 +381,7 @@ const App: React.FC = () => {
                         </div>
                     )}
                     {activeModule === 'dashboard' && (
-                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} />
+                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
                     )}
                 </div>
             </main>
@@ -349,8 +390,22 @@ const App: React.FC = () => {
                 {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
             </div>
 
-            {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={() => {}} />}
-            {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={() => {}} />}
+            {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
+            {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
+            
+            {/* ПОДКЛЮЧЕНО МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ */}
+            {editingClient && (
+                <AddressEditModal 
+                    isOpen={!!editingClient} 
+                    onClose={() => setEditingClient(null)} 
+                    onBack={() => setEditingClient(null)} 
+                    data={editingClient} 
+                    onDataUpdate={handleDataUpdate}
+                    onStartPolling={() => {}} // В этой версии поллинг не требуется, так как работаем с кэшем напрямую
+                    onDelete={handleDeleteClient}
+                    globalTheme="dark"
+                />
+            )}
         </div>
     );
 };
