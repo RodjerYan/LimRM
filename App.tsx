@@ -571,7 +571,7 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED AUTOMATIC CHUNKED CLOUD LOADER (JSON, SEQUENTIAL)
+    // OPTIMIZED AUTOMATIC CHUNKED CLOUD LOADER (SPEED: 1 chunk / 2.5s)
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -613,7 +613,7 @@ const App: React.FC = () => {
                         const files = await res.json();
                         files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
                     }
-                    // Wait between requests
+                    // Wait between metadata requests
                     await new Promise(r => setTimeout(r, 250));
                 } catch (e) {
                     console.warn(`Failed to list files for month ${m}`, e);
@@ -627,10 +627,11 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content SEQUENTIALLY with AUTOMATIC CHUNKING
+            // Step 3: Fetch Content SEQUENTIALLY with 2.5s TARGET INTERVAL
             let filesProcessed = 0;
             const totalFiles = allFiles.length;
             const CHUNK_LIMIT = 5000;
+            const TARGET_INTERVAL_MS = 2500; // Целевая скорость: 1 порция в 2.5 секунды
             
             for (const file of allFiles) {
                 filesProcessed++;
@@ -638,9 +639,11 @@ const App: React.FC = () => {
                 let hasMore = true;
                 
                 while (hasMore) {
+                    const cycleStartTime = Date.now();
+                    
                     setProcessingState(prev => ({ 
                         ...prev, 
-                        message: `Загрузка ${file.name}: порция с ${offset} строки...`,
+                        message: `Загрузка ${file.name}: строки ${offset + 1} - ${offset + CHUNK_LIMIT}...`,
                         progress: Math.round(((filesProcessed - 1) / totalFiles) * 80)
                     }));
 
@@ -662,7 +665,6 @@ const App: React.FC = () => {
                             
                             if (result.rows && Array.isArray(result.rows)) {
                                  if (result.rows.length > 0) {
-                                     // Logic to detect headers (first chunk of first file)
                                      let isFirst = false;
                                      if (!cloudHeadersProcessed.current) {
                                          cloudHeadersProcessed.current = true;
@@ -683,14 +685,11 @@ const App: React.FC = () => {
                                  hasMore = result.hasMore;
                                  offset += CHUNK_LIMIT;
                                  success = true;
-                                 
-                                 // Add small delay to keep server breathing
-                                 if (hasMore) await new Promise(r => setTimeout(r, 100));
                             } else {
                                 throw new Error('Invalid response format: rows array missing');
                             }
                             
-                            break; // Exit retry loop
+                            break; 
 
                         } catch (e) {
                             console.error(`Error loading chunk for ${file.name} (Attempt ${attempt}):`, e);
@@ -698,17 +697,20 @@ const App: React.FC = () => {
                             
                             if (attempt === 3 || isFatal) {
                                 addNotification(`Сбой загрузки части файла ${file.name}: ${(e as Error).message}`, 'error');
-                                hasMore = false; // Stop this file
+                                hasMore = false; 
                             } else {
                                 await new Promise(r => setTimeout(r, 2000 * attempt));
                             }
                         }
                     }
-                }
-                
-                // Delay between different files
-                if (filesProcessed < totalFiles) {
-                    await new Promise(r => setTimeout(r, 500));
+
+                    // Регулировка скорости загрузки до 2.5 секунд
+                    const timeElapsed = Date.now() - cycleStartTime;
+                    const waitTime = Math.max(0, TARGET_INTERVAL_MS - timeElapsed);
+                    
+                    if (hasMore || filesProcessed < totalFiles) {
+                         await new Promise(r => setTimeout(r, waitTime));
+                    }
                 }
             }
 

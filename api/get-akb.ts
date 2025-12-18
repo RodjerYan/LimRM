@@ -35,12 +35,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const offset = parseInt(req.query.offset as string || '0', 10);
             const limit = parseInt(req.query.limit as string || '5000', 10);
             
-            // Загружаем контент
-            const allContent = await fetchFileContent(fileId);
+            // ВАЖНО: Вычисляем диапазон для Google Sheets API (1-indexed)
+            // Добавляем 1 к смещению, так как строки в Sheets начинаются с 1
+            const startRow = offset + 1;
+            const endRow = offset + limit;
+            const range = `A${startRow}:BZ${endRow}`;
+
+            // Загружаем только нужный кусок напрямую из Google
+            const chunk = await fetchFileContent(fileId, range);
             
-            // Берем только нужный срез данных
-            const chunk = allContent.slice(offset, offset + limit);
-            const hasMore = offset + limit < allContent.length;
+            // Если вернулось меньше строк, чем лимит — файл закончился
+            const hasMore = chunk.length >= limit;
             
             res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
             return res.status(200).json({
@@ -48,7 +53,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 rows: chunk,
                 offset,
                 limit,
-                totalRows: allContent.length,
+                // Мы не знаем totalRows заранее без лишнего запроса, но hasMore достаточно
                 hasMore
             });
         }

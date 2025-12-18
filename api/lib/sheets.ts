@@ -8,7 +8,7 @@ const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
 
-// ID корневых папок с данными по годам (из вашего запроса)
+// ID корневых папок с данными по годам
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
     '2026': '1S3O-kl_ct4dfh11uG8rLRDeNUVeF3o17'
@@ -112,10 +112,9 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
                 throw error;
             }
 
-            // Exponential backoff: 2s, 4s, 8s, 16s... + Jitter
             const baseDelay = 2000 * Math.pow(2, attempt - 1);
             const jitter = Math.random() * 1000;
-            const delay = Math.min(baseDelay + jitter, 30000); // Max wait 30s
+            const delay = Math.min(baseDelay + jitter, 30000); 
 
             console.warn(`[${context}] Attempt ${attempt} failed (Status ${status}). Retrying in ${Math.round(delay)}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -213,8 +212,6 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     }), 'batchUpdateOKBStatus');
 }
 
-// --- NEW GRANULAR METHODS ---
-
 /**
  * Returns a list of file IDs and names for a specific year/month.
  */
@@ -228,10 +225,9 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
     if (!mName) throw new Error(`Invalid month index: ${month}`);
     
     const engMonthName = MONTH_MAP[mName];
-    if (!engMonthName) return []; // Should not happen based on maps
+    if (!engMonthName) return []; 
 
     return callWithRetry(async () => {
-        // 1. Find Month Folder
         const folderListRes = await drive.files.list({
             q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
             fields: 'files(id, name)',
@@ -245,11 +241,10 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
             return [];
         }
 
-        // 2. List Spreadsheets in Month Folder
         const fileListRes = await drive.files.list({
             q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
             fields: 'files(id, name)',
-            pageSize: 100 // Limit to 100 files per month
+            pageSize: 100 
         });
 
         return (fileListRes.data.files || []).map(f => ({
@@ -261,8 +256,6 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
 
 /**
  * Exports a spreadsheet file as a CSV stream.
- * This is efficient for large files as it pipes data directly.
- * Added retry logic to handle potential 500 errors from Google Drive API.
  */
 export async function exportFileAsCsv(fileId: string): Promise<Readable> {
     const drive = await getGoogleDriveClient();
@@ -278,28 +271,25 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
 }
 
 /**
- * Fetches content of a specific spreadsheet file (Legacy JSON method).
- * Kept for backward compatibility or small files if needed.
+ * Fetches content of a specific spreadsheet file with optional range support.
+ * ОПТИМИЗИРОВАНО: Если передан range, запрашивает только его.
  */
-export async function fetchFileContent(fileId: string): Promise<any[][]> {
+export async function fetchFileContent(fileId: string, range: string = 'A:BZ'): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({
         spreadsheetId: fileId,
-        range: 'A:BZ', 
+        range: range, 
         valueRenderOption: 'UNFORMATTED_VALUE',
-    }), `fetchFileContent-${fileId}`) as any;
+    }), `fetchFileContent-${fileId}-${range}`) as any;
 
     return res.data.values || [];
 }
 
 /**
  * Legacy support - kept but deprecated.
- * DYNAMICALLY fetches AKB data by traversing Google Drive folders.
  */
 export async function getAkbData(year?: string, quarter?: number, month?: number): Promise<any[][]> {
-    // This function is kept for backward compatibility but the frontend should move to 
-    // listFilesForMonth and fetchFileContent to avoid timeouts.
     const fileList: { id: string, name: string }[] = [];
     
     let targetMonths: number[] = [];
@@ -315,7 +305,6 @@ export async function getAkbData(year?: string, quarter?: number, month?: number
     const allData: any[][] = [];
     let headersSet = false;
 
-    // Sequential fetch to be safe
     for (const file of fileList) {
         try {
             const rows = await fetchFileContent(file.id);
