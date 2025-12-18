@@ -571,7 +571,7 @@ const App: React.FC = () => {
         }
     }, [initWorker, addNotification]);
 
-    // OPTIMIZED SEQUENTIAL CLOUD LOADER (JSON, SEQUENTIAL)
+    // OPTIMIZED AUTOMATIC CHUNKED CLOUD LOADER (JSON, SEQUENTIAL)
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         const { year, quarter, month } = params;
         
@@ -614,7 +614,7 @@ const App: React.FC = () => {
                         files.forEach((f: any) => allFiles.push({ ...f, monthIndex: m }));
                     }
                     // Wait between requests
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 250));
                 } catch (e) {
                     console.warn(`Failed to list files for month ${m}`, e);
                 }
@@ -627,83 +627,88 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Step 3: Fetch Content SEQUENTIALLY as JSON
-            let processedCount = 0;
-            const total = allFiles.length;
+            // Step 3: Fetch Content SEQUENTIALLY with AUTOMATIC CHUNKING
+            let filesProcessed = 0;
+            const totalFiles = allFiles.length;
+            const CHUNK_LIMIT = 5000;
             
-            // Use a simple for...of loop for strict sequential processing
             for (const file of allFiles) {
-                processedCount++;
+                filesProcessed++;
+                let offset = 0;
+                let hasMore = true;
                 
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    message: `Загрузка: ${Math.round((processedCount / total) * 100)}% (${processedCount}/${total}) - ${file.name}...`,
-                    progress: Math.round((processedCount / total) * 80)
-                }));
+                while (hasMore) {
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        message: `Загрузка ${file.name}: порция с ${offset} строки...`,
+                        progress: Math.round(((filesProcessed - 1) / totalFiles) * 80)
+                    }));
 
-                // Add delay between files to respect API quotas
-                if (processedCount > 1) {
-                    await new Promise(r => setTimeout(r, 1500));
-                }
+                    let success = false;
+                    for (let attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            const url = `/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_LIMIT}`;
+                            const contentRes = await fetch(url);
+                            
+                            if (!contentRes.ok) {
+                                if (contentRes.status === 429 || contentRes.status >= 500) {
+                                    throw new Error(`HTTP ${contentRes.status}`);
+                                } else {
+                                    throw new Error(`Fatal HTTP ${contentRes.status}`);
+                                }
+                            }
+                            
+                            const result = await contentRes.json();
+                            
+                            if (result.rows && Array.isArray(result.rows)) {
+                                 if (result.rows.length > 0) {
+                                     // Logic to detect headers (first chunk of first file)
+                                     let isFirst = false;
+                                     if (!cloudHeadersProcessed.current) {
+                                         cloudHeadersProcessed.current = true;
+                                         isFirst = true;
+                                     }
 
-                let success = false;
-                // Retry logic per file
-                for (let attempt = 1; attempt <= 3; attempt++) {
-                    try {
-                        const contentRes = await fetch(`/api/get-akb?fileId=${file.id}`);
-                        
-                        if (!contentRes.ok) {
-                            if (contentRes.status === 429 || contentRes.status >= 500) {
-                                // Quota/Server error - throw to trigger retry
-                                throw new Error(`HTTP ${contentRes.status}`);
+                                     const chunkMsg: WorkerInputChunk = {
+                                         type: 'PROCESS_CHUNK',
+                                         payload: {
+                                             rawData: result.rows,
+                                             isFirstChunk: isFirst,
+                                             fileName: file.name
+                                         }
+                                     };
+                                     workerRef.current?.postMessage(chunkMsg);
+                                 }
+
+                                 hasMore = result.hasMore;
+                                 offset += CHUNK_LIMIT;
+                                 success = true;
+                                 
+                                 // Add small delay to keep server breathing
+                                 if (hasMore) await new Promise(r => setTimeout(r, 100));
                             } else {
-                                // Client error - fatal
-                                throw new Error(`Fatal HTTP ${contentRes.status}`);
+                                throw new Error('Invalid response format: rows array missing');
+                            }
+                            
+                            break; // Exit retry loop
+
+                        } catch (e) {
+                            console.error(`Error loading chunk for ${file.name} (Attempt ${attempt}):`, e);
+                            const isFatal = (e as Error).message.includes('Fatal');
+                            
+                            if (attempt === 3 || isFatal) {
+                                addNotification(`Сбой загрузки части файла ${file.name}: ${(e as Error).message}`, 'error');
+                                hasMore = false; // Stop this file
+                            } else {
+                                await new Promise(r => setTimeout(r, 2000 * attempt));
                             }
                         }
-                        
-                        // NEW: Parse as JSON directly (No blob/PapaParse)
-                        const result = await contentRes.json();
-                        
-                        if (result.rows && Array.isArray(result.rows)) {
-                             // Logic to detect headers (first chunk of first file)
-                             let isFirst = false;
-                             if (!cloudHeadersProcessed.current) {
-                                 cloudHeadersProcessed.current = true;
-                                 isFirst = true;
-                             }
-
-                             const chunkMsg: WorkerInputChunk = {
-                                 type: 'PROCESS_CHUNK',
-                                 payload: {
-                                     rawData: result.rows,
-                                     isFirstChunk: isFirst,
-                                     fileName: file.name
-                                 }
-                             };
-                             workerRef.current?.postMessage(chunkMsg);
-
-                             if (result.truncated) {
-                                 addNotification(`Файл ${file.name} урезан (${result.totalRows} строк, загружено 5000).`, 'warning');
-                             }
-                             success = true;
-                        } else {
-                            throw new Error('Invalid response format: rows array missing');
-                        }
-                        
-                        break; // Exit retry loop on success
-
-                    } catch (e) {
-                        console.error(`Error loading ${file.name} (Attempt ${attempt}):`, e);
-                        const isFatal = (e as Error).message.includes('Fatal');
-                        
-                        if (attempt === 3 || isFatal) {
-                            addNotification(`Сбой загрузки ${file.name}: ${(e as Error).message}`, 'error');
-                        } else {
-                            // Exponential backoff: 3s, 6s, 9s
-                            await new Promise(r => setTimeout(r, 3000 * attempt));
-                        }
                     }
+                }
+                
+                // Delay between different files
+                if (filesProcessed < totalFiles) {
+                    await new Promise(r => setTimeout(r, 500));
                 }
             }
 
