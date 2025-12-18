@@ -7,7 +7,6 @@ import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
 import RoiGenome from './components/modules/RoiGenome'; 
-// Fix: Added missing imports for UI components to resolve "Cannot find name" errors.
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import Filters from './components/Filters';
 import PotentialChart from './components/PotentialChart';
@@ -40,10 +39,7 @@ import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-type Theme = 'dark' | 'light';
-
 const App: React.FC = () => {
-    // Fix: Using imported ApiKeyErrorDisplay.
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
     const [activeModule, setActiveModule] = useState('adapta');
@@ -52,7 +48,7 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // --- LIVE SYNC & PERSISTENCE ---
+    // --- PERSISTENCE ---
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
@@ -69,12 +65,6 @@ const App: React.FC = () => {
     const workerRef = useRef<Worker | null>(null);
     const aggregatedDataBuffer = useRef<AggregatedDataRow[]>([]);
     const unidentifiedBuffer = useRef<UnidentifiedRow[]>([]);
-    const cloudHeadersProcessed = useRef(false);
-
-    // Modals & Selection
-    const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
-    const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
-    const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     // Data State
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -83,8 +73,10 @@ const App: React.FC = () => {
     const [allActiveClients, setAllActiveClients] = useState<MapPoint[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], packaging: [], region: [] });
-    const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
-    const [theme, setTheme] = useState<Theme>('dark');
+    
+    const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
+    const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
+    const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
@@ -92,26 +84,25 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- STEP 1: RESTORE FROM LOCAL DB ON MOUNT ---
+    // --- STEP 1: RESTORE FROM INDEXED DB ---
     useEffect(() => {
         const restore = async () => {
             try {
                 const saved = await loadAnalyticsState();
                 if (saved) {
-                    setAllData(saved.allData);
-                    setUnidentifiedRows(saved.unidentifiedRows);
-                    setOkbRegionCounts(saved.okbRegionCounts);
+                    setAllData(saved.allData || []);
+                    setUnidentifiedRows(saved.unidentifiedRows || []);
+                    setOkbRegionCounts(saved.okbRegionCounts || null);
+                    setOkbData(saved.okbData || []);
+                    setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    const activeClientsFlat = saved.allData.flatMap((row: any) => row.clients || []);
-                    setAllActiveClients(activeClientsFlat);
+                    setAllActiveClients((saved.allData || []).flatMap((row: any) => row.clients || []));
                     
-                    // Skip 'adapta' if we have data
-                    if (saved.allData.length > 0) setActiveModule('amp');
-                    
-                    console.log('Restored state from IndexedDB:', saved.versionHash);
+                    if (saved.allData?.length > 0) setActiveModule('amp');
+                    console.log('Restored analytics and OKB from IndexedDB');
                 }
             } catch (e) {
-                console.warn('Failed to restore state:', e);
+                console.warn('Restore failed:', e);
             } finally {
                 setIsRestoring(false);
             }
@@ -119,60 +110,58 @@ const App: React.FC = () => {
         restore();
     }, []);
 
-    // --- STEP 2: BACKGROUND SYNC CHECK ---
+    // --- STEP 2: CLOUD SYNC ---
     const checkCloudChanges = useCallback(async () => {
+        // КРИТИЧНО: Не запускаем синхронизацию, пока ОКБ не готова (из кеша или сети)
+        if (isRestoring || !okbStatus || okbStatus.status !== 'ready') return;
+
         try {
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025&month=${new Date().getMonth() + 1}`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
                 
-                // If cloud version is different, trigger a silent or notified update
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    addNotification('Обнаружены изменения в Google Таблицах. Синхронизация...', 'info');
+                    addNotification('Данные обновлены. Синхронизация...', 'info');
                     handleStartCloudProcessing({ year: '2025', month: new Date().getMonth() + 1 }, meta.versionHash);
                 }
             }
         } catch (e) {
             setIsLiveConnected(false);
-            console.warn('Live sync check failed:', e);
         }
-    }, [lastSyncVersion, addNotification]);
+    }, [isRestoring, okbStatus, lastSyncVersion, addNotification]);
 
     useEffect(() => {
-        if (isRestoring) return;
         const timer = setInterval(checkCloudChanges, 60000);
         checkCloudChanges();
         return () => clearInterval(timer);
-    }, [isRestoring, checkCloudChanges]);
+    }, [checkCloudChanges]);
 
-    // Worker Results Finished Handler
     const handleResultFinished = useCallback(async (versionHash?: string) => {
         const aggregated = [...aggregatedDataBuffer.current];
         const unidentified = [...unidentifiedBuffer.current];
-        const activeClientsFlat = aggregated.flatMap(row => row.clients || []);
-
+        
         setAllData(aggregated);
-        setAllActiveClients(activeClientsFlat);
+        setAllActiveClients(aggregated.flatMap(row => row.clients || []));
         setUnidentifiedRows(unidentified);
         
-        // SAVE TO PERSISTENT STORAGE
         if (versionHash) {
             await saveAnalyticsState({
                 allData: aggregated,
                 unidentifiedRows: unidentified,
-                okbRegionCounts: okbRegionCounts,
-                dateRange: dateRange,
-                versionHash: versionHash
+                okbRegionCounts,
+                okbData,
+                okbStatus,
+                dateRange,
+                versionHash
             });
             setLastSyncVersion(versionHash);
             localStorage.setItem('last_sync_version', versionHash);
         }
 
-        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано' }));
-    }, [okbRegionCounts, dateRange]);
+        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Готово' }));
+    }, [okbRegionCounts, okbData, okbStatus, dateRange]);
 
-    // Initialize Worker
     const initWorker = useCallback(async (startMessage: string, fileNameForState: string) => {
         aggregatedDataBuffer.current = [];
         unidentifiedBuffer.current = [];
@@ -182,7 +171,7 @@ const App: React.FC = () => {
         try {
             const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
             if (response.ok) cacheData = await response.json();
-        } catch (error) { console.error('Cache load error', error); }
+        } catch (error) {}
 
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
@@ -204,7 +193,6 @@ const App: React.FC = () => {
                     unidentifiedBuffer.current.push(...(msg.payload as UnidentifiedRow[]));
                     break;
                 case 'result_finished':
-                    // We extract versionHash from localStorage if it was passed through the flow
                     const currentVersion = localStorage.getItem('pending_version_hash') || undefined;
                     handleResultFinished(currentVersion);
                     localStorage.removeItem('pending_version_hash');
@@ -216,9 +204,6 @@ const App: React.FC = () => {
                         workerRef.current?.postMessage({ type: 'ACK', payload: { batchId } });
                     }
                     break;
-                case 'error':
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: `Ошибка: ${msg.payload}` }));
-                    break;
             }
         };
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
@@ -229,43 +214,37 @@ const App: React.FC = () => {
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
         await initWorker(`Облако: ${year}`, `Синхронизация...`);
-        cloudHeadersProcessed.current = false;
 
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}&month=${month || 1}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
 
-            if (allFiles.length === 0) {
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Нет данных' }));
-                return;
-            }
-
             for (const file of allFiles) {
                 let offset = 0, hasMore = true;
+                let isFirstChunkOfFile = true; // Сбрасываем для каждого файла
+
                 while (hasMore) {
-                    const cycleStart = Date.now();
-                    const url = `/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`;
-                    const res = await fetch(url);
+                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
                     const result = await res.json();
                     
                     if (result.rows?.length > 0) {
-                        let isFirst = !cloudHeadersProcessed.current;
-                        if (isFirst) cloudHeadersProcessed.current = true;
-                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk: isFirst, fileName: file.name } });
+                        workerRef.current?.postMessage({ 
+                            type: 'PROCESS_CHUNK', 
+                            payload: { rawData: result.rows, isFirstChunk: isFirstChunkOfFile, fileName: file.name } 
+                        });
+                        isFirstChunkOfFile = false; // Последующие чанки ЭТОГО файла не содержат заголовков
                     }
                     hasMore = result.hasMore;
                     offset += 5000;
-                    const elapsed = Date.now() - cycleStart;
-                    await new Promise(r => setTimeout(r, Math.max(0, 1000 - elapsed)));
                 }
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка' }));
         }
     }, [initWorker]);
 
-    // Data Filtering
+    // Data Filtering & Integration
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
         okbData.forEach(row => {
@@ -280,10 +259,11 @@ const App: React.FC = () => {
         setFilteredData(applyFilters(smartData, filters));
     }, [smartData, filters]);
 
+    const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => {
         const baseMetrics = calculateSummaryMetrics(filteredData);
         return baseMetrics ? { ...baseMetrics, totalActiveClients: allActiveClients.length } : null;
-    }, [filteredData, allActiveClients.length]);
+    }, [filteredData, allActiveClients]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
@@ -292,26 +272,17 @@ const App: React.FC = () => {
     }, [okbData, allActiveClients]);
 
     return (
-        <div className={`flex min-h-screen bg-primary-dark ${theme} font-sans text-text-main overflow-hidden`}>
+        <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
 
             <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
-                {/* Header with connection and restore status */}
                 <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
                     <div className="flex items-center gap-4">
                         <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] uppercase font-bold tracking-widest transition-all ${isLiveConnected ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
                             <div className={`w-1.5 h-1.5 rounded-full ${isLiveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
-                            {isLiveConnected ? 'Sync: Connected' : 'Sync: Checking...'}
+                            {isLiveConnected ? 'Sync: Connected' : 'Sync: Offline'}
                         </div>
-                        {isRestoring && (
-                            <div className="text-indigo-400 text-[10px] font-bold animate-pulse">Восстановление из кеша...</div>
-                        )}
-                        {processingState.isProcessing && (
-                            <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold">
-                                <LoaderIcon />
-                                <span>{processingState.message} ({processingState.progress}%)</span>
-                            </div>
-                        )}
+                        {isRestoring && <div className="text-indigo-400 text-[10px] font-bold animate-pulse">Восстановление...</div>}
                     </div>
                     
                     <div className="flex items-center gap-3">
@@ -355,7 +326,6 @@ const App: React.FC = () => {
                                 potentialClients={potentialClients}
                                 activeClients={allActiveClients}
                                 flyToClientKey={flyToClientKey}
-                                theme={theme}
                                 onEditClient={() => {}}
                             />
                             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -371,12 +341,6 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} />
-                    )}
-                    {activeModule === 'agile' && (
-                        <AgileLearning data={filteredData} />
-                    )}
-                    {activeModule === 'roi-genome' && (
-                        <RoiGenome data={filteredData} />
                     )}
                 </div>
             </main>

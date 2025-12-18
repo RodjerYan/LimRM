@@ -1,13 +1,10 @@
 
-import { AggregatedDataRow, UnidentifiedRow, MapPoint } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, MapPoint, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Повышаем версию для обновления структуры
 const STORE_NAME = 'app_state';
 
-/**
- * Инициализация базы данных IndexedDB
- */
 const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -25,12 +22,14 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Сохранение всего состояния данных
+ * Сохранение всего состояния аналитики и справочников
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
   unidentifiedRows: UnidentifiedRow[];
   okbRegionCounts: Record<string, number> | null;
+  okbData: OkbDataRow[];
+  okbStatus: OkbStatus | null;
   dateRange?: string;
   versionHash: string;
 }) => {
@@ -61,9 +60,6 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
   });
 };
 
-/**
- * Очистка базы (при необходимости)
- */
 export const clearAnalyticsState = async () => {
   const db = await initDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');

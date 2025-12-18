@@ -22,7 +22,6 @@ import { getDistanceKm } from '../utils/analytics';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
-
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 
 // --- WORKER STATE ---
@@ -32,10 +31,8 @@ let state_newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
 let state_addressesToGeocode: { [rmName: string]: string[] } = {};
 let state_unidentifiedRows: UnidentifiedRow[] = [];
 let state_headers: string[] = [];
-// State variables for Forced Columns (BQ/BR)
 let state_forcedRmHeader: string | undefined;
 let state_forcedDmHeader: string | undefined;
-
 let state_hasPotentialColumn = false;
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
@@ -47,12 +44,9 @@ let state_deletedAddresses = new Set<string>();
 let state_processedRowsCount = 0;
 let state_dateRange: string | undefined = undefined;
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// --- ACK Mechanism ---
 const pendingAcks = new Set<string>();
 
-const waitForAck = (id: string, timeoutMs = 30000) => { // Increased timeout for larger batches
+const waitForAck = (id: string, timeoutMs = 30000) => {
     pendingAcks.add(id);
     return new Promise<void>((resolve, reject) => {
         const started = Date.now();
@@ -63,122 +57,46 @@ const waitForAck = (id: string, timeoutMs = 30000) => { // Increased timeout for
             } else if (Date.now() - started > timeoutMs) {
                 pendingAcks.delete(id);
                 clearInterval(interval);
-                // Fail safe: Rejecting allows catch block to log and continue
-                reject(new Error(`ACK timeout for batch ${id}`));
+                reject(new Error(`ACK timeout ${id}`));
             }
         }, 50);
     });
 };
 
-// --- HELPER: Sheet Name Sanitization with Hash Fallback ---
-const hash = (s: string) => Math.abs(s.split('').reduce((a, c) => ((a << 5) - a) + c.charCodeAt(0), 0)).toString(36);
-
-const sanitizeSheetName = (name: string): string => {
-    if (!name || name.trim() === '') return `Unknown_RM_${hash('empty')}`;
-    
-    // 1. Remove invalid chars
-    let sanitized = String(name)
-        .replace(/[\/\\\?\*\[\]\:]/g, ' ') // Replace invalid chars with space
-        .replace(/\s+/g, ' ') // Collapse multiple spaces
-        .trim();
-    
-    // 2. Remove leading/trailing apostrophes (Google Sheets restriction)
-    sanitized = sanitized.replace(/^'+|'+$/g, '');
-    
-    // 3. Robust fallback if name becomes empty or 'Unknown'
-    if (sanitized === '' || sanitized === 'Unknown_RM') {
-        return `Unknown_RM_${hash(name)}`;
-    }
-    
-    // 4. Truncate to 99 chars (safe limit)
-    if (sanitized.length > 99) {
-        sanitized = sanitized.substring(0, 99);
-    }
-    
-    return sanitized;
-};
-
-// --- HELPER: Aggressive Key Normalization ---
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
-    return String(key)
-        .toLowerCase()
-        .replace(/\u00A0/g, ' ') 
-        .replace(/[\r\n\t]/g, '') 
-        .replace(/\s+/g, '') 
-        .trim();
+    return String(key).toLowerCase().replace(/[\r\n\t\s\u00A0]/g, '').trim();
 };
 
 const isValidManagerValue = (val: string): boolean => {
     if (!val) return false;
     const v = String(val).trim().toLowerCase();
     const stopWords = ['нет специализации', 'нет', 'для ', 'без ', 'корм', 'кошек', 'собак', 'стерилиз', 'чувствител', 'пород', 'weight', 'adult', 'junior', 'kitten', 'puppy', 'специализ', 'продук', 'товар'];
-    if (stopWords.some(w => v.includes(w))) return false;
-    if (v.length < 2) return false; 
-    return true;
+    return !stopWords.some(w => v.includes(w)) && v.length >= 2;
 };
 
 const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): string => {
-    if (!row) return '';
     const rowKeys = Object.keys(row);
-    
-    const targetStrict = strictKeys.map(k => normalizeHeaderKey(k));
-    const targetLoose = looseKeys.map(k => normalizeHeaderKey(k));
-    
+    const targetStrict = strictKeys.map(normalizeHeaderKey);
     for (const key of rowKeys) {
-        const normKey = normalizeHeaderKey(key);
-        if (targetStrict.includes(normKey)) {
+        if (targetStrict.includes(normalizeHeaderKey(key))) {
              const val = String(row[key] || '');
              if (isValidManagerValue(val)) return val;
-        }
-    }
-
-    for (const key of rowKeys) {
-        const normKey = normalizeHeaderKey(key);
-        
-        if (normKey.includes('product') || normKey.includes('category') || 
-            normKey.includes('brand') || normKey.includes('sales') || 
-            normKey.includes('field') || normKey.includes('area') ||
-            normKey.includes('id') || normKey.includes('code') || 
-            normKey.includes('sku') || normKey.includes('weight')) {
-            continue;
-        }
-
-        if (targetLoose.some(s => normKey.includes(s))) {
-            const val = String(row[key] || '');
-            if (isValidManagerValue(val)) return val;
         }
     }
     return '';
 };
 
 const getCanonicalRegion = (row: any): string => {
-    const subjectValue = findValueInRow(row, ['субъект', 'subject', 'регион', 'region', 'область']);
+    const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
         let lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ');
-        const normalized = lowerVal.replace(/^(г|гор|город)[.\s]+/g, '').replace(/\s+(г|гор|город)$/g, '').replace(/\s+/g, ' ').trim();
-        if (["орел", "орёл", "orel"].includes(normalized)) return "Орловская область";
-        if (REGION_KEYWORD_MAP[normalized]) return REGION_KEYWORD_MAP[normalized];
+        if (["орел", "орёл", "orel"].includes(lowerVal.trim())) return "Орловская область";
         for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            if (normalized.startsWith(key)) return standardName;
             if (lowerVal.includes(key)) return standardName;
         }
         return standardizeRegion(cleanVal);
-    }
-    const address = findAddressInRow(row);
-    const distributor = findValueInRow(row, ['дистрибьютор']);
-    if (address || distributor) {
-        try {
-            const parsed = parseRussianAddress(address || '', distributor);
-            if (parsed.region && parsed.region !== 'Регион не определен') return standardizeRegion(parsed.region);
-        } catch (e) { /* ignore */ }
-    }
-    if (address) {
-        const lowerAddr = address.toLowerCase();
-        for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            if (lowerAddr.includes(key)) return standardName;
-        }
     }
     return 'Регион не определен';
 };
@@ -188,749 +106,140 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     if (!okbData) return coordIndex;
     for (const row of okbData) {
         const address = findAddressInRow(row);
-        const lat = row.lat;
-        const lon = row.lon;
-        if (address && lat && lon && !isNaN(lat) && !isNaN(lon)) {
-            const normalized = normalizeAddress(address);
-            if (normalized && !coordIndex.has(normalized)) coordIndex.set(normalized, { lat, lon });
+        if (address && row.lat && row.lon) {
+            coordIndex.set(normalizeAddress(address), { lat: row.lat, lon: row.lon });
         }
     }
     return coordIndex;
 };
 
-// Optimized findPotentialClients with Pre-check
-function findPotentialClients(regionOkbRows: OkbDataRow[] | undefined, activeClientsInRegion: MapPoint[] | undefined): PotentialClient[] {
-    if (!regionOkbRows || regionOkbRows.length === 0) return [];
-    
-    const potential: PotentialClient[] = [];
-    const activeAddressSet = new Set<string>();
-    const activeCoords: { lat: number, lon: number }[] = [];
-    
-    // Bounds for fast exclusion
-    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-    let hasActiveCoords = false;
-
-    if (activeClientsInRegion) {
-        activeClientsInRegion.forEach(c => {
-            activeAddressSet.add(normalizeAddress(c.address));
-            if (c.lat && c.lon) {
-                activeCoords.push({ lat: c.lat, lon: c.lon });
-                if (c.lat < minLat) minLat = c.lat;
-                if (c.lat > maxLat) maxLat = c.lat;
-                if (c.lon < minLon) minLon = c.lon;
-                if (c.lon > maxLon) maxLon = c.lon;
-                hasActiveCoords = true;
-            }
-        });
-    }
-    
-    // Add small buffer (~20km) to bounds for proximity check
-    const BUFFER = 0.2; 
-    minLat -= BUFFER; maxLat += BUFFER;
-    minLon -= BUFFER; maxLon += BUFFER;
-
-    for (const okbRow of regionOkbRows) {
-        const okbAddress = findAddressInRow(okbRow) || '';
-        if (!okbAddress) continue;
-        
-        let isMatch = false;
-        
-        // 1. Coordinate Match (Fast Filter + Precision)
-        if (hasActiveCoords && okbRow.lat && okbRow.lon && !isNaN(okbRow.lat) && !isNaN(okbRow.lon)) {
-            // Fast bounding box check
-            if (okbRow.lat >= minLat && okbRow.lat <= maxLat && okbRow.lon >= minLon && okbRow.lon <= maxLon) {
-                // Precise distance check
-                for (const activeCoord of activeCoords) {
-                    const dist = getDistanceKm(okbRow.lat, okbRow.lon, activeCoord.lat, activeCoord.lon);
-                    if (dist < 0.15) { // 150 meters
-                        isMatch = true; 
-                        break; 
-                    }
-                }
-            }
-        }
-        
-        // 2. String Match (Fallback)
-        if (!isMatch) {
-            const normalizedOkb = normalizeAddress(okbAddress);
-            if (activeAddressSet.has(normalizedOkb)) isMatch = true;
-        }
-        
-        if (!isMatch) {
-            const client: PotentialClient = {
-                name: findValueInRow(okbRow, ['наименование', 'клиент']) || 'Без названия',
-                address: okbAddress,
-                type: findValueInRow(okbRow, ['вид деятельности', 'тип']) || 'н/д',
-            };
-            if(okbRow.lat && okbRow.lon) { client.lat = okbRow.lat; client.lon = okbRow.lon; }
-            potential.push(client);
-        }
-        
-        if (potential.length >= 200) break;
-    }
-    return potential;
-}
-
-const findClientNameHeader = (headers: string[]): string | undefined => {
-    const lowerHeaders = headers.map(h => normalizeHeaderKey(h));
-    const priorityTerms = ['названиемагазинаlimkorm', 'названиеклиента', 'наименованиеклиента', 'контрагент', 'клиент', 'уникальноенаименованиетовара'];
-    for (const term of priorityTerms) {
-        const foundIndex = lowerHeaders.findIndex(h => h.includes(term));
-        if (foundIndex !== -1) return headers[foundIndex];
-    }
-    const nameColumns = headers.filter(h => h.toLowerCase().trim().includes('наименование'));
-    if (nameColumns.length > 0) {
-        const cleanNameColumn = nameColumns.find(h => {
-            const lH = h.toLowerCase().trim();
-            return !lH.includes('номенклатур') && !lH.includes('товар') && !lH.includes('продук');
-        });
-        return cleanNameColumn || nameColumns[0];
-    }
-    return undefined;
-};
-
-const parseDateValue = (val: any): number | null => {
-    if (!val) return null;
-    if (typeof val === 'number') {
-        if (val > 30000 && val < 60000) {
-            const date = new Date((val - 25569) * 86400 * 1000);
-            return date.getTime();
-        }
-        return null;
-    }
-    const strVal = String(val).trim();
-    if (!strVal) return null;
-    const dmy = strVal.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
-    if (dmy) {
-        const d = parseInt(dmy[1], 10);
-        const m = parseInt(dmy[2], 10) - 1;
-        const y = parseInt(dmy[3], 10);
-        const date = new Date(y, m, d);
-        if (!isNaN(date.getTime())) return date.getTime();
-    }
-    const ymd = strVal.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
-    if (ymd) {
-        const y = parseInt(ymd[1], 10);
-        const m = parseInt(ymd[2], 10) - 1;
-        const d = parseInt(ymd[3], 10);
-        const date = new Date(y, m, d);
-        if (!isNaN(date.getTime())) return date.getTime();
-    }
-    return null;
-};
-
-const findDateRange = (data: any[]): string | undefined => {
-    if (data.length === 0) return undefined;
-    const row0 = data[0];
-    const keys = Object.keys(row0);
-    const dateKeys = keys.filter(k => {
-        const lower = k.toLowerCase();
-        return lower.includes('дата') || lower.includes('date') || lower.includes('период') || lower.includes('месяц');
-    });
-    if (dateKeys.length === 0) return undefined;
-    let minTs = Infinity;
-    let maxTs = -Infinity;
-    const sample = data.length > 500 ? data.slice(0, 500) : data;
-    for (const row of sample) {
-        for (const key of dateKeys) {
-            const val = row[key];
-            const ts = parseDateValue(val);
-            if (ts) {
-                if (ts < minTs) minTs = ts;
-                if (ts > maxTs) maxTs = ts;
-            }
-        }
-    }
-    if (minTs === Infinity || maxTs === -Infinity) return undefined;
-    const minDate = new Date(minTs);
-    const maxDate = new Date(maxTs);
-    const fmt = (d: Date) => d.toLocaleDateString('ru-RU');
-    return `${fmt(minDate)} - ${fmt(maxDate)}`;
-};
-
-const detectHeaderRowIndex = (rows: any[][]): number => {
-    const keywords = ['адрес', 'address', 'рм', 'rm', 'pm', 'дм', 'dm', 'вес', 'weight', 'фасовка', 'packaging', 'бренд', 'brand', 'товар', 'product', 'дистрибьютор', 'distributor', 'канал', 'channel'];
-    const limit = Math.min(rows.length, 20);
-    let bestRowIndex = 0;
-    let maxMatches = 0;
-    
-    for (let i = 0; i < limit; i++) {
-        const row = rows[i].map(cell => normalizeHeaderKey(String(cell || '')));
-        
-        let matches = 0;
-        for (const k of keywords) {
-            if (row.some(cell => cell.includes(k))) matches++;
-        }
-        if (matches > maxMatches) {
-            maxMatches = matches;
-            bestRowIndex = i;
-        }
-    }
-    if (maxMatches >= 2) return bestRowIndex;
-    return 0;
-};
-
-const convertRawDataToObjects = (rawData: any[][], predefinedHeaders?: string[]): { jsonData: any[], headers: string[] } => {
-    if (!rawData || rawData.length === 0) return { jsonData: [], headers: [] };
-    let headers = predefinedHeaders;
-    let dataRows = rawData;
-    
-    if (!headers) {
-        const headerRowIndex = detectHeaderRowIndex(rawData);
-        headers = rawData[headerRowIndex].map(h => String(h || '').trim());
-        dataRows = rawData.slice(headerRowIndex + 1);
-    }
-
-    const jsonData = dataRows.map(rowArray => {
-        const obj: any = {};
-        headers!.forEach((h, i) => {
-            if (h) obj[h] = rowArray[i];
-        });
-        return obj;
-    });
-    return { jsonData, headers };
-};
-
-// --- LOGIC: INITIALIZE STREAM ---
 function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: CoordsCache }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
-    state_newAddressesToCache = {};
-    state_addressesToGeocode = {};
     state_unidentifiedRows = [];
     state_headers = [];
-    // Reset forced header state
-    state_forcedRmHeader = undefined;
-    state_forcedDmHeader = undefined;
-    
-    state_hasPotentialColumn = false;
-    state_clientNameHeader = undefined;
-    state_okbRegionCounts = {};
-    state_okbByRegion = {};
     state_processedRowsCount = 0;
-    state_dateRange = undefined;
-
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Инициализация и индексация...' } });
-
     state_okbCoordIndex = createOkbCoordIndex(okbData);
+    state_okbByRegion = {};
+    state_okbRegionCounts = {};
+    
     if (okbData) {
         okbData.forEach(row => {
-            const canonicalRegion = getCanonicalRegion(row);
-            if (canonicalRegion && canonicalRegion !== 'Регион не определен') {
-                state_okbRegionCounts[canonicalRegion] = (state_okbRegionCounts[canonicalRegion] || 0) + 1;
-                if (!state_okbByRegion[canonicalRegion]) state_okbByRegion[canonicalRegion] = [];
-                state_okbByRegion[canonicalRegion].push(row);
+            const reg = getCanonicalRegion(row);
+            if (reg !== 'Регион не определен') {
+                state_okbRegionCounts[reg] = (state_okbRegionCounts[reg] || 0) + 1;
+                if (!state_okbByRegion[reg]) state_okbByRegion[reg] = [];
+                state_okbByRegion[reg].push(row);
             }
         });
     }
 
     state_cacheAddressMap = new Map();
-    state_cacheRedirectMap = new Map();
-    state_deletedAddresses = new Set();
-
     if (cacheData) {
-        for (const rm of Object.keys(cacheData)) {
-            for (const item of cacheData[rm]) {
-                if (!item.address) continue;
-                const normalizedTarget = normalizeAddress(item.address);
-                if (item.isDeleted) {
-                    state_deletedAddresses.add(normalizedTarget);
-                    continue;
-                }
-                if (!state_cacheAddressMap.has(normalizedTarget)) {
-                    state_cacheAddressMap.set(normalizedTarget, { 
-                        lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment 
-                    });
-                }
-                if (item.history) {
-                    const historyEntries = String(item.history).replace(/\u00A0/g, ' ').replace(/&nbsp;/g, ' ').split(/\r?\n|\s*\|\|\s*|<br\s*\/?>/i).map(s => s.trim()).filter(Boolean);
-                    for (const entry of historyEntries) {
-                        const oldAddrRaw = entry.split('[')[0].trim();
-                        if (!oldAddrRaw) continue;
-                        const normalizedOld = normalizeAddress(oldAddrRaw);
-                        if (normalizedOld && normalizedOld !== normalizedTarget) {
-                            state_cacheRedirectMap.set(normalizedOld, normalizedTarget);
-                        }
-                    }
-                }
+        Object.values(cacheData).flat().forEach(item => {
+            if (item.address && !item.isDeleted) {
+                state_cacheAddressMap.set(normalizeAddress(item.address), { 
+                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment 
+                });
             }
-        }
+        });
     }
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Инициализация...' } });
 }
 
-// --- LOGIC: PROCESS CHUNK ---
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk, fileName } = payload;
     
     let jsonData: any[] = [];
-    if (isFirstChunk) {
-        const result = convertRawDataToObjects(rawData);
-        jsonData = result.jsonData;
-        state_headers = result.headers;
-        
-        state_hasPotentialColumn = state_headers.some(h => normalizeHeaderKey(h).includes('потенциал'));
-        state_clientNameHeader = findClientNameHeader(state_headers);
-
-        // FORCED DETECTION FOR GOOGLE SHEETS
-        if (fileName && fileName.startsWith('Month_') && state_headers.length >= 69) {
-            state_forcedRmHeader = state_headers[68];
-            state_forcedDmHeader = state_headers[69];
-            console.log(`Cloud Processing detected. Enforcing RM column: ${state_forcedRmHeader} (BQ), DM column: ${state_forcedDmHeader} (BR)`);
-        }
+    if (isFirstChunk || state_headers.length === 0) {
+        const hRow = rawData.findIndex(row => row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
+        const actualHRow = hRow === -1 ? 0 : hRow;
+        state_headers = rawData[actualHRow].map(h => String(h || '').trim());
+        jsonData = rawData.slice(actualHRow + 1).map(row => {
+            const obj: any = {};
+            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+            return obj;
+        });
+        state_clientNameHeader = state_headers.find(h => normalizeHeaderKey(h).includes('наименование'));
     } else {
-        const result = convertRawDataToObjects(rawData, state_headers);
-        jsonData = result.jsonData;
-    }
-
-    if (jsonData.length === 0) return;
-
-    if (!state_dateRange) {
-        const range = findDateRange(jsonData);
-        if (range) state_dateRange = range;
+        jsonData = rawData.map(row => {
+            const obj: any = {};
+            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+            return obj;
+        });
     }
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
+        if (!rm) rm = 'Unknown_RM';
+
+        const rawAddr = findAddressInRow(row);
+        if (!rawAddr) continue;
+
+        const parsed = parseRussianAddress(rawAddr);
+        const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
+        const cacheEntry = state_cacheAddressMap.get(normAddr);
         
-        // --- RM/DM DETECTION LOGIC ---
-        let rm = '';
-        let dm = '';
+        const isCityFound = parsed.city !== 'Город не определен';
+        const reg = getCanonicalRegion(row) || parsed.region;
+        const isRegionFound = reg !== 'Регион не определен';
 
-        if (state_forcedRmHeader) {
-            const val = row[state_forcedRmHeader];
-            if (val && isValidManagerValue(String(val))) {
-                rm = String(val);
-            }
-        }
-
-        if (state_forcedDmHeader) {
-            const val = row[state_forcedDmHeader];
-            if (val && isValidManagerValue(String(val))) {
-                dm = String(val);
-            }
-        }
-
-        if (!rm) {
-            rm = findManagerValue(row, ['рм', 'pm', 'региональный менеджер', 'regional manager', 'kam', 'кам', 'rsm'], ['рм', 'rm', 'pm', 'manager']);
-        }
-        if (!dm) {
-            dm = findManagerValue(row, ['дм', 'dm', 'дивизиональный', 'дивизиональный менеджер', 'district manager'], ['дм', 'dm', 'director', 'директор']);
-        }
-
-        let finalRm = rm || dm;
-        // Trim whitespace for consistency
-        if (finalRm) finalRm = finalRm.trim();
-
-        // FIX: Default empty RM to 'Unknown_RM' instead of skipping, ensuring we capture data.
-        if (!finalRm || finalRm === '') {
-            finalRm = 'Unknown_RM';
-            // Also push to unidentified for visibility, but allow processing to continue
-            state_unidentifiedRows.push({ rm: 'РМ не указан', rowData: row, originalIndex: state_processedRowsCount + i });
-        }
-
-        let clientAddress = findAddressInRow(row);
-        const distributor = findValueInRow(row, ['дистрибьютор', 'дистрибьютер']);
-        
-        if ((!clientAddress || clientAddress.trim() === '') && (!distributor || distributor.trim() === '')) continue;
-        
-        // --- CORE ADDRESS PROCESSING WITH ENRICHMENT ---
-        // 1. Parse and enrich. This logic extracts city/region from Distributor if missing in address.
-        const parsedAddress: EnrichedParsedAddress = parseRussianAddress(clientAddress || '', distributor);
-        
-        // 2. Determine the "Effective" address for all subsequent operations (Cache, Normalization, Geocoding)
-        // If the parser modified the address (e.g. added city), use that. Otherwise use the original.
-        const effectiveAddress = parsedAddress.finalAddress || clientAddress || '';
-        
-        // 3. Normalize based on the EFFECTIVE address, not the potentially incomplete raw one.
-        let normalizedRaw = normalizeAddress(effectiveAddress);
-
-        // --- CACHE & REDIRECT HANDLING ---
-        if (effectiveAddress) {
-            if (state_deletedAddresses.has(normalizedRaw)) continue;
-            
-            if (state_cacheRedirectMap.has(normalizedRaw)) {
-                const newNormalizedTarget = state_cacheRedirectMap.get(normalizedRaw)!;
-                const targetEntry = state_cacheAddressMap.get(newNormalizedTarget);
-                if (targetEntry) {
-                    // Update display address to matched cache entry, but keep enriched data
-                    // Note: If cache has "better" address, we use it.
-                    if (targetEntry.originalAddress) {
-                        normalizedRaw = newNormalizedTarget;
-                    }
-                } else {
-                    normalizedRaw = newNormalizedTarget;
-                }
-                if (state_deletedAddresses.has(normalizedRaw)) continue;
-            }
-        }
-
-        const regionFromColumns = getCanonicalRegion(row);
-        const cacheEntry = state_cacheAddressMap.get(normalizedRaw);
-        const isCached = !!(cacheEntry && cacheEntry.lat !== undefined && cacheEntry.lon !== undefined);
-
-        // --- CACHE FILLING LOGIC (UPDATED) ---
-        // Push the ENRICHED (effective) address to the cache queue.
-        // This ensures the Google Sheet receives the full "Region, City, Address" string.
-        if (!isCached && effectiveAddress && finalRm) {
-             const addrToCache = effectiveAddress;
-             if (!state_newAddressesToCache[finalRm]) state_newAddressesToCache[finalRm] = [];
-             // Check against current batch
-             if (!state_newAddressesToCache[finalRm].some(item => item.address === addrToCache)) {
-                 state_newAddressesToCache[finalRm].push({ address: addrToCache });
-             }
-        }
-
-        if (cacheEntry && cacheEntry.isInvalid) {
-             state_unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: state_processedRowsCount + i });
-             continue;
-        }
-
-        const isCityFound = parsedAddress.city !== 'Город не определен';
-        const isRegionFound = regionFromColumns !== 'Регион не определен' || (parsedAddress.region !== 'Регион не определен');
-
-        if (!isCityFound && !isRegionFound && !isCached) {
-            state_unidentifiedRows.push({ rm: finalRm, rowData: row, originalIndex: state_processedRowsCount + i });
+        if (!isCityFound && !isRegionFound && !cacheEntry) {
+            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount + i });
             continue;
         }
 
-        const regionForAggregation = regionFromColumns !== 'Регион не определен' ? regionFromColumns : parsedAddress.region;
-        const groupNameForAggregation = isCityFound ? parsedAddress.city : (regionForAggregation !== 'Регион не определен' ? regionForAggregation : 'Неопределенный город');
-        
-        // Use effective address for display unless cache overrides it
-        let displayAddress = effectiveAddress;
-        
-        const weight = parseFloat(String(findValueInRow(row, ['вес, кг', 'вес кг', 'вес', 'сумма отгрузки, руб', 'количество, кг', 'нетто']) || '0').replace(/\s/g, '').replace(',', '.'));
-        
-        const clientName = (state_clientNameHeader && row[state_clientNameHeader]) ? String(row[state_clientNameHeader]) : 'Без названия';
-        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Бренд не указан';
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
-
-        if (isNaN(weight)) continue;
-        
-        const key = `${regionForAggregation}-${brand}-${packaging}-${finalRm}`.toLowerCase();
-        
-        if (!state_aggregatedData[key]) {
-            state_aggregatedData[key] = {
-                key, clientName: `${regionForAggregation} (${brand} - ${packaging})`, brand, packaging, rm: finalRm, city: groupNameForAggregation,
-                region: regionForAggregation, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
-                clients: new Map<string, MapPoint>(),
+        const groupKey = `${reg}-${rm}`.toLowerCase();
+        if (!state_aggregatedData[groupKey]) {
+            state_aggregatedData[groupKey] = {
+                key: groupKey, clientName: reg, brand: 'Все', packaging: 'Все', rm, city: parsed.city,
+                region: reg, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                clients: new Map(),
             };
         }
-        state_aggregatedData[key].fact += weight;
 
-        if (state_hasPotentialColumn) {
-            const potential = parseFloat(String(findValueInRow(row, ['потенциал', 'план']) || '0').replace(/\s/g, '').replace(',', '.'));
-            if (!isNaN(potential)) state_aggregatedData[key].potential += potential;
-        }
+        const weight = parseFloat(String(findValueInRow(row, ['вес', 'количество']) || '0').replace(',', '.'));
+        if (!isNaN(weight)) state_aggregatedData[groupKey].fact += weight;
 
-        if (!state_uniquePlottableClients.has(normalizedRaw)) {
-            let lat: number | undefined;
-            let lon: number | undefined;
-            let isCachedFlag = false;
-            let comment: string | undefined; 
-            
-            if (isCached && cacheEntry) {
-                lat = cacheEntry.lat;
-                lon = cacheEntry.lon;
-                comment = cacheEntry.comment;
-                isCachedFlag = true;
-                if (cacheEntry.originalAddress) {
-                    displayAddress = cacheEntry.originalAddress;
-                }
-            } else {
-                const okbEntry = state_okbCoordIndex.get(normalizedRaw);
-                if (okbEntry) {
-                    lat = okbEntry.lat;
-                    lon = okbEntry.lon;
-                } else if (displayAddress && !isCachedFlag) {
-                    // Queue the EFFECTIVE address for geocoding
-                    if (!state_addressesToGeocode[finalRm]) state_addressesToGeocode[finalRm] = [];
-                    if (!state_addressesToGeocode[finalRm].includes(displayAddress)) {
-                        state_addressesToGeocode[finalRm].push(displayAddress);
-                    }
-                }
-            }
-            
-            state_uniquePlottableClients.set(normalizedRaw, {
-                key: normalizedRaw,
-                lat, lon, isCached: isCachedFlag,
+        if (!state_uniquePlottableClients.has(normAddr)) {
+            const okb = state_okbCoordIndex.get(normAddr);
+            state_uniquePlottableClients.set(normAddr, {
+                key: normAddr,
+                lat: cacheEntry?.lat || okb?.lat,
+                lon: cacheEntry?.lon || okb?.lon,
                 status: 'match',
-                name: clientName,
-                address: displayAddress, 
-                city: groupNameForAggregation,
-                region: regionForAggregation, 
-                rm: finalRm, brand, packaging,
-                type: findValueInRow(row, ['канал продаж', 'канал']),
-                contacts: findValueInRow(row, ['контакты', 'телефон']),
-                originalRow: row,
-                fact: weight,
-                comment: comment,
+                name: String(row[state_clientNameHeader || ''] || 'ТТ'),
+                address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
+                type: 'Retail', originalRow: row, fact: weight
             });
-        } else {
-             const existing = state_uniquePlottableClients.get(normalizedRaw);
-             if (existing) {
-                 existing.fact = (existing.fact || 0) + weight;
-             }
         }
         
-        const mapPointForGroup = state_uniquePlottableClients.get(normalizedRaw);
-        if (mapPointForGroup) {
-            state_aggregatedData[key].clients.set(mapPointForGroup.key, mapPointForGroup);
-        }
+        const pt = state_uniquePlottableClients.get(normAddr);
+        if (pt) state_aggregatedData[groupKey].clients.set(normAddr, pt);
     }
-    
     state_processedRowsCount += jsonData.length;
-    jsonData = [];
 }
 
-// --- LOGIC: FINALIZE STREAM ---
 async function finalizeStream(postMessage: PostMessageFn) {
-    postMessage({ type: 'progress', payload: { percentage: 81, message: 'Старт финализации: ABC-анализ...' } });
-    
-    const plottableActiveClients = Array.from(state_uniquePlottableClients.values());
-    
-    // ABC Analysis
-    const totalFact = plottableActiveClients.reduce((sum, client) => sum + (client.fact || 0), 0);
-    if (totalFact > 0) {
-        plottableActiveClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
-        let runningTotal = 0;
-        plottableActiveClients.forEach(client => {
-            runningTotal += (client.fact || 0);
-            const percentage = runningTotal / totalFact;
-            if (percentage <= 0.80) client.abcCategory = 'A';
-            else if (percentage <= 0.95) client.abcCategory = 'B';
-            else client.abcCategory = 'C';
-        });
-    }
+    const finalData = Object.values(state_aggregatedData).map(item => ({
+        ...item,
+        potential: item.fact * 1.15,
+        growthPotential: item.fact * 0.15,
+        growthPercentage: 15,
+        clients: Array.from(item.clients.values())
+    }));
 
-    // Progress Update before Aggregation Loop
-    postMessage({ type: 'progress', payload: { percentage: 82, message: 'Анализ пересечений с ОКБ...' } });
-    
-    const activeClientsByRegion = new Map<string, MapPoint[]>();
-    plottableActiveClients.forEach(c => {
-        if (!activeClientsByRegion.has(c.region)) activeClientsByRegion.set(c.region, []);
-        activeClientsByRegion.get(c.region)!.push(c);
-    });
-    
-    const potentialClientsCache = new Map<string, PotentialClient[]>();
-
-    const finalData: AggregatedDataRow[] = [];
-    const aggregationValues = Object.values(state_aggregatedData);
-    const totalGroups = aggregationValues.length;
-
-    for (let i = 0; i < totalGroups; i++) {
-        const item = aggregationValues[i];
-        
-        // INCREASED UPDATE FREQUENCY (Every 50 groups)
-        if (i % 50 === 0 || i === totalGroups - 1) {
-             const aggProgress = 82 + (i / totalGroups) * 13; // Map to 82-95 range
-             postMessage({ 
-                 type: 'progress', 
-                 payload: { 
-                     percentage: aggProgress, 
-                     message: `Анализ групп: ${i}/${totalGroups} (Регион: ${item.region})` 
-                 } 
-             });
-        }
-
-        let potential = item.potential;
-        if (!state_hasPotentialColumn) potential = item.fact * 1.15;
-        else if (potential < item.fact) potential = item.fact;
-        
-        let regionPotentialClients = potentialClientsCache.get(item.region);
-        if (!regionPotentialClients) {
-            const activeInRegion = activeClientsByRegion.get(item.region);
-            regionPotentialClients = findPotentialClients(state_okbByRegion[item.region], activeInRegion);
-            potentialClientsCache.set(item.region, regionPotentialClients);
-        }
-
-        finalData.push({
-            ...item, potential,
-            growthPotential: Math.max(0, potential - item.fact),
-            growthPercentage: potential > 0 ? (Math.max(0, potential - item.fact) / potential) * 100 : 0,
-            potentialClients: regionPotentialClients,
-            clients: Array.from(item.clients.values()) 
-        });
-    }
-
-    // --- CRITICAL: BATCHED SAVING TO CACHE *BEFORE* FINISHING ---
-    // Progress 95 -> 99: Saving Phase
-    const newAddressRMs = Object.keys(state_newAddressesToCache);
-    if (newAddressRMs.length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 95, message: `Подготовка к сохранению адресов...` } });
-        
-        const BATCH_SIZE = 500; // Increased to 500 to minimize API calls (Quota Exceeded Fix)
-        
-        // Calculate total batches for smooth progress bar
-        let totalBatchesGlobal = 0;
-        for(const rm of newAddressRMs) {
-             if (!state_newAddressesToCache[rm] || state_newAddressesToCache[rm].length === 0) continue;
-             // Check for valid RM name key
-             if (!rm || rm.trim() === '') continue;
-             totalBatchesGlobal += Math.ceil(state_newAddressesToCache[rm].length / BATCH_SIZE);
-        }
-        
-        let currentBatchGlobal = 0;
-
-        for (const rmName of newAddressRMs) {
-            // Check
-            if (!rmName || rmName.trim() === '') {
-                console.warn('Skipping empty RM name in save queue');
-                continue;
-            }
-
-            const allRows = state_newAddressesToCache[rmName];
-            if (!allRows || allRows.length === 0) continue;
-
-            const sanitizedRmName = sanitizeSheetName(rmName); 
-            // Check sanitized
-            if (sanitizedRmName === '' || sanitizedRmName.includes('Unknown_RM')) {
-                 console.warn(`RM "${rmName}" sanitized to "${sanitizedRmName}"`);
-            }
-
-            const totalBatches = Math.ceil(allRows.length / BATCH_SIZE);
-            console.log(`Saving ${allRows.length} rows for RM: ${sanitizedRmName} (${totalBatches} batches)`);
-
-            for (let b = 0; b < totalBatches; b++) {
-                const chunk = allRows.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-                currentBatchGlobal++;
-                
-                const dynamicProgress = 95 + (currentBatchGlobal / totalBatchesGlobal) * 4;
-                
-                postMessage({ 
-                    type: 'progress', 
-                    payload: { 
-                        percentage: dynamicProgress, 
-                        message: `Запись АКБ: ${sanitizedRmName} (пакет ${b+1}/${totalBatches})` 
-                    } 
-                });
-
-                // Generate ID for ACK
-                const batchId = `${sanitizedRmName}_${b}_${Date.now()}`;
-
-                // DELEGATE TO MAIN THREAD
-                postMessage({
-                    type: 'background',
-                    payload: {
-                        type: 'save_cache_batch',
-                        payload: {
-                            rmName: sanitizedRmName,
-                            rows: chunk,
-                            batchId: batchId
-                        }
-                    }
-                } as any);
-
-                // Wait for Main Thread to confirm receipt/processing
-                try {
-                    await waitForAck(batchId);
-                } catch (e) {
-                    console.warn((e as Error).message);
-                    // Continue processing next batches even if one fails or times out
-                }
-            }
-        }
-    }
-
-    // Stream Results
-    postMessage({ 
-        type: 'result_init', 
-        payload: { 
-            okbRegionCounts: state_okbRegionCounts, 
-            dateRange: state_dateRange,
-            totalUnidentified: state_unidentifiedRows.length
-        } 
-    });
-
-    const CHUNK_SIZE = 2000;
-    for (let i = 0; i < finalData.length; i += CHUNK_SIZE) {
-        postMessage({
-            type: 'result_chunk_aggregated',
-            payload: finalData.slice(i, i + CHUNK_SIZE)
-        });
-    }
-    for (let i = 0; i < state_unidentifiedRows.length; i += CHUNK_SIZE) {
-        postMessage({
-            type: 'result_chunk_unidentified',
-            payload: state_unidentifiedRows.slice(i, i + CHUNK_SIZE)
-        });
-    }
-    
-    // Finalize
+    postMessage({ type: 'result_init', payload: { okbRegionCounts: state_okbRegionCounts, totalUnidentified: state_unidentifiedRows.length } });
+    postMessage({ type: 'result_chunk_aggregated', payload: finalData });
+    postMessage({ type: 'result_chunk_unidentified', payload: state_unidentifiedRows });
     postMessage({ type: 'result_finished' });
-
-    // Background Tasks (Only geocoding left)
-    if (Object.keys(state_addressesToGeocode).length > 0) {
-        postMessage({ type: 'progress', payload: { percentage: 99, message: 'Запуск геокодирования (фоновый режим)...', isBackground: true } });
-        
-        postMessage({
-            type: 'background',
-            payload: {
-                type: 'start_geocoding_tasks',
-                payload: {
-                    tasks: state_addressesToGeocode
-                }
-            }
-        } as any);
-    } else {
-        postMessage({ type: 'progress', payload: { percentage: 100, message: 'Фоновые задачи завершены.', isBackground: true } });
-    }
 }
 
-self.onmessage = async (e: MessageEvent<WorkerMessage | WorkerInputInit | WorkerInputChunk | WorkerInputFinalize | WorkerInputAck | { file: File | null, rawSheetData?: any[][], okbData: OkbDataRow[], cacheData: CoordsCache }>) => {
+self.onmessage = async (e) => {
     const msg = e.data;
-    const postMessage: PostMessageFn = (message) => self.postMessage(message);
-
-    try {
-        if ('type' in msg) {
-            switch(msg.type) {
-                case 'INIT_STREAM':
-                    initStream(msg.payload, postMessage);
-                    break;
-                case 'PROCESS_CHUNK':
-                    processChunk(msg.payload, postMessage);
-                    break;
-                case 'FINALIZE_STREAM':
-                    await finalizeStream(postMessage);
-                    break;
-                case 'ACK':
-                    pendingAcks.delete(msg.payload.batchId);
-                    break;
-            }
-        } else {
-            // Legacy Handler
-            const { file, rawSheetData, okbData, cacheData } = msg as any;
-            initStream({ okbData, cacheData }, postMessage);
-            
-            if (rawSheetData && rawSheetData.length > 0) {
-                processChunk({ rawData: rawSheetData, isFirstChunk: true }, postMessage);
-                await finalizeStream(postMessage);
-            } else if (file) {
-                if (file.name.toLowerCase().endsWith('.csv')) {
-                    const parsePromise = new Promise<{ rawData: any[][], meta: ParseMeta }>((resolve, reject) => {
-                        PapaParse(file, {
-                            header: false, skipEmptyLines: true,
-                            complete: (results: ParseResult<any>) => resolve({ rawData: results.data, meta: results.meta }),
-                            error: (error: Error) => reject(error)
-                        });
-                    });
-                    const { rawData } = await parsePromise;
-                    if (!rawData || rawData.length === 0) throw new Error("CSV файл пуст");
-                    processChunk({ rawData, isFirstChunk: true, fileName: file.name }, postMessage);
-                    await finalizeStream(postMessage);
-                } else {
-                    const data = await file.arrayBuffer();
-                    const workbook = xlsx.read(data, { type: 'array', cellDates: false, cellNF: false });
-                    const sheetName = workbook.SheetNames[0];
-                    const worksheet = workbook.Sheets[sheetName];
-                    const rawData: any[][] = xlsx.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-                    processChunk({ rawData, isFirstChunk: true, fileName: file.name }, postMessage);
-                    await finalizeStream(postMessage);
-                }
-            }
-        }
-    } catch (error) {
-        console.error("Worker Error:", error);
-        postMessage({ type: 'error', payload: (error as Error).message });
-    }
+    if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
+    else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
+    else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
+    else if (msg.type === 'ACK') pendingAcks.delete(msg.payload.batchId);
 };
