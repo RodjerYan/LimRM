@@ -36,7 +36,7 @@ import {
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { LoaderIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
-import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
+import { saveAnalyticsState, loadAnalyticsState, clearAnalyticsState } from './utils/db';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -50,13 +50,12 @@ const App: React.FC = () => {
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
-    const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
 
     const [processingState, setProcessingState] = useState<FileProcessingState>({
         isProcessing: false,
         progress: 0,
-        message: 'Ожидание данных...',
+        message: 'Ожидание выбора периода...',
         fileName: null,
         backgroundMessage: null,
         startTime: null
@@ -84,41 +83,7 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
-        setAllActiveClients(prev => {
-            const index = prev.findIndex(c => c.key === oldKey);
-            if (index !== -1) {
-                const updated = [...prev];
-                updated[index] = newPoint;
-                return updated;
-            }
-            return [...prev, newPoint];
-        });
-
-        setAllData(prev => prev.map(group => {
-            const clientIndex = group.clients.findIndex(c => c.key === oldKey);
-            if (clientIndex !== -1) {
-                const updatedClients = [...group.clients];
-                updatedClients[clientIndex] = newPoint;
-                return { ...group, clients: updatedClients };
-            }
-            return group;
-        }));
-
-        setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey));
-        addNotification('Данные обновлены', 'success');
-    }, [addNotification]);
-
-    const handleDeleteClient = useCallback((key: string) => {
-        setAllActiveClients(prev => prev.filter(c => c.key !== key));
-        setAllData(prev => prev.map(group => ({
-            ...group,
-            clients: group.clients.filter(c => c.key !== key)
-        })));
-        setEditingClient(null);
-        addNotification('Запись удалена', 'info');
-    }, [addNotification]);
-
+    // Восстановление данных из локального хранилища без авто-загрузки из облака
     useEffect(() => {
         const restore = async () => {
             try {
@@ -131,7 +96,7 @@ const App: React.FC = () => {
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
                     setAllActiveClients((saved.allData || []).flatMap((row: any) => row.clients || []));
-                    if (saved.allData?.length > 0) setActiveModule('amp');
+                    // Мы НЕ переключаем вкладку автоматически, оставляем пользователя в "Adapta"
                 }
             } catch (e) {
                 console.warn('Restore failed:', e);
@@ -142,6 +107,15 @@ const App: React.FC = () => {
         restore();
     }, []);
 
+    const handleClearData = async () => {
+        await clearAnalyticsState();
+        setAllData([]);
+        setAllActiveClients([]);
+        setUnidentifiedRows([]);
+        setDateRange(undefined);
+        addNotification('Локальные данные очищены', 'info');
+    };
+
     const handleResultFinished = useCallback(async (versionHash?: string) => {
         const aggregated = [...aggregatedDataBuffer.current];
         const unidentified = [...unidentifiedBuffer.current];
@@ -150,22 +124,22 @@ const App: React.FC = () => {
         setAllActiveClients(aggregated.flatMap(row => row.clients || []));
         setUnidentifiedRows(unidentified);
         
-        if (versionHash) {
-            await saveAnalyticsState({
-                allData: aggregated,
-                unidentifiedRows: unidentified,
-                okbRegionCounts,
-                okbData,
-                okbStatus,
-                dateRange,
-                versionHash
-            });
-            setLastSyncVersion(versionHash);
-            localStorage.setItem('last_sync_version', versionHash);
-        }
-
-        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Данные за год полностью загружены' }));
-    }, [okbRegionCounts, okbData, okbStatus, dateRange]);
+        const finalVersion = versionHash || `sync-${Date.now()}`;
+        
+        await saveAnalyticsState({
+            allData: aggregated,
+            unidentifiedRows: unidentified,
+            okbRegionCounts,
+            okbData,
+            okbStatus,
+            dateRange,
+            versionHash: finalVersion
+        });
+        
+        setLastSyncVersion(finalVersion);
+        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Загрузка завершена. Данные сохранены локально.' }));
+        addNotification('Данные успешно загружены и сохранены локально', 'success');
+    }, [okbRegionCounts, okbData, okbStatus, dateRange, addNotification]);
 
     const initWorker = useCallback(async (startMessage: string, fileNameForState: string) => {
         aggregatedDataBuffer.current = [];
@@ -197,56 +171,68 @@ const App: React.FC = () => {
                     unidentifiedBuffer.current.push(...(msg.payload as UnidentifiedRow[]));
                     break;
                 case 'result_finished':
-                    const currentVersion = localStorage.getItem('pending_version_hash') || undefined;
-                    handleResultFinished(currentVersion);
-                    localStorage.removeItem('pending_version_hash');
+                    handleResultFinished();
                     break;
             }
         };
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
     }, [okbData, handleResultFinished]);
 
-    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
-        const { year, month } = params;
-        if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
+        const { year, month, quarter } = params;
         
-        await initWorker(`Инициализация года ${year}`, `Облачное хранилище`);
+        let label = `${year} год`;
+        let monthsToLoad: number[] = [];
+
+        if (month) {
+            monthsToLoad = [month];
+            label = new Date(0, month - 1).toLocaleString('ru-RU', { month: 'long', year: 'numeric' });
+        } else if (quarter) {
+            monthsToLoad = [(quarter - 1) * 3 + 1, (quarter - 1) * 3 + 2, (quarter - 1) * 3 + 3];
+            label = `Q${quarter} ${year}`;
+        } else {
+            monthsToLoad = Array.from({ length: 12 }, (_, i) => i + 1);
+            label = `Весь ${year} год`;
+        }
+
+        setDateRange(label);
+        await initWorker(`Начало загрузки: ${label}`, `Облако: ${label}`);
 
         try {
-            // Если выбран год, проходим циклом по всем 12 месяцам
-            const monthsToLoad = month ? [month] : Array.from({ length: 12 }, (_, i) => i + 1);
-            
+            let monthsProcessed = 0;
             for (const m of monthsToLoad) {
                 const monthName = new Date(0, m - 1).toLocaleString('ru-RU', { month: 'long' });
-                setProcessingState(prev => ({ ...prev, message: `Загрузка периода: ${monthName}` }));
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    message: `Загрузка: ${monthName} (${monthsProcessed + 1}/${monthsToLoad.length})`,
+                    progress: (monthsProcessed / monthsToLoad.length) * 100
+                }));
 
                 const listRes = await fetch(`/api/get-akb?year=${year}&month=${m}&mode=list`);
                 if (!listRes.ok) continue;
                 
                 const files = await listRes.json();
-                if (files.length === 0) continue;
-
                 for (const file of files) {
                     let offset = 0, hasMore = true;
                     while (hasMore) {
                         const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
                         const result = await res.json();
-                        
                         if (result.rows?.length > 0) {
                             workerRef.current?.postMessage({ 
                                 type: 'PROCESS_CHUNK', 
-                                payload: { rawData: result.rows, isFirstChunk: (offset === 0 && m === monthsToLoad[0]), fileName: file.name } 
+                                payload: { rawData: result.rows, isFirstChunk: (monthsProcessed === 0 && offset === 0), fileName: file.name } 
                             });
                         }
                         hasMore = result.hasMore;
                         offset += 5000;
                     }
                 }
+                monthsProcessed++;
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка при загрузке года' }));
-            addNotification('Ошибка облачной синхронизации', 'error');
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи с Google Drive' }));
+            addNotification('Ошибка при загрузке данных за период', 'error');
         }
     }, [initWorker, addNotification]);
 
@@ -283,23 +269,18 @@ const App: React.FC = () => {
             <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
                 <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
                     <div className="flex items-center gap-4">
-                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] uppercase font-bold tracking-widest transition-all ${isLiveConnected ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${isLiveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
-                            {isLiveConnected ? 'Live: Синхронизировано' : 'Sync: Оффлайн'}
+                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] uppercase font-bold tracking-widest bg-emerald-500/10 border-emerald-500/30 text-emerald-400`}>
+                            <div className={`w-1.5 h-1.5 rounded-full bg-emerald-500`}></div>
+                            {allData.length > 0 ? `Локальная база: ${dateRange || 'загружена'}` : 'Ожидание данных'}
                         </div>
                         {isRestoring && <div className="text-indigo-400 text-[10px] font-bold animate-pulse">Восстановление сессии...</div>}
                     </div>
                     
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-6">
                          {allData.length > 0 && (
-                            <div className="flex items-center gap-6 text-xs mr-6">
-                                <div className="flex flex-col items-end">
-                                    <span className="text-gray-500">Общий Факт (Год)</span>
-                                    <span className="text-emerald-400 font-mono font-bold">
-                                        {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(summaryMetrics?.totalFact || 0)}
-                                    </span>
-                                </div>
-                            </div>
+                            <button onClick={handleClearData} className="text-[10px] uppercase font-bold text-gray-500 hover:text-red-400 transition-colors">
+                                Сбросить всё
+                            </button>
                         )}
                         <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 border-2 border-gray-700"></div>
                     </div>
@@ -363,9 +344,9 @@ const App: React.FC = () => {
                     onClose={() => setEditingClient(null)} 
                     onBack={() => setEditingClient(null)} 
                     data={editingClient} 
-                    onDataUpdate={handleDataUpdate}
+                    onDataUpdate={() => {}}
                     onStartPolling={() => {}} 
-                    onDelete={handleDeleteClient}
+                    onDelete={() => {}}
                     globalTheme="dark"
                 />
             )}
