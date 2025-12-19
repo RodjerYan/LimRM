@@ -1,5 +1,4 @@
-
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
 
@@ -15,7 +14,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
     const handleFetchData = useCallback(async () => {
         setIsFetching(true);
-        onStatusChange({ status: 'loading', message: 'Синхронизация базы ОКБ...' });
+        onStatusChange({ status: 'loading', message: 'Автоматическая загрузка данных ОКБ...' });
         try {
             const response = await fetch('/api/get-okb');
             if (!response.ok) {
@@ -26,7 +25,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
-                message: `База ОКБ синхронизирована.`,
+                message: `ОКБ успешно загружена.`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
                 coordsCount: data.filter(d => d.lat && d.lon).length,
@@ -38,6 +37,13 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         }
     }, [onStatusChange, onDataChange]);
 
+    useEffect(() => {
+        if (!status) {
+            // Автоматическая загрузка при старте (если статус отсутствует)
+            handleFetchData();
+        }
+    }, [status, handleFetchData]);
+
     const isLoading = isFetching || status?.status === 'loading';
     const isReady = status?.status === 'ready';
     const isError = status?.status === 'error';
@@ -47,16 +53,18 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
             <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
                 
+                {/* Header */}
                 <div className="flex items-center gap-4 mb-6">
                     <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold shadow-lg shadow-indigo-500/30 ring-2 ring-white/10">
                         1
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-white leading-tight">База Клиентов (ОКБ)</h2>
-                        <p className="text-xs text-gray-400">Справочник всех торговых точек</p>
+                        <p className="text-xs text-gray-400">Источник данных для анализа</p>
                     </div>
                 </div>
 
+                {/* Status Banner */}
                 <div className={`mb-5 p-3 rounded-xl border flex items-center gap-3 transition-colors duration-300 ${
                     isError ? 'bg-red-500/10 border-red-500/20 text-red-200' : 
                     isReady ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-200' : 
@@ -70,33 +78,51 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                         {isLoading ? <LoaderIcon /> : isError ? <div className="w-4 h-4"><ErrorIcon /></div> : isReady ? <div className="w-4 h-4"><SuccessIcon /></div> : <div className="w-4 h-4 rounded-full bg-gray-500" />}
                     </div>
                     <span className="text-sm font-medium truncate">
-                        {status?.message || 'База не синхронизирована'}
+                        {status?.message || 'Ожидание действий...'}
                     </span>
                 </div>
 
+                {/* Stats Grid */}
                 <div className="grid grid-cols-2 gap-3 mb-6">
                     <div className="bg-gray-800/40 p-3 rounded-xl border border-white/5">
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">Всего в базе</p>
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">Всего записей</p>
                         <p className="text-lg font-bold text-white font-mono">
                             {status?.rowCount ? status.rowCount.toLocaleString('ru-RU') : '—'}
                         </p>
                     </div>
                     <div className="bg-gray-800/40 p-3 rounded-xl border border-white/5">
-                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">Гео-привязка</p>
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1">С координатами</p>
                         <p className="text-lg font-bold text-indigo-300 font-mono">
                             {status?.coordsCount ? status.coordsCount.toLocaleString('ru-RU') : '—'}
                         </p>
                     </div>
+                    <div className="col-span-2 bg-gray-800/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
+                        <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Версия от</p>
+                        <p className="text-xs font-medium text-gray-300 font-mono">
+                            {status?.timestamp ? new Date(status.timestamp).toLocaleString('ru-RU') : 'Не загружена'}
+                        </p>
+                    </div>
                 </div>
 
+                {/* Action Button */}
                 <button
                     onClick={handleFetchData}
                     disabled={isLoading || disabled}
                     className="w-full relative overflow-hidden group/btn bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg shadow-indigo-900/20 transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                     <span className="relative z-10 flex items-center justify-center gap-2">
-                        {isLoading ? 'Синхронизация...' : isReady ? 'Обновить справочник' : 'Загрузить базу'}
+                        {isLoading ? (
+                            <>
+                                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                                Загрузка...
+                            </>
+                        ) : (
+                            isReady ? 'Обновить данные' : 'Загрузить базу'
+                        )}
                     </span>
+                    {!isLoading && !disabled && (
+                        <div className="absolute inset-0 h-full w-full scale-0 rounded-xl transition-all duration-300 group-hover/btn:scale-100 group-hover/btn:bg-white/10"></div>
+                    )}
                 </button>
             </div>
         </div>
