@@ -12,6 +12,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const year = (req.query.year as string) || '2025';
         const mode = req.query.mode as string; 
         
+        // Режим 3: Быстрая проверка метаданных (для авто-обновления)
         if (mode === 'metadata') {
             const drive = await getGoogleDriveClient();
             const month = parseInt(req.query.month as string || '1', 10);
@@ -19,6 +20,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             if (files.length === 0) return res.status(200).json({ version: 'none' });
 
+            // Получаем подробные метаданные самого свежего файла в папке
             const lastFile = files[0];
             const meta = await drive.files.get({
                 fileId: lastFile.id,
@@ -30,21 +32,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 name: lastFile.name,
                 modifiedTime: meta.data.modifiedTime,
                 size: meta.data.size,
+                // Создаем уникальный хеш версии
                 versionHash: `${meta.data.modifiedTime}-${meta.data.size}`
             });
         }
 
+        // Режим 1: Получение списка файлов
         if (mode === 'list') {
             const monthStr = req.query.month as string;
-            // Если месяц не передан, мы не возвращаем ошибку, а позволяем фронтенду решать
-            if (!monthStr) return res.status(400).json({ error: 'Month parameter is required for list mode' });
-            
             const month = parseInt(monthStr, 10);
             const files = await listFilesForMonth(year, month);
             res.setHeader('Cache-Control', 'no-store');
             return res.status(200).json(files);
         }
 
+        // Режим 2: Загрузка контента частями (Чанкинг)
         if (req.query.fileId) {
             const fileId = req.query.fileId as string;
             const offset = parseInt(req.query.offset as string || '0', 10);
@@ -57,7 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const chunk = await fetchFileContent(fileId, range);
             const hasMore = chunk.length >= limit;
             
-            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Cache-Control', 'no-store'); // Отключаем кеш для режима синхронизации
             return res.status(200).json({
                 fileId,
                 rows: chunk,
