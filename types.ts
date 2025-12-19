@@ -130,13 +130,12 @@ export type WorkerProgressPayload = {
     isBackground?: boolean;
 };
 
-// Deprecated single-payload type (kept for backward compat if needed, but not used in streaming)
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
-    plottableActiveClients: MapPoint[];
     unidentifiedRows: UnidentifiedRow[];
     okbRegionCounts: { [key: string]: number };
     dateRange?: string; 
+    totalRowsProcessed: number;
 };
 
 export type WorkerErrorPayload = string;
@@ -151,17 +150,18 @@ export type WorkerStreamInit = {
     payload: {
         okbRegionCounts: { [key: string]: number };
         dateRange?: string;
-        totalUnidentified: number; // Just count for progress
+        totalUnidentified: number;
     }
 };
 
 export type WorkerStreamChunk = {
     type: 'result_chunk_aggregated' | 'result_chunk_unidentified';
-    payload: any[]; // AggregatedDataRow[] or UnidentifiedRow[]
+    payload: any[]; 
 };
 
 export type WorkerStreamFinish = {
     type: 'result_finished';
+    payload: WorkerResultPayload;
 };
 
 // --- NEW TYPES FOR INPUT (Streaming to Worker) ---
@@ -186,7 +186,6 @@ export type WorkerInputFinalize = {
     type: 'FINALIZE_STREAM';
 };
 
-// Flow Control ACK
 export type WorkerInputAck = {
     type: 'ACK';
     payload: {
@@ -194,28 +193,15 @@ export type WorkerInputAck = {
     };
 };
 
-// Legacy input for file processing
-export type WorkerInputLegacy = {
-    file?: File;
-    rawSheetData?: any[][];
-    okbData: OkbDataRow[];
-    cacheData: CoordsCache;
-};
-
 export type WorkerMessage =
     | { type: 'progress', payload: WorkerProgressPayload }
-    | { type: 'result', payload: WorkerResultPayload } // Legacy
     | { type: 'error', payload: WorkerErrorPayload }
     | { type: 'background', payload: WorkerBackgroundMessage }
     | WorkerStreamInit
     | WorkerStreamChunk
     | WorkerStreamFinish;
 
-
-// Type for the coordinate cache data structure from Google Sheets
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;
-
-// --- PLANNING ENGINE TYPES ---
 
 export interface GrowthFactors {
     base: number;
@@ -230,64 +216,55 @@ export interface GrowthDetails {
     globalSku: number;
     myVelocity: number;
     globalVelocity: number;
-    marketShare: number; // 0.0 - 1.0
-    rmEfficiencyRatio: number; // 1.0 = average
+    marketShare: number; 
+    rmEfficiencyRatio: number; 
 }
 
-// Sub-metric for detailed Region/Brand planning
 export interface PlanMetric {
-    name: string; // Region name or Brand name
+    name: string; 
     fact: number;
     plan: number;
-    growthPct: number; // The specific or effective growth rate
-    marketShare?: number; // Only applicable for regions
-    activeCount?: number; // Active clients
-    totalCount?: number; // Total potential clients (OKB) - only for regions
-    brands?: PlanMetric[]; // Nested brand breakdown for this specific region
-    packagingDetails?: AggregatedDataRow[]; // Breakdown by packaging for this brand
-    
-    // Breakdown of the calculation
+    growthPct: number; 
+    marketShare?: number; 
+    activeCount?: number; 
+    totalCount?: number; 
+    brands?: PlanMetric[]; 
+    packagingDetails?: AggregatedDataRow[]; 
     factors?: GrowthFactors;
-    details?: GrowthDetails; // Context for the explanation
+    details?: GrowthDetails; 
 }
 
-// Shared interface for RMMetrics used in Dashboard and Analysis
 export interface RMMetrics {
     rmName: string;
     totalClients: number;
-    totalOkbCount: number; // Stored matched OKB count
+    totalOkbCount: number; 
     totalFact: number;
     totalPotential: number;
     avgFactPerClient: number;
-    marketShare: number; // Percentage (0-100) - Weighted Average
+    marketShare: number; 
     countA: number;
     countB: number;
     countC: number;
-    factA: number; // Total sales volume for category A
-    factB: number; // Total sales volume for category B
-    factC: number; // Total sales volume for category C
-    recommendedGrowthPct: number; // Effective weighted growth
+    factA: number; 
+    factB: number; 
+    factC: number; 
+    recommendedGrowthPct: number; 
     nextYearPlan: number;
-    // Detailed breakdowns
     regions: PlanMetric[];
     brands: PlanMetric[];
-    
-    // New Analytics Fields from Smart Logic
     avgSkuPerClient?: number;
     avgSalesPerSku?: number;
     globalAvgSku?: number;
     globalAvgSalesSku?: number;
 }
 
-// Planning Context for the Engine
 export interface PlanningContext {
     baseRate: number;
     globalAvgSku: number;
     globalAvgSales: number;
-    riskLevel: 'low' | 'medium' | 'high'; // Corresponds to "Black Day" scenarios
+    riskLevel: 'low' | 'medium' | 'high'; 
 }
 
-// New Interface for Global File Processing State
 export interface FileProcessingState {
     isProcessing: boolean;
     progress: number;
@@ -295,23 +272,21 @@ export interface FileProcessingState {
     fileName: string | null;
     backgroundMessage: string | null;
     startTime: number | null;
+    totalRowsProcessed?: number;
 }
 
-// Interface for Cloud Loading Parameters
 export interface CloudLoadParams {
     year: string;
-    quarter?: number; // 1-4
-    month?: number;   // 1-12
+    quarter?: number; 
+    month?: number;   
 }
-
-// --- NEW TYPES FOR UPGRADES ---
 
 export interface MarketData {
     regionName: string;
-    petDensityIndex: number; // 0-100 (100 = max density)
-    competitorDensityIndex: number; // 0-100 (100 = high competition)
-    eComPenetration: number; // % of sales online
-    avgOwnerAge: number; // Average age of pet owners
+    petDensityIndex: number; 
+    competitorDensityIndex: number; 
+    eComPenetration: number; 
+    avgOwnerAge: number; 
 }
 
 export interface SalesLeagueMember {

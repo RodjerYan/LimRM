@@ -1,24 +1,17 @@
 
 import * as xlsx from 'xlsx';
-import { parse as PapaParse, type ParseResult, type ParseMeta } from 'papaparse';
 import { 
     AggregatedDataRow, 
     OkbDataRow, 
     WorkerMessage, 
-    PotentialClient, 
     MapPoint, 
     CoordsCache,
-    EnrichedParsedAddress,
     UnidentifiedRow,
-    WorkerInputInit,
-    WorkerInputChunk,
-    WorkerInputFinalize,
-    WorkerInputAck
+    WorkerResultPayload
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
-import { getDistanceKm } from '../utils/analytics';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -27,41 +20,15 @@ type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 // --- WORKER STATE ---
 let state_aggregatedData: AggregationMap = {};
 let state_uniquePlottableClients = new Map<string, MapPoint>();
-let state_newAddressesToCache: { [rmName: string]: { address: string }[] } = {};
-let state_addressesToGeocode: { [rmName: string]: string[] } = {};
 let state_unidentifiedRows: UnidentifiedRow[] = [];
 let state_headers: string[] = [];
-let state_forcedRmHeader: string | undefined;
-let state_forcedDmHeader: string | undefined;
-let state_hasPotentialColumn = false;
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
 let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
-let state_cacheRedirectMap = new Map<string, string>(); 
-let state_deletedAddresses = new Set<string>();
 let state_processedRowsCount = 0;
 let state_dateRange: string | undefined = undefined;
-
-const pendingAcks = new Set<string>();
-
-const waitForAck = (id: string, timeoutMs = 30000) => {
-    pendingAcks.add(id);
-    return new Promise<void>((resolve, reject) => {
-        const started = Date.now();
-        const interval = setInterval(() => {
-            if (!pendingAcks.has(id)) {
-                clearInterval(interval);
-                resolve();
-            } else if (Date.now() - started > timeoutMs) {
-                pendingAcks.delete(id);
-                clearInterval(interval);
-                reject(new Error(`ACK timeout ${id}`));
-            }
-        }, 50);
-    });
-};
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -171,6 +138,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        state_processedRowsCount++;
+        
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
 
@@ -186,7 +155,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
-            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount + i });
+            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
             continue;
         }
 
@@ -218,7 +187,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const pt = state_uniquePlottableClients.get(normAddr);
         if (pt) state_aggregatedData[groupKey].clients.set(normAddr, pt);
     }
-    state_processedRowsCount += jsonData.length;
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
@@ -230,10 +198,15 @@ async function finalizeStream(postMessage: PostMessageFn) {
         clients: Array.from(item.clients.values())
     }));
 
-    postMessage({ type: 'result_init', payload: { okbRegionCounts: state_okbRegionCounts, totalUnidentified: state_unidentifiedRows.length } });
-    postMessage({ type: 'result_chunk_aggregated', payload: finalData });
-    postMessage({ type: 'result_chunk_unidentified', payload: state_unidentifiedRows });
-    postMessage({ type: 'result_finished' });
+    const result: WorkerResultPayload = {
+        aggregatedData: finalData,
+        unidentifiedRows: state_unidentifiedRows,
+        okbRegionCounts: state_okbRegionCounts,
+        dateRange: state_dateRange,
+        totalRowsProcessed: state_processedRowsCount
+    };
+
+    postMessage({ type: 'result_finished', payload: result });
 }
 
 self.onmessage = async (e) => {
@@ -241,5 +214,4 @@ self.onmessage = async (e) => {
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
-    else if (msg.type === 'ACK') pendingAcks.delete(msg.payload.batchId);
 };

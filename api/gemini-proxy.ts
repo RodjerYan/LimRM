@@ -28,47 +28,33 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Read multiple API keys from environment variables
-    const apiKeys = [
-      process.env.API_KEY_1,
-      process.env.API_KEY_2,
-      process.env.API_KEY_3,
-      process.env.API_KEY_4,
-    ].filter(Boolean) as string[];
+    // Fix: Using process.env.API_KEY exclusively as per GenAI guidelines.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
-    if (apiKeys.length === 0) {
-        return new Response(JSON.stringify({ error: 'Server configuration error: No Gemini API keys found.' }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-        });
-    }
-    
-    const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
-    const ai = new GoogleGenAI({ apiKey });
+    // Fix: Use 'gemini-3-flash-preview' for text tasks as per model selection guidelines.
+    const model = 'gemini-3-flash-preview';
 
-    // Ensure model supports tools if requested
-    const model = 'gemini-2.5-flash';
-
-    const generateConfig: any = {
+    // Fix: Simplified content structure for text tasks as per GenAI guidelines.
+    const generateParams: any = {
         model,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: prompt,
         config: {
             temperature: 0.7,
-            candidateCount: 1,
         }
     };
 
     // Attach tools if provided (e.g. { googleSearch: {} })
     if (tools) {
-        generateConfig.config.tools = tools;
+        generateParams.config.tools = tools;
     }
 
-    const responseStream = await ai.models.generateContentStream(generateConfig);
+    const responseStream = await ai.models.generateContentStream(generateParams);
     
     const stream = new ReadableStream({
       async start(controller) {
         try {
             for await (const chunk of responseStream) {
+              // Fix: Access the .text property directly instead of calling a method.
               const chunkText = chunk.text;
               if (chunkText) {
                 controller.enqueue(new TextEncoder().encode(chunkText));

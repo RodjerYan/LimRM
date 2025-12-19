@@ -15,7 +15,7 @@ import { RMDashboard } from './components/RMDashboard';
 import Notification from './components/Notification';
 import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
-import AddressEditModal from './components/AddressEditModal'; // Добавлен импорт
+import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 
 import { 
@@ -31,10 +31,11 @@ import {
     FileProcessingState,
     WorkerMessage,
     CoordsCache,
-    CloudLoadParams
+    CloudLoadParams,
+    WorkerResultPayload
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { LoaderIcon } from './components/icons';
+import { LoaderIcon, CheckIcon, ErrorIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -49,23 +50,23 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // --- PERSISTENCE ---
+    // --- PERSISTENCE & SYNC STATUS ---
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
+    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
 
     const [processingState, setProcessingState] = useState<FileProcessingState>({
         isProcessing: false,
         progress: 0,
-        message: 'Ожидание данных...',
+        message: 'Система готова',
         fileName: null,
         backgroundMessage: null,
-        startTime: null
+        startTime: null,
+        totalRowsProcessed: 0
     });
     
     const workerRef = useRef<Worker | null>(null);
-    const aggregatedDataBuffer = useRef<AggregatedDataRow[]>([]);
-    const unidentifiedBuffer = useRef<UnidentifiedRow[]>([]);
 
     // Data State
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -75,10 +76,9 @@ const App: React.FC = () => {
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
     const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], packaging: [], region: [] });
     
-    // Modals state
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
-    const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); // Для модалки редактирования
+    const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); 
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
@@ -87,64 +87,124 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- LOGIC: Handle Data Updates from Edit Modal ---
-    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint) => {
-        // 1. Обновляем плоский список всех активных клиентов (для карты)
+    // Функция мгновенной синхронизации текущего стейта в IndexedDB
+    const persistToDB = useCallback(async (
+        updatedData: AggregatedDataRow[], 
+        updatedUnidentified: UnidentifiedRow[],
+        updatedActivePoints: MapPoint[]
+    ) => {
+        const stateToSave = {
+            allData: updatedData,
+            unidentifiedRows: updatedUnidentified,
+            okbRegionCounts,
+            okbData,
+            okbStatus,
+            dateRange,
+            versionHash: lastSyncVersion || 'manual_patch_' + Date.now()
+        };
+        try {
+            await saveAnalyticsState(stateToSave);
+            console.log("Local DB Sync: Success (Manual Edit)");
+        } catch (e) {
+            console.error("Local DB Sync: Failed", e);
+        }
+    }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
+
+    const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
+        let finalData: AggregatedDataRow[] = [];
+        let finalUnidentified: UnidentifiedRow[] = [];
+        let finalPoints: MapPoint[] = [];
+
+        // 1. Обновляем плоский список точек для карты
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             if (index !== -1) {
                 const updated = [...prev];
                 updated[index] = newPoint;
+                finalPoints = updated;
                 return updated;
             }
-            return [...prev, newPoint];
+            finalPoints = [...prev, newPoint];
+            return finalPoints;
         });
 
-        // 2. Обновляем агрегированные данные (для таблиц и расчетов)
-        setAllData(prev => prev.map(group => {
-            const clientIndex = group.clients.findIndex(c => c.key === oldKey);
-            if (clientIndex !== -1) {
-                const updatedClients = [...group.clients];
-                updatedClients[clientIndex] = newPoint;
-                return { ...group, clients: updatedClients };
-            }
-            return group;
-        }));
+        // 2. Обновляем агрегированные группы (Результаты анализа)
+        setAllData(prev => {
+            finalData = prev.map(group => {
+                const clientIndex = group.clients.findIndex(c => c.key === oldKey);
+                if (clientIndex !== -1) {
+                    const updatedClients = [...group.clients];
+                    updatedClients[clientIndex] = newPoint;
+                    return { ...group, clients: updatedClients };
+                }
+                return group;
+            });
+            return finalData;
+        });
 
-        // 3. Если это был неопознанный адрес, убираем его из списка неопознанных
-        setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey));
+        // 3. Если это была правка неопознанной строки, убираем её из списка проблемных
+        setUnidentifiedRows(prev => {
+            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey);
+            return finalUnidentified;
+        });
+
+        // 4. Мгновенное сохранение в локальную базу (IndexedDB)
+        // Мы используем setTimeout чтобы дождаться завершения транзакций стейта, 
+        // но передаем актуальные массивы напрямую для надежности.
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 100);
         
-        addNotification('Данные успешно обновлены локально', 'success');
-    }, [addNotification]);
+        addNotification('Изменения сохранены в облаке и локальной базе', 'success');
+    }, [addNotification, persistToDB]);
 
-    const handleDeleteClient = useCallback((key: string) => {
-        setAllActiveClients(prev => prev.filter(c => c.key !== key));
-        setAllData(prev => prev.map(group => ({
-            ...group,
-            clients: group.clients.filter(c => c.key !== key)
-        })));
+    const handleDeleteClient = useCallback(async (key: string) => {
+        let finalData: AggregatedDataRow[] = [];
+        let finalUnidentified: UnidentifiedRow[] = [];
+        let finalPoints: MapPoint[] = [];
+
+        setAllActiveClients(prev => {
+            finalPoints = prev.filter(c => c.key !== key);
+            return finalPoints;
+        });
+
+        setAllData(prev => {
+            finalData = prev.map(group => ({
+                ...group,
+                clients: group.clients.filter(c => c.key !== key)
+            }));
+            return finalData;
+        });
+
+        setUnidentifiedRows(prev => {
+            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key);
+            return finalUnidentified;
+        });
+
         setEditingClient(null);
-        addNotification('Запись удалена', 'info');
-    }, [addNotification]);
+        
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 100);
+        addNotification('Запись удалена из всех источников', 'info');
+    }, [addNotification, persistToDB]);
 
-    // --- STEP 1: RESTORE FROM INDEXED DB ---
     useEffect(() => {
         const restore = async () => {
             try {
+                setDbStatus('loading');
                 const saved = await loadAnalyticsState();
-                if (saved) {
-                    setAllData(saved.allData || []);
+                if (saved && saved.allData?.length > 0) {
+                    setAllData(saved.allData);
                     setUnidentifiedRows(saved.unidentifiedRows || []);
                     setOkbRegionCounts(saved.okbRegionCounts || null);
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    setAllActiveClients((saved.allData || []).flatMap((row: any) => row.clients || []));
-                    
-                    if (saved.allData?.length > 0) setActiveModule('amp');
+                    setAllActiveClients(saved.allData.flatMap((row: any) => row.clients || []));
+                    setDbStatus('ready');
+                    setActiveModule('amp');
+                } else {
+                    setDbStatus('empty');
                 }
             } catch (e) {
-                console.warn('Restore failed:', e);
+                setDbStatus('empty');
             } finally {
                 setIsRestoring(false);
             }
@@ -152,61 +212,13 @@ const App: React.FC = () => {
         restore();
     }, []);
 
-    // --- STEP 2: CLOUD SYNC ---
-    const checkCloudChanges = useCallback(async () => {
-        if (isRestoring || !okbStatus || okbStatus.status !== 'ready') return;
-
-        try {
-            const res = await fetch(`/api/get-akb?mode=metadata&year=2025&month=${new Date().getMonth() + 1}`);
-            if (res.ok) {
-                const meta = await res.json();
-                setIsLiveConnected(true);
-                
-                if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    addNotification('Данные обновлены. Синхронизация...', 'info');
-                    handleStartCloudProcessing({ year: '2025', month: new Date().getMonth() + 1 }, meta.versionHash);
-                }
-            }
-        } catch (e) {
-            setIsLiveConnected(false);
-        }
-    }, [isRestoring, okbStatus, lastSyncVersion, addNotification]);
-
-    useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 60000);
-        checkCloudChanges();
-        return () => clearInterval(timer);
-    }, [checkCloudChanges]);
-
-    const handleResultFinished = useCallback(async (versionHash?: string) => {
-        const aggregated = [...aggregatedDataBuffer.current];
-        const unidentified = [...unidentifiedBuffer.current];
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
+        if (processingState.isProcessing) return;
+        const { year, month } = params;
+        const isUpdate = allData.length > 0;
+        if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setAllData(aggregated);
-        setAllActiveClients(aggregated.flatMap(row => row.clients || []));
-        setUnidentifiedRows(unidentified);
-        
-        if (versionHash) {
-            await saveAnalyticsState({
-                allData: aggregated,
-                unidentifiedRows: unidentified,
-                okbRegionCounts,
-                okbData,
-                okbStatus,
-                dateRange,
-                versionHash
-            });
-            setLastSyncVersion(versionHash);
-            localStorage.setItem('last_sync_version', versionHash);
-        }
-
-        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Готово' }));
-    }, [okbRegionCounts, okbData, okbStatus, dateRange]);
-
-    const initWorker = useCallback(async (startMessage: string, fileNameForState: string) => {
-        aggregatedDataBuffer.current = [];
-        unidentifiedBuffer.current = [];
-        setProcessingState({ isProcessing: true, progress: 0, message: startMessage, fileName: fileNameForState, backgroundMessage: null, startTime: Date.now() });
+        setProcessingState({ isProcessing: true, progress: 0, message: isUpdate ? 'Синхронизация обновлений...' : `Загрузка: ${year}`, fileName: isUpdate ? 'Проверка версии' : 'Загрузка из Google Drive...', backgroundMessage: null, startTime: Date.now(), totalRowsProcessed: 0 });
 
         let cacheData: CoordsCache = {};
         try {
@@ -219,61 +231,48 @@ const App: React.FC = () => {
 
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
-            switch (msg.type) {
-                case 'progress':
-                    setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-                    break;
-                case 'result_init':
-                    setOkbRegionCounts(msg.payload.okbRegionCounts);
-                    setDateRange(msg.payload.dateRange);
-                    break;
-                case 'result_chunk_aggregated':
-                    aggregatedDataBuffer.current.push(...(msg.payload as AggregatedDataRow[]));
-                    break;
-                case 'result_chunk_unidentified':
-                    unidentifiedBuffer.current.push(...(msg.payload as UnidentifiedRow[]));
-                    break;
-                case 'result_finished':
-                    const currentVersion = localStorage.getItem('pending_version_hash') || undefined;
-                    handleResultFinished(currentVersion);
+            if (msg.type === 'result_finished') {
+                const payload = msg.payload as WorkerResultPayload;
+                setOkbRegionCounts(payload.okbRegionCounts);
+                setDateRange(payload.dateRange);
+                setAllData(payload.aggregatedData);
+                setAllActiveClients(payload.aggregatedData.flatMap(row => row.clients || []));
+                setUnidentifiedRows(payload.unidentifiedRows);
+                setDbStatus('ready');
+                
+                const version = localStorage.getItem('pending_version_hash');
+                if (version) {
+                    await saveAnalyticsState({ 
+                        allData: payload.aggregatedData, 
+                        unidentifiedRows: payload.unidentifiedRows, 
+                        okbRegionCounts: payload.okbRegionCounts,
+                        okbData: okbData,
+                        okbStatus: okbStatus, 
+                        dateRange: payload.dateRange,
+                        versionHash: version 
+                    });
+                    setLastSyncVersion(version);
+                    localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
-                    break;
-                case 'background':
-                    if (msg.payload.type === 'save_cache_batch') {
-                        const { rmName, rows, batchId } = msg.payload.payload;
-                        await fetch('/api/add-to-cache', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rmName, rows }) });
-                        workerRef.current?.postMessage({ type: 'ACK', payload: { batchId } });
-                    }
-                    break;
+                }
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Данные актуальны' }));
+                if (isUpdate) addNotification('База данных обновлена', 'success');
             }
         };
-        workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
-    }, [okbData, handleResultFinished]);
 
-    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
-        const { year, month } = params;
-        if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
-        
-        await initWorker(`Облако: ${year}`, `Синхронизация...`);
+        workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
 
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}&month=${month || 1}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
-
             for (const file of allFiles) {
-                let offset = 0, hasMore = true;
-                let isFirstChunkOfFile = true;
-
+                let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
                     const result = await res.json();
-                    
                     if (result.rows?.length > 0) {
-                        workerRef.current?.postMessage({ 
-                            type: 'PROCESS_CHUNK', 
-                            payload: { rawData: result.rows, isFirstChunk: isFirstChunkOfFile, fileName: file.name } 
-                        });
-                        isFirstChunkOfFile = false;
+                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
+                        isFirstChunk = false;
                     }
                     hasMore = result.hasMore;
                     offset += 5000;
@@ -281,24 +280,37 @@ const App: React.FC = () => {
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка' }));
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         }
-    }, [initWorker]);
+    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification]);
 
-    // Data Filtering & Integration
+    const checkCloudChanges = useCallback(async () => {
+        if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
+        try {
+            const res = await fetch(`/api/get-akb?mode=metadata&year=2025&month=${new Date().getMonth() + 1}`);
+            if (res.ok) {
+                const meta = await res.json();
+                setIsLiveConnected(true);
+                if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
+                    handleStartCloudProcessing({ year: '2025', month: new Date().getMonth() + 1 }, meta.versionHash);
+                }
+            }
+        } catch (e) { setIsLiveConnected(false); }
+    }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
+
+    useEffect(() => {
+        const timer = setInterval(checkCloudChanges, 60000);
+        checkCloudChanges();
+        return () => clearInterval(timer);
+    }, [checkCloudChanges]);
+
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
-        okbData.forEach(row => {
-            if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) {
-                okbCoordSet.add(`${row.lat.toFixed(4)},${row.lon.toFixed(4)}`);
-            }
-        });
+        okbData.forEach(row => { if (row.lat && row.lon) okbCoordSet.add(`${row.lat.toFixed(4)},${row.lon.toFixed(4)}`); });
         return enrichDataWithSmartPlan(allData, okbRegionCounts, 15, okbCoordSet);
     }, [allData, okbRegionCounts, okbData]);
 
-    useEffect(() => {
-        setFilteredData(applyFilters(smartData, filters));
-    }, [smartData, filters]);
+    useEffect(() => { setFilteredData(applyFilters(smartData, filters)); }, [smartData, filters]);
 
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => {
@@ -315,29 +327,37 @@ const App: React.FC = () => {
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
-
             <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
                 <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
-                    <div className="flex items-center gap-4">
-                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full border text-[10px] uppercase font-bold tracking-widest transition-all ${isLiveConnected ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-                            <div className={`w-1.5 h-1.5 rounded-full ${isLiveConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`}></div>
-                            {isLiveConnected ? 'Sync: Connected' : 'Sync: Offline'}
+                    <div className="flex items-center gap-6">
+                        <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Локальная база</span>
+                            </div>
+                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Подключено: Мгновенный доступ' : 'Инициализация...'}</span>
                         </div>
-                        {isRestoring && <div className="text-indigo-400 text-[10px] font-bold animate-pulse">Восстановление...</div>}
+                        <div className="h-8 w-px bg-gray-800"></div>
+                        <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Облако (Sync)</span>
+                            </div>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'В сети: Авто-обновление активно' : 'Синхронизация недоступна'}</span>
+                        </div>
                     </div>
-                    
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-6">
                          {allData.length > 0 && (
-                            <div className="flex items-center gap-6 text-xs mr-6">
-                                <div className="flex flex-col items-end">
-                                    <span className="text-gray-500">Общий Факт</span>
-                                    <span className="text-emerald-400 font-mono font-bold">
-                                        {new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(summaryMetrics?.totalFact || 0)}
-                                    </span>
+                            <div className="flex items-center gap-6 text-xs text-right">
+                                <div className="flex flex-col">
+                                    <span className="text-gray-500 text-[10px] uppercase font-bold">Активных записей</span>
+                                    <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString('ru-RU')}</span>
                                 </div>
                             </div>
                         )}
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 border-2 border-gray-700"></div>
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 border border-white/10 flex items-center justify-center text-white shadow-lg">
+                            <span className="font-bold">L</span>
+                        </div>
                     </div>
                 </div>
 
@@ -356,26 +376,16 @@ const App: React.FC = () => {
                             disabled={processingState.isProcessing}
                             unidentifiedCount={unidentifiedRows.length}
                             activeClientsCount={allActiveClients.length}
-                            uploadedData={allData} 
+                            uploadedData={allData}
+                            dbStatus={dbStatus}
                         />
                     )}
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
-                             <InteractiveRegionMap 
-                                data={filteredData} 
-                                selectedRegions={filters.region} 
-                                potentialClients={potentialClients}
-                                activeClients={allActiveClients}
-                                flyToClientKey={flyToClientKey}
-                                onEditClient={setEditingClient} // ПЕРЕДАЕМ ФУНКЦИЮ
-                            />
+                             <InteractiveRegionMap data={filteredData} selectedRegions={filters.region} potentialClients={potentialClients} activeClients={allActiveClients} flyToClientKey={flyToClientKey} onEditClient={setEditingClient} />
                             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                <div className="lg:col-span-1">
-                                    <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({ rm: '', brand: [], packaging: [], region: [] })} disabled={allData.length === 0} />
-                                </div>
-                                <div className="lg:col-span-3">
-                                    <PotentialChart data={filteredData} />
-                                </div>
+                                <div className="lg:col-span-1"><Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({ rm: '', brand: [], packaging: [], region: [] })} disabled={allData.length === 0} /></div>
+                                <div className="lg:col-span-3"><PotentialChart data={filteredData} /></div>
                             </div>
                             <ResultsTable data={filteredData} onRowClick={setSelectedDetailsRow} disabled={allData.length === 0} unidentifiedRowsCount={unidentifiedRows.length} onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} />
                         </div>
@@ -385,15 +395,9 @@ const App: React.FC = () => {
                     )}
                 </div>
             </main>
-
-            <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">
-                {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
-            </div>
-
+            <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">{notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}</div>
             {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
             {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
-            
-            {/* ПОДКЛЮЧЕНО МОДАЛЬНОЕ ОКНО РЕДАКТИРОВАНИЯ */}
             {editingClient && (
                 <AddressEditModal 
                     isOpen={!!editingClient} 
@@ -401,7 +405,7 @@ const App: React.FC = () => {
                     onBack={() => setEditingClient(null)} 
                     data={editingClient} 
                     onDataUpdate={handleDataUpdate}
-                    onStartPolling={() => {}} // В этой версии поллинг не требуется, так как работаем с кэшем напрямую
+                    onStartPolling={() => {}} 
                     onDelete={handleDeleteClient}
                     globalTheme="dark"
                 />
