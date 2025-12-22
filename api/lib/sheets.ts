@@ -608,7 +608,7 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     }
 }
 
-export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string; comment?: string } | null> {
+export async function getAddressFromCache(rmName: string, address: string): Promise<{ address: string; lat?: number; lon?: number; history?: string; comment?: string; isInvalid?: boolean } | null> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
     const lowerRmName = rmName.toLowerCase();
@@ -646,15 +646,19 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
              return null; 
         }
 
-        const lat = latStr ? parseFloat(latStr.replace(',', '.')) : undefined;
-        const lon = lonStr ? parseFloat(lonStr.replace(',', '.')) : undefined;
+        const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
+        const isInvalid = BAD_STATUSES.some(status => latStr.toLowerCase().includes(status) || lonStr.toLowerCase().includes(status));
+
+        const lat = (!isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
+        const lon = (!isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
         
         return {
             address: String(foundRow[0]),
             lat: (lat !== undefined && !isNaN(lat)) ? lat : undefined,
             lon: (lon !== undefined && !isNaN(lon)) ? lon : undefined,
             history: history,
-            comment: comment
+            comment: comment,
+            isInvalid: isInvalid
         };
     }
 

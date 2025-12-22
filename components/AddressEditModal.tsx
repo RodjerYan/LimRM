@@ -181,7 +181,6 @@ const SinglePointMap: React.FC<{
                     {searchResults.length > 0 && (
                         <ul className="absolute mt-1 w-full bg-card-bg/95 backdrop-blur border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-[1050]">
                             {searchResults.map((res, idx) => (
-                                // Fix: Added missing opening angle bracket for 'li' tag
                                 <li 
                                     key={idx}
                                     onClick={() => selectResult(res)}
@@ -194,7 +193,6 @@ const SinglePointMap: React.FC<{
                     )}
                 </div>
             </div>
-            {/* Fix: Error on line 214 was likely caused by cascading parsing error from line 184 */}
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
@@ -241,16 +239,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     }, [isOpen, globalTheme]);
 
     // NEW/FIX: Синхронизируем локальный статус модалки с флагом isGeocoding из пропсов.
-    // Если polling в App.tsx нашел координаты и обновил editingClient, мы увидим это здесь.
+    // Если polling в App.tsx нашел координаты или ОШИБКУ, мы реагируем здесь.
     useEffect(() => {
         if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
+            
             if (pt.isGeocoding) {
                 setStatus('geocoding');
                 setManualCoords(null);
-            } else if (status === 'geocoding' && pt.lat && pt.lon) {
-                // Если мы ЖДАЛИ (были в статусе geocoding) и ПРИШЛИ координаты
+                setError(null);
+            } else if (pt.geocodingError) {
+                // ПРИШЛА ОШИБКА ОТ ГЕОКОДЕРА
                 setStatus('idle');
+                setError(pt.geocodingError);
+                setSaveSuccess(false);
+            } else if (status === 'geocoding' && pt.lat && pt.lon) {
+                // ПРИШЛИ УСПЕШНЫЕ КООРДИНАТЫ
+                setStatus('idle');
+                setError(null);
                 setSaveSuccess(true);
                 setTimeout(() => setSaveSuccess(false), 3000);
                 setManualCoords(null);
@@ -316,7 +322,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setStatus('idle');
             }
 
-            setError(null);
+            setError((data as MapPoint).geocodingError || null);
             setShowDeleteConfirm(false);
             setSaveSuccess(false);
             if ((data as MapPoint).lastUpdated) {
@@ -395,7 +401,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 type: findValueInRow(originalRow, ['канал продаж']),
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow, fact: (data as MapPoint).fact,
-                isGeocoding: isGeocodingState, lastUpdated: updateTimestamp, comment
+                isGeocoding: isGeocodingState, lastUpdated: updateTimestamp, comment,
+                geocodingError: undefined // Сбрасываем ошибку при новом сохранении
             };
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
@@ -516,8 +523,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         <div className="space-y-3">
                             <div className="relative">
                                 <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
-                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`} />
+                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : (error ? 'border-red-500' : 'border-gray-600')}`} />
                                 {saveSuccess && <div className="absolute right-2 top-8 text-green-400 animate-pulse"><CheckIcon /></div>}
+                                {error && <div className="absolute right-2 top-8 text-red-400"><ErrorIcon /></div>}
                             </div>
                             <div className="relative">
                                 <label htmlFor="comment-input" className="block text-sm font-medium text-text-muted mb-1">Комментарий</label>
@@ -527,7 +535,23 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             
                             {/* СЕКЦИЯ СТАТУСА И КНОПОК */}
                             <div className="min-h-[60px] flex flex-col justify-center">
-                                {status === 'idle' && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
+                                {status === 'idle' && !error && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
+                                
+                                {status === 'idle' && error && (
+                                    <div className="space-y-3">
+                                        <div className="p-3 bg-red-900/20 border border-red-500/50 rounded-lg text-red-200 text-xs flex gap-3 items-start">
+                                            <ErrorIcon />
+                                            <div className="flex-grow">
+                                                <p className="font-bold mb-1">Ошибка геокодирования:</p>
+                                                <p>{error}</p>
+                                            </div>
+                                        </div>
+                                        <button onClick={handleSave} className="w-full bg-warning hover:bg-amber-500 text-black font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                                            <RetryIcon /> Исправить и повторить
+                                        </button>
+                                    </div>
+                                )}
+
                                 {status === 'saving' && <div className="text-center text-cyan-400 flex items-center justify-center gap-2 py-2"><LoaderIcon /> Сохранение изменений...</div>}
                                 {status === 'deleting' && <div className="text-center text-danger flex items-center justify-center gap-2 py-2"><LoaderIcon /> Удаление строки...</div>}
                                 {status === 'geocoding' && (
@@ -538,7 +562,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                         <div className="text-center text-[10px] leading-tight text-gray-300">Запрос отправлен в Google Таблицу. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.</div>
                                     </div>
                                 )}
-                                {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
+                                {(status === 'error_saving' || status === 'error_deleting') && (
                                     <div className="text-center text-danger space-y-2">
                                         <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
                                         {status !== 'error_deleting' && <button onClick={handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2"><RetryIcon /> Повторить попытку</button>}

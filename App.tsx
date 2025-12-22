@@ -179,12 +179,28 @@ const App: React.FC = () => {
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
                 if (res.ok) {
                     const cached = await res.json();
+
+                    // ЕСЛИ ГЕОКОДЕР ВЕРНУЛ ОШИБКУ "НЕ НАЙДЕНО"
+                    if (cached.isInvalid) {
+                        const updatedPoint: MapPoint = {
+                            ...basePoint,
+                            isGeocoding: false,
+                            geocodingError: 'Геокодер не смог найти этот адрес. Пожалуйста, уточните его вручную или переместите маркер.',
+                            lastUpdated: Date.now()
+                        };
+                        handleDataUpdate(tempKey, updatedPoint);
+                        addNotification(`Адрес не распознан: ${address}`, 'error');
+                        return; // Интервал очистится в handleDataUpdate
+                    }
+
+                    // ЕСЛИ ГЕОКОДЕР НАШЕЛ КООРДИНАТЫ
                     if (cached.lat && cached.lon && !isNaN(cached.lat)) {
                         const updatedPoint: MapPoint = {
                             ...basePoint,
                             lat: parseFloat(cached.lat),
                             lon: parseFloat(cached.lon),
                             isGeocoding: false,
+                            geocodingError: undefined,
                             lastUpdated: Date.now()
                         };
                         handleDataUpdate(tempKey, updatedPoint);

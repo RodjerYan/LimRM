@@ -38,6 +38,7 @@ export interface MapPoint {
     contacts?: string;
     isCached?: boolean; // To distinguish between new and cached clients on the map
     isGeocoding?: boolean; // New flag: indicates if coordinates are currently being fetched
+    geocodingError?: string; // New field: error message from external geocoder
     originalRow: any; // To hold the full original data row for detailed viewing
     fact?: number; // Sales volume for this specific point
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
