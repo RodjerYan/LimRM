@@ -16,11 +16,31 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// Кастомная иконка для успешно найденных координат
+const greenIcon = new L.Icon({
+    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowSize: [41, 41]
+});
+
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
 
-// Fix: Defined AddressEditModalProps to resolve "Cannot find name 'AddressEditModalProps'"
+interface AddressEditModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onBack: () => void;
+    data: EditableData | null;
+    onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
+    onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
+    onDelete: (key: string) => void;
+    globalTheme: Theme;
+}
+
 interface AddressEditModalProps {
     isOpen: boolean;
     onClose: () => void;
@@ -500,7 +520,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 <div className="flex flex-col gap-6">
                     <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
                          <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding'}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding' && !!displayLat}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
