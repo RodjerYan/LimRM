@@ -6,7 +6,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon, AlertIcon } from './icons';
 
 // Fix for default marker icons in Leaflet when using build tools
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -238,8 +238,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     }, [isOpen, globalTheme]);
 
-    // NEW/FIX: Синхронизируем локальный статус модалки с флагом isGeocoding из пропсов.
-    // Если polling в App.tsx нашел координаты или ОШИБКУ, мы реагируем здесь.
     useEffect(() => {
         if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
@@ -249,12 +247,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setManualCoords(null);
                 setError(null);
             } else if (pt.geocodingError) {
-                // ПРИШЛА ОШИБКА ОТ ГЕОКОДЕРА
                 setStatus('idle');
                 setError(pt.geocodingError);
                 setSaveSuccess(false);
             } else if (status === 'geocoding' && pt.lat && pt.lon) {
-                // ПРИШЛИ УСПЕШНЫЕ КООРДИНАТЫ
                 setStatus('idle');
                 setError(null);
                 setSaveSuccess(true);
@@ -315,7 +311,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setManualCoords(null);
             setIsMapExpanded(false);
             
-            // Если точка уже в процессе геокодирования (пришла такая из списка)
             if (!isUnidentified(data) && (data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
             } else {
@@ -402,7 +397,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 contacts: findValueInRow(originalRow, ['контакты']),
                 originalRow: originalRow, fact: (data as MapPoint).fact,
                 isGeocoding: isGeocodingState, lastUpdated: updateTimestamp, comment,
-                geocodingError: undefined // Сбрасываем ошибку при новом сохранении
+                geocodingError: undefined 
             };
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
@@ -511,61 +506,96 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
                          />
                     </div>
-                    <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700">
-                        <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-bold text-lg text-accent">Редактирование данных</h4>
+                    <div className="bg-card-bg/50 p-6 rounded-2xl border border-gray-700 shadow-xl overflow-hidden relative">
+                        <div className="flex justify-between items-center mb-5">
+                            <h4 className="font-bold text-lg text-indigo-300 uppercase tracking-wider flex items-center gap-2">
+                                <div className="p-1.5 bg-indigo-500/20 rounded-lg"><SaveIcon small /></div>
+                                Редактирование
+                            </h4>
                             {!showDeleteConfirm ? (
-                                <button onClick={() => setShowDeleteConfirm(true)} className="text-danger hover:text-red-400 transition-colors flex items-center gap-1 text-sm" title="Удалить строку"><TrashIcon /></button>
+                                <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-danger transition-colors p-2 hover:bg-red-500/10 rounded-full" title="Удалить строку"><TrashIcon /></button>
                             ) : (
-                                <div className="flex items-center gap-2"><span className="text-xs text-gray-300">Удалить?</span><button onClick={handleDelete} className="text-xs bg-danger hover:bg-red-600 text-white px-2 py-1 rounded">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded">Нет</button></div>
+                                <div className="flex items-center gap-2 bg-red-900/20 px-3 py-1 rounded-lg border border-red-500/30 animate-fade-in"><span className="text-xs font-bold text-red-400">Удалить?</span><button onClick={handleDelete} className="text-[10px] bg-danger hover:bg-red-600 text-white px-2 py-1 rounded-md font-bold uppercase transition-colors">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded-md font-bold uppercase transition-colors">Нет</button></div>
                             )}
                         </div>
-                        <div className="space-y-3">
-                            <div className="relative">
-                                <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
-                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : (error ? 'border-red-500' : 'border-gray-600')}`} />
-                                {saveSuccess && <div className="absolute right-2 top-8 text-green-400 animate-pulse"><CheckIcon /></div>}
-                                {error && <div className="absolute right-2 top-8 text-red-400"><ErrorIcon /></div>}
+                        
+                        <div className="space-y-5">
+                            <div className="relative group">
+                                <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 ml-1">Адрес ТТ LimKorm</label>
+                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-3 bg-gray-900/60 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-text-main shadow-inner resize-none custom-scrollbar ${saveSuccess ? 'border-emerald-500 ring-2 ring-emerald-500/30' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-500')}`} />
+                                {saveSuccess && <div className="absolute right-3 top-9 text-emerald-400 animate-pulse"><CheckIcon /></div>}
+                                {error && <div className="absolute right-3 top-9 text-red-400"><ErrorIcon /></div>}
                             </div>
-                            <div className="relative">
-                                <label htmlFor="comment-input" className="block text-sm font-medium text-text-muted mb-1">Комментарий</label>
-                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding'} placeholder="Введите комментарий..." className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main" />
+
+                            <div className="relative group">
+                                <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 ml-1">Комментарий</label>
+                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding'} placeholder="Введите заметку..." className="w-full p-3 bg-gray-900/60 border border-gray-700 hover:border-gray-500 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-text-main shadow-inner resize-none custom-scrollbar" />
                             </div>
-                            {lastUpdatedStr && <div className="text-xs text-gray-500 text-right italic">Последнее изменение: {lastUpdatedStr}</div>}
+
+                            {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-2">Обновлено: {lastUpdatedStr}</div>}
                             
-                            {/* СЕКЦИЯ СТАТУСА И КНОПОК */}
-                            <div className="min-h-[60px] flex flex-col justify-center">
-                                {status === 'idle' && !error && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
+                            <div className="pt-2 min-h-[60px] flex flex-col justify-center">
+                                {status === 'idle' && !error && (
+                                    <button 
+                                        onClick={handleSave} 
+                                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]"
+                                    >
+                                        <SaveIcon /> {saveButtonText}
+                                    </button>
+                                )}
                                 
                                 {status === 'idle' && error && (
-                                    <div className="space-y-3">
-                                        <div className="p-3 bg-red-900/20 border border-red-500/50 rounded-lg text-red-200 text-xs flex gap-3 items-start">
-                                            <ErrorIcon />
-                                            <div className="flex-grow">
-                                                <p className="font-bold mb-1">Ошибка геокодирования:</p>
-                                                <p>{error}</p>
+                                    <div className="space-y-4 animate-fade-in">
+                                        <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl text-red-200 flex gap-4 items-start shadow-inner">
+                                            <div className="mt-1 flex-shrink-0"><ErrorIcon /></div>
+                                            <div className="flex-grow space-y-1">
+                                                <p className="text-xs font-bold uppercase tracking-wider text-red-400">Ошибка геокодирования</p>
+                                                <p className="text-xs leading-relaxed text-red-100 opacity-90">{error}</p>
                                             </div>
                                         </div>
-                                        <button onClick={handleSave} className="w-full bg-warning hover:bg-amber-500 text-black font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                                        <button 
+                                            onClick={handleSave} 
+                                            className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98]"
+                                        >
                                             <RetryIcon /> Исправить и повторить
                                         </button>
                                     </div>
                                 )}
 
-                                {status === 'saving' && <div className="text-center text-cyan-400 flex items-center justify-center gap-2 py-2"><LoaderIcon /> Сохранение изменений...</div>}
-                                {status === 'deleting' && <div className="text-center text-danger flex items-center justify-center gap-2 py-2"><LoaderIcon /> Удаление строки...</div>}
-                                {status === 'geocoding' && (
-                                    <div className="flex flex-col gap-3 p-3 bg-indigo-900/30 rounded-lg border border-indigo-500/40 animate-pulse shadow-[0_0_15px_rgba(129,140,248,0.2)]">
-                                        <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
-                                            <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
-                                        </div>
-                                        <div className="text-center text-[10px] leading-tight text-gray-300">Запрос отправлен в Google Таблицу. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.</div>
+                                {status === 'saving' && (
+                                    <div className="w-full bg-gray-800/50 py-3.5 rounded-xl border border-gray-700 text-center text-cyan-400 flex items-center justify-center gap-3 font-bold animate-pulse">
+                                        <LoaderIcon /> Синхронизация...
                                     </div>
                                 )}
+                                
+                                {status === 'deleting' && (
+                                    <div className="w-full bg-red-900/20 py-3.5 rounded-xl border border-red-500/20 text-center text-danger flex items-center justify-center gap-3 font-bold animate-pulse">
+                                        <LoaderIcon /> Удаление...
+                                    </div>
+                                )}
+
+                                {status === 'geocoding' && (
+                                    <div className="flex flex-col gap-3 p-4 bg-indigo-900/20 rounded-xl border border-indigo-500/40 animate-pulse shadow-inner">
+                                        <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
+                                            <div className="w-4 h-4"><LoaderIcon /></div> 
+                                            <span>Поиск в Google Таблице...</span>
+                                        </div>
+                                        <p className="text-center text-[10px] leading-relaxed text-gray-400 px-2 italic">
+                                            Запрос в обработке. Система уведомит вас автоматически при нахождении координат.
+                                        </p>
+                                    </div>
+                                )}
+
                                 {(status === 'error_saving' || status === 'error_deleting') && (
-                                    <div className="text-center text-danger space-y-2">
-                                        <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
-                                        {status !== 'error_deleting' && <button onClick={handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2"><RetryIcon /> Повторить попытку</button>}
+                                    <div className="text-center space-y-3 animate-fade-in">
+                                        <div className="flex items-center justify-center gap-2 text-danger text-xs bg-red-900/10 p-2 rounded-lg border border-red-500/20">
+                                            <ErrorIcon small /> {error || 'Сбой соединения'}
+                                        </div>
+                                        {status !== 'error_deleting' && (
+                                            <button onClick={handleSave} className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all">
+                                                <RetryIcon /> Повторить
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
