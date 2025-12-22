@@ -43,8 +43,6 @@ const fixChukotkaGeoJSON = (feature: any) => {
     const transformCoord = (coord: number[]) => {
         let [lon, lat] = coord;
         // Shift negative longitudes (Western Hemisphere) to 180+ (Eastern Hemisphere extension)
-        // This ensures the polygon is drawn continuously on the right side of the map (East of Russia)
-        // instead of wrapping around the world.
         if (lon < 0) lon += 360;
         return [lon, lat];
     };
@@ -61,7 +59,6 @@ const fixChukotkaGeoJSON = (feature: any) => {
 };
 
 // --- MANUAL GEOJSON OVERRIDES ---
-// High-precision boundaries provided manually to replace inaccurate external data.
 const MANUAL_BOUNDARIES: any[] = [
     {
         "type": "Feature",
@@ -203,7 +200,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState<SearchableLocation[]>([]);
     
-    // Remote GeoJSON Data State
     const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
     const [isFromCache, setIsFromCache] = useState(false);
@@ -215,17 +211,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     // Fetch High-Quality GeoJSONs with Caching
     useEffect(() => {
         const fetchGeoData = async () => {
-            const CACHE_NAME = 'limkorm-geo-v2'; // Bump version to force refresh
+            const CACHE_NAME = 'limkorm-geo-v2';
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
-            // Use lighter and faster CloudFront CDN for world countries (Natural Earth 50m)
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
 
             try {
                 setIsLoadingGeo(true);
                 let russiaData: any = null, worldData: any = null;
-                let usedCache = false;
 
-                // 1. Try Cache API
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
@@ -237,10 +230,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                         if (russiaRes && worldRes) {
                             russiaData = await russiaRes.json();
                             worldData = await worldRes.json();
-                            usedCache = true;
                             setIsFromCache(true);
                         } else {
-                            // Fetch and Cache
                             const [rNetwork, wNetwork] = await Promise.all([
                                 fetch(RUSSIA_URL),
                                 fetch(WORLD_URL)
@@ -258,7 +249,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     }
                 }
 
-                // Fallback if cache failed or data missing
                 if (!russiaData || !worldData) {
                     const [rRes, wRes] = await Promise.all([
                         fetch(RUSSIA_URL),
@@ -269,15 +259,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 const finalFeatures = [];
-
-                // 1. MANUAL BOUNDARIES (Highest Priority)
-                // Add these first so they are definitely included.
                 finalFeatures.push(...MANUAL_BOUNDARIES);
-                
                 const manualNames = new Set(MANUAL_BOUNDARIES.map(f => f.properties.name));
 
-                // 2. RUSSIA (Primary Fetched)
-                // Filter out any standard regions that conflict with our manual ones (e.g. if Russia GeoJSON had old borders)
                 if (russiaData && russiaData.features) {
                     const fixedRussia = russiaData.features
                         .filter((f: any) => !manualNames.has(f.properties.name))
@@ -290,9 +274,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     finalFeatures.push(...fixedRussia);
                 }
 
-                // 3. WORLD / CIS
                 if (worldData && worldData.features) {
-                    // Filter & Translate CIS Countries to match our internal region names
                     const cisCountriesMap: Record<string, string> = {
                         'Belarus': 'Республика Беларусь',
                         'Kazakhstan': 'Республика Казахстан',
@@ -316,7 +298,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     finalFeatures.push(...cisFeatures);
                 }
 
-                // Merge collections: Manual + Russia Regions + CIS Countries
                 setGeoJsonData({
                     type: 'FeatureCollection',
                     features: finalFeatures
@@ -332,7 +313,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         fetchGeoData();
     }, []);
 
-    // Sync refs with props
     useEffect(() => {
         activeClientsDataRef.current = activeClients;
     }, [activeClients]);
@@ -368,16 +348,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [searchTerm, searchableLocations]);
 
-    // --- STYLING LOGIC ---
-    
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
         
-        // Base border style - SHARPER and more visible
         const baseBorder = {
-            weight: isSelected ? 2 : 1, // Thinner, crisper borders
+            weight: isSelected ? 2 : 1,
             opacity: 1,
             color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), 
             fillColor: 'transparent',
@@ -385,19 +362,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon'
         };
 
-        // Mode 1: Sales (Clean) - Default
         if (overlayMode === 'sales') {
             return {
                 ...baseBorder,
-                // FIX: Use darker fill color and higher opacity (0.2) to ensure click events are captured
-                // even when markers are present. Transparent layers often fail click tests in Leaflet.
                 fillColor: isSelected ? '#818cf8' : '#111827', 
                 fillOpacity: isSelected ? 0.3 : 0.2, 
                 interactive: true
             };
         }
 
-        // Mode 2: Pets (Heat map)
         if (overlayMode === 'pets') {
             const density = marketData.petDensityIndex;
             let fillColor = '#6b7280'; 
@@ -420,7 +393,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             };
         } 
         
-        // Mode 3: Competitors
         if (overlayMode === 'competitors') {
             const comp = marketData.competitorDensityIndex;
             let fillColor = '#3b82f6';
@@ -443,20 +415,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             };
         }
 
-        // Mode 4: Age
         if (overlayMode === 'age') {
             const age = marketData.avgOwnerAge;
             let fillColor = '#6b7280';
             let fillOpacity = 0.3;
 
             if (age < 35) {
-                fillColor = '#10b981'; // Young - Green
+                fillColor = '#10b981';
                 fillOpacity = 0.6;
             } else if (age < 45) {
-                fillColor = '#f59e0b'; // Middle - Yellow/Orange
+                fillColor = '#f59e0b';
                 fillOpacity = 0.5;
             } else {
-                fillColor = '#8b5cf6'; // Senior - Purple
+                fillColor = '#8b5cf6';
                 fillOpacity = 0.5;
             }
 
@@ -484,7 +455,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (layer instanceof L.Path) {
              layer.setStyle({ 
                  weight: 2, 
-                 color: '#fbbf24', // Amber-400 Highlight
+                 color: '#fbbf24', 
                  opacity: 1, 
                  fillOpacity: 0.2,
                  dashArray: '' 
@@ -515,7 +486,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [highlightRegion]);
 
-    // Handle Map Resize
     useEffect(() => {
         const map = mapInstance.current;
         if (map) {
@@ -524,7 +494,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [data, isFullscreen]);
     
-    // Initialize Map Structure
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
             const map = L.map(mapContainer.current, { 
@@ -532,7 +501,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 zoom: 3, 
                 minZoom: 2, 
                 scrollWheelZoom: true, 
-                preferCanvas: true, // IMPORTANT for performance
+                preferCanvas: true,
                 worldCopyJump: true,
                 zoomControl: false, 
                 attributionControl: false 
@@ -540,7 +509,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             mapInstance.current = map;
             
             L.control.zoom({ position: 'topleft' }).addTo(map);
-
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
 
             const legend = new (L.Control.extend({
@@ -555,7 +523,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }))({ position: 'bottomright' });
             
             legend.addTo(map);
-            
             map.on('click', resetHighlight);
 
             map.on('popupopen', (e) => {
@@ -569,6 +536,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                             if (key) {
                                 const client = activeClientsDataRef.current.find(c => c.key === key);
                                 if (client) {
+                                    // Автоматически сворачиваем карту при редактировании для фокусировки на модалке
+                                    setIsFullscreen(false);
                                     onEditClientRef.current(client);
                                 }
                             }
@@ -586,7 +555,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, []); 
 
-    // Render Legend
     useEffect(() => {
         if (legendContainerRef.current) {
             const root = (ReactDOM as any).createRoot(legendContainerRef.current);
@@ -594,7 +562,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [overlayMode]);
 
-    // Handle Theme
     useEffect(() => {
         const map = mapInstance.current;
         if (mapContainer.current && map) {
@@ -630,12 +597,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 data-key="${key}"
             >
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                Изменить местоположение
+                Редактировать данные
             </button>
         </div>
     `;
     
-    // Data Layers (Active/Potential)
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
@@ -688,7 +654,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // Region Layer - OSM Source
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
@@ -710,11 +675,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 layer.bindTooltip(tooltipText, { sticky: true, className: 'leaflet-tooltip-custom' });
                 layer.on({
                     click: (e) => {
-                        L.DomEvent.stop(e); // Stop map click handler
+                        L.DomEvent.stop(e);
                         map.fitBounds(e.target.getBounds());
                         highlightRegion(e.target);
 
-                        // Confetti for Belgorod Oblast
                         if (feature.properties.name === 'Белгородская область' && (window as any).confetti) {
                             const clickPoint = map.latLngToContainerPoint(e.latlng);
                             const x = clickPoint.x / window.innerWidth;
@@ -737,7 +701,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                                 weight: 2,
                                 color: '#a5b4fc',
                                 opacity: 1,
-                                fillOpacity: 0.2, // Increased for visibility
+                                fillOpacity: 0.2,
                             });
                             layer.bringToFront();
                         }
@@ -751,11 +715,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 });
             }
         }).addTo(map);
-        
-        // Ensure the region layer is at the bottom so it doesn't block markers, 
-        // but since fillOpacity is 0.2, clicks pass through if needed or captured if hit.
         geoJsonLayer.current.bringToBack();
-
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);
 
     return (
@@ -765,7 +725,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         >
             <style>{`.leaflet-control-attribution { display: none !important; } .region-polygon { pointer-events: auto !important; }`}</style>
             
-            {/* Header Controls */}
             <div className={`flex flex-col md:flex-row justify-between items-center mb-4 gap-4 ${isFullscreen ? 'absolute top-4 left-4 z-[1001] w-[calc(100%-5rem)] pointer-events-none' : ''}`}>
                 <div className="flex items-center gap-3 pointer-events-auto">
                     <h2 className={`text-xl font-bold text-text-main whitespace-nowrap drop-shadow-md ${isFullscreen ? 'bg-card-bg/80 px-4 py-2 rounded-lg backdrop-blur-md border border-gray-700' : ''}`}>

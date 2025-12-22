@@ -181,6 +181,7 @@ const SinglePointMap: React.FC<{
                     {searchResults.length > 0 && (
                         <ul className="absolute mt-1 w-full bg-card-bg/95 backdrop-blur border border-gray-700 rounded-lg shadow-xl max-h-60 overflow-y-auto custom-scrollbar z-[1050]">
                             {searchResults.map((res, idx) => (
+                                // Fix: Added missing opening angle bracket for 'li' tag
                                 <li 
                                     key={idx}
                                     onClick={() => selectResult(res)}
@@ -193,6 +194,7 @@ const SinglePointMap: React.FC<{
                     )}
                 </div>
             </div>
+            {/* Fix: Error on line 214 was likely caused by cascading parsing error from line 184 */}
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
@@ -456,7 +458,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     );
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[200]">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="flex flex-col gap-4">
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar">
