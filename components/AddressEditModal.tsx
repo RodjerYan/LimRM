@@ -20,24 +20,16 @@ type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
 
-const greenIcon = new L.Icon({
-    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowSize: [41, 41]
-});
-
+// Fix: Defined AddressEditModalProps to resolve "Cannot find name 'AddressEditModalProps'"
 interface AddressEditModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  onBack: () => void;
-  data: EditableData | null;
-  onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
-  onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
-  onDelete: (key: string) => void;
-  globalTheme: Theme;
+    isOpen: boolean;
+    onClose: () => void;
+    onBack: () => void;
+    data: EditableData | null;
+    onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
+    onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
+    onDelete: (key: string) => void;
+    globalTheme: Theme;
 }
 
 const SinglePointMap: React.FC<{ 
@@ -241,14 +233,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
-            if (pt.isGeocoding) {
-                setStatus('geocoding');
-                setManualCoords(null);
-                setError(null);
-            } else if (pt.geocodingError) {
-                setStatus('idle');
+            
+            // КРИТИЧЕСКИЙ ФИКС: Сначала проверяем на наличие ошибки
+            if (pt.geocodingError) {
+                setStatus('idle'); // Останавливаем анимацию
                 setError(pt.geocodingError);
                 setSaveSuccess(false);
+            } else if (pt.isGeocoding) {
+                setStatus('geocoding');
+                setError(null);
+                setManualCoords(null);
             } else if (status === 'geocoding' && pt.lat && pt.lon) {
                 setStatus('idle');
                 setError(null);
@@ -258,9 +252,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 if (pt.lastUpdated) {
                     setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
                 }
+            } else {
+                // Если не грузится и нет ошибки — значит просто idle
+                setStatus('idle');
             }
         }
-    }, [data, isOpen]);
+    }, [data, isOpen, status]);
 
     const fetchHistory = async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
@@ -310,17 +307,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setManualCoords(null);
             setIsMapExpanded(false);
             
-            if (!isUnidentified(data) && (data as MapPoint).isGeocoding) {
+            const pt = data as MapPoint;
+            if (!isUnidentified(data) && pt.isGeocoding) {
                 setStatus('geocoding');
             } else {
                 setStatus('idle');
             }
 
-            setError((data as MapPoint).geocodingError || null);
+            setError(pt.geocodingError || null);
             setShowDeleteConfirm(false);
             setSaveSuccess(false);
-            if ((data as MapPoint).lastUpdated) {
-                setLastUpdatedStr(new Date((data as MapPoint).lastUpdated!).toLocaleString('ru-RU'));
+            if (pt.lastUpdated) {
+                setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
             } else {
                 setLastUpdatedStr(null);
             }
@@ -502,7 +500,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 <div className="flex flex-col gap-6">
                     <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
                          <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding' && !!displayLat}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding'}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
@@ -570,7 +568,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     </div>
                                 )}
 
-                                {status === 'geocoding' && (
+                                {status === 'geocoding' && !error && (
                                     <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
                                         <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
                                             <LoaderIcon className="w-4 h-4" /> 
