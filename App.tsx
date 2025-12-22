@@ -300,7 +300,9 @@ const App: React.FC = () => {
 
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
-            if (msg.type === 'result_finished') {
+            if (msg.type === 'progress') {
+                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
+            } else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setDateRange(payload.dateRange);
@@ -324,7 +326,7 @@ const App: React.FC = () => {
                     localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
                 }
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Данные актуальны' }));
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Данные актуальны', totalRowsProcessed: payload.totalRowsProcessed }));
                 if (isUpdate) addNotification('База данных обновлена', 'success');
             }
         };
@@ -334,17 +336,25 @@ const App: React.FC = () => {
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}&month=${month || 1}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
+            const CHUNK_SIZE = 2000; // Уменьшенный лимит для стабильности
+            
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
-                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
+                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
+                    if (!res.ok) {
+                        console.error(`Chunk fetch failed at offset ${offset}`);
+                        break;
+                    }
                     const result = await res.json();
                     if (result.rows?.length > 0) {
                         workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
                         isFirstChunk = false;
+                    } else {
+                        hasMore = false;
                     }
                     hasMore = result.hasMore;
-                    offset += 5000;
+                    offset += CHUNK_SIZE;
                 }
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });

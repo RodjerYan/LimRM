@@ -138,6 +138,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+        // Счётчик увеличивается для каждой строки, независимо от валидности адреса
         state_processedRowsCount++;
         
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
@@ -187,6 +188,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const pt = state_uniquePlottableClients.get(normAddr);
         if (pt) state_aggregatedData[groupKey].clients.set(normAddr, pt);
     }
+    
+    // Промежуточный прогресс (необязательно, но приятно для пользователя)
+    const currentProgress = Math.min(95, 10 + (state_processedRowsCount / 50000) * 80);
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработано ${state_processedRowsCount} строк...` } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {

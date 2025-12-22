@@ -61,13 +61,11 @@ async function getAuthClient() {
     });
 }
 
-// FIX: Exported getGoogleSheetsClient to resolve the import error in other modules.
 export async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = await getAuthClient();
     return google.sheets({ version: 'v4', auth });
 }
 
-// FIX: Exported getGoogleDriveClient to resolve the import error in api/get-akb.ts.
 export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     const auth = await getAuthClient();
     return google.drive({ version: 'v3', auth });
@@ -276,7 +274,7 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
  * Fetches content of a specific spreadsheet file with optional range support.
  * ОПТИМИЗИРОВАНО: Если передан range, запрашивает только его.
  */
-export async function fetchFileContent(fileId: string, range: string = 'A:BZ'): Promise<any[][]> {
+export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
     
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({

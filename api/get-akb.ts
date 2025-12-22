@@ -50,16 +50,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.query.fileId) {
             const fileId = req.query.fileId as string;
             const offset = parseInt(req.query.offset as string || '0', 10);
-            const limit = parseInt(req.query.limit as string || '5000', 10);
+            // Уменьшаем лимит до 2000, так как широкие таблицы (до CZ) могут превышать 4.5МБ лимит Vercel
+            const limit = parseInt(req.query.limit as string || '2000', 10);
             
             const startRow = offset + 1;
             const endRow = offset + limit;
-            const range = `A${startRow}:BZ${endRow}`;
+            // Расширяем диапазон до CZ (104 колонки), чтобы не терять данные в широких отчетах
+            const range = `A${startRow}:CZ${endRow}`;
 
             const chunk = await fetchFileContent(fileId, range);
-            const hasMore = chunk.length >= limit;
+            // Если API вернуло пустой массив или меньше строк, чем мы просили — данных больше нет
+            const hasMore = chunk.length > 0 && chunk.length >= limit;
             
-            res.setHeader('Cache-Control', 'no-store'); // Отключаем кеш для режима синхронизации
+            res.setHeader('Cache-Control', 'no-store');
             return res.status(200).json({
                 fileId,
                 rows: chunk,
@@ -73,6 +76,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error) {
         console.error('Error in /api/get-akb:', error);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: 'Server error', details: error instanceof Error ? error.message : 'Unknown' });
     }
 }
