@@ -117,6 +117,14 @@ const App: React.FC = () => {
             pollingIntervals.current.delete(oldKey);
         }
 
+        // КРИТИЧНО: Если сейчас открыто модальное окно с этим клиентом, обновляем его стейт, чтобы маркер переставился
+        setEditingClient(prev => {
+            if (prev && 'key' in prev && (prev as MapPoint).key === oldKey) {
+                return newPoint;
+            }
+            return prev;
+        });
+
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];

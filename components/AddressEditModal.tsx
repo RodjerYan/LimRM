@@ -8,6 +8,14 @@ import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dat
 import { parseRussianAddress } from '../services/addressParser';
 import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
+// Fix for default marker icons in Leaflet when using build tools
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+});
+
 type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
@@ -20,7 +28,6 @@ const greenIcon = new L.Icon({
     popupAnchor: [1, -34],
     shadowSize: [41, 41]
 });
-const blueIcon = new L.Icon.Default(); 
 
 interface AddressEditModalProps {
   isOpen: boolean;
@@ -92,7 +99,7 @@ const SinglePointMap: React.FC<{
         if (!map) return;
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
-            const iconToUse = isSuccess ? greenIcon : blueIcon;
+            const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
             if (!markerRef.current) {
                 const marker = L.marker(latLng, { 
                     icon: iconToUse,
@@ -231,11 +238,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     }, [isOpen, globalTheme]);
 
-    // NEW: Эффект для автоматического обновления статуса при получении координат через polling
+    // NEW/FIX: Синхронизируем локальный статус модалки с флагом isGeocoding из пропсов.
+    // Если polling в App.tsx нашел координаты и обновил editingClient, мы увидим это здесь.
     useEffect(() => {
-        if (isOpen && data && status === 'geocoding') {
+        if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
-            if (pt.lat && pt.lon && !pt.isGeocoding) {
+            if (pt.isGeocoding) {
+                setStatus('geocoding');
+                setManualCoords(null);
+            } else if (status === 'geocoding' && pt.lat && pt.lon) {
+                // Если мы ЖДАЛИ (были в статусе geocoding) и ПРИШЛИ координаты
                 setStatus('idle');
                 setSaveSuccess(true);
                 setTimeout(() => setSaveSuccess(false), 3000);
@@ -245,7 +257,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 }
             }
         }
-    }, [data, isOpen, status]);
+    }, [data, isOpen]);
 
     const fetchHistory = async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
@@ -294,11 +306,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setComment((data as MapPoint).comment || ''); 
             setManualCoords(null);
             setIsMapExpanded(false);
-            if ((data as MapPoint).isGeocoding) {
+            
+            // Если точка уже в процессе геокодирования (пришла такая из списка)
+            if (!isUnidentified(data) && (data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
             } else {
                 setStatus('idle');
             }
+
             setError(null);
             setShowDeleteConfirm(false);
             setSaveSuccess(false);
@@ -481,7 +496,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 <div className="space-y-4">
                     <div className="h-64">
                          <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={false}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding' && !!displayLat}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
@@ -507,21 +522,27 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding'} placeholder="Введите комментарий..." className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main" />
                             </div>
                             {lastUpdatedStr && <div className="text-xs text-gray-500 text-right italic">Последнее изменение: {lastUpdatedStr}</div>}
-                            {status === 'idle' && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
-                            {status === 'saving' && <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение изменений...</div>}
-                            {status === 'deleting' && <div className="text-center text-danger flex items-center justify-center gap-2"><LoaderIcon /> Удаление строки...</div>}
-                            {status === 'geocoding' && (
-                                <div className="flex flex-col gap-3 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30 animate-pulse">
-                                    <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm"><LoaderIcon /> <span>Ожидание ответа от геокодера...</span></div>
-                                    <div className="text-center text-xs text-gray-300">Запрос отправлен. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.</div>
-                                </div>
-                            )}
-                             {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
-                                <div className="text-center text-danger space-y-2">
-                                    <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
-                                    {status !== 'error_deleting' && <button onClick={handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2"><RetryIcon /> Повторить попытку</button>}
-                                </div>
-                            )}
+                            
+                            {/* СЕКЦИЯ СТАТУСА И КНОПОК */}
+                            <div className="min-h-[60px] flex flex-col justify-center">
+                                {status === 'idle' && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
+                                {status === 'saving' && <div className="text-center text-cyan-400 flex items-center justify-center gap-2 py-2"><LoaderIcon /> Сохранение изменений...</div>}
+                                {status === 'deleting' && <div className="text-center text-danger flex items-center justify-center gap-2 py-2"><LoaderIcon /> Удаление строки...</div>}
+                                {status === 'geocoding' && (
+                                    <div className="flex flex-col gap-3 p-3 bg-indigo-900/30 rounded-lg border border-indigo-500/40 animate-pulse shadow-[0_0_15px_rgba(129,140,248,0.2)]">
+                                        <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
+                                            <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
+                                        </div>
+                                        <div className="text-center text-[10px] leading-tight text-gray-300">Запрос отправлен в Google Таблицу. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.</div>
+                                    </div>
+                                )}
+                                {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
+                                    <div className="text-center text-danger space-y-2">
+                                        <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
+                                        {status !== 'error_deleting' && <button onClick={handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2"><RetryIcon /> Повторить попытку</button>}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -534,7 +555,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                     <div className="flex-grow relative">
                         <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={false}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding'}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onCollapse={() => setIsMapExpanded(false)} isExpanded={true}
