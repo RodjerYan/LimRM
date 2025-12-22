@@ -169,7 +169,7 @@ const SinglePointMap: React.FC<{
             <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
-                        {isSearching ? <div className="animate-spin h-4 w-4 border-2 border-accent border-t-transparent rounded-full"/> : <SearchIcon />}
+                        {isSearching ? <LoaderIcon className="w-4 h-4 text-accent" /> : <SearchIcon className="w-4 h-4" />}
                     </div>
                     <input 
                         type="text" 
@@ -478,7 +478,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
                         <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-bold text-lg text-text-main flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon />}</h4>
+                            <h4 className="font-bold text-lg text-text-main flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon className="w-4 h-4" />}</h4>
                             <span className="text-xs text-text-muted bg-gray-800 px-2 py-1 rounded-full border border-gray-700">Всего: {history.length}</span>
                         </div>
                         <div className="flex-grow overflow-y-auto custom-scrollbar bg-gray-800/30 rounded-lg p-2 border border-gray-700/50 min-h-[120px]">
@@ -492,7 +492,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     ))}
                                 </ul>
                             ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-gray-500 text-sm p-4"><div className="w-8 h-8 mb-2 opacity-50"><InfoIcon /></div><span>История изменений пуста</span></div>
+                                <div className="h-full flex flex-col items-center justify-center text-gray-500 text-sm p-4"><InfoIcon className="w-8 h-8 mb-2 opacity-50" /><span>История изменений пуста</span></div>
                             )}
                         </div>
                     </div>
@@ -506,10 +506,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
                          />
                     </div>
-                    <div className="bg-card-bg/50 p-6 rounded-2xl border border-gray-700 shadow-xl overflow-hidden relative">
+                    <div className="bg-card-bg/50 p-6 rounded-2xl border border-gray-700 shadow-xl overflow-hidden">
                         <div className="flex justify-between items-center mb-5">
                             <h4 className="font-bold text-lg text-indigo-300 uppercase tracking-wider flex items-center gap-2">
-                                <div className="p-1.5 bg-indigo-500/20 rounded-lg"><SaveIcon small /></div>
+                                <SaveIcon className="w-4 h-4" />
                                 Редактирование
                             </h4>
                             {!showDeleteConfirm ? (
@@ -523,8 +523,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             <div className="relative group">
                                 <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 ml-1">Адрес ТТ LimKorm</label>
                                 <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-3 bg-gray-900/60 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-text-main shadow-inner resize-none custom-scrollbar ${saveSuccess ? 'border-emerald-500 ring-2 ring-emerald-500/30' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-500')}`} />
-                                {saveSuccess && <div className="absolute right-3 top-9 text-emerald-400 animate-pulse"><CheckIcon /></div>}
-                                {error && <div className="absolute right-3 top-9 text-red-400"><ErrorIcon /></div>}
+                                {saveSuccess && <CheckIcon className="absolute right-3 top-9 text-emerald-400 animate-pulse" />}
+                                {error && <AlertIcon className="absolute right-3 top-9 text-red-400" />}
                             </div>
 
                             <div className="relative group">
@@ -546,38 +546,38 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 
                                 {status === 'idle' && error && (
                                     <div className="space-y-4 animate-fade-in">
-                                        <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl text-red-200 flex gap-4 items-start shadow-inner">
-                                            <div className="mt-1 flex-shrink-0"><ErrorIcon /></div>
-                                            <div className="flex-grow space-y-1">
-                                                <p className="text-xs font-bold uppercase tracking-wider text-red-400">Ошибка геокодирования</p>
-                                                <p className="text-xs leading-relaxed text-red-100 opacity-90">{error}</p>
+                                        <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl text-red-100 flex gap-4 items-start shadow-inner">
+                                            <div className="mt-1 flex-shrink-0"><ErrorIcon className="w-5 h-5 text-red-500" /></div>
+                                            <div className="flex-grow space-y-1 text-left">
+                                                <p className="text-xs font-bold uppercase tracking-wider text-red-400">Геокодирование не удалось</p>
+                                                <p className="text-xs leading-relaxed opacity-90">{error}</p>
                                             </div>
                                         </div>
                                         <button 
                                             onClick={handleSave} 
-                                            className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98]"
+                                            className="w-full h-12 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98]"
                                         >
-                                            <RetryIcon /> Исправить и повторить
+                                            <RetryIcon className="w-4 h-4" /> Исправить и повторить
                                         </button>
                                     </div>
                                 )}
 
                                 {status === 'saving' && (
                                     <div className="w-full bg-gray-800/50 py-3.5 rounded-xl border border-gray-700 text-center text-cyan-400 flex items-center justify-center gap-3 font-bold animate-pulse">
-                                        <LoaderIcon /> Синхронизация...
+                                        <LoaderIcon className="w-5 h-5" /> Синхронизация...
                                     </div>
                                 )}
                                 
                                 {status === 'deleting' && (
                                     <div className="w-full bg-red-900/20 py-3.5 rounded-xl border border-red-500/20 text-center text-danger flex items-center justify-center gap-3 font-bold animate-pulse">
-                                        <LoaderIcon /> Удаление...
+                                        <LoaderIcon className="w-5 h-5" /> Удаление...
                                     </div>
                                 )}
 
                                 {status === 'geocoding' && (
                                     <div className="flex flex-col gap-3 p-4 bg-indigo-900/20 rounded-xl border border-indigo-500/40 animate-pulse shadow-inner">
                                         <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
-                                            <div className="w-4 h-4"><LoaderIcon /></div> 
+                                            <LoaderIcon className="w-4 h-4" /> 
                                             <span>Поиск в Google Таблице...</span>
                                         </div>
                                         <p className="text-center text-[10px] leading-relaxed text-gray-400 px-2 italic">
@@ -589,11 +589,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 {(status === 'error_saving' || status === 'error_deleting') && (
                                     <div className="text-center space-y-3 animate-fade-in">
                                         <div className="flex items-center justify-center gap-2 text-danger text-xs bg-red-900/10 p-2 rounded-lg border border-red-500/20">
-                                            <ErrorIcon small /> {error || 'Сбой соединения'}
+                                            <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
                                         </div>
                                         {status !== 'error_deleting' && (
                                             <button onClick={handleSave} className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all">
-                                                <RetryIcon /> Повторить
+                                                <RetryIcon className="w-4 h-4" /> Повторить
                                             </button>
                                         )}
                                     </div>
