@@ -545,10 +545,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 
                                 {status === 'idle' && error && (
                                     <div className="space-y-4 animate-fade-in">
-                                        <div className="p-4 bg-red-900/30 border border-red-500/40 rounded-2xl text-red-100 flex gap-4 items-start shadow-inner">
-                                            <div className="mt-1 flex-shrink-0 text-red-500"><ErrorIcon className="w-6 h-6" /></div>
+                                        <div className="p-4 bg-red-900/30 border border-red-500/40 rounded-2xl text-red-100 flex gap-3 items-start shadow-inner">
+                                            <div className="mt-0.5 flex-shrink-0 text-red-500 w-6 h-6"><ErrorIcon className="w-6 h-6" /></div>
                                             <div className="flex-grow space-y-1 text-left">
-                                                <p className="text-xs font-bold uppercase tracking-widest text-red-400">Геокодирование не удалось</p>
+                                                <p className="text-xs font-bold uppercase tracking-widest text-red-400">Ошибка</p>
                                                 <p className="text-xs leading-relaxed opacity-80">{error}</p>
                                             </div>
                                         </div>
@@ -585,7 +585,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 {(status === 'error_saving' || status === 'error_deleting') && (
                                     <div className="text-center space-y-4 animate-fade-in">
                                         <div className="flex items-center justify-center gap-3 text-red-400 text-xs bg-red-900/20 p-3 rounded-xl border border-red-500/20 shadow-inner">
-                                            <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
+                                            <div className="w-4 h-4 flex-shrink-0"><ErrorIcon className="w-4 h-4" /></div> 
+                                            <span className="truncate">{error || 'Сбой соединения'}</span>
                                         </div>
                                         {status !== 'error_deleting' && (
                                             <button onClick={handleSave} className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-all">
