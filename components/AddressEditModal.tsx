@@ -50,7 +50,6 @@ const SinglePointMap: React.FC<{
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
 
-    // Search State
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -59,33 +58,21 @@ const SinglePointMap: React.FC<{
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-    // 1. Initialize Map (Once)
     useEffect(() => {
         if (!mapContainerRef.current) return;
-
-        // FIX: Strict Mode Safety - Prevent double initialization
         if (mapRef.current) return;
-
-        // Create map instance
         const map = L.map(mapContainerRef.current, { 
             scrollWheelZoom: true,
-            zoomControl: false, // Disable default to add manual control
+            zoomControl: false,
             center: [55.75, 37.61],
             zoom: 5,
-            attributionControl: false // Disable attribution
+            attributionControl: false
         });
-        
         mapRef.current = map;
-
-        // Add zoom control to top-left explicitly
         L.control.zoom({ position: 'topleft' }).addTo(map);
-
-        // Create tile layer (placeholder, URL set in next effect)
         tileLayerRef.current = L.tileLayer(darkUrl, {
             attribution: '&copy; OpenStreetMap &copy; CARTO',
         }).addTo(map);
-
-        // Cleanup on unmount
         return () => {
             map.remove();
             mapRef.current = null;
@@ -94,29 +81,24 @@ const SinglePointMap: React.FC<{
         };
     }, []);
 
-    // 2. Handle Theme Updates
     useEffect(() => {
         if (!tileLayerRef.current) return;
         const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
         tileLayerRef.current.setUrl(targetUrl);
     }, [theme]);
 
-    // 3. Handle Data/Marker Updates
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
-
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
             const iconToUse = isSuccess ? greenIcon : blueIcon;
-
             if (!markerRef.current) {
                 const marker = L.marker(latLng, { 
                     icon: iconToUse,
                     draggable: true,
                     autoPan: true
                 }).addTo(map);
-                
                 marker.on('dragend', (e) => {
                     const m = e.target;
                     const p = m.getLatLng();
@@ -126,36 +108,27 @@ const SinglePointMap: React.FC<{
             } else {
                 markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             }
-             
             const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
-             
             map.setView(latLng, isExpanded ? 16 : 15);
         } else {
-            // No coords
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
         }
-        
-        // Fix gray tiles
         const timer = setTimeout(() => map.invalidateSize(), 200);
         return () => clearTimeout(timer);
-
     }, [lat, lon, isSuccess, isExpanded, address]); 
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
         setSearchQuery(q);
-        
         if (searchTimeout.current) clearTimeout(searchTimeout.current);
-        
         if (q.length < 3) {
             setSearchResults([]);
             return;
         }
-
         setIsSearching(true);
         searchTimeout.current = setTimeout(async () => {
             try {
@@ -186,8 +159,6 @@ const SinglePointMap: React.FC<{
         <div className="relative h-full w-full group isolate">
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
-            
-            {/* Map Search Bar - Shifted right (left-14) to avoid zoom controls, High Z-Index */}
             <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
@@ -215,8 +186,6 @@ const SinglePointMap: React.FC<{
                     )}
                 </div>
             </div>
-
-            {/* Map Controls Overlay - Positioned Top Right - Explicit Z-Index */}
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
@@ -225,21 +194,12 @@ const SinglePointMap: React.FC<{
                 >
                     {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
                 </button>
-                
                 {isExpanded ? (
-                    <button 
-                        onClick={onCollapse}
-                        className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
-                        title="Свернуть карту"
-                    >
+                    <button onClick={onCollapse} className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm" title="Свернуть карту">
                         <MinimizeIcon />
                     </button>
                 ) : (
-                    <button 
-                        onClick={onExpand}
-                        className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
-                        title="Развернуть карту"
-                    >
+                    <button onClick={onExpand} className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm" title="Развернуть карту">
                         <MaximizeIcon />
                     </button>
                 )}
@@ -259,25 +219,39 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-    
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
 
     const justSaved = useRef(false);
 
-    // Sync local map theme with global theme when opened
     useEffect(() => {
         if (isOpen) {
             setMapTheme(globalTheme);
         }
     }, [isOpen, globalTheme]);
 
+    // NEW: Эффект для автоматического обновления статуса при получении координат через polling
+    useEffect(() => {
+        if (isOpen && data && status === 'geocoding') {
+            const pt = data as MapPoint;
+            if (pt.lat && pt.lon && !pt.isGeocoding) {
+                setStatus('idle');
+                setSaveSuccess(true);
+                setTimeout(() => setSaveSuccess(false), 3000);
+                setManualCoords(null);
+                if (pt.lastUpdated) {
+                    setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
+                }
+            }
+        }
+    }, [data, isOpen, status]);
+
     const fetchHistory = async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
         setHistory([]);
         try {
-            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}`);
+            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
@@ -295,7 +269,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     };
 
-    // Helper to determine if we are editing a fresh Unidentified Row or an existing MapPoint
     const isUnidentified = (item: EditableData): item is UnidentifiedRow => {
         return (item as UnidentifiedRow).originalIndex !== undefined;
     };
@@ -303,204 +276,119 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     useEffect(() => {
         if (isOpen && data) {
             const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-            
-            // --- LOGIC UPDATE: Aggressive Smart Address Population on Mount ---
             let currentAddress = '';
-
-            // If it's an UnidentifiedRow, we MUST recalculate the address from source,
-            // scanning for Distributor info even if columns are named weirdly or info is inside value strings.
             if (isUnidentified(data)) {
                 const rawAddress = findAddressInRow(originalRow) || '';
-                
-                // 1. Standard search by column name
                 let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
-                
-                // 2. Aggressive fallback: search ALL values for typical patterns (e.g. "Name (City)")
                 if (!distributor) {
                     const values = Object.values(originalRow);
                     const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
-                    if (possibleDistributor) {
-                        distributor = String(possibleDistributor);
-                    }
+                    if (possibleDistributor) distributor = String(possibleDistributor);
                 }
-                
-                // Use the parser to attempt enrichment (e.g. inject city from distributor)
                 const parsed = parseRussianAddress(rawAddress, distributor);
                 currentAddress = parsed.finalAddress || rawAddress;
             } else {
-                // For MapPoints (already matched), use the existing address which might have been edited/enriched
                 currentAddress = (data as MapPoint).address;
             }
-            // --- END LOGIC UPDATE ---
-
             setEditedAddress(currentAddress);
             setComment((data as MapPoint).comment || ''); 
-            
             setManualCoords(null);
             setIsMapExpanded(false);
-            
             if ((data as MapPoint).isGeocoding) {
                 setStatus('geocoding');
             } else {
                 setStatus('idle');
             }
-            
             setError(null);
             setShowDeleteConfirm(false);
             setSaveSuccess(false);
-
             if ((data as MapPoint).lastUpdated) {
                 setLastUpdatedStr(new Date((data as MapPoint).lastUpdated!).toLocaleString('ru-RU'));
             } else {
                 setLastUpdatedStr(null);
             }
-
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
-                if (!justSaved.current) {
-                    fetchHistory(rm, currentAddress);
-                } else {
-                    justSaved.current = false;
-                }
-            } else {
-                setHistory([]);
-            }
+                if (!justSaved.current) fetchHistory(rm, currentAddress);
+                else justSaved.current = false;
+            } else setHistory([]);
         }
     }, [isOpen, data]);
 
     const handleSave = async () => {
         if (!data) return;
-        
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const originalIndex = (data as UnidentifiedRow).originalIndex;
-        
-        // Use current state for comparison, fallback to re-parsing raw if needed (though editedAddress should be populated)
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
-        
-        let oldKey = '';
-        if ((data as MapPoint).key) {
-            oldKey = (data as MapPoint).key;
-        } else {
-            oldKey = normalizeAddress(oldAddress);
-        }
-
+        let oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
         const isCommentChanged = comment.trim() !== currentComment.trim();
 
-        if (!isAddressChanged && !isCoordsChanged && !isCommentChanged) {
-            if (typeof originalIndex !== 'number') { 
-                 setStatus('error_saving');
-                 setError('Нет изменений для сохранения.');
-                 return;
-            }
+        if (!isAddressChanged && !isCoordsChanged && !isCommentChanged && typeof originalIndex !== 'number') {
+            setStatus('error_saving'); setError('Нет изменений для сохранения.'); return;
         }
 
-        setStatus('saving');
-        setError(null);
-        
+        setStatus('saving'); setError(null);
         try {
             const rm = findValueInRow(originalRow, ['рм']);
-            
-            // 1. Update Address / Comment
             if (isAddressChanged || isCommentChanged) {
                 const res = await fetch('/api/update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        rmName: rm, 
-                        oldAddress, 
-                        newAddress: editedAddress,
-                        comment: comment
-                    }),
+                    body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress, comment }),
                 });
-                if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.details || 'Ошибка при сохранении адреса/комментария.');
-                }
-                
-                const timestamp = new Date().toLocaleString('ru-RU', {
-                    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                });
-
-                if (isAddressChanged) {
-                    const newHistoryEntry = `${oldAddress} [${timestamp}]`;
-                    setHistory(prev => [newHistoryEntry, ...prev]);
-                } else if (isCommentChanged) {
-                    const commentEntry = `Комментарий: "${comment}" [${timestamp}]`;
-                    setHistory(prev => [commentEntry, ...prev]);
-                }
+                if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
+                const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                if (isAddressChanged) setHistory(prev => [`${oldAddress} [${timestamp}]`, ...prev]);
+                else if (isCommentChanged) setHistory(prev => [`Комментарий: "${comment}" [${timestamp}]`, ...prev]);
                 justSaved.current = true;
             }
 
-            // Same aggressive search here to ensure parsed result is consistent
             let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor']);
             if (!distributor) {
                  const values = Object.values(originalRow);
                  const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
                  if (possibleDistributor) distributor = String(possibleDistributor);
             }
-
             const parsed = parseRussianAddress(editedAddress, distributor);
-            
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
-            
             let isGeocodingState = isAddressChanged && !manualCoords;
 
-            // 2. Handle Manual Coordinates Update
             if (manualCoords) {
-                currentLat = manualCoords.lat;
-                currentLon = manualCoords.lon;
-                isGeocodingState = false;
-
+                currentLat = manualCoords.lat; currentLon = manualCoords.lon; isGeocodingState = false;
                 await fetch('/api/update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        rmName: rm, 
-                        updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] 
-                    })
+                    body: JSON.stringify({ rmName: rm, updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] })
                 });
             }
 
-            setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 2000);
-
+            setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2000);
             const updateTimestamp = Date.now();
-
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
                 lat: currentLat, lon: currentLon, status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
-                address: editedAddress,
-                city: parsed.city,
-                region: parsed.region,
-                rm: rm,
+                address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
                 brand: findValueInRow(originalRow, ['торговая марка']),
                 packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
                 type: findValueInRow(originalRow, ['канал продаж']),
                 contacts: findValueInRow(originalRow, ['контакты']),
-                originalRow: originalRow,
-                fact: (data as MapPoint).fact,
-                isGeocoding: isGeocodingState,
-                lastUpdated: updateTimestamp,
-                comment: comment
+                originalRow: originalRow, fact: (data as MapPoint).fact,
+                isGeocoding: isGeocodingState, lastUpdated: updateTimestamp, comment
             };
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
-            if (!manualCoords && isAddressChanged) {
+            if (isGeocodingState) {
                 setStatus('geocoding');
                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
-            } else {
-                setStatus('idle');
-            }
-
+            } else setStatus('idle');
         } catch (e) {
-            setStatus('error_saving');
-            setError((e as Error).message);
+            setStatus('error_saving'); setError((e as Error).message);
         }
     };
 
@@ -509,41 +397,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
         const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const rm = findValueInRow(originalRow, ['рм']);
-
-        setStatus('deleting');
-        setError(null);
-
+        setStatus('deleting'); setError(null);
         try {
             const res = await fetch('/api/delete-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rmName: rm, address: addressToDelete }),
             });
-
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.details || 'Ошибка при удалении строки.');
-            }
-            
-            let keyToDelete = '';
-            if ((data as MapPoint).key) {
-                keyToDelete = (data as MapPoint).key;
-            } else {
-                keyToDelete = normalizeAddress(addressToDelete);
-            }
-            
+            if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при удалении.'); }
+            let keyToDelete = (data as MapPoint).key || normalizeAddress(addressToDelete);
             onDelete(keyToDelete);
-
-        } catch (e) {
-            setStatus('error_deleting');
-            setError((e as Error).message);
-        }
+        } catch (e) { setStatus('error_deleting'); setError((e as Error).message); }
     };
     
-    const handleRetryGeocode = () => {
-       handleSave();
-    };
-
     if (!data) return null;
 
     const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
@@ -552,51 +418,25 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
     const currentComment = (data as MapPoint).comment || '';
-
-    const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({
-        key: String(key).trim(),
-        value: String(value).trim()
-    })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
-
+    const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
-    
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
-
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
     
     let saveButtonText = "Сохранить изменения";
-    if (isAddressChanged) {
-        saveButtonText = "Сохранить новый адрес";
-    }
-    if (isCoordsChanged) {
-        saveButtonText = "Сохранить новые координаты";
-    }
-    if (isAddressChanged && isCoordsChanged) {
-        saveButtonText = "Сохранить адрес и координаты";
-    }
-    if (isCommentChanged && !isAddressChanged && !isCoordsChanged) {
-        saveButtonText = "Сохранить комментарий";
-    }
+    if (isAddressChanged) saveButtonText = "Сохранить новый адрес";
+    if (isCoordsChanged) saveButtonText = "Сохранить новые координаты";
+    if (isAddressChanged && isCoordsChanged) saveButtonText = "Сохранить адрес и координаты";
+    if (isCommentChanged && !isAddressChanged && !isCoordsChanged) saveButtonText = "Сохранить комментарий";
 
     const customFooter = (
         <div className="flex justify-between items-center p-4 bg-card-bg/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0">
-            <button
-                onClick={onBack}
-                className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"
-                aria-label="Вернуться к предыдущему окну"
-            >
-                <ArrowLeftIcon /> Назад
-            </button>
-            <button
-                onClick={onClose}
-                className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200"
-            >
-                Закрыть
-            </button>
+            <button onClick={onBack} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"><ArrowLeftIcon /> Назад</button>
+            <button onClick={onClose} className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg transition duration-200">Закрыть</button>
         </div>
     );
 
@@ -617,183 +457,92 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             </tbody>
                         </table>
                     </div>
-                    
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700 flex-grow flex flex-col">
                         <div className="flex justify-between items-center mb-3">
-                            <h4 className="font-bold text-lg text-text-main flex items-center gap-2">
-                                История изменений
-                                {isLoadingHistory && <LoaderIcon />}
-                            </h4>
-                            <span className="text-xs text-text-muted bg-gray-800 px-2 py-1 rounded-full border border-gray-700">
-                                Всего: {history.length}
-                            </span>
+                            <h4 className="font-bold text-lg text-text-main flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon />}</h4>
+                            <span className="text-xs text-text-muted bg-gray-800 px-2 py-1 rounded-full border border-gray-700">Всего: {history.length}</span>
                         </div>
-                        
                         <div className="flex-grow overflow-y-auto custom-scrollbar bg-gray-800/30 rounded-lg p-2 border border-gray-700/50 min-h-[120px]">
                             {history.length > 0 ? (
                                 <ul className="space-y-2">
                                     {history.map((item, idx) => (
                                         <li key={idx} className="p-3 bg-gray-800 rounded border border-gray-700 text-sm text-gray-300 flex flex-col gap-1 hover:bg-gray-700/80 transition-colors">
-                                            <div className="flex items-center gap-2 text-accent text-xs font-bold">
-                                                <span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
-                                                <span>Изменение #{history.length - idx}</span>
-                                            </div>
+                                            <div className="flex items-center gap-2 text-accent text-xs font-bold"><span className="w-2 h-2 rounded-full bg-accent animate-pulse"></span><span>Изменение #{history.length - idx}</span></div>
                                             <span className="pl-4 break-words whitespace-pre-wrap">{item}</span>
                                         </li>
                                     ))}
                                 </ul>
                             ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-gray-500 text-sm p-4">
-                                    <div className="w-8 h-8 mb-2 opacity-50"><InfoIcon /></div>
-                                    <span>История изменений пуста</span>
-                                </div>
+                                <div className="h-full flex flex-col items-center justify-center text-gray-500 text-sm p-4"><div className="w-8 h-8 mb-2 opacity-50"><InfoIcon /></div><span>История изменений пуста</span></div>
                             )}
                         </div>
                     </div>
                 </div>
-
                 <div className="space-y-4">
                     <div className="h-64">
                          <SinglePointMap 
-                            lat={displayLat} 
-                            lon={displayLon} 
-                            address={editedAddress} 
-                            isSuccess={false}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={false}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
-                            theme={mapTheme}
-                            onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                            onExpand={() => setIsMapExpanded(true)}
-                            isExpanded={false}
+                            theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                            onExpand={() => setIsMapExpanded(true)} isExpanded={false}
                          />
                     </div>
                     <div className="bg-card-bg/50 p-4 rounded-lg border border-gray-700">
                         <div className="flex justify-between items-center mb-3">
                             <h4 className="font-bold text-lg text-accent">Редактирование данных</h4>
                             {!showDeleteConfirm ? (
-                                <button 
-                                    onClick={() => setShowDeleteConfirm(true)}
-                                    className="text-danger hover:text-red-400 transition-colors flex items-center gap-1 text-sm"
-                                    title="Удалить строку"
-                                >
-                                    <TrashIcon />
-                                </button>
+                                <button onClick={() => setShowDeleteConfirm(true)} className="text-danger hover:text-red-400 transition-colors flex items-center gap-1 text-sm" title="Удалить строку"><TrashIcon /></button>
                             ) : (
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs text-gray-300">Удалить?</span>
-                                    <button onClick={handleDelete} className="text-xs bg-danger hover:bg-red-600 text-white px-2 py-1 rounded">Да</button>
-                                    <button onClick={() => setShowDeleteConfirm(false)} className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded">Нет</button>
-                                </div>
+                                <div className="flex items-center gap-2"><span className="text-xs text-gray-300">Удалить?</span><button onClick={handleDelete} className="text-xs bg-danger hover:bg-red-600 text-white px-2 py-1 rounded">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded">Нет</button></div>
                             )}
                         </div>
                         <div className="space-y-3">
                             <div className="relative">
                                 <label htmlFor="address-input" className="block text-sm font-medium text-text-muted mb-1">Адрес ТТ LimKorm</label>
-                                <textarea
-                                    id="address-input"
-                                    rows={2}
-                                    value={editedAddress}
-                                    onChange={e => setEditedAddress(e.target.value)}
-                                    disabled={isProcessing || status === 'geocoding'}
-                                    className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`}
-                                />
-                                {saveSuccess && (
-                                    <div className="absolute right-2 top-8 text-green-400 animate-pulse">
-                                        <CheckIcon />
-                                    </div>
-                                )}
+                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-2 bg-gray-900/50 border rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main ${saveSuccess ? 'border-green-500 ring-1 ring-green-500' : 'border-gray-600'}`} />
+                                {saveSuccess && <div className="absolute right-2 top-8 text-green-400 animate-pulse"><CheckIcon /></div>}
                             </div>
-
                             <div className="relative">
                                 <label htmlFor="comment-input" className="block text-sm font-medium text-text-muted mb-1">Комментарий</label>
-                                <textarea
-                                    id="comment-input"
-                                    rows={2}
-                                    value={comment}
-                                    onChange={e => setComment(e.target.value)}
-                                    disabled={isProcessing || status === 'geocoding'}
-                                    placeholder="Введите комментарий..."
-                                    className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main"
-                                />
+                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding'} placeholder="Введите комментарий..." className="w-full p-2 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-2 focus:ring-accent disabled:opacity-50 transition-colors duration-300 text-text-main" />
                             </div>
-                            
-                            {lastUpdatedStr && (
-                                <div className="text-xs text-gray-500 text-right italic">
-                                    Последнее изменение: {lastUpdatedStr}
-                                </div>
-                            )}
-                            
-                            {status === 'idle' && (
-                                <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors">
-                                    <SaveIcon /> {saveButtonText}
-                                </button>
-                            )}
-                            
-                            {status === 'saving' && (
-                                <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение изменений...</div>
-                            )}
-                            
-                            {status === 'deleting' && (
-                                <div className="text-center text-danger flex items-center justify-center gap-2"><LoaderIcon /> Удаление строки...</div>
-                            )}
-
-                             {status === 'geocoding' && (
+                            {lastUpdatedStr && <div className="text-xs text-gray-500 text-right italic">Последнее изменение: {lastUpdatedStr}</div>}
+                            {status === 'idle' && <button onClick={handleSave} className="w-full bg-accent hover:bg-accent-dark text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors"><SaveIcon /> {saveButtonText}</button>}
+                            {status === 'saving' && <div className="text-center text-cyan-400 flex items-center justify-center gap-2"><LoaderIcon /> Сохранение изменений...</div>}
+                            {status === 'deleting' && <div className="text-center text-danger flex items-center justify-center gap-2"><LoaderIcon /> Удаление строки...</div>}
+                            {status === 'geocoding' && (
                                 <div className="flex flex-col gap-3 p-3 bg-indigo-900/20 rounded-lg border border-indigo-500/30 animate-pulse">
-                                    <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm">
-                                        <LoaderIcon /> <span>Ожидание ответа от геокодера...</span>
-                                    </div>
-                                    <div className="text-center text-xs text-gray-300">
-                                        Запрос отправлен. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.
-                                    </div>
+                                    <div className="text-center text-cyan-400 flex items-center justify-center gap-2 font-bold text-sm"><LoaderIcon /> <span>Ожидание ответа от геокодера...</span></div>
+                                    <div className="text-center text-xs text-gray-300">Запрос отправлен. Поиск координат продолжится в фоне (до 48 часов). Вы можете закрыть это окно.</div>
                                 </div>
                             )}
-
                              {(status === 'error_saving' || status === 'error_geocoding' || status === 'error_deleting') && (
                                 <div className="text-center text-danger space-y-2">
                                     <p className="flex items-center justify-center gap-2"><ErrorIcon /> {error}</p>
-                                    {status !== 'error_deleting' && (
-                                        <button onClick={handleRetryGeocode} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2">
-                                            <RetryIcon /> Повторить попытку
-                                        </button>
-                                    )}
+                                    {status !== 'error_deleting' && <button onClick={handleSave} className="w-full bg-warning/80 hover:bg-warning text-black font-bold py-2 px-4 rounded-lg flex items-center justify-center gap-2"><RetryIcon /> Повторить попытку</button>}
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
             </div>
-
-            {/* Full Screen Map Modal */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-card-bg/80 backdrop-blur-sm border-b border-gray-700">
                         <h3 className="text-lg font-bold text-white">Уточнение координат: {editedAddress}</h3>
-                        <button 
-                            onClick={() => setIsMapExpanded(false)}
-                            className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors"
-                        >
-                            Закрыть
-                        </button>
+                        <button onClick={() => setIsMapExpanded(false)} className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg transition-colors">Закрыть</button>
                     </div>
                     <div className="flex-grow relative">
                         <SinglePointMap 
-                            lat={displayLat} 
-                            lon={displayLon} 
-                            address={editedAddress} 
-                            isSuccess={false}
+                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={false}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
-                            theme={mapTheme}
-                            onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                            onCollapse={() => setIsMapExpanded(false)}
-                            isExpanded={true}
+                            theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                            onCollapse={() => setIsMapExpanded(false)} isExpanded={true}
                         />
                     </div>
                     <div className="p-4 bg-card-bg/80 backdrop-blur-sm border-t border-gray-700 flex justify-end gap-3">
-                         <div className="text-sm text-text-muted flex items-center mr-4">
-                            Перетащите маркер в нужное место. Координаты обновятся автоматически.
-                         </div>
-                         <button onClick={() => setIsMapExpanded(false)} className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg">
-                            Применить и вернуться
-                         </button>
+                         <div className="text-sm text-text-muted flex items-center mr-4">Перетащите маркер в нужное место. Координаты обновятся автоматически.</div>
+                         <button onClick={() => setIsMapExpanded(false)} className="bg-accent hover:bg-accent-dark text-white font-bold py-2 px-6 rounded-lg">Применить и вернуться</button>
                     </div>
                 </div>
             )}

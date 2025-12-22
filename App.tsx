@@ -67,6 +67,7 @@ const App: React.FC = () => {
     });
     
     const workerRef = useRef<Worker | null>(null);
+    const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
     // Data State
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -104,18 +105,23 @@ const App: React.FC = () => {
         };
         try {
             await saveAnalyticsState(stateToSave);
-            console.log("Local DB Sync: Success (Manual Edit)");
         } catch (e) {
             console.error("Local DB Sync: Failed", e);
         }
     }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
+        // Если пришло обновление (ручное или от поллинга), и для этого адреса шел опрос — останавливаем его
+        if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
+            clearInterval(pollingIntervals.current.get(oldKey));
+            pollingIntervals.current.delete(oldKey);
+        }
+
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
 
-        // 1. Обновляем плоский список точек для карты
+        // 1. Обновляем плоский список точек
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             if (index !== -1) {
@@ -128,7 +134,7 @@ const App: React.FC = () => {
             return finalPoints;
         });
 
-        // 2. Обновляем агрегированные группы (Результаты анализа)
+        // 2. Обновляем агрегированные группы
         setAllData(prev => {
             finalData = prev.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -142,19 +148,54 @@ const App: React.FC = () => {
             return finalData;
         });
 
-        // 3. Если это была правка неопознанной строки, убираем её из списка проблемных
+        // 3. Убираем из неопознанных, если адрес стал валидным
         setUnidentifiedRows(prev => {
-            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey);
+            finalUnidentified = prev.filter(row => {
+                const rowAddr = normalizeAddress(findAddressInRow(row.rowData));
+                return rowAddr !== oldKey && rowAddr !== newPoint.key;
+            });
             return finalUnidentified;
         });
 
-        // 4. Мгновенное сохранение в локальную базу (IndexedDB)
-        // Мы используем setTimeout чтобы дождаться завершения транзакций стейта, 
-        // но передаем актуальные массивы напрямую для надежности.
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 100);
+        // 4. Сохраняем
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 50);
+    }, [persistToDB]);
+
+    const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
+        if (pollingIntervals.current.has(tempKey)) {
+            clearInterval(pollingIntervals.current.get(tempKey));
+        }
+
+        const intervalId = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
+                if (res.ok) {
+                    const cached = await res.json();
+                    if (cached.lat && cached.lon && !isNaN(cached.lat)) {
+                        const updatedPoint: MapPoint = {
+                            ...basePoint,
+                            lat: parseFloat(cached.lat),
+                            lon: parseFloat(cached.lon),
+                            isGeocoding: false,
+                            lastUpdated: Date.now()
+                        };
+                        handleDataUpdate(tempKey, updatedPoint);
+                        addNotification(`Координаты определены: ${address}`, 'success');
+                    }
+                }
+            } catch (e) {}
+        }, 10000);
+
+        pollingIntervals.current.set(tempKey, intervalId);
         
-        addNotification('Изменения сохранены в облаке и локальной базе', 'success');
-    }, [addNotification, persistToDB]);
+        // Авто-стоп через 1 час для экономии ресурсов
+        setTimeout(() => {
+            if (pollingIntervals.current.has(tempKey)) {
+                clearInterval(pollingIntervals.current.get(tempKey));
+                pollingIntervals.current.delete(tempKey);
+            }
+        }, 3600000);
+    }, [handleDataUpdate, addNotification]);
 
     const handleDeleteClient = useCallback(async (key: string) => {
         let finalData: AggregatedDataRow[] = [];
@@ -179,10 +220,14 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
+        if (pollingIntervals.current.has(key)) {
+            clearInterval(pollingIntervals.current.get(key));
+            pollingIntervals.current.delete(key);
+        }
+
         setEditingClient(null);
-        
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 100);
-        addNotification('Запись удалена из всех источников', 'info');
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 50);
+        addNotification('Запись удалена', 'info');
     }, [addNotification, persistToDB]);
 
     useEffect(() => {
@@ -405,7 +450,7 @@ const App: React.FC = () => {
                     onBack={() => setEditingClient(null)} 
                     data={editingClient} 
                     onDataUpdate={handleDataUpdate}
-                    onStartPolling={() => {}} 
+                    onStartPolling={handleStartPolling} 
                     onDelete={handleDeleteClient}
                     globalTheme="dark"
                 />
