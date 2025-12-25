@@ -65,6 +65,8 @@ const App: React.FC = () => {
     });
     
     const workerRef = useRef<Worker | null>(null);
+    const cumulativeDataRef = useRef<AggregatedDataRow[]>([]);
+    const lastSnapshotMilestone = useRef<number>(0);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -85,25 +87,39 @@ const App: React.FC = () => {
     }, []);
 
     const uploadSnapshot = useCallback(async (state: any) => {
-        // ОПТИМИЗАЦИЯ: убираем тяжелые поля перед загрузкой
+        if (!state.allData || state.allData.length === 0) return;
+        
+        // ОПТИМИЗАЦИЯ: максимально сжимаем JSON перед отправкой, удаляя тяжелые originalRow
         const cloudState = {
             ...state,
             allData: state.allData.map((group: AggregatedDataRow) => ({
                 ...group,
-                clients: group.clients.map(c => ({ ...c, originalRow: undefined }))
+                clients: group.clients.map(c => ({ 
+                    key: c.key, lat: c.lat, lon: c.lon, name: c.name, address: c.address, 
+                    city: c.city, region: c.region, rm: c.rm, brand: c.brand, 
+                    packaging: c.packaging, type: c.type, fact: c.fact, abcCategory: c.abcCategory 
+                }))
             })),
             unidentifiedRows: state.unidentifiedRows.map((row: UnidentifiedRow) => ({
-                ...row,
-                rowData: { 'Address': findAddressInRow(row.rowData) }
+                rm: row.rm,
+                rowData: { 'Address': findAddressInRow(row.rowData) },
+                originalIndex: row.originalIndex
             }))
         };
+        
         try {
-            await fetch(`/api/get-akb?mode=snapshot&year=2025`, {
+            const res = await fetch(`/api/get-akb?mode=snapshot&year=2025`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(cloudState)
             });
-        } catch (e) {}
+            if (res.ok) {
+                console.log(`Cloud Snapshot: Saved at ${state.totalRowsProcessed} rows`);
+                setProcessingState(prev => ({ ...prev, backgroundMessage: `Облачный снимок сохранен (${state.totalRowsProcessed} стр.)` }));
+            }
+        } catch (e) {
+            console.error("Cloud Snapshot Error", e);
+        }
     }, []);
 
     const persistToDB = useCallback(async (
@@ -227,7 +243,10 @@ const App: React.FC = () => {
         if (isUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: isUpdate ? 'Синхронизация данных...' : 'Начало загрузки...', startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0 }));
+        cumulativeDataRef.current = [];
+        lastSnapshotMilestone.current = 0;
+        
+        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: isUpdate ? 'Синхронизация данных...' : 'Начало загрузки...', startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0, backgroundMessage: null }));
 
         let cacheData: CoordsCache = {};
         try { const res = await fetch(`/api/get-full-cache?t=${Date.now()}`); if (res.ok) cacheData = await res.json(); } catch (e) {}
@@ -241,11 +260,24 @@ const App: React.FC = () => {
             else if (msg.type === 'result_init' && !isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunk, totalProcessed } = msg.payload;
-                if (!isUpdate) { setAllData(chunk); }
+                
+                // Накапливаем данные для Snapshot
+                cumulativeDataRef.current = chunk; 
+                
+                if (!isUpdate) setAllData(chunk);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
-                // AUTO-SAVE: Сохраняем каждые 15000 строк в облако
-                if (totalProcessed > 0 && totalProcessed % 15000 === 0) {
-                    uploadSnapshot({ allData: chunk, unidentifiedRows: [], okbData, okbStatus, okbRegionCounts });
+
+                // AUTO-SAVE: Сохраняем каждые 15000 строк (система Milestones)
+                if (totalProcessed >= lastSnapshotMilestone.current + 15000) {
+                    lastSnapshotMilestone.current = totalProcessed;
+                    uploadSnapshot({ 
+                        allData: cumulativeDataRef.current, 
+                        unidentifiedRows: [], 
+                        okbData, 
+                        okbStatus, 
+                        okbRegionCounts,
+                        totalRowsProcessed: totalProcessed 
+                    });
                 }
             }
             else if (msg.type === 'result_finished') {
@@ -260,7 +292,7 @@ const App: React.FC = () => {
                 setDbStatus('ready');
                 const v = localStorage.getItem('pending_version_hash') || lastSyncVersion;
                 if (v) { await persistToDB(p.aggregatedData, p.unidentifiedRows, unique, p.totalRowsProcessed, v); setLastSyncVersion(v); }
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Завершено', totalRowsProcessed: p.totalRowsProcessed }));
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Завершено', totalRowsProcessed: p.totalRowsProcessed, backgroundMessage: 'Все данные синхронизированы с облаком' }));
                 addNotification('Облачная синхронизация завершена', 'success');
             }
         };
@@ -273,7 +305,6 @@ const App: React.FC = () => {
             for (const file of files) {
                 let offset = 0, hasMore = true, isFirst = true;
                 while (hasMore) {
-                    // УМЕНЬШАЕМ ЧАНК до 3000 для стабильности API
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=3000`);
                     if (!res.ok) { hasMore = false; break; }
                     const r = await res.json();
