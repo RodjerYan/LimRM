@@ -3,8 +3,9 @@ import React, { useState, useMemo } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
-import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams } from '../../types';
-import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon } from '../icons';
+import Modal from '../Modal';
+import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams, MapPoint } from '../../types';
+import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
@@ -33,6 +34,8 @@ interface OutlierItem {
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
     const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
+    const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
+    const [channelSearchTerm, setChannelSearchTerm] = useState('');
 
     const healthScore = useMemo(() => {
         if (props.activeClientsCount === 0) return 0;
@@ -74,6 +77,36 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             }))
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
+
+    // Иерархическая группировка клиентов для модального окна канала
+    const groupedChannelData = useMemo(() => {
+        if (!selectedChannel || !props.uploadedData) return null;
+
+        const filteredClients: MapPoint[] = [];
+        props.uploadedData.forEach(row => {
+            row.clients.forEach(c => {
+                if ((c.type || 'Не определен') === selectedChannel) {
+                    // Применяем поиск если есть
+                    const search = channelSearchTerm.toLowerCase();
+                    if (!search || c.name.toLowerCase().includes(search) || c.address.toLowerCase().includes(search) || c.rm.toLowerCase().includes(search)) {
+                        filteredClients.push(c);
+                    }
+                }
+            });
+        });
+
+        // Группировка: РМ -> Город -> Клиенты
+        const hierarchy: Record<string, Record<string, MapPoint[]>> = {};
+        filteredClients.forEach(c => {
+            const rm = c.rm || 'Не указан';
+            const city = c.city || 'Город не определен';
+            if (!hierarchy[rm]) hierarchy[rm] = {};
+            if (!hierarchy[rm][city]) hierarchy[rm][city] = [];
+            hierarchy[rm][city].push(c);
+        });
+
+        return hierarchy;
+    }, [selectedChannel, props.uploadedData, channelSearchTerm]);
 
     const rowsToDisplay = useMemo(() => {
         return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
@@ -191,7 +224,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     </div>
                                     <div>
                                         <h3 className="text-base font-bold text-white tracking-tight uppercase">Структура Каналов Продаж</h3>
-                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Данные извлекаются на лету</p>
+                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Нажмите на канал для детализации адресов</p>
                                     </div>
                                 </div>
                             </div>
@@ -199,10 +232,17 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             {channelStats.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                                     {channelStats.map((stat, idx) => (
-                                        <div key={idx} className="space-y-2 group">
+                                        <div 
+                                            key={idx} 
+                                            className="space-y-2 group cursor-pointer"
+                                            onClick={() => {
+                                                setSelectedChannel(stat.name);
+                                                setChannelSearchTerm('');
+                                            }}
+                                        >
                                             <div className="flex justify-between items-end">
                                                 <div className="flex flex-col">
-                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-300 transition-colors">{stat.name}</span>
+                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">{stat.name}</span>
                                                     <span className="text-[9px] text-indigo-400 font-bold mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
                                                 </div>
                                                 <span className="text-xs font-mono text-gray-300">
@@ -212,7 +252,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                             </div>
                                             <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
                                                 <div 
-                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out"
+                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out group-hover:from-indigo-400 group-hover:to-purple-400"
                                                     style={{ width: `${stat.percentage}%` }}
                                                 ></div>
                                             </div>
@@ -262,6 +302,89 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     </div>
                 </div>
             )}
+            
+            {/* Модальное окно детализации канала */}
+            {selectedChannel && (
+                <Modal 
+                    isOpen={!!selectedChannel} 
+                    onClose={() => setSelectedChannel(null)} 
+                    title={
+                        <div className="flex flex-col">
+                            <span className="text-xl font-bold text-white">Канал: {selectedChannel}</span>
+                            <span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация по РМ и городам</span>
+                        </div>
+                    }
+                    maxWidth="max-w-5xl"
+                >
+                    <div className="space-y-4">
+                        <div className="relative mb-6">
+                            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500">
+                                <SearchIcon small />
+                            </div>
+                            <input 
+                                type="text" 
+                                placeholder="Поиск по адресу, названию ТТ или менеджеру..." 
+                                value={channelSearchTerm}
+                                onChange={(e) => setChannelSearchTerm(e.target.value)}
+                                className="w-full bg-gray-900 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                            />
+                        </div>
+
+                        <div className="max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
+                            {groupedChannelData && Object.keys(groupedChannelData).length > 0 ? (
+                                <div className="space-y-8">
+                                    {Object.entries(groupedChannelData).sort((a,b) => a[0].localeCompare(b[0])).map(([rm, cities]) => (
+                                        <div key={rm} className="space-y-4">
+                                            <div className="sticky top-0 bg-card-bg/95 backdrop-blur z-10 py-2 border-b border-gray-800 flex justify-between items-center">
+                                                <h4 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                                                    <UsersIcon small /> {rm}
+                                                </h4>
+                                                <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">
+                                                    {Object.values(cities).flat().length} ТТ
+                                                </span>
+                                            </div>
+                                            <div className="pl-4 space-y-6">
+                                                {Object.entries(cities).sort((a,b) => a[0].localeCompare(b[0])).map(([city, clients]) => (
+                                                    <div key={city} className="space-y-2">
+                                                        <h5 className="text-xs font-bold text-gray-300 flex items-center gap-2">
+                                                            <div className="w-1 h-1 rounded-full bg-emerald-500"></div>
+                                                            {city}
+                                                        </h5>
+                                                        <div className="grid grid-cols-1 gap-2">
+                                                            {clients.map((client, cIdx) => (
+                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-colors flex justify-between items-start gap-4">
+                                                                    <div className="min-w-0">
+                                                                        <div className="text-xs font-bold text-white truncate" title={client.name}>{client.name}</div>
+                                                                        <div className="text-[10px] text-gray-500 mt-1 truncate" title={client.address}>{client.address}</div>
+                                                                    </div>
+                                                                    <div className="flex flex-col items-end shrink-0">
+                                                                        <div className="text-[11px] font-mono font-bold text-emerald-400">
+                                                                            {(client.fact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span>
+                                                                        </div>
+                                                                        <div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">
+                                                                            {client.brand}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="py-20 text-center text-gray-600 flex flex-col items-center gap-2">
+                                    <SearchIcon />
+                                    <p className="text-sm">Адреса не найдены по вашему запросу</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </Modal>
+            )}
+
             {selectedOutlier && <OutlierDetailsModal isOpen={!!selectedOutlier} onClose={() => setSelectedOutlier(null)} item={selectedOutlier} />}
         </div>
     );
