@@ -138,7 +138,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        // Счётчик увеличивается для каждой строки, независимо от валидности адреса
         state_processedRowsCount++;
         
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
@@ -146,6 +145,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
+
+        // Поиск канала продаж (столбец BG / Канал продаж)
+        let channel = findValueInRow(row, ['канал продаж', 'канал', 'тип тт', 'сегмент']);
+        if (!channel) channel = 'Не определен';
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
@@ -181,7 +184,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 status: 'match',
                 name: String(row[state_clientNameHeader || ''] || 'ТТ'),
                 address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
-                type: 'Retail', originalRow: row, fact: weight
+                type: channel, // Исправлено: теперь используем найденный канал
+                originalRow: row, fact: weight
             });
         }
         
@@ -189,7 +193,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (pt) state_aggregatedData[groupKey].clients.set(normAddr, pt);
     }
     
-    // Промежуточный прогресс (необязательно, но приятно для пользователя)
     const currentProgress = Math.min(95, 10 + (state_processedRowsCount / 50000) * 80);
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработано ${state_processedRowsCount} строк...` } });
 }
