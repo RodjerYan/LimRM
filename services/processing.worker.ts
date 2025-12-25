@@ -17,6 +17,7 @@ type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 
+// --- WORKER STATE ---
 let state_aggregatedData: AggregationMap = {};
 let state_uniquePlottableClients = new Map<string, MapPoint>();
 let state_unidentifiedRows: UnidentifiedRow[] = [];
@@ -25,8 +26,9 @@ let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
 let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
-let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; isInvalid?: boolean; comment?: string }>();
+let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
+let state_dateRange: string | undefined = undefined;
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -36,15 +38,28 @@ const normalizeHeaderKey = (key: string): string => {
 const isValidManagerValue = (val: string): boolean => {
     if (!val) return false;
     const v = String(val).trim().toLowerCase();
-    const stopWords = ['нет специализации', 'нет', 'корм', 'кошек', 'собак'];
+    const stopWords = ['нет специализации', 'нет', 'для ', 'без ', 'корм', 'кошек', 'собак', 'стерилиз', 'чувствител', 'пород', 'weight', 'adult', 'junior', 'kitten', 'puppy', 'специализ', 'продук', 'товар'];
     return !stopWords.some(w => v.includes(w)) && v.length >= 2;
 };
 
+const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): string => {
+    const rowKeys = Object.keys(row);
+    const targetStrict = strictKeys.map(normalizeHeaderKey);
+    for (const key of rowKeys) {
+        if (targetStrict.includes(normalizeHeaderKey(key))) {
+             const val = String(row[key] || '');
+             if (isValidManagerValue(val)) return val;
+        }
+    }
+    return '';
+};
+
 const getCanonicalRegion = (row: any): string => {
-    const subjectValue = findValueInRow(row, ['субъект', 'регион', 'region', 'область']);
+    const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
         const cleanVal = subjectValue.trim();
         let lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ');
+        if (["орел", "орёл", "orel"].includes(lowerVal.trim())) return "Орловская область";
         for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
             if (lowerVal.includes(key)) return standardName;
         }
@@ -91,7 +106,7 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
         Object.values(cacheData).flat().forEach(item => {
             if (item.address && !item.isDeleted) {
                 state_cacheAddressMap.set(normalizeAddress(item.address), { 
-                    lat: item.lat, lon: item.lon, isInvalid: item.isInvalid, comment: item.comment 
+                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment 
                 });
             }
         });
@@ -100,43 +115,50 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
-    const { rawData, isFirstChunk } = payload;
+    const { rawData, isFirstChunk, fileName } = payload;
     
+    let jsonData: any[] = [];
     if (isFirstChunk || state_headers.length === 0) {
         const hRow = rawData.findIndex(row => row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
         const actualHRow = hRow === -1 ? 0 : hRow;
         state_headers = rawData[actualHRow].map(h => String(h || '').trim());
+        jsonData = rawData.slice(actualHRow + 1).map(row => {
+            const obj: any = {};
+            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+            return obj;
+        });
         state_clientNameHeader = state_headers.find(h => normalizeHeaderKey(h).includes('наименование'));
+    } else {
+        jsonData = rawData.map(row => {
+            const obj: any = {};
+            state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
+            return obj;
+        });
     }
 
-    const jsonData = isFirstChunk 
-        ? rawData.slice(state_headers.length > 0 ? 1 : 0) 
-        : rawData;
-
     for (let i = 0; i < jsonData.length; i++) {
-        const rawRow = jsonData[i];
-        const row: any = {};
-        state_headers.forEach((h, idx) => { if (h) row[h] = rawRow[idx]; });
-        
+        const row = jsonData[i];
         state_processedRowsCount++;
         
-        let rm = findValueInRow(row, ['рм', 'региональный менеджер']);
-        if (!isValidManagerValue(rm)) rm = 'Не указан';
+        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
+        if (!rm) rm = 'Unknown_RM';
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
+        // Более точный поиск канала
+        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
+        if (!channel || channel.length < 2) channel = 'Не определен';
+
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
-        
-        // КЛЮЧЕВОЙ ФИКС: Уникальность ТТ = Адрес + Клиент
-        const clientUid = `${normAddr}_${clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '')}`;
-        
         const cacheEntry = state_cacheAddressMap.get(normAddr);
+        
+        const isCityFound = parsed.city !== 'Город не определен';
         const reg = getCanonicalRegion(row) || parsed.region;
+        const isRegionFound = reg !== 'Регион не определен';
 
-        if (parsed.city === 'Город не определен' && reg === 'Регион не определен' && !cacheEntry) {
+        if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
             continue;
         }
@@ -153,49 +175,55 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weight = parseFloat(String(findValueInRow(row, ['вес', 'количество']) || '0').replace(',', '.'));
         if (!isNaN(weight)) state_aggregatedData[groupKey].fact += weight;
 
-        if (!state_uniquePlottableClients.has(clientUid)) {
+        if (!state_uniquePlottableClients.has(normAddr)) {
             const okb = state_okbCoordIndex.get(normAddr);
-            state_uniquePlottableClients.set(clientUid, {
-                key: clientUid,
+            state_uniquePlottableClients.set(normAddr, {
+                key: normAddr,
                 lat: cacheEntry?.lat || okb?.lat,
                 lon: cacheEntry?.lon || okb?.lon,
                 status: 'match',
-                name: clientName,
+                name: String(row[state_clientNameHeader || ''] || 'ТТ'),
                 address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
-                type: findValueInRow(row, ['канал продаж', 'тип']),
+                type: channel,
                 originalRow: row, fact: 0,
-                comment: cacheEntry?.comment
+                abcCategory: 'C' // Default
             });
         }
         
-        const pt = state_uniquePlottableClients.get(clientUid);
+        const pt = state_uniquePlottableClients.get(normAddr);
         if (pt) {
             pt.fact = (pt.fact || 0) + (isNaN(weight) ? 0 : weight);
-            state_aggregatedData[groupKey].clients.set(clientUid, pt);
+            state_aggregatedData[groupKey].clients.set(normAddr, pt);
         }
     }
     
-    // Прогресс более реалистичный (базируется на ожидаемом объеме в 220к строк)
-    const currentProgress = Math.min(98, 5 + (state_processedRowsCount / 250000) * 90);
-    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Загружено ТТ: ${state_uniquePlottableClients.size} (строк: ${state_processedRowsCount})` } });
+    const currentProgress = Math.min(95, 10 + (state_processedRowsCount / 50000) * 80);
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработано ${state_processedRowsCount} строк...` } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
+    // 1. Расчет ABC Анализа
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
     
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
     let runningSum = 0;
+
     allClients.forEach(client => {
         runningSum += (client.fact || 0);
         const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
+        
         if (pct <= 80) client.abcCategory = 'A';
         else if (pct <= 95) client.abcCategory = 'B';
         else client.abcCategory = 'C';
     });
 
+    // 2. Сборка финального результата
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
+        potential: item.fact * 1.15,
+        growthPotential: item.fact * 0.15,
+        growthPercentage: 15,
         clients: Array.from(item.clients.values())
     }));
 
@@ -203,6 +231,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         aggregatedData: finalData,
         unidentifiedRows: state_unidentifiedRows,
         okbRegionCounts: state_okbRegionCounts,
+        dateRange: state_dateRange,
         totalRowsProcessed: state_processedRowsCount
     };
 
