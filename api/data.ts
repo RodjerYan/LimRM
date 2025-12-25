@@ -110,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
             case 'geocode': {
                 const q = req.query.address as string;
-                const gRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=ru,by,kz,kg,uz`, { headers: { 'User-Agent': 'LimkormGeo/1.1' } });
+                const gRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=ru,by,kz,kg,uz`, { headers: { 'User-Agent': 'LimRM/1.1' } });
                 const gData = await gRes.json() as any[];
                 if (gData && gData.length > 0) return res.status(200).json({ lat: parseFloat(gData[0].lat), lon: parseFloat(gData[0].lon) });
                 return res.status(404).json({ error: 'Not found' });
@@ -122,7 +122,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             default: return res.status(400).json({ error: 'Invalid action' });
         }
     } catch (e: any) {
-        console.error('API Fail:', e);
+        console.error('API Error:', e);
         return res.status(500).json({ error: e.message });
     }
 }
