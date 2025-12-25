@@ -232,6 +232,18 @@ interface RMDashboardProps {
     dateRange?: string;
 }
 
+type RegionBucket = {
+    fact: number;
+    potential: number;
+    activeClients: Set<string>;
+    matchedOkbCoords: Set<string>;
+    brandFacts: Map<string, number>;
+    brandClientCounts: Map<string, number>;
+    brandRows: Map<string, AggregatedDataRow[]>;
+    originalRegionName: string;
+    regionListings: number;
+};
+
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
@@ -280,20 +292,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 if (addr) globalOkbAddressSet.add(normalizeAddress(addr));
             });
         }
-        const rmBuckets = new Map<string, { originalName: string; regions: Map<string, any>; totalFact: number; countA: number; countB: number; countC: number; factA: number; factB: number; factC: number; uniqueClientKeys: Set<string>; totalListings: number; }>();
+        const rmBuckets = new Map<string, { originalName: string; regions: Map<string, RegionBucket>; totalFact: number; countA: number; countB: number; countC: number; factA: number; factB: number; factC: number; uniqueClientKeys: Set<string>; totalListings: number; }>();
         data.forEach(row => {
             const rmName = row.rm || 'Не указан'; const normRm = normalizeRmNameForMatching(rmName); const regionKey = row.region || 'Регион не определен';
             if (!rmBuckets.has(normRm)) rmBuckets.set(normRm, { originalName: rmName, regions: new Map(), totalFact: 0, countA: 0, countB: 0, countC: 0, factA: 0, factB: 0, factC: 0, uniqueClientKeys: new Set(), totalListings: 0 });
             const rmBucket = rmBuckets.get(normRm)!; rmBucket.totalFact += row.fact; rmBucket.totalListings += row.clients.length;
             if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
-            if (!rmBucket.regions.has(regionKey)) rmBucket.regions.set(regionKey, { fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map(), brandClientCounts: new Map(), brandRows: new Map(), originalRegionName: row.region, regionListings: 0 });
+            if (!rmBucket.regions.has(regionKey)) rmBucket.regions.set(regionKey, { fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map<string, number>(), brandClientCounts: new Map<string, number>(), brandRows: new Map<string, AggregatedDataRow[]>(), originalRegionName: row.region, regionListings: 0 });
             const regBucket = rmBucket.regions.get(regionKey)!; regBucket.fact += row.fact; regBucket.potential += row.potential || 0; regBucket.regionListings += row.clients.length;
             if (row.clients) row.clients.forEach(c => { regBucket.activeClients.add(c.key); let isMatch = false; if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) { if (globalOkbCoordSet.has(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`)) isMatch = true; } if (!isMatch && globalOkbAddressSet.has(normalizeAddress(c.address))) isMatch = true; if (isMatch) regBucket.matchedOkbCoords.add(c.key); });
             const brandName = row.brand || 'No Brand'; regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact); regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
             if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []); regBucket.brandRows.get(brandName)!.push(row);
         });
         const resultMetrics: RMMetrics[] = [];
-        rmBuckets.forEach((rmData, normRmKey) => {
+        rmBuckets.forEach((rmData) => {
             const regionMetrics: PlanMetric[] = []; const brandAggregates = new Map<string, { fact: number, plan: number }>();
             let rmTotalOkbRaw = 0; let rmTotalMatched = 0; let rmTotalActive = 0; let rmTotalCalculatedPlan = 0;
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
@@ -305,7 +317,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 let totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
                 rmTotalOkbRaw += totalRegionOkb;
                 let regionCalculatedPlan = 0; const regionBrands: PlanMetric[] = [];
-                regData.brandFacts.forEach((bFact, bName) => {
+                regData.brandFacts.forEach((bFact: number, bName: string) => {
                     const bClientCount = regData.brandClientCounts.get(bName) || 0; const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
                     const calculationResult = PlanningEngine.calculateRMPlan({ totalFact: bFact, totalPotential: totalRegionOkb, matchedCount: matchedCount, activeCount: activeCount, totalRegionOkb: totalRegionOkb, avgSku: 1, avgVelocity: bVelocity, rmGlobalVelocity: rmGlobalAvgVelocity }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
                     let bRate = bFact === 0 && calculationResult.plan > 0 ? 100 : calculationResult.growthPct;
