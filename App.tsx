@@ -90,7 +90,8 @@ const App: React.FC = () => {
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
         updatedActivePoints: MapPoint[],
-        rawCount: number
+        rawCount: number,
+        vHash?: string
     ) => {
         const stateToSave = {
             allData: updatedData,
@@ -100,7 +101,7 @@ const App: React.FC = () => {
             okbStatus,
             dateRange,
             totalRowsProcessed: rawCount,
-            versionHash: lastSyncVersion || 'manual_patch_' + Date.now()
+            versionHash: vHash || lastSyncVersion || 'manual_patch_' + Date.now()
         };
         try {
             await saveAnalyticsState(stateToSave);
@@ -285,19 +286,20 @@ const App: React.FC = () => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
         
-        if (allData.length > 0) setActiveModule('amp');
+        const isUpdate = allData.length > 0;
+        if (isUpdate) setActiveModule('amp');
 
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setProcessingState({ 
+        setProcessingState(prev => ({ 
+            ...prev,
             isProcessing: true, 
             progress: 0, 
-            message: 'Инициализация Live Sync...', 
-            fileName: 'Подключение к облаку', 
+            message: isUpdate ? 'Обновление данных в фоне...' : 'Инициализация Live Sync...', 
+            fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
             backgroundMessage: 'Синхронизация структуры файлов', 
-            startTime: Date.now(), 
-            totalRowsProcessed: 0 
-        });
+            startTime: Date.now()
+        }));
 
         let cacheData: CoordsCache = {};
         try {
@@ -314,20 +316,27 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
             } 
             else if (msg.type === 'result_init') {
-                setOkbRegionCounts(msg.payload.okbRegionCounts);
+                // Во время обновления (Update) мы НЕ сбрасываем okbRegionCounts сразу, 
+                // чтобы не "моргали" карты и графики. Ждем полной готовности.
+                if (!isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             }
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                setAllData(chunkData);
-                
-                const clientsMap = new Map<string, MapPoint>();
-                chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
+                // Если это первая загрузка - показываем чанки сразу.
+                // Если это обновление - НЕ показываем чанки, чтобы не было "рваных" данных на графиках.
+                if (!isUpdate) {
+                    setAllData(chunkData);
+                    const clientsMap = new Map<string, MapPoint>();
+                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    const uniqueClients = Array.from(clientsMap.values());
+                    setAllActiveClients(uniqueClients);
+                }
+                setProcessingState(prev => ({ ...prev, totalRowsProcessedInSync: totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
+                
+                // Момент бесшовной подмены данных
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 
@@ -341,23 +350,27 @@ const App: React.FC = () => {
                 
                 const version = localStorage.getItem('pending_version_hash');
                 if (version) {
-                    await saveAnalyticsState({ 
-                        allData: payload.aggregatedData, 
-                        unidentifiedRows: payload.unidentifiedRows, 
-                        okbRegionCounts: payload.okbRegionCounts,
-                        okbData: okbData,
-                        okbStatus: okbStatus!, 
-                        dateRange: dateRange,
-                        totalRowsProcessed: payload.totalRowsProcessed,
-                        versionHash: version 
-                    });
+                    await persistToDB(
+                        payload.aggregatedData, 
+                        payload.unidentifiedRows, 
+                        uniqueClients, 
+                        payload.totalRowsProcessed,
+                        version
+                    );
                     setLastSyncVersion(version);
                     localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
                 }
-                // FIX: Here we use payload.totalRowsProcessed (raw Excel rows count)
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
-                addNotification('Данные актуализированы', 'success');
+
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    isProcessing: false, 
+                    progress: 100, 
+                    message: 'Синхронизировано', 
+                    totalRowsProcessed: payload.totalRowsProcessed 
+                }));
+                
+                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены', 'success');
             }
         };
 
@@ -390,7 +403,7 @@ const App: React.FC = () => {
         } catch (error) {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         }
-    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification, dateRange]);
+    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification, dateRange, persistToDB]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
@@ -456,7 +469,9 @@ const App: React.FC = () => {
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
                                 <LoaderIcon className="w-3 h-3 text-indigo-400" />
-                                <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">Синхронизация: {Math.round(processingState.progress)}%</span>
+                                <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">
+                                    {allData.length > 0 ? 'Фоновое обновление' : 'Синхронизация'}: {Math.round(processingState.progress)}%
+                                </span>
                             </div>
                         )}
                     </div>
