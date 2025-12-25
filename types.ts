@@ -228,6 +228,8 @@ export interface PlanMetric {
     plan: number;
     growthPct: number; 
     marketShare?: number; 
+    // Fix: Added eCom property to PlanMetric interface to resolve TypeScript error in RMDashboard.tsx
+    eCom?: number;
     activeCount?: number; 
     totalCount?: number; 
     brands?: PlanMetric[]; 
