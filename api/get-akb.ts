@@ -1,6 +1,6 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { listFilesForMonth, listFilesForYear, fetchFileContent, getGoogleDriveClient, getCloudSnapshot, saveCloudSnapshot } from './lib/sheets.js';
+// FIX: Removed 'listFilesForMonth' which was not exported from sheets.ts and was unused here.
+import { listFilesForYear, fetchFileContent, getGoogleDriveClient, getCloudSnapshot, saveCloudSnapshot } from './lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET' && req.method !== 'POST') {
