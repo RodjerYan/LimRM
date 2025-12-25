@@ -46,8 +46,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const buffer = Buffer.from(req.body.fileBase64, 'base64');
                 const workbook = XLSX.read(buffer, { type: 'buffer' });
                 const akbData: any[][] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-                const akbAddresses = new Set(akbData.flat().map(cell => String(cell || '').trim()));
-                const updates = okbAddresses.map((addr, idx) => ({
+                const akbAddresses = new Set(akbData.flat().map((cell: any) => String(cell || '').trim()));
+                const updates = okbAddresses.map((addr: string, idx: number) => ({
                     rowIndex: idx + 2,
                     status: akbAddresses.has(addr) ? 'Совпадение' : 'Не найдено'
                 }));
@@ -92,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return resAddr ? res.status(200).json(resAddr) : res.status(404).end();
             }
             case 'add-to-cache': {
-                const fmt = (req.body.rows as any[]).map(r => [r.address, r.lat ?? '', r.lon ?? '']);
+                const fmt = (req.body.rows as any[]).map((r: any) => [r.address, r.lat ?? '', r.lon ?? '']);
                 await appendToCache(req.body.rmName, fmt);
                 return res.status(200).json({ success: true });
             }

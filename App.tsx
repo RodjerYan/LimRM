@@ -115,7 +115,7 @@ const App: React.FC = () => {
             if (index !== -1) updated[index] = newPoint;
             return updated;
         });
-        setAllData(prev => prev.map(group => {
+        setAllData(prev => prev.map((group: AggregatedDataRow) => {
             const clientIndex = group.clients.findIndex(c => c.key === oldKey);
             if (clientIndex !== -1) {
                 const updatedClients = [...group.clients];
@@ -151,7 +151,7 @@ const App: React.FC = () => {
 
     const handleDeleteClient = useCallback(async (key: string) => {
         setAllActiveClients(prev => prev.filter(c => c.key !== key));
-        setAllData(prev => prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })));
+        setAllData(prev => prev.map((group: AggregatedDataRow) => ({ ...group, clients: group.clients.filter(c => c.key !== key) })));
         setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key));
         if (pollingIntervals.current.has(key)) { clearInterval(pollingIntervals.current.get(key)); pollingIntervals.current.delete(key); }
         setEditingClient(null); addNotification('Запись удалена', 'info');
@@ -178,7 +178,7 @@ const App: React.FC = () => {
             } catch (e) { setDbStatus('empty'); } finally { setIsRestoring(false); }
         };
         const applyState = (state: any) => {
-            setAllData(state.allData); 
+            setAllData(state.allData as AggregatedDataRow[]); 
             setUnidentifiedRows(state.unidentifiedRows || []);
             setOkbRegionCounts(state.okbRegionCounts || null); 
             setOkbData(state.okbData || []);
@@ -223,7 +223,7 @@ const App: React.FC = () => {
             if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
             else if (msg.type === 'result_init' && !isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated' && !isUpdate) {
-                setAllData(msg.payload.data);
+                setAllData(msg.payload.data as AggregatedDataRow[]);
                 const clientsMap = new Map<string, MapPoint>();
                 (msg.payload.data as AggregatedDataRow[]).forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 setAllActiveClients(Array.from(clientsMap.values()));
@@ -233,7 +233,7 @@ const App: React.FC = () => {
                 const payload = msg.payload as any;
                 const isCheckpoint = !!payload.isCheckpoint;
                 setOkbRegionCounts(payload.okbRegionCounts);
-                setAllData(payload.aggregatedData);
+                setAllData(payload.aggregatedData as AggregatedDataRow[]);
                 const clientsMap = new Map<string, MapPoint>();
                 (payload.aggregatedData as AggregatedDataRow[]).forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
@@ -242,7 +242,7 @@ const App: React.FC = () => {
                 setDbStatus('ready');
                 const version = localStorage.getItem('pending_version_hash') || 'hash_' + Date.now();
                 const stateToSave = { allData: payload.aggregatedData, unidentifiedRows: payload.unidentifiedRows, okbRegionCounts: payload.okbRegionCounts, okbData, okbStatus, dateRange, totalRowsProcessed: payload.totalRowsProcessed, versionHash: version, isCheckpoint };
-                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                await persistToDB(payload.aggregatedData as AggregatedDataRow[], payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 await uploadMasterSnapshot(stateToSave);
                 if (!isCheckpoint) {
                     setLastSyncVersion(version);

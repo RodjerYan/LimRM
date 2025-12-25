@@ -107,14 +107,10 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } }));
 }
 
-/**
- * Lists all spreadsheet files for a given year by scanning all month subfolders.
- */
 export async function listFilesForYear(year: string): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) return [];
-    
     const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)' });
     const allFiles: { id: string, name: string }[] = [];
     for (const folder of (folderListRes.data.files || [])) {
@@ -125,33 +121,15 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
     return allFiles;
 }
 
-// FIX: Added missing exported listFilesForMonth function to resolve build error in api/get-akb.ts
-/**
- * Lists all spreadsheet files for a specific month within a year folder.
- * Matches month folders by number prefix (e.g., "01").
- */
 export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) return [];
-
-    const folderListRes = await drive.files.list({ 
-        q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, 
-        fields: 'files(id, name)' 
-    });
-    
+    const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)' });
     const monthStr = month.toString().padStart(2, '0');
-    const targetFolder = (folderListRes.data.files || []).find(f => 
-        f.name?.startsWith(monthStr) || f.name?.includes(monthStr)
-    );
-
+    const targetFolder = (folderListRes.data.files || []).find(f => f.name?.startsWith(monthStr) || f.name?.includes(monthStr));
     if (!targetFolder || !targetFolder.id) return [];
-
-    const fileListRes = await drive.files.list({ 
-        q: `'${targetFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, 
-        fields: 'files(id, name)' 
-    });
-
+    const fileListRes = await drive.files.list({ q: `'${targetFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, fields: 'files(id, name)' });
     return (fileListRes.data.files || []).map(f => ({ id: f.id!, name: f.name || 'Untitled' }));
 }
 
@@ -195,7 +173,7 @@ export async function updateCacheCoords(rmName: string, updates: any[]) {
     const sheets = await getGoogleSheetsClient();
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A:A` })) as any;
     const addrs = (response.data.values || []).flat().map((a: any) => norm(String(a)));
-    const data = updates.map(u => {
+    const data = updates.map((u: any) => {
         const idx = addrs.indexOf(norm(u.address));
         return idx === -1 ? null : { range: `'${rmName}'!B${idx+1}:C${idx+1}`, values: [[u.lat, u.lon]] };
     }).filter(Boolean) as any[];
