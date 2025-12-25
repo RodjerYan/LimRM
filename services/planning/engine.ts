@@ -134,7 +134,7 @@ export class PlanningEngine {
             growthComponents.acquisition;
 
         // Корректировка на риск
-        const riskCoef = Coefs.RISK_FACTORS[context.riskLevel] || 1.0;
+        const riskCoef = (Coefs.RISK_FACTORS as Record<string, number>)[context.riskLevel] || 1.0;
         let finalGrowthPct = rawGrowthPct * riskCoef;
 
         // Жесткие границы (Safety limits)

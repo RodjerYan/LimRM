@@ -228,7 +228,6 @@ export interface PlanMetric {
     plan: number;
     growthPct: number; 
     marketShare?: number; 
-    // Fix: Added missing eCom property to resolve type errors in RMDashboard
     eCom?: number;
     activeCount?: number; 
     totalCount?: number; 
@@ -236,6 +235,13 @@ export interface PlanMetric {
     packagingDetails?: AggregatedDataRow[]; 
     factors?: GrowthFactors;
     details?: GrowthDetails; 
+}
+
+export interface PlanningContext {
+    baseRate: number;
+    globalAvgSku: number;
+    globalAvgSales: number;
+    riskLevel: 'low' | 'medium' | 'high';
 }
 
 export interface RMMetrics {
