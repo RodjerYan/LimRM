@@ -28,7 +28,7 @@ let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
-let state_dateRange: string | undefined = undefined;
+let state_lastEmitCount = 0; // Для инкрементальной отправки данных
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -86,6 +86,7 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
     state_unidentifiedRows = [];
     state_headers = [];
     state_processedRowsCount = 0;
+    state_lastEmitCount = 0;
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
@@ -111,11 +112,11 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
             }
         });
     }
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Инициализация...' } });
+    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Связь установлена. Начало индексации...' } });
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
-    const { rawData, isFirstChunk, fileName } = payload;
+    const { rawData, isFirstChunk } = payload;
     
     let jsonData: any[] = [];
     if (isFirstChunk || state_headers.length === 0) {
@@ -146,7 +147,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        // Более точный поиск канала
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = 'Не определен';
 
@@ -186,7 +186,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
                 type: channel,
                 originalRow: row, fact: 0,
-                abcCategory: 'C' // Default
+                abcCategory: 'C'
             });
         }
         
@@ -197,12 +197,28 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    const currentProgress = Math.min(95, 10 + (state_processedRowsCount / 50000) * 80);
-    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработано ${state_processedRowsCount} строк...` } });
+    // Инкрементальная отправка данных каждые 5000 строк для "моментального" эффекта
+    if (state_processedRowsCount - state_lastEmitCount > 5000) {
+        state_lastEmitCount = state_processedRowsCount;
+        const partialData = Object.values(state_aggregatedData).map(item => ({
+            ...item,
+            potential: item.fact * 1.15,
+            growthPotential: item.fact * 0.15,
+            growthPercentage: 15,
+            clients: Array.from(item.clients.values())
+        }));
+        
+        postMessage({ 
+            type: 'result_chunk_aggregated', 
+            payload: partialData 
+        });
+    }
+
+    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 100000) * 85);
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...` } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
-    // 1. Расчет ABC Анализа
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
     
@@ -212,13 +228,11 @@ async function finalizeStream(postMessage: PostMessageFn) {
     allClients.forEach(client => {
         runningSum += (client.fact || 0);
         const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
-        
         if (pct <= 80) client.abcCategory = 'A';
         else if (pct <= 95) client.abcCategory = 'B';
         else client.abcCategory = 'C';
     });
 
-    // 2. Сборка финального результата
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
         potential: item.fact * 1.15,
@@ -227,15 +241,15 @@ async function finalizeStream(postMessage: PostMessageFn) {
         clients: Array.from(item.clients.values())
     }));
 
-    const result: WorkerResultPayload = {
-        aggregatedData: finalData,
-        unidentifiedRows: state_unidentifiedRows,
-        okbRegionCounts: state_okbRegionCounts,
-        dateRange: state_dateRange,
-        totalRowsProcessed: state_processedRowsCount
-    };
-
-    postMessage({ type: 'result_finished', payload: result });
+    postMessage({ 
+        type: 'result_finished', 
+        payload: {
+            aggregatedData: finalData,
+            unidentifiedRows: state_unidentifiedRows,
+            okbRegionCounts: state_okbRegionCounts,
+            totalRowsProcessed: state_processedRowsCount
+        }
+    });
 }
 
 self.onmessage = async (e) => {

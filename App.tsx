@@ -269,10 +269,21 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
-        const isUpdate = allData.length > 0;
+        
+        // Моментальный переход в аналитику, если у нас уже есть хоть какие-то данные
+        if (allData.length > 0) setActiveModule('amp');
+
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setProcessingState({ isProcessing: true, progress: 0, message: isUpdate ? 'Синхронизация обновлений...' : `Загрузка: ${year}`, fileName: isUpdate ? 'Проверка версии' : 'Загрузка из Google Drive...', backgroundMessage: null, startTime: Date.now(), totalRowsProcessed: 0 });
+        setProcessingState({ 
+            isProcessing: true, 
+            progress: 0, 
+            message: 'Инициализация Live Sync...', 
+            fileName: 'Подключение к облаку', 
+            backgroundMessage: 'Синхронизация структуры файлов', 
+            startTime: Date.now(), 
+            totalRowsProcessed: 0 
+        });
 
         let cacheData: CoordsCache = {};
         try {
@@ -287,10 +298,17 @@ const App: React.FC = () => {
             const msg = e.data;
             if (msg.type === 'progress') {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-            } else if (msg.type === 'result_finished') {
+            } 
+            // Инкрементальное обновление данных
+            else if (msg.type === 'result_chunk_aggregated') {
+                const chunkData = msg.payload as AggregatedDataRow[];
+                // Обновляем состояние без блокировки UI
+                setAllData(chunkData);
+                setAllActiveClients(chunkData.flatMap(row => row.clients || []));
+            }
+            else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
-                setDateRange(payload.dateRange);
                 setAllData(payload.aggregatedData);
                 setAllActiveClients(payload.aggregatedData.flatMap(row => row.clients || []));
                 setUnidentifiedRows(payload.unidentifiedRows);
@@ -304,27 +322,26 @@ const App: React.FC = () => {
                         okbRegionCounts: payload.okbRegionCounts,
                         okbData: okbData,
                         okbStatus: okbStatus, 
-                        dateRange: payload.dateRange,
+                        dateRange: dateRange,
                         versionHash: version 
                     });
                     setLastSyncVersion(version);
                     localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
                 }
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Данные актуальны', totalRowsProcessed: payload.totalRowsProcessed }));
-                if (isUpdate) addNotification('База данных обновлена', 'success');
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
+                addNotification('Данные актуализированы', 'success');
             }
         };
 
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
 
         try {
-            // Исправлено: если month не передан, запрашиваем список по всему году
             const listUrl = `/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`;
             const listRes = await fetch(listUrl);
             const allFiles = listRes.ok ? await listRes.json() : [];
             
-            const CHUNK_SIZE = 2000;
+            const CHUNK_SIZE = 5000; // Увеличенный размер для скорости
             
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
@@ -346,18 +363,17 @@ const App: React.FC = () => {
         } catch (error) {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         }
-    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification]);
+    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification, dateRange]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            // Проверяем метаданные всего года 2025 для авто-синхронизации
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    // Загружаем весь год, если обнаружены изменения
+                    // Фоновая тихая синхронизация
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }
@@ -365,7 +381,7 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 120000); // Раз в 2 минуты
+        const timer = setInterval(checkCloudChanges, 300000); // Каждые 5 минут
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);
@@ -399,25 +415,31 @@ const App: React.FC = () => {
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Локальная база</span>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Local DB</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Подключено: Мгновенный доступ' : 'Инициализация...'}</span>
+                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Offline: Ready' : 'Initializing...'}</span>
                         </div>
                         <div className="h-8 w-px bg-gray-800"></div>
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Облако (Sync)</span>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'В сети: Авто-обновление активно' : 'Синхронизация недоступна'}</span>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online: Streaming' : 'Disconnected'}</span>
                         </div>
+                        {processingState.isProcessing && (
+                            <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
+                                <LoaderIcon className="w-3 h-3 text-indigo-400" />
+                                <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">Синхронизация: {Math.round(processingState.progress)}%</span>
+                            </div>
+                        )}
                     </div>
                     <div className="flex items-center gap-6">
                          {allData.length > 0 && (
                             <div className="flex items-center gap-6 text-xs text-right">
                                 <div className="flex flex-col">
-                                    <span className="text-gray-500 text-[10px] uppercase font-bold">Активных записей</span>
-                                    <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString('ru-RU')}</span>
+                                    <span className="text-gray-500 text-[10px] uppercase font-bold">Индексировано</span>
+                                    <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString('ru-RU')} ТТ</span>
                                 </div>
                             </div>
                         )}
