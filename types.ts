@@ -108,6 +108,7 @@ export interface SummaryMetrics {
         name: string;
         value: number;
     };
+    channelCounts: Record<string, number>; // Добавлено: количество ТТ по каналам
 }
 
 export interface NotificationMessage {

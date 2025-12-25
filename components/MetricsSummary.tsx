@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { OkbStatus, SummaryMetrics } from '../types';
-import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon, CoverageIcon, InfoIcon } from './icons';
+import { FactIcon, PotentialIcon, GrowthIcon, UsersIcon, TrendingUpIcon, TargetIcon, CalculatorIcon, CoverageIcon, InfoIcon, ChannelIcon } from './icons';
 import Modal from './Modal';
 
 interface MetricCardProps {
@@ -52,9 +52,9 @@ interface MetricsSummaryProps {
     onActiveClientsClick?: () => void;
 }
 
-type MetricType = 'totalFact' | 'totalPotential' | 'totalGrowth' | 'avgGrowth' | 'avgFact' | 'coverage' | 'topRM';
+type MetricType = 'totalFact' | 'totalPotential' | 'totalGrowth' | 'avgGrowth' | 'avgFact' | 'coverage' | 'topRM' | 'channels';
 
-const METRIC_EXPLANATIONS: Record<MetricType, { title: string; description: React.ReactNode }> = {
+const METRIC_EXPLANATIONS: Record<Exclude<MetricType, 'channels'>, { title: string; description: React.ReactNode }> = {
     totalFact: {
         title: 'Общий Факт',
         description: (
@@ -148,7 +148,6 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     const [selectedExplanation, setSelectedExplanation] = useState<MetricType | null>(null);
 
     if (disabled || !metrics) {
-        // Render placeholders
         return (
             <div className={`grid grid-cols-2 lg:grid-cols-4 gap-4 ${disabled ? 'opacity-50' : ''}`}>
                 {Array.from({ length: 8 }).map((_, index) => (
@@ -161,7 +160,7 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
         );
     }
     
-    const avgFactPerClient = metrics.totalClients > 0 ? metrics.totalFact / metrics.totalClients : 0;
+    const avgFactPerClient = metrics.totalActiveClients > 0 ? metrics.totalFact / metrics.totalActiveClients : 0;
     
     const active = metrics.totalActiveClients;
     const okbTotal = okbStatus?.rowCount || 0;
@@ -170,6 +169,8 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
     const totalUniverseEstimate = active + uncoveredEstimate;
     const rawCoverage = totalUniverseEstimate > 0 ? (active / totalUniverseEstimate) * 100 : 0;
     const okbCoverage = Math.min(100, rawCoverage);
+
+    const channelSorted = Object.entries(metrics.channelCounts).sort((a, b) => b[1] - a[1]);
 
     return (
         <>
@@ -220,13 +221,13 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
                     isClickable={!!onActiveClientsClick}
                 />
                 <MetricCard 
-                    title="Средний Факт (Клиент)"
-                    value={formatNumber(avgFactPerClient)}
-                    icon={<CalculatorIcon />}
-                    color="text-indigo-400"
-                    tooltip="Нажмите для пояснения расчета"
+                    title="Каналы продаж"
+                    value={`${Object.keys(metrics.channelCounts).length}`}
+                    icon={<ChannelIcon />}
+                    color="text-purple-400"
+                    tooltip="Разбивка по каналам сбыта (Зоо розница, Опт, Бридер и др.)"
                     isClickable={true}
-                    onClick={() => setSelectedExplanation('avgFact')}
+                    onClick={() => setSelectedExplanation('channels')}
                 />
                  <MetricCard 
                     title="Покрытие ОКБ"
@@ -252,10 +253,33 @@ const MetricsSummary: React.FC<MetricsSummaryProps> = ({ metrics, okbStatus, dis
             <Modal
                 isOpen={!!selectedExplanation}
                 onClose={() => setSelectedExplanation(null)}
-                title={selectedExplanation ? METRIC_EXPLANATIONS[selectedExplanation].title : ''}
+                title={selectedExplanation === 'channels' ? 'Разбивка по каналам продаж' : (selectedExplanation ? METRIC_EXPLANATIONS[selectedExplanation as keyof typeof METRIC_EXPLANATIONS].title : '')}
             >
                 <div className="p-2">
-                    {selectedExplanation && METRIC_EXPLANATIONS[selectedExplanation].description}
+                    {selectedExplanation === 'channels' ? (
+                        <div className="space-y-4">
+                            <p className="text-gray-400 text-sm mb-4">Всего адресов: <strong className="text-white">{metrics.totalActiveClients.toLocaleString('ru-RU')}</strong></p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {channelSorted.map(([channel, count]) => {
+                                    const pct = (count / metrics.totalActiveClients) * 100;
+                                    return (
+                                        <div key={channel} className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 flex justify-between items-center group hover:border-indigo-500/50 transition-colors">
+                                            <div className="flex flex-col">
+                                                <span className="text-indigo-300 font-bold text-sm uppercase tracking-wider">{channel}</span>
+                                                <span className="text-xs text-gray-500 mt-1">{pct.toFixed(1)}% от общего числа</span>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="text-xl font-mono font-bold text-white">{count.toLocaleString('ru-RU')}</div>
+                                                <div className="text-[10px] text-gray-500 uppercase font-bold">Адресов</div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ) : (
+                        selectedExplanation && METRIC_EXPLANATIONS[selectedExplanation as keyof typeof METRIC_EXPLANATIONS].description
+                    )}
                 </div>
             </Modal>
         </>
