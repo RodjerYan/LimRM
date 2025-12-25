@@ -270,7 +270,6 @@ const App: React.FC = () => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
         
-        // Моментальный переход в аналитику, если у нас уже есть хоть какие-то данные
         if (allData.length > 0) setActiveModule('amp');
 
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
@@ -299,10 +298,13 @@ const App: React.FC = () => {
             if (msg.type === 'progress') {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
             } 
+            // Мгновенная инициализация структуры ОКБ для Дашборда
+            else if (msg.type === 'result_init') {
+                setOkbRegionCounts(msg.payload.okbRegionCounts);
+            }
             // Инкрементальное обновление данных
             else if (msg.type === 'result_chunk_aggregated') {
                 const chunkData = msg.payload as AggregatedDataRow[];
-                // Обновляем состояние без блокировки UI
                 setAllData(chunkData);
                 setAllActiveClients(chunkData.flatMap(row => row.clients || []));
             }
@@ -341,7 +343,7 @@ const App: React.FC = () => {
             const listRes = await fetch(listUrl);
             const allFiles = listRes.ok ? await listRes.json() : [];
             
-            const CHUNK_SIZE = 5000; // Увеличенный размер для скорости
+            const CHUNK_SIZE = 5000; 
             
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
@@ -373,7 +375,6 @@ const App: React.FC = () => {
                 const meta = await res.json();
                 setIsLiveConnected(true);
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    // Фоновая тихая синхронизация
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }
@@ -381,7 +382,7 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 300000); // Каждые 5 минут
+        const timer = setInterval(checkCloudChanges, 300000); 
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);

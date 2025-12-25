@@ -28,7 +28,7 @@ let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
-let state_lastEmitCount = 0; // Для инкрементальной отправки данных
+let state_lastEmitCount = 0;
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -80,6 +80,23 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
+// Функция инкрементального ABC-анализа
+function performIncrementalAbc() {
+    const allClients = Array.from(state_uniquePlottableClients.values());
+    allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+    
+    const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+    let runningSum = 0;
+
+    allClients.forEach(client => {
+        runningSum += (client.fact || 0);
+        const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
+        if (pct <= 80) client.abcCategory = 'A';
+        else if (pct <= 95) client.abcCategory = 'B';
+        else client.abcCategory = 'C';
+    });
+}
+
 function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: CoordsCache }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
@@ -112,6 +129,16 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
             }
         });
     }
+
+    // Мгновенно отправляем инициализацию с данными ОКБ
+    postMessage({ 
+        type: 'result_init', 
+        payload: { 
+            okbRegionCounts: state_okbRegionCounts,
+            totalUnidentified: 0 
+        } 
+    });
+    
     postMessage({ type: 'progress', payload: { percentage: 5, message: 'Связь установлена. Начало индексации...' } });
 }
 
@@ -197,9 +224,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    // Инкрементальная отправка данных каждые 5000 строк для "моментального" эффекта
+    // Инкрементальная отправка данных каждые 5000 строк
     if (state_processedRowsCount - state_lastEmitCount > 5000) {
         state_lastEmitCount = state_processedRowsCount;
+        
+        // ПРОВЕРКА: Делаем промежуточный ABC-анализ перед отправкой
+        performIncrementalAbc();
+
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -219,19 +250,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
-    const allClients = Array.from(state_uniquePlottableClients.values());
-    allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
-    
-    const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
-    let runningSum = 0;
-
-    allClients.forEach(client => {
-        runningSum += (client.fact || 0);
-        const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
-        if (pct <= 80) client.abcCategory = 'A';
-        else if (pct <= 95) client.abcCategory = 'B';
-        else client.abcCategory = 'C';
-    });
+    // Финальный точный ABC-анализ
+    performIncrementalAbc();
 
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
