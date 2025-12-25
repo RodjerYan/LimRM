@@ -104,7 +104,7 @@ export async function saveMasterSnapshot(data: any): Promise<string> {
     }
 }
 
-// --- REST OF THE CODE (Legacy support) ---
+// --- CORE LOGIC ---
 
 let lastRequestTime = 0;
 const MIN_REQUEST_INTERVAL = 250;
@@ -214,7 +214,6 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): 
     return res.data.values || [];
 }
 
-// ... Coordinate Cache functions omitted for brevity but remain the same ...
 function normalizeForComparison(str: string): string {
     return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -269,7 +268,7 @@ export async function updateCacheCoords(rmName: string, updates: any[]) {
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualTitle}'!A:A` }), 'getAddr') as any;
     const addrs = (response.data.values || []).flat();
     const data = updates.map(u => {
-        const idx = addrs.findIndex(a => normalizeForComparison(String(a)) === normalizeForComparison(u.address));
+        const idx = addrs.findIndex((a: any) => normalizeForComparison(String(a)) === normalizeForComparison(u.address));
         return idx === -1 ? null : { range: `'${actualTitle}'!B${idx+1}:C${idx+1}`, values: [[u.lat, u.lon]] };
     }).filter(Boolean) as any[];
     if (data.length) await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data } }), 'batchUpdate');
@@ -297,7 +296,7 @@ export async function deleteAddressFromCache(rmName: string, address: string) {
     const actualTitle = await ensureSheetExists(sheets, rmName);
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualTitle}'!A:A` }), 'getRows') as any;
     const addrs = (res.data.values || []).flat();
-    const idx = addrs.findIndex(a => normalizeForComparison(String(a)) === normalizeForComparison(address));
+    const idx = addrs.findIndex((a: any) => normalizeForComparison(String(a)) === normalizeForComparison(address));
     if (idx !== -1) await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualTitle}'!B${idx+1}:C${idx+1}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [['DELETED', 'DELETED']] } }), 'markDel');
 }
 

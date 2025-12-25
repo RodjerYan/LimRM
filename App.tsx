@@ -86,9 +86,9 @@ const App: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(state)
             });
-            if (!state.isCheckpoint) addNotification('Облачный слепок обновлен', 'success');
+            if (!state.isCheckpoint) addNotification('Снимок данных обновлен в облаке', 'success');
         } catch (e) {
-            console.error('Cloud snapshot upload failed', e);
+            console.error('Snapshot upload failed', e);
         }
     }, [addNotification]);
 
@@ -167,15 +167,18 @@ const App: React.FC = () => {
         const restore = async () => {
             try {
                 setDbStatus('loading');
+                // 1. Попытка загрузки снимка из облака
                 const cloudRes = await fetch('/api/snapshot');
                 if (cloudRes.ok) {
                     const cloudSnapshot = await cloudRes.json();
                     if (cloudSnapshot && cloudSnapshot.allData?.length > 0) {
-                        applyState(cloudSnapshot); setDbStatus('ready');
-                        addNotification('Загружен Master Snapshot', 'success');
+                        applyState(cloudSnapshot); 
+                        setDbStatus('ready');
+                        addNotification('Загружен Master Snapshot из облака', 'success');
                         setIsRestoring(false); setActiveModule('amp'); return;
                     }
                 }
+                // 2. Локальная база (IndexedDB)
                 const saved = await loadAnalyticsState();
                 if (saved && saved.allData?.length > 0) {
                     applyState(saved); setDbStatus('ready'); setActiveModule('amp');
@@ -183,12 +186,20 @@ const App: React.FC = () => {
             } catch (e) { setDbStatus('empty'); } finally { setIsRestoring(false); }
         };
         const applyState = (state: any) => {
-            setAllData(state.allData); setUnidentifiedRows(state.unidentifiedRows || []);
-            setOkbRegionCounts(state.okbRegionCounts || null); setOkbData(state.okbData || []);
-            setOkbStatus(state.okbStatus || null); setDateRange(state.dateRange);
-            if (state.versionHash) { setLastSyncVersion(state.versionHash); localStorage.setItem('last_sync_version', state.versionHash); }
+            setAllData(state.allData); 
+            setUnidentifiedRows(state.unidentifiedRows || []);
+            setOkbRegionCounts(state.okbRegionCounts || null); 
+            setOkbData(state.okbData || []);
+            setOkbStatus(state.okbStatus || null); 
+            setDateRange(state.dateRange);
+            if (state.versionHash) { 
+                setLastSyncVersion(state.versionHash); 
+                localStorage.setItem('last_sync_version', state.versionHash); 
+            }
             const clientsMap = new Map<string, MapPoint>();
-            state.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+            state.allData.forEach((row: AggregatedDataRow) => { 
+                row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)); 
+            });
             setAllActiveClients(Array.from(clientsMap.values()));
             setProcessingState(prev => ({ ...prev, totalRowsProcessed: state.totalRowsProcessed || 0 }));
         };
@@ -203,7 +214,7 @@ const App: React.FC = () => {
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
         setProcessingState(prev => ({ 
-            ...prev, isProcessing: true, progress: 0, message: isUpdate ? 'Обновление...' : 'Синхронизация...', totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
+            ...prev, isProcessing: true, progress: 0, message: isUpdate ? 'Синхронизация...' : 'Загрузка...', totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
 
         let cacheData: CoordsCache = {};
@@ -222,7 +233,7 @@ const App: React.FC = () => {
             else if (msg.type === 'result_chunk_aggregated' && !isUpdate) {
                 setAllData(msg.payload.data);
                 const clientsMap = new Map<string, MapPoint>();
-                msg.payload.data.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                msg.payload.data.forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 setAllActiveClients(Array.from(clientsMap.values()));
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: msg.payload.totalProcessed }));
             }
@@ -233,7 +244,7 @@ const App: React.FC = () => {
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                payload.aggregatedData.forEach((row: any) => row.clients.forEach((c: any) => clientsMap.set(c.key, c)));
+                payload.aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(payload.unidentifiedRows);
@@ -261,7 +272,6 @@ const App: React.FC = () => {
             }
         };
 
-        // Если есть уже загруженные данные, передаем их воркеру для продолжения
         const existingDataSnapshot = isUpdate ? { allData, unidentifiedRows, totalRowsProcessed: processingState.totalRowsProcessed } : undefined;
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData, existingData: existingDataSnapshot } });
 
@@ -270,7 +280,6 @@ const App: React.FC = () => {
             const allFiles = listRes.ok ? await listRes.json() : [];
             const CHUNK_SIZE = 5000; 
             
-            // Логика докачки: Пропускаем файлы, которые уже в списке обработанных (если это не обновление всей базы)
             const processedIds = JSON.parse(localStorage.getItem('processed_file_ids') || '[]');
             
             for (const file of allFiles) {
@@ -305,7 +314,6 @@ const App: React.FC = () => {
                 const meta = await res.json();
                 setIsLiveConnected(true);
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    // Автоматическая подгрузка
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }

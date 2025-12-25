@@ -24,12 +24,11 @@ let state_unidentifiedRows: UnidentifiedRow[] = [];
 let state_headers: string[] = [];
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
-let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
-let state_rowsSinceLastCheckpoint = 0;
+let state_rowsSinceCheckpoint = 0;
 const CHECKPOINT_THRESHOLD = 30000;
 
 const normalizeHeaderKey = (key: string): string => {
@@ -44,7 +43,7 @@ const isValidManagerValue = (val: string): boolean => {
     return !stopWords.some(w => v.includes(w)) && v.length >= 2;
 };
 
-const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): string => {
+const findManagerValue = (row: any, strictKeys: string[]): string => {
     const rowKeys = Object.keys(row);
     const targetStrict = strictKeys.map(normalizeHeaderKey);
     for (const key of rowKeys) {
@@ -103,21 +102,23 @@ function initStream(payload: { okbData: OkbDataRow[], cacheData: CoordsCache, ex
     state_headers = [];
     state_processedRowsCount = 0;
     state_lastEmitCount = 0;
-    state_rowsSinceLastCheckpoint = 0;
+    state_rowsSinceCheckpoint = 0;
     
-    // Если мы восстанавливаемся из Snapshot
+    // Восстановление состояния при инкрементальной загрузке
     if (payload.existingData) {
         const d = payload.existingData;
         state_unidentifiedRows = d.unidentifiedRows || [];
         state_processedRowsCount = d.totalRowsProcessed || 0;
-        d.allData.forEach((row: any) => {
-            const clientsMap = new Map();
-            row.clients.forEach((c: any) => {
-                clientsMap.set(c.key, c);
-                state_uniquePlottableClients.set(c.key, c);
+        if (d.allData) {
+            d.allData.forEach((row: any) => {
+                const clientsMap = new Map<string, MapPoint>();
+                row.clients.forEach((c: MapPoint) => {
+                    clientsMap.set(c.key, c);
+                    state_uniquePlottableClients.set(c.key, c);
+                });
+                state_aggregatedData[row.key] = { ...row, clients: clientsMap };
             });
-            state_aggregatedData[row.key] = { ...row, clients: clientsMap };
-        });
+        }
     }
 
     state_okbCoordIndex = createOkbCoordIndex(payload.okbData);
@@ -170,19 +171,18 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         state_processedRowsCount++;
-        state_rowsSinceLastCheckpoint++;
+        state_rowsSinceCheckpoint++;
         
-        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
+        let rm = findManagerValue(row, ['рм', 'региональный менеджер']);
         if (!rm) rm = 'Unknown_RM';
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = 'Не определен';
-
         const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
+        if (!channel || channel.length < 2) channel = 'Не определен';
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
@@ -224,17 +224,16 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             state_aggregatedData[groupKey].clients.set(normAddr, pt);
         }
 
-        // ПРОВЕРКА CHECKPOINT (Каждые 30,000 строк)
-        if (state_rowsSinceLastCheckpoint >= CHECKPOINT_THRESHOLD) {
-            state_rowsSinceLastCheckpoint = 0;
+        // Проверка на достижение контрольной точки для сохранения
+        if (state_rowsSinceCheckpoint >= CHECKPOINT_THRESHOLD) {
+            state_rowsSinceCheckpoint = 0;
             performIncrementalAbc();
             const snapshotData = Object.values(state_aggregatedData).map(item => ({
                 ...item, clients: Array.from(item.clients.values())
             }));
             
-            // Отправляем специальный сигнал на сохранение в Облако
             postMessage({ 
-                type: 'result_finished', // Используем этот тип, чтобы App.tsx понял, что данные полные для сохранения
+                type: 'result_finished', 
                 payload: {
                     aggregatedData: snapshotData,
                     unidentifiedRows: state_unidentifiedRows,
