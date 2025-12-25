@@ -23,6 +23,7 @@ interface AdaptaProps {
     activeClientsCount: number;
     uploadedData?: AggregatedDataRow[]; 
     dbStatus?: 'empty' | 'ready' | 'loading';
+    onStartEdit?: (client: MapPoint) => void;
 }
 
 interface OutlierItem {
@@ -352,7 +353,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         <div key={rm} className="space-y-4">
                                             <div className="sticky top-0 bg-card-bg/95 backdrop-blur z-10 py-2 border-b border-gray-800 flex justify-between items-center">
                                                 <h4 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                                                    <UsersIcon small /> {rm}
+                                                    <div className="p-1 bg-indigo-500/10 rounded-md"><UsersIcon small /></div> {rm}
                                                 </h4>
                                                 <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">
                                                     {Object.values(cities).flat().length} ТТ
@@ -362,22 +363,29 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                                 {Object.entries(cities).sort((a,b) => a[0].localeCompare(b[0])).map(([city, clients]) => (
                                                     <div key={city} className="space-y-2">
                                                         <h5 className="text-xs font-bold text-gray-300 flex items-center gap-2">
-                                                            <div className="w-1 h-1 rounded-full bg-emerald-500"></div>
+                                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>
                                                             {city}
                                                         </h5>
                                                         <div className="grid grid-cols-1 gap-2">
                                                             {clients.map((client, cIdx) => (
-                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-colors flex justify-between items-start gap-4">
+                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-all flex justify-between items-start gap-4 group">
                                                                     <div className="min-w-0">
                                                                         <div className="text-xs font-bold text-white truncate" title={client.name}>{client.name}</div>
-                                                                        <div className="text-[10px] text-gray-500 mt-1 truncate" title={client.address}>{client.address}</div>
+                                                                        <div 
+                                                                            className="text-[10px] text-gray-500 mt-1 truncate cursor-pointer hover:text-indigo-400 flex items-center gap-1 transition-colors" 
+                                                                            title="Нажмите, чтобы открыть точку на карте"
+                                                                            onClick={() => props.onStartEdit?.(client)}
+                                                                        >
+                                                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>
+                                                                            {client.address}
+                                                                        </div>
                                                                     </div>
                                                                     <div className="flex flex-col items-end shrink-0">
                                                                         <div className="text-[11px] font-mono font-bold text-emerald-400">
                                                                             {(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span>
                                                                         </div>
                                                                         <div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">
-                                                                            Уникальная ТТ
+                                                                            {client.brand || 'Уникальная ТТ'}
                                                                         </div>
                                                                     </div>
                                                                 </div>

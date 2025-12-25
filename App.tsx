@@ -90,7 +90,8 @@ const App: React.FC = () => {
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
         updatedActivePoints: MapPoint[],
-        rawCount: number
+        rawCount: number,
+        version: string
     ) => {
         const stateToSave = {
             allData: updatedData,
@@ -100,14 +101,16 @@ const App: React.FC = () => {
             okbStatus,
             dateRange,
             totalRowsProcessed: rawCount,
-            versionHash: lastSyncVersion || 'manual_patch_' + Date.now()
+            versionHash: version
         };
         try {
             await saveAnalyticsState(stateToSave);
+            setLastSyncVersion(version);
+            localStorage.setItem('last_sync_version', version);
         } catch (e) {
             console.error("Local DB Sync: Failed", e);
         }
-    }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
+    }, [okbRegionCounts, okbData, okbStatus, dateRange]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
         if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
@@ -159,8 +162,8 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
-    }, [persistToDB, processingState.totalRowsProcessed]);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0, lastSyncVersion || 'manual'), 50);
+    }, [persistToDB, processingState.totalRowsProcessed, lastSyncVersion]);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
         if (pollingIntervals.current.has(tempKey)) {
@@ -237,9 +240,9 @@ const App: React.FC = () => {
         }
 
         setEditingClient(null);
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0, lastSyncVersion || 'manual'), 50);
         addNotification('Запись удалена', 'info');
-    }, [addNotification, persistToDB, processingState.totalRowsProcessed]);
+    }, [addNotification, persistToDB, processingState.totalRowsProcessed, lastSyncVersion]);
 
     useEffect(() => {
         const restore = async () => {
@@ -253,6 +256,7 @@ const App: React.FC = () => {
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
+                    setLastSyncVersion(saved.versionHash);
                     
                     const clientsMap = new Map<string, MapPoint>();
                     saved.allData.forEach((row: AggregatedDataRow) => {
@@ -264,11 +268,11 @@ const App: React.FC = () => {
                     setProcessingState(prev => ({
                         ...prev,
                         totalRowsProcessed: saved.totalRowsProcessed || 0,
-                        message: 'Система готова: данные загружены из локальной базы'
+                        message: 'Данные загружены из локальной базы'
                     }));
 
                     setDbStatus('ready');
-                    setActiveModule('amp');
+                    // Не переключаем модуль автоматом, если мы восстанавливаемся в фоне
                 } else {
                     setDbStatus('empty');
                 }
@@ -285,19 +289,17 @@ const App: React.FC = () => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
         
-        if (allData.length > 0) setActiveModule('amp');
-
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setProcessingState({ 
+        setProcessingState(prev => ({ 
+            ...prev,
             isProcessing: true, 
             progress: 0, 
-            message: 'Инициализация Live Sync...', 
-            fileName: 'Подключение к облаку', 
-            backgroundMessage: 'Синхронизация структуры файлов', 
-            startTime: Date.now(), 
-            totalRowsProcessed: 0 
-        });
+            message: 'Инициализация фонового обновления...', 
+            fileName: 'Синхронизация с облаком',
+            backgroundMessage: 'Проверка структуры файлов',
+            startTime: Date.now()
+        }));
 
         let cacheData: CoordsCache = {};
         try {
@@ -317,17 +319,14 @@ const App: React.FC = () => {
                 setOkbRegionCounts(msg.payload.okbRegionCounts);
             }
             else if (msg.type === 'result_chunk_aggregated') {
-                const { data: chunkData, totalProcessed } = msg.payload;
-                setAllData(chunkData);
-                
-                const clientsMap = new Map<string, MapPoint>();
-                chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
+                // Во время чанков МЫ НЕ ОБНОВЛЯЕМ allData, чтобы не ломать текущий вид пользователя
+                // Обновим только счетчик для индикации прогресса
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: msg.payload.totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
+                
+                // АТОМАРНАЯ ЗАМЕНА: данные меняются только когда всё готово
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 
@@ -339,25 +338,12 @@ const App: React.FC = () => {
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 
-                const version = localStorage.getItem('pending_version_hash');
-                if (version) {
-                    await saveAnalyticsState({ 
-                        allData: payload.aggregatedData, 
-                        unidentifiedRows: payload.unidentifiedRows, 
-                        okbRegionCounts: payload.okbRegionCounts,
-                        okbData: okbData,
-                        okbStatus: okbStatus!, 
-                        dateRange: dateRange,
-                        totalRowsProcessed: payload.totalRowsProcessed,
-                        versionHash: version 
-                    });
-                    setLastSyncVersion(version);
-                    localStorage.setItem('last_sync_version', version);
-                    localStorage.removeItem('pending_version_hash');
-                }
-                // FIX: Here we use payload.totalRowsProcessed (raw Excel rows count)
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
-                addNotification('Данные актуализированы', 'success');
+                const version = localStorage.getItem('pending_version_hash') || 'manual_' + Date.now();
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                localStorage.removeItem('pending_version_hash');
+
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Обновлено', totalRowsProcessed: payload.totalRowsProcessed }));
+                addNotification('Данные успешно актуализированы', 'success');
             }
         };
 
@@ -369,7 +355,6 @@ const App: React.FC = () => {
             const allFiles = listRes.ok ? await listRes.json() : [];
             
             const CHUNK_SIZE = 5000; 
-            
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
@@ -379,9 +364,7 @@ const App: React.FC = () => {
                     if (result.rows?.length > 0) {
                         workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
                         isFirstChunk = false;
-                    } else {
-                        hasMore = false;
-                    }
+                    } else { hasMore = false; }
                     hasMore = result.hasMore;
                     offset += CHUNK_SIZE;
                 }
@@ -390,7 +373,7 @@ const App: React.FC = () => {
         } catch (error) {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         }
-    }, [okbData, okbStatus, processingState.isProcessing, allData.length, addNotification, dateRange]);
+    }, [okbData, processingState.isProcessing, addNotification, persistToDB]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
@@ -443,7 +426,7 @@ const App: React.FC = () => {
                                 <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Local DB</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Offline: Ready' : 'Initializing...'}</span>
+                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Ready' : 'Restoring...'}</span>
                         </div>
                         <div className="h-8 w-px bg-gray-800"></div>
                         <div className="flex flex-col">
@@ -451,7 +434,7 @@ const App: React.FC = () => {
                                 <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online: Streaming' : 'Disconnected'}</span>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online' : 'Offline'}</span>
                         </div>
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
@@ -492,6 +475,7 @@ const App: React.FC = () => {
                             activeClientsCount={allActiveClients.length}
                             uploadedData={allData}
                             dbStatus={dbStatus}
+                            onStartEdit={setEditingClient}
                         />
                     )}
                     {activeModule === 'amp' && (
@@ -507,6 +491,9 @@ const App: React.FC = () => {
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
                     )}
+                    {activeModule === 'prophet' && <Prophet data={filteredData} />}
+                    {activeModule === 'agile' && <AgileLearning data={filteredData} />}
+                    {activeModule === 'roi-genome' && <RoiGenome data={filteredData} />}
                 </div>
             </main>
             <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">{notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}</div>
