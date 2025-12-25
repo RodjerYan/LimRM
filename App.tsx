@@ -89,7 +89,8 @@ const App: React.FC = () => {
     const persistToDB = useCallback(async (
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
-        updatedActivePoints: MapPoint[]
+        updatedActivePoints: MapPoint[],
+        rawCount: number
     ) => {
         const stateToSave = {
             allData: updatedData,
@@ -98,6 +99,7 @@ const App: React.FC = () => {
             okbData,
             okbStatus,
             dateRange,
+            totalRowsProcessed: rawCount,
             versionHash: lastSyncVersion || 'manual_patch_' + Date.now()
         };
         try {
@@ -157,8 +159,8 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 50);
-    }, [persistToDB]);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
+    }, [persistToDB, processingState.totalRowsProcessed]);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
         if (pollingIntervals.current.has(tempKey)) {
@@ -174,7 +176,7 @@ const App: React.FC = () => {
                         const updatedPoint: MapPoint = {
                             ...basePoint,
                             isGeocoding: false,
-                            geocodingError: 'Геокодер не смог найти этот адрес. Пожалуйста, уточните его вручную или переместите маркер.',
+                            geocodingError: 'Геокодер не смог найти этот адрес.',
                             lastUpdated: Date.now()
                         };
                         handleDataUpdate(tempKey, updatedPoint);
@@ -235,9 +237,9 @@ const App: React.FC = () => {
         }
 
         setEditingClient(null);
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 50);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
         addNotification('Запись удалена', 'info');
-    }, [addNotification, persistToDB]);
+    }, [addNotification, persistToDB, processingState.totalRowsProcessed]);
 
     useEffect(() => {
         const restore = async () => {
@@ -251,13 +253,17 @@ const App: React.FC = () => {
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    const clients = saved.allData.flatMap((row: any) => row.clients || []);
-                    setAllActiveClients(clients);
                     
-                    // Восстанавливаем счетчик строк в стейте обработки
+                    const clientsMap = new Map<string, MapPoint>();
+                    saved.allData.forEach((row: AggregatedDataRow) => {
+                        row.clients.forEach(c => clientsMap.set(c.key, c));
+                    });
+                    const uniqueClients = Array.from(clientsMap.values());
+                    setAllActiveClients(uniqueClients);
+                    
                     setProcessingState(prev => ({
                         ...prev,
-                        totalRowsProcessed: clients.length,
+                        totalRowsProcessed: saved.totalRowsProcessed || 0,
                         message: 'Система готова: данные загружены из локальной базы'
                     }));
 
@@ -311,18 +317,25 @@ const App: React.FC = () => {
                 setOkbRegionCounts(msg.payload.okbRegionCounts);
             }
             else if (msg.type === 'result_chunk_aggregated') {
-                const chunkData = msg.payload as AggregatedDataRow[];
+                const { data: chunkData, totalProcessed } = msg.payload;
                 setAllData(chunkData);
-                const clients = chunkData.flatMap(row => row.clients || []);
-                setAllActiveClients(clients);
-                // В процессе потоковой загрузки обновляем счетчик строк
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed: clients.length }));
+                
+                const clientsMap = new Map<string, MapPoint>();
+                chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                const uniqueClients = Array.from(clientsMap.values());
+                setAllActiveClients(uniqueClients);
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
-                setAllActiveClients(payload.aggregatedData.flatMap(row => row.clients || []));
+                
+                const clientsMap = new Map<string, MapPoint>();
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                const uniqueClients = Array.from(clientsMap.values());
+                setAllActiveClients(uniqueClients);
+                
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 
@@ -333,14 +346,16 @@ const App: React.FC = () => {
                         unidentifiedRows: payload.unidentifiedRows, 
                         okbRegionCounts: payload.okbRegionCounts,
                         okbData: okbData,
-                        okbStatus: okbStatus, 
+                        okbStatus: okbStatus!, 
                         dateRange: dateRange,
+                        totalRowsProcessed: payload.totalRowsProcessed,
                         versionHash: version 
                     });
                     setLastSyncVersion(version);
                     localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
                 }
+                // FIX: Here we use payload.totalRowsProcessed (raw Excel rows count)
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
                 addNotification('Данные актуализированы', 'success');
             }
@@ -449,8 +464,8 @@ const App: React.FC = () => {
                          {allData.length > 0 && (
                             <div className="flex items-center gap-6 text-xs text-right">
                                 <div className="flex flex-col">
-                                    <span className="text-gray-500 text-[10px] uppercase font-bold">Индексировано</span>
-                                    <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString('ru-RU')} ТТ</span>
+                                    <span className="text-gray-500 text-[10px] uppercase font-bold">Уникальных ТТ</span>
+                                    <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString('ru-RU')}</span>
                                 </div>
                             </div>
                         )}

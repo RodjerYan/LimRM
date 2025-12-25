@@ -1,9 +1,10 @@
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-// Fix: Remove .tsx extension to follow standard module resolution.
 import App from './App';
 import './index.css';
 import { SpeedInsights } from "@vercel/speed-insights/react";
+import { Analytics } from "@vercel/analytics/react";
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -15,5 +16,6 @@ root.render(
   <React.StrictMode>
     <App />
     <SpeedInsights />
+    <Analytics />
   </React.StrictMode>
 );

@@ -75,10 +75,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
 
-    // Определяем, какое число строк показывать (из процесса загрузки или из загруженных ТТ)
-    const rowsToDisplay = props.processingState.totalRowsProcessed && props.processingState.totalRowsProcessed > 0
-        ? props.processingState.totalRowsProcessed.toLocaleString('ru-RU')
-        : (props.activeClientsCount > 0 ? props.activeClientsCount.toLocaleString('ru-RU') : '0');
+    const rowsToDisplay = useMemo(() => {
+        return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
+    }, [props.processingState.totalRowsProcessed]);
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -160,16 +159,16 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего строк</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего записей (Excel)</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
-                                        {props.processingState.isProcessing ? 'Файлы в обработке...' : 'Данные из локальной базы'}
+                                        {props.processingState.isProcessing ? 'Чтение файлов...' : 'Загружено из локальной БД'}
                                     </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Распознано ТТ</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Уникальных ТТ</div>
                                     <div className="text-xl font-bold text-white font-mono">{props.activeClientsCount.toLocaleString()}</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-emerald-400 mt-2 uppercase font-bold">● Индексация OK</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-emerald-400 mt-2 uppercase font-bold">● Гео-объектов</div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Неопознанные</div>
@@ -202,16 +201,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     {channelStats.map((stat, idx) => (
                                         <div key={idx} className="space-y-2 group">
                                             <div className="flex justify-between items-end">
-                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-300 transition-colors">{stat.name}</span>
-                                                <div className="text-right">
-                                                    <div className="text-xs font-mono text-gray-300">
-                                                        <strong className="text-white">{stat.count.toLocaleString()}</strong> 
-                                                        <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
-                                                    </div>
-                                                    <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-tighter">
-                                                        Объем: {stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.
-                                                    </div>
+                                                <div className="flex flex-col">
+                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-300 transition-colors">{stat.name}</span>
+                                                    <span className="text-[9px] text-indigo-400 font-bold mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
                                                 </div>
+                                                <span className="text-xs font-mono text-gray-300">
+                                                    <strong className="text-white">{stat.count.toLocaleString()}</strong> 
+                                                    <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
+                                                </span>
                                             </div>
                                             <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
                                                 <div 

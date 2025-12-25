@@ -1,4 +1,5 @@
 
+
 export interface AggregatedDataRow {
     key: string;
     rm: string;
@@ -156,10 +157,16 @@ export type WorkerStreamInit = {
     }
 };
 
-export type WorkerStreamChunk = {
-    type: 'result_chunk_aggregated' | 'result_chunk_unidentified';
-    payload: any[]; 
-};
+// FIX: Updated WorkerStreamChunk to be a discriminated union to handle different payload shapes for different chunk types.
+export type WorkerStreamChunk = 
+    | {
+        type: 'result_chunk_aggregated';
+        payload: { data: AggregatedDataRow[]; totalProcessed: number };
+      }
+    | {
+        type: 'result_chunk_unidentified';
+        payload: UnidentifiedRow[];
+      };
 
 export type WorkerStreamFinish = {
     type: 'result_finished';

@@ -1,4 +1,5 @@
 
+
 import { AggregatedDataRow, UnidentifiedRow, MapPoint, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
@@ -31,6 +32,8 @@ export const saveAnalyticsState = async (state: {
   okbData: OkbDataRow[];
   okbStatus: OkbStatus | null;
   dateRange?: string;
+  // FIX: Added totalRowsProcessed to ensure full analytics state is persisted.
+  totalRowsProcessed: number;
   versionHash: string;
 }) => {
   const db = await initDB();

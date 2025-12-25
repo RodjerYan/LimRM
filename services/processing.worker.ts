@@ -193,12 +193,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
-        // Группировка теперь включает бренд и фасовку для отображения в таблицах
         const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
         if (!state_aggregatedData[groupKey]) {
             state_aggregatedData[groupKey] = {
                 key: groupKey, 
-                clientName: reg, // Для иерархии в таблице может использоваться регион или имя клиента
+                clientName: `${reg}: ${brand}`, 
                 brand: brand, 
                 packaging: packaging, 
                 rm, 
@@ -215,7 +214,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weight = parseFloat(String(findValueInRow(row, ['вес', 'количество']) || '0').replace(',', '.'));
         if (!isNaN(weight)) state_aggregatedData[groupKey].fact += weight;
 
-        // Для уникальных точек на карте все еще используем адрес как ключ
         if (!state_uniquePlottableClients.has(normAddr)) {
             const okb = state_okbCoordIndex.get(normAddr);
             state_uniquePlottableClients.set(normAddr, {
@@ -244,7 +242,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    // Инкрементальная отправка данных каждые 5000 строк
     if (state_processedRowsCount - state_lastEmitCount > 5000) {
         state_lastEmitCount = state_processedRowsCount;
         
@@ -260,7 +257,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         postMessage({ 
             type: 'result_chunk_aggregated', 
-            payload: partialData 
+            payload: {
+                data: partialData,
+                totalProcessed: state_processedRowsCount
+            }
         });
     }
 
