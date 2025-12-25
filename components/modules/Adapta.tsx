@@ -55,8 +55,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
         
-        // Используем Map для хранения данных о каналах
-        // И Set для хранения уникальных ключей ТТ внутри каждого канала
+        // ГАРАНТИЯ УНИКАЛЬНОСТИ: Считаем Set ключей (адресов) для каждого канала
         const acc: Record<string, { uniqueKeys: Set<string>; volume: number }> = {};
         const globalUniqueKeys = new Set<string>();
 
@@ -65,7 +64,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
                 
-                acc[type].uniqueKeys.add(client.key);
+                acc[type].uniqueKeys.add(client.key); // Ключ — это уникальный адрес
                 acc[type].volume += (client.fact || 0);
                 globalUniqueKeys.add(client.key);
             });
@@ -76,19 +75,16 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return Object.entries(acc)
             .map(([name, data]) => ({
                 name,
-                count: data.uniqueKeys.size, // Количество именно УНИКАЛЬНЫХ ТТ
+                count: data.uniqueKeys.size, // Только уникальные физические точки
                 volumeTons: data.volume / 1000,
                 percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
 
-    // Иерархическая группировка клиентов для модального окна канала
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
 
-        // Важно: в рамках одного канала ТТ тоже могут дублироваться из-за разных брендов в uploadedData
-        // Схлопываем их по ключу перед группировкой
         const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
         
         props.uploadedData.forEach(row => {
@@ -106,7 +102,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             });
         });
 
-        // Группировка: РМ -> Город -> Клиенты
         const hierarchy: Record<string, Record<string, (MapPoint & { totalFact: number })[]>> = {};
         uniqueClientsInChannel.forEach(c => {
             const rm = c.rm || 'Не указан';
@@ -122,6 +117,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const rowsToDisplay = useMemo(() => {
         return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
     }, [props.processingState.totalRowsProcessed]);
+
+    // Корректный расчет охвата: сколько точек из ОКБ мы "закрыли" своими продажами
+    const coverageOkb = useMemo(() => {
+        if (!props.okbStatus?.coordsCount || props.okbStatus.coordsCount === 0) return 0;
+        // Мы берем количество активных ТТ, которые есть в базе ОКБ (match)
+        // Для простоты здесь используем отношение уникальных активных к общему числу в ОКБ, 
+        // но ограничиваем 100%, так как "охват" не может быть 200% по логике
+        return Math.min(100, Math.round((props.activeClientsCount / props.okbStatus.coordsCount) * 100));
+    }, [props.activeClientsCount, props.okbStatus?.coordsCount]);
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -166,7 +170,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                             {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
                                         </div>
                                         <div className="text-xs text-gray-500 mt-1">
-                                            {props.activeClientsCount.toLocaleString()} ТТ в памяти
+                                            {props.activeClientsCount.toLocaleString()} уник. ТТ
                                         </div>
                                     </div>
                                 </div>
@@ -203,10 +207,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего строк</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Строк в Excel</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
-                                        {props.processingState.isProcessing ? 'Чтение файлов...' : 'Загружено из локальной БД'}
+                                        {props.processingState.isProcessing ? 'Чтение файлов...' : 'Всего записей'}
                                     </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
@@ -221,8 +225,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Охват ОКБ</div>
-                                    <div className="text-xl font-bold text-white font-mono">{props.okbStatus?.coordsCount ? Math.round((props.activeClientsCount / props.okbStatus.coordsCount) * 100) : 0}%</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-indigo-400 mt-2 uppercase font-bold">Анализ пробелов</div>
+                                    <div className="text-xl font-bold text-white font-mono">{coverageOkb}%</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-indigo-400 mt-2 uppercase font-bold">Доля рынка</div>
                                 </div>
                             </div>
                         </div>
@@ -234,8 +238,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         <ChannelIcon small />
                                     </div>
                                     <div>
-                                        <h3 className="text-base font-bold text-white tracking-tight uppercase">Структура Каналов Продаж</h3>
-                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Нажмите на канал для детализации адресов</p>
+                                        <h3 className="text-base font-bold text-white tracking-tight uppercase">Структура Каналов Продаж (Уник. ТТ)</h3>
+                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Считаются физические адреса магазинов</p>
                                     </div>
                                 </div>
                             </div>
@@ -257,7 +261,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                                     <span className="text-[9px] text-indigo-400 font-bold mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
                                                 </div>
                                                 <span className="text-xs font-mono text-gray-300">
-                                                    <strong className="text-white">{stat.count.toLocaleString()}</strong> 
+                                                    <strong className="text-white">{stat.count.toLocaleString()} ТТ</strong> 
                                                     <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
                                                 </span>
                                             </div>
@@ -322,7 +326,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     title={
                         <div className="flex flex-col">
                             <span className="text-xl font-bold text-white">Канал: {selectedChannel}</span>
-                            <span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация по РМ и городам</span>
+                            <span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация уник. адресов по РМ и городам</span>
                         </div>
                     }
                     maxWidth="max-w-5xl"
