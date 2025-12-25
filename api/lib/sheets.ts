@@ -98,7 +98,6 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
             const status = error.response?.status || error.code;
             const msg = error.message || '';
             
-            // Check for quota/rate limit/server errors
             const isRetryable = 
                 status === 429 || 
                 status === 500 || 
@@ -255,6 +254,44 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
 }
 
 /**
+ * Сбор всех файлов за весь год из всех подпапок месяцев.
+ */
+export async function listFilesForYear(year: string): Promise<{ id: string, name: string }[]> {
+    const drive = await getGoogleDriveClient();
+    const rootFolderId = ROOT_FOLDERS[year];
+    if (!rootFolderId) throw new Error(`Папка для года ${year} не настроена.`);
+
+    return callWithRetry(async () => {
+        // 1. Получаем список всех папок месяцев
+        const folderListRes = await drive.files.list({
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 50
+        });
+        
+        const monthFolders = folderListRes.data.files || [];
+        const allFiles: { id: string, name: string }[] = [];
+
+        // 2. Для каждой папки месяца собираем таблицы
+        for (const folder of monthFolders) {
+            if (!folder.id) continue;
+            const fileListRes = await drive.files.list({
+                q: `'${folder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+                fields: 'files(id, name)',
+                pageSize: 100 
+            });
+            const files = (fileListRes.data.files || []).map(f => ({
+                id: f.id!,
+                name: f.name || 'Untitled'
+            }));
+            allFiles.push(...files);
+        }
+
+        return allFiles;
+    }, `listFilesForYear-${year}`);
+}
+
+/**
  * Exports a spreadsheet file as a CSV stream.
  */
 export async function exportFileAsCsv(fileId: string): Promise<Readable> {
@@ -272,7 +309,6 @@ export async function exportFileAsCsv(fileId: string): Promise<Readable> {
 
 /**
  * Fetches content of a specific spreadsheet file with optional range support.
- * ОПТИМИЗИРОВАНО: Если передан range, запрашивает только его.
  */
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();

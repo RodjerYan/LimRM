@@ -50,7 +50,6 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // --- PERSISTENCE & SYNC STATUS ---
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
@@ -69,7 +68,6 @@ const App: React.FC = () => {
     const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-    // Data State
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [okbRegionCounts, setOkbRegionCounts] = useState<{ [key: string]: number } | null>(null);
@@ -88,7 +86,6 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // Функция мгновенной синхронизации текущего стейта в IndexedDB
     const persistToDB = useCallback(async (
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
@@ -111,13 +108,11 @@ const App: React.FC = () => {
     }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
-        // Если пришло обновление (ручное или от поллинга), и для этого адреса шел опрос — останавливаем его
         if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
             clearInterval(pollingIntervals.current.get(oldKey));
             pollingIntervals.current.delete(oldKey);
         }
 
-        // КРИТИЧНО: Если сейчас открыто модальное окно с этим клиентом, обновляем его стейт, чтобы маркер переставился
         setEditingClient(prev => {
             if (prev && 'key' in prev && (prev as MapPoint).key === oldKey) {
                 return newPoint;
@@ -129,7 +124,6 @@ const App: React.FC = () => {
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
 
-        // 1. Обновляем плоский список точек
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             if (index !== -1) {
@@ -142,7 +136,6 @@ const App: React.FC = () => {
             return finalPoints;
         });
 
-        // 2. Обновляем агрегированные группы
         setAllData(prev => {
             finalData = prev.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -156,7 +149,6 @@ const App: React.FC = () => {
             return finalData;
         });
 
-        // 3. Убираем из неопознанных, если адрес стал валидным
         setUnidentifiedRows(prev => {
             finalUnidentified = prev.filter(row => {
                 const rowAddr = normalizeAddress(findAddressInRow(row.rowData));
@@ -165,7 +157,6 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
-        // 4. Сохраняем
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints), 50);
     }, [persistToDB]);
 
@@ -179,8 +170,6 @@ const App: React.FC = () => {
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
                 if (res.ok) {
                     const cached = await res.json();
-
-                    // ЕСЛИ ГЕОКОДЕР ВЕРНУЛ ОШИБКУ "НЕ НАЙДЕНО"
                     if (cached.isInvalid) {
                         const updatedPoint: MapPoint = {
                             ...basePoint,
@@ -190,10 +179,8 @@ const App: React.FC = () => {
                         };
                         handleDataUpdate(tempKey, updatedPoint);
                         addNotification(`Адрес не распознан: ${address}`, 'error');
-                        return; // Интервал очистится в handleDataUpdate
+                        return;
                     }
-
-                    // ЕСЛИ ГЕОКОДЕР НАШЕЛ КООРДИНАТЫ
                     if (cached.lat && cached.lon && !isNaN(cached.lat)) {
                         const updatedPoint: MapPoint = {
                             ...basePoint,
@@ -211,8 +198,6 @@ const App: React.FC = () => {
         }, 10000);
 
         pollingIntervals.current.set(tempKey, intervalId);
-        
-        // Авто-стоп через 1 час для экономии ресурсов
         setTimeout(() => {
             if (pollingIntervals.current.has(tempKey)) {
                 clearInterval(pollingIntervals.current.get(tempKey));
@@ -334,18 +319,18 @@ const App: React.FC = () => {
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
 
         try {
-            const listRes = await fetch(`/api/get-akb?year=${year}&month=${month || 1}&mode=list`);
+            // Исправлено: если month не передан, запрашиваем список по всему году
+            const listUrl = `/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`;
+            const listRes = await fetch(listUrl);
             const allFiles = listRes.ok ? await listRes.json() : [];
-            const CHUNK_SIZE = 2000; // Уменьшенный лимит для стабильности
+            
+            const CHUNK_SIZE = 2000;
             
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
-                    if (!res.ok) {
-                        console.error(`Chunk fetch failed at offset ${offset}`);
-                        break;
-                    }
+                    if (!res.ok) break;
                     const result = await res.json();
                     if (result.rows?.length > 0) {
                         workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
@@ -366,19 +351,21 @@ const App: React.FC = () => {
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            const res = await fetch(`/api/get-akb?mode=metadata&year=2025&month=${new Date().getMonth() + 1}`);
+            // Проверяем метаданные всего года 2025 для авто-синхронизации
+            const res = await fetch(`/api/get-akb?mode=metadata&year=2025`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    handleStartCloudProcessing({ year: '2025', month: new Date().getMonth() + 1 }, meta.versionHash);
+                    // Загружаем весь год, если обнаружены изменения
+                    handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }
         } catch (e) { setIsLiveConnected(false); }
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 60000);
+        const timer = setInterval(checkCloudChanges, 120000); // Раз в 2 минуты
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);
