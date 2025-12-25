@@ -167,7 +167,6 @@ const App: React.FC = () => {
         const restore = async () => {
             try {
                 setDbStatus('loading');
-                // 1. Попытка загрузки снимка из облака
                 const cloudRes = await fetch('/api/snapshot');
                 if (cloudRes.ok) {
                     const cloudSnapshot = await cloudRes.json();
@@ -178,7 +177,6 @@ const App: React.FC = () => {
                         setIsRestoring(false); setActiveModule('amp'); return;
                     }
                 }
-                // 2. Локальная база (IndexedDB)
                 const saved = await loadAnalyticsState();
                 if (saved && saved.allData?.length > 0) {
                     applyState(saved); setDbStatus('ready'); setActiveModule('amp');
