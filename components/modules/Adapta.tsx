@@ -4,7 +4,7 @@ import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams } from '../../types';
-import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon } from '../icons';
+import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
@@ -49,6 +49,29 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return detectOutliers(props.uploadedData);
     }, [props.uploadedData]);
 
+    // Расчет разбивки по каналам продаж
+    const channelStats = useMemo(() => {
+        if (!props.uploadedData || props.uploadedData.length === 0) return [];
+        const counts: Record<string, number> = {};
+        let total = 0;
+
+        props.uploadedData.forEach(row => {
+            row.clients.forEach(client => {
+                const type = client.type || 'Не определен';
+                counts[type] = (counts[type] || 0) + 1;
+                total++;
+            });
+        });
+
+        return Object.entries(counts)
+            .map(([name, count]) => ({
+                name,
+                count,
+                percentage: total > 0 ? (count / total) * 100 : 0
+            }))
+            .sort((a, b) => b.count - a.count);
+    }, [props.uploadedData]);
+
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
@@ -89,60 +112,105 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                     </div>
 
-                    <div className="lg:col-span-2">
-                        <div className={`bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border ${healthBorder} h-full`}>
+                    <div className="lg:col-span-2 space-y-6">
+                        <div className={`bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border ${healthBorder} shadow-xl`}>
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
                                 Качество данных (Health Score)
                                 <span className={`text-2xl font-mono ${healthColor} ml-auto`}>{healthScore}%</span>
                             </h3>
                             
-                            <div className="w-full bg-gray-800 rounded-full h-2 mb-6">
-                                <div className={`h-2 rounded-full transition-all duration-1000 ${healthScore > 80 ? 'bg-emerald-500' : healthScore > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${healthScore}%` }}></div>
+                            <div className="w-full bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
+                                <div className={`h-full transition-all duration-1000 ease-out ${healthScore > 80 ? 'bg-emerald-500' : healthScore > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${healthScore}%` }}></div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                                    <div className="text-xs text-gray-400 uppercase mb-1">Всего строк</div>
+                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего строк</div>
                                     <div className="text-xl font-bold text-gray-200">{props.processingState.totalRowsProcessed || (props.activeClientsCount > 0 ? props.activeClientsCount : '—')}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2"><DataIcon small /> Транзакции в файлах</div>
                                 </div>
-                                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                                    <div className="text-xs text-gray-400 uppercase mb-1">Уникальные ТТ</div>
+                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Уникальные ТТ</div>
                                     <div className="text-xl font-bold text-white">{props.activeClientsCount}</div>
                                     <div className="flex items-center gap-1 text-xs text-emerald-400 mt-2"><CheckIcon /> Проверено</div>
                                 </div>
-                                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                                    <div className="text-xs text-gray-400 uppercase mb-1">Неопознанные</div>
+                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Неопознанные</div>
                                     <div className="text-xl font-bold text-white">{props.unidentifiedCount}</div>
                                     <div className="flex items-center gap-1 text-xs text-amber-400 mt-2"><WarningIcon /> Требуют внимания</div>
                                 </div>
-                                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                                    <div className="text-xs text-gray-400 uppercase mb-1">Покрытие ОКБ</div>
+                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Покрытие ОКБ</div>
                                     <div className="text-xl font-bold text-white">{props.okbStatus?.coordsCount ? Math.round((props.activeClientsCount / props.okbStatus.coordsCount) * 100) : 0}%</div>
                                     <div className="flex items-center gap-1 text-xs text-indigo-400 mt-2">Анализ пробелов</div>
                                 </div>
                             </div>
+                        </div>
 
-                            <div className="mt-6 p-5 bg-indigo-900/20 border border-indigo-500/20 rounded-xl text-sm text-indigo-200">
-                                <strong className="block mb-2 text-indigo-100 flex items-center gap-2"><InfoIcon small /> Режим работы:</strong>
-                                {props.dbStatus === 'ready' 
-                                    ? `Система использует локальную базу данных (моментальная загрузка). Каждые 60 секунд проводится проверка облака на наличие новых версий. Если данные изменятся, обновление произойдет автоматически.`
-                                    : "Локальная база отсутствует. Пожалуйста, инициируйте загрузку через кнопку «Облако» в блоке справа."}
+                        {/* НОВЫЙ БЛОК: Разбивку по каналам продаж */}
+                        <div className="bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 shadow-xl">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <ChannelIcon small className="text-indigo-400" />
+                                    Разбивка по каналам продаж
+                                </h3>
+                                <span className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded border border-gray-700 font-mono">
+                                    Total n={props.activeClientsCount}
+                                </span>
                             </div>
+
+                            {channelStats.length > 0 ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
+                                    {channelStats.map((stat, idx) => (
+                                        <div key={idx} className="space-y-2 group">
+                                            <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
+                                                <span className="text-gray-400 group-hover:text-indigo-300 transition-colors">{stat.name}</span>
+                                                <span className="text-white font-mono">{stat.count} ТТ <span className="text-gray-500 font-normal">({stat.percentage.toFixed(1)}%)</span></span>
+                                            </div>
+                                            <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                                                <div 
+                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out shadow-[0_0_8px_rgba(99,102,241,0.3)]"
+                                                    style={{ width: `${stat.percentage}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="h-40 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded-xl">
+                                    <InfoIcon className="mb-2 opacity-20" />
+                                    <p className="text-sm">Данные о каналах появятся после загрузки</p>
+                                </div>
+                            )}
+
+                            <div className="mt-8 p-4 bg-gray-800/30 border border-gray-700/50 rounded-xl flex items-start gap-4">
+                                <div className="mt-0.5 text-gray-500"><InfoIcon small /></div>
+                                <div className="text-[11px] text-gray-400 leading-relaxed italic">
+                                    Классификация каналов сбыта (Зоо сети, Розница, Бридер канал) используется для уточнения алгоритмов 
+                                    <strong> Smart Planning</strong> и выявления специфических трендов в каждом сегменте.
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="p-5 bg-indigo-900/20 border border-indigo-500/20 rounded-xl text-sm text-indigo-200 shadow-inner">
+                            <strong className="block mb-2 text-indigo-100 flex items-center gap-2"><InfoIcon small /> Режим работы системы:</strong>
+                            {props.dbStatus === 'ready' 
+                                ? `Система использует локальную базу данных (моментальная загрузка). Каждые 60 секунд проводится проверка облака на наличие новых версий. Если данные изменятся, обновление произойдет автоматически.`
+                                : "Локальная база отсутствует. Пожалуйста, инициируйте загрузку через кнопку «Облако» в блоке слева."}
                         </div>
                     </div>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-1">
-                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700">
+                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 shadow-xl">
                             <h3 className="text-lg font-bold text-white mb-4">Статистический Анализ (Z-Score)</h3>
                             <p className="text-sm text-gray-400 mb-4">Система автоматически находит отклонения в продажах, используя метод Z-оценки. Это помогает выявить ошибки ввода или найти скрытых "чемпионов".</p>
                             <div className="flex items-center gap-2 text-amber-400 text-sm bg-amber-900/20 p-3 rounded-lg border border-amber-500/20"><AlertIcon small /><span>Найдено аномалий: <strong>{outliers.length}</strong></span></div>
                         </div>
                     </div>
                     <div className="lg:col-span-2">
-                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 h-full overflow-hidden flex flex-col">
+                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 h-full overflow-hidden flex flex-col shadow-xl">
                             <h3 className="text-lg font-bold text-white mb-4">Детализация Аномалий</h3>
                             <div className="flex-grow overflow-y-auto custom-scrollbar">
                                 {outliers.length > 0 ? (
