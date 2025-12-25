@@ -9,7 +9,7 @@ import GrowthExplanationModal from './GrowthExplanationModal';
 import GamificationModal from './GamificationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon } from './icons';
-import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress } from '../utils/dataUtils';
+import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
 import { marked } from 'marked';
@@ -218,7 +218,6 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
     );
 };
 
-// Fix: Define the missing RMDashboardProps interface.
 interface RMDashboardProps {
     isOpen: boolean;
     onClose: () => void;
@@ -240,7 +239,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
     const [isAbcModalOpen, setIsAbcModalOpen] = useState(false);
     const [abcClients, setAbcClients] = useState<MapPoint[]>([]);
-    const [abcModalTitle, setAbcModalTitle] = useState<React.ReactNode>(''); // Изменен тип состояния
+    const [abcModalTitle, setAbcModalTitle] = useState<React.ReactNode>('');
     const [isRegionModalOpen, setIsRegionModalOpen] = useState(false);
     const [selectedRegionDetails, setSelectedRegionDetails] = useState<{ rmName: string; regionName: string; activeClients: MapPoint[]; potentialClients: PotentialClient[]; } | null>(null);
     const [explanationData, setExplanationData] = useState<PlanMetric | null>(null);
@@ -266,7 +265,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
-    // --- RE-INSERTED METRICSDATA LOGIC (Compact) ---
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
         let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
@@ -282,8 +280,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 if (addr) globalOkbAddressSet.add(normalizeAddress(addr));
             });
         }
-        type RegionBucket = { fact: number; potential: number; activeClients: Set<string>; matchedOkbCoords: Set<string>; brandFacts: Map<string, number>; brandClientCounts: Map<string, number>; brandRows: Map<string, AggregatedDataRow[]>; originalRegionName?: string; regionListings: number; };
-        const rmBuckets = new Map<string, { originalName: string; regions: Map<string, RegionBucket>; totalFact: number; countA: number; countB: number; countC: number; factA: number; factB: number; factC: number; uniqueClientKeys: Set<string>; totalListings: number; }>();
+        const rmBuckets = new Map<string, { originalName: string; regions: Map<string, any>; totalFact: number; countA: number; countB: number; countC: number; factA: number; factB: number; factC: number; uniqueClientKeys: Set<string>; totalListings: number; }>();
         data.forEach(row => {
             const rmName = row.rm || 'Не указан'; const normRm = normalizeRmNameForMatching(rmName); const regionKey = row.region || 'Регион не определен';
             if (!rmBuckets.has(normRm)) rmBuckets.set(normRm, { originalName: rmName, regions: new Map(), totalFact: 0, countA: 0, countB: 0, countC: 0, factA: 0, factB: 0, factC: 0, uniqueClientKeys: new Set(), totalListings: 0 });
@@ -295,39 +292,37 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             const brandName = row.brand || 'No Brand'; regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact); regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
             if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []); regBucket.brandRows.get(brandName)!.push(row);
         });
-        const missingRegionNames = new Set<string>(); const resultMetrics: RMMetrics[] = [];
+        const resultMetrics: RMMetrics[] = [];
         rmBuckets.forEach((rmData, normRmKey) => {
             const regionMetrics: PlanMetric[] = []; const brandAggregates = new Map<string, { fact: number, plan: number }>();
-            let rmTotalOkbRaw = 0; let rmTotalMatched = 0; let rmTotalActive = 0; let rmTotalCalculatedPlan = 0; let rmTotalPotentialFile = 0;
+            let rmTotalOkbRaw = 0; let rmTotalMatched = 0; let rmTotalActive = 0; let rmTotalCalculatedPlan = 0;
             const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
             const rmGlobalAvgVelocity = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
             const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
             rmData.regions.forEach((regData, regionKey) => {
                 const activeCount = regData.activeClients.size; const matchedCount = regData.matchedOkbCoords.size;
-                rmTotalMatched += matchedCount; rmTotalActive += activeCount; rmTotalPotentialFile += regData.potential;
-                let totalRegionOkb = 0; if (globalOkbRegionCounts && globalOkbRegionCounts[regionKey]) totalRegionOkb = globalOkbRegionCounts[regionKey];
-                if (totalRegionOkb === 0 && regionKey !== 'Регион не определен') missingRegionNames.add(regionKey);
+                rmTotalMatched += matchedCount; rmTotalActive += activeCount;
+                let totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
                 rmTotalOkbRaw += totalRegionOkb;
                 let regionCalculatedPlan = 0; const regionBrands: PlanMetric[] = [];
                 regData.brandFacts.forEach((bFact, bName) => {
-                    const bClientCount = regData.brandClientCounts.get(bName) || 0; const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0; const bWidth = 1;
-                    const calculationResult = PlanningEngine.calculateRMPlan({ totalFact: bFact, totalPotential: totalRegionOkb, matchedCount: matchedCount, activeCount: activeCount, totalRegionOkb: totalRegionOkb, avgSku: bWidth, avgVelocity: bVelocity, rmGlobalVelocity: rmGlobalAvgVelocity }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
-                    let bRate = calculationResult.growthPct; if (bFact === 0 && calculationResult.plan > 0) bRate = 100;
+                    const bClientCount = regData.brandClientCounts.get(bName) || 0; const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
+                    const calculationResult = PlanningEngine.calculateRMPlan({ totalFact: bFact, totalPotential: totalRegionOkb, matchedCount: matchedCount, activeCount: activeCount, totalRegionOkb: totalRegionOkb, avgSku: 1, avgVelocity: bVelocity, rmGlobalVelocity: rmGlobalAvgVelocity }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
+                    let bRate = bFact === 0 && calculationResult.plan > 0 ? 100 : calculationResult.growthPct;
                     const bPlan = bFact * (1 + bRate / 100); regionCalculatedPlan += bPlan;
                     regionBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bRate, factors: calculationResult.factors, details: calculationResult.details, packagingDetails: regData.brandRows.get(bName) || [] });
                     if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 }); const agg = brandAggregates.get(bName)!; agg.fact += bFact; agg.plan += bPlan;
                 });
                 regionBrands.sort((a, b) => b.fact - a.fact); rmTotalCalculatedPlan += regionCalculatedPlan;
                 const regionGrowthPct = regData.fact > 0 ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100 : (regionCalculatedPlan > 0 ? 100 : 0);
-                const uncoveredCount = Math.max(0, totalRegionOkb - matchedCount); const totalUniverse = activeCount + uncoveredCount; const marketShare = totalUniverse > 0 ? (activeCount / totalUniverse) : NaN;
-                regionMetrics.push({ name: regionKey, fact: regData.fact, plan: regionCalculatedPlan, growthPct: regionGrowthPct, marketShare: !Number.isNaN(marketShare) ? marketShare * 100 : NaN, activeCount: activeCount, totalCount: totalRegionOkb, brands: regionBrands });
+                const marketShare = (activeCount + Math.max(0, totalRegionOkb - matchedCount)) > 0 ? (activeCount / (activeCount + Math.max(0, totalRegionOkb - matchedCount))) * 100 : NaN;
+                regionMetrics.push({ name: regionKey, fact: regData.fact, plan: regionCalculatedPlan, growthPct: regionGrowthPct, marketShare, activeCount: activeCount, totalCount: totalRegionOkb, brands: regionBrands });
             });
             const brandMetrics: PlanMetric[] = Array.from(brandAggregates.entries()).map(([name, val]) => ({ name, fact: val.fact, plan: val.plan, growthPct: val.fact > 0 ? ((val.plan - val.fact) / val.fact) * 100 : 0 })).sort((a, b) => b.plan - a.plan);
             const effectiveGrowthPct = rmData.totalFact > 0 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100 : baseRate;
-            const rmUncovered = Math.max(0, rmTotalOkbRaw - rmTotalMatched); const rmTotalUniverse = rmTotalActive + rmUncovered; const weightedShare = (rmTotalUniverse > 0) ? (rmTotalActive / rmTotalUniverse) * 100 : NaN;
-            resultMetrics.push({ rmName: rmData.originalName, totalClients: rmUniqueClientsCount, totalOkbCount: rmTotalOkbRaw, totalFact: rmData.totalFact, totalPotential: rmTotalPotentialFile, avgFactPerClient: rmUniqueClientsCount > 0 ? rmData.totalFact / rmUniqueClientsCount : 0, marketShare: weightedShare, countA: rmData.countA, countB: rmData.countB, countC: rmData.countC, factA: rmData.factA, factB: rmData.factB, factC: rmData.factC, recommendedGrowthPct: effectiveGrowthPct, nextYearPlan: rmTotalCalculatedPlan, regions: regionMetrics.sort((a, b) => b.fact - a.fact), brands: brandMetrics, avgSkuPerClient: rmAvgSkuPerClient, avgSalesPerSku: rmGlobalAvgVelocity, globalAvgSku: globalAvgSkuPerClient, globalAvgSalesSku: globalAvgSalesPerSku } as unknown as RMMetrics);
+            const rmTotalUniverse = rmTotalActive + Math.max(0, rmTotalOkbRaw - rmTotalMatched); const weightedShare = rmTotalUniverse > 0 ? (rmTotalActive / rmTotalUniverse) * 100 : NaN;
+            resultMetrics.push({ rmName: rmData.originalName, totalClients: rmUniqueClientsCount, totalOkbCount: rmTotalOkbRaw, totalFact: rmData.totalFact, marketShare: weightedShare, countA: rmData.countA, countB: rmData.countB, countC: rmData.countC, factA: rmData.factA, factB: rmData.factB, factC: rmData.factC, recommendedGrowthPct: effectiveGrowthPct, nextYearPlan: rmTotalCalculatedPlan, regions: regionMetrics.sort((a, b) => b.fact - a.fact), brands: brandMetrics, avgSkuPerClient: rmAvgSkuPerClient, avgSalesPerSku: rmGlobalAvgVelocity, globalAvgSku: globalAvgSkuPerClient, globalAvgSalesSku: globalAvgSalesPerSku } as unknown as RMMetrics);
         });
-        (resultMetrics as any).__missingOkbRegions = Array.from(missingRegionNames.values());
         return resultMetrics.sort((a, b) => b.totalFact - a.totalFact);
     }, [data, okbRegionCounts, okbData, baseRate]);
 
@@ -366,11 +361,12 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const toggleCountry = (country: string) => { const newSet = new Set(selectedCountries); if (newSet.has(country)) { newSet.delete(country); } else { newSet.add(country); } setSelectedCountries(newSet); };
     const toggleRegion = (region: string) => { const newSet = new Set(selectedRegions); if (newSet.has(region)) { newSet.delete(region); } else { newSet.add(region); } setSelectedRegions(newSet); };
-    const missingOkbRegions: string[] = (metricsData as any).__missingOkbRegions || [];
+    const availableCountries = Object.keys(exportHierarchy).sort();
+    const availableRegions = useMemo(() => { const regions = new Set<string>(); availableCountries.forEach(c => { if (selectedCountries.has(c)) { exportHierarchy[c].forEach(r => regions.add(r)); } }); return Array.from(regions).sort(); }, [exportHierarchy, selectedCountries]);
+    const filteredRegions = availableRegions.filter(r => r.toLowerCase().includes(regionSearch.toLowerCase()));
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
     const handleAnalyzeClick = (e: React.MouseEvent, rm: RMMetrics) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); };
     
-    // ОБНОВЛЕННЫЙ МЕТОД: Формирование заголовка с подписью
     const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => { 
         const clients: MapPoint[] = []; 
         const normalizedTargetRm = normalizeRmNameForMatching(rmName); 
@@ -385,39 +381,40 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             } 
         }); 
         clients.sort((a, b) => (b.fact || 0) - (a.fact || 0)); 
-        
         setAbcClients(clients); 
-
-        // Описания для каждой категории
-        const descriptions = {
-            'A': 'Лидеры (обеспечивают 80% продаж)',
-            'B': 'Середняки (следующие 15% продаж)',
-            'C': 'Малообъемные (оставшиеся 5% продаж)'
-        };
-
-        // Создание богатого заголовка с подписью
-        const titleNode = (
-            <div className="flex flex-col">
-                <span className="text-xl font-bold text-white">
-                    {rmName}: Категория {category} ({clients.length})
-                </span>
-                <span className="text-sm font-normal text-indigo-400 mt-1 uppercase tracking-tight">
-                    {descriptions[category]}
-                </span>
-            </div>
-        );
-
-        setAbcModalTitle(titleNode); 
+        const descriptions = { 'A': 'Лидеры (обеспечивают 80% продаж)', 'B': 'Середняки (следующие 15% продаж)', 'C': 'Малообъемные (оставшиеся 5% продаж)' };
+        setAbcModalTitle(<div className="flex flex-col"><span className="text-xl font-bold text-white">{rmName}: Категория {category} ({clients.length})</span><span className="text-sm font-normal text-indigo-400 mt-1 uppercase tracking-tight">{descriptions[category]}</span></div>); 
         setIsAbcModalOpen(true); 
     };
 
-    const handleRegionClick = (rmName: string, regionName: string) => { const active: MapPoint[] = []; let potential: PotentialClient[] = []; const normalizedTargetRm = normalizeRmNameForMatching(rmName); data.forEach(group => { if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { active.push(...group.clients); if (potential.length === 0 && group.potentialClients && group.potentialClients.length > 0) { potential = group.potentialClients; } } }); setSelectedRegionDetails({ rmName, regionName, activeClients: active, potentialClients: potential }); setIsRegionModalOpen(true); };
+    const handleRegionClick = (rmName: string, regionName: string) => { 
+        const active: MapPoint[] = []; 
+        const normalizedTargetRm = normalizeRmNameForMatching(rmName); 
+        data.forEach(group => { if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { active.push(...group.clients); } }); 
+        
+        // КРИТИЧНО: Фильтруем ОКБ для получения "Свободного потенциала" в данном регионе
+        const activeKeys = new Set(active.map(c => c.key));
+        const potential: PotentialClient[] = okbData.filter(row => {
+            const rowRegion = recoverRegion(findValueInRow(row, ['субъект', 'регион', 'region', 'область']), findValueInRow(row, ['город', 'city']));
+            if (rowRegion !== regionName) return false;
+            const addr = findAddressInRow(row);
+            if (!addr) return false;
+            return !activeKeys.has(normalizeAddress(addr));
+        }).map(row => ({
+            name: findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            address: findAddressInRow(row) || 'Адрес не указан',
+            type: findValueInRow(row, ['вид деятельности', 'тип']) || 'н/д',
+            lat: row.lat,
+            lon: row.lon
+        }));
+
+        setSelectedRegionDetails({ rmName, regionName, activeClients: active, potentialClients: potential }); 
+        setIsRegionModalOpen(true); 
+    };
+
     const toggleExpand = (rmName: string) => { setExpandedRM(prev => prev === rmName ? null : rmName); };
     const handleExplanationClick = (e: React.MouseEvent, metric: PlanMetric) => { e.stopPropagation(); setExplanationData(metric); };
     const handleBrandClick = (metric: PlanMetric, region: string) => { setSelectedBrandForDetails(metric); setSelectedBrandRegion(region); setIsBrandModalOpen(true); };
-    const availableCountries = Object.keys(exportHierarchy).sort();
-    const availableRegions = useMemo(() => { const regions = new Set<string>(); availableCountries.forEach(c => { if (selectedCountries.has(c)) { exportHierarchy[c].forEach(r => regions.add(r)); } }); return Array.from(regions).sort(); }, [exportHierarchy, selectedCountries]);
-    const filteredRegions = availableRegions.filter(r => r.toLowerCase().includes(regionSearch.toLowerCase()));
 
     const mainContent = (
         <>
@@ -427,10 +424,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2"></span>
                         <div className="flex items-center gap-2">
                             <label htmlFor="baseRateInput" className="cursor-pointer font-medium text-gray-300 select-none">Базовое повышение:</label>
-                            <div className="relative">
-                                <input id="baseRateInput" type="number" min="0" max="100" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all appearance-none no-spinner" />
-                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500 pointer-events-none select-none invisible">%</span>
-                            </div>
+                            <input id="baseRateInput" type="number" min="0" max="100" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-14 bg-gray-800 border border-gray-600 rounded px-1 text-center font-bold text-indigo-400 focus:ring-2 focus:ring-indigo-500 outline-none appearance-none no-spinner" />
                             <span className="font-bold text-indigo-400">%</span>
                         </div>
                     </div>
@@ -438,105 +432,68 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span>Высокий План</span></div>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span>Сниженный План</span></div>
                     </div>
-                    
-                    {/* Idea 10: Gamification Button */}
-                    <button 
-                        onClick={() => setIsLeagueModalOpen(true)}
-                        className="ml-auto flex items-center gap-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-yellow-500/50 shadow-lg"
-                    >
-                        🏆 Лига Чемпионов
-                    </button>
-
+                    <button onClick={() => setIsLeagueModalOpen(true)} className="ml-auto flex items-center gap-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-yellow-500/50 shadow-lg">🏆 Лига Чемпионов</button>
                     {okbData.length > 0 && (
-                        <button onClick={prepareExportData} className="flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50" title="Скачать строки из ОКБ, которые не совпадают с активными клиентами по координатам">
-                            <ExportIcon /> Скачать непокрытый потенциал (XLSX)
-                        </button>
+                        <button onClick={prepareExportData} className="flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"><ExportIcon /> Скачать непокрытый потенциал (XLSX)</button>
                     )}
-                    
-                    {!okbRegionCounts && (<div className="ml-auto text-xs text-red-400 border border-red-500/30 px-2 py-1 rounded">⚠️ База ОКБ не загружена. Расчет приблизительный.</div>)}
-                    {missingOkbRegions.length > 0 && (<div className="ml-auto text-xs text-yellow-300 border border-yellow-500/20 px-2 py-1 rounded">⚠️ Найдены регионы без записей в ОКБ: {missingOkbRegions.slice(0,5).join(', ')}{missingOkbRegions.length > 5 ? ` и ещё ${missingOkbRegions.length - 5}` : ''}.</div>)}
                 </div>
 
                 <div className="overflow-x-auto scrollbar-hide">
                     <table className="w-full text-left text-sm text-gray-300 border-separate border-spacing-y-0">
                         <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 z-10">
-                            <tr>
-                                <th className="px-4 py-3 w-8"></th>
-                                <th className="px-4 py-3">РМ</th>
-                                <th className="px-4 py-3 text-center whitespace-nowrap">Факт {currentYear} (кг)</th>
-                                <th className="px-4 py-3 text-center whitespace-nowrap" title="Левое число: Всего активных клиентов. Правое: Размер ОКБ.">АКБ / ОКБ (шт)</th>
-                                <th className="px-4 py-3 text-center text-indigo-300 whitespace-nowrap" title="Доля активных клиентов от всей известной базы (Active + Uncovered).">Покрытие</th>
-                                <th className="px-4 py-3 text-center text-emerald-300 whitespace-nowrap" title="Среднее количество уникальных брендов/SKU, продаваемых в одну точку">Ср. SKU/ТТ</th>
-                                <th className="px-4 py-3 text-center text-cyan-300 whitespace-nowrap" title="Средний объем продаж на одну позицию">Ср. Продажи/SKU</th>
-                                <th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30 whitespace-nowrap">Рек. План (%)</th>
-                                <th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th>
-                                <th className="px-4 py-3 text-center font-bold bg-gray-800/30 whitespace-nowrap">План {nextYear} (кг)</th>
-                                <th className="px-4 py-3 text-center text-amber-400" title="Клиенты категории A">A</th>
-                                <th className="px-4 py-3 text-center text-emerald-400" title="Клиенты категории B">B</th>
-                                <th className="px-4 py-3 text-center text-slate-400" title="Клиенты категории C">C</th>
-                            </tr>
+                            <tr><th className="px-4 py-3 w-8"></th><th className="px-4 py-3">РМ</th><th className="px-4 py-3 text-center whitespace-nowrap">Факт {currentYear} (кг)</th><th className="px-4 py-3 text-center whitespace-nowrap">АКБ / ОКБ (шт)</th><th className="px-4 py-3 text-center text-indigo-300 whitespace-nowrap">Покрытие</th><th className="px-4 py-3 text-center text-emerald-300 whitespace-nowrap">Ср. SKU/ТТ</th><th className="px-4 py-3 text-center text-cyan-300 whitespace-nowrap">Ср. Продажи/SKU</th><th className="px-4 py-3 text-center border-l border-gray-700 bg-gray-800/30 whitespace-nowrap">Рек. План (%)</th><th className="px-4 py-3 text-center border-r border-gray-700 bg-gray-800/30">Обоснование</th><th className="px-4 py-3 text-center font-bold bg-gray-800/30 whitespace-nowrap">План {nextYear} (кг)</th><th className="px-4 py-3 text-center text-amber-400">A</th><th className="px-4 py-3 text-center text-emerald-400">B</th><th className="px-4 py-3 text-center text-slate-400">C</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
                             {metricsData.map(rm => {
                                 const isExpanded = expandedRM === rm.rmName;
-                                const isAnyExpanded = expandedRM !== null;
                                 const shareValue = Number.isNaN(rm.marketShare) ? null : rm.marketShare;
-                                const shareColor = (shareValue === null) ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                                const growthColor = rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300');
+                                const covered = shareValue ? Math.min(100, shareValue) : 0;
                                 const skuMetric = (rm as any).avgSkuPerClient || 0;
                                 const salesMetric = (rm as any).avgSalesPerSku || 0;
                                 const globalSku = (rm as any).globalAvgSku || 0;
                                 const globalSales = (rm as any).globalAvgSalesSku || 0;
-                                const skuColor = skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300');
-                                const salesColor = salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300');
-                                let rowClasses = "transition-all duration-300 cursor-pointer ";
-                                if (isAnyExpanded) { if (isExpanded) { rowClasses += "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30 "; } else { rowClasses += "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none border-b border-gray-800 "; } } else { rowClasses += "hover:bg-gray-800/50 border-b border-gray-700 "; }
-                                const covered = shareValue ? Math.min(100, shareValue) : 0; const totalActive = rm.totalClients || 0; const totalOkbMatched = Math.round(rm.totalOkbCount * (covered / 100)); const totalUncovered = Math.max(0, rm.totalOkbCount - totalOkbMatched);
                                 return (
                                     <React.Fragment key={rm.rmName}>
-                                        <tr className={rowClasses} onClick={() => toggleExpand(rm.rmName)}>
+                                        <tr className={`transition-all duration-300 cursor-pointer ${expandedRM !== null ? (isExpanded ? "bg-gray-800/90 z-20 relative shadow-2xl scale-[1.005] border-y border-indigo-500/30" : "opacity-20 blur-[1px] grayscale hover:bg-transparent pointer-events-none") : "hover:bg-gray-800/50 border-b border-gray-700"}`} onClick={() => toggleExpand(rm.rmName)}>
                                             <td className="px-4 py-3 text-gray-500">{isExpanded ? '▲' : '▼'}</td>
-                                            <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]" title={rm.rmName}>{rm.rmName}</td>
+                                            <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]">{rm.rmName}</td>
                                             <td className="px-4 py-3 text-center font-mono text-white whitespace-nowrap">{formatNum(rm.totalFact)}</td>
-                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white" title="Всего активных ТТ">{rm.totalClients}</span><span className="mx-1">/</span><span title="Размер базы ОКБ">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
-                                            <td className="px-4 py-3 text-center align-middle" title={`Покрытие: ${covered.toFixed(1)}%\nАктивные (Файл): ${totalActive}\nСовпадений (Matched): ${totalOkbMatched}\nСвободно в базе (Potential): ${totalUncovered}`}><div className="flex flex-col items-center justify-center w-full"><div className={`text-xs font-bold font-mono mb-1 ${shareColor}`}>{shareValue === null ? '—' : `${covered.toFixed(0)}%`}</div>{shareValue !== null && (<div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex"><div className={`h-full ${shareValue >= 90 ? 'bg-emerald-500' : 'bg-emerald-500'}`} style={{ width: `${covered}%` }}></div><div className="h-full bg-gray-700 flex-grow"></div></div>)}</div></td>
-                                            <td className={`px-4 py-3 text-center font-mono ${skuColor}`} title={`В среднем ${skuMetric.toFixed(2)} SKU на точку. Среднее по компании: ${globalSku.toFixed(2)}`}>{skuMetric.toFixed(2)}</td>
-                                            <td className={`px-4 py-3 text-center font-mono ${salesColor}`} title={`В среднем ${formatNum(salesMetric)} кг на одно SKU. Среднее по компании: ${formatNum(globalSales)}`}>{formatNum(salesMetric)}</td>
-                                            <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${growthColor}`}>{rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%</td>
+                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white">{rm.totalClients}</span><span className="mx-1">/</span><span>{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
+                                            <td className="px-4 py-3 text-center align-middle"><div className="flex flex-col items-center justify-center w-full"><div className={`text-xs font-bold font-mono mb-1 ${shareValue === null ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'))}`}>{shareValue === null ? '—' : `${covered.toFixed(0)}%`}</div>{shareValue !== null && (<div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex"><div className="h-full bg-emerald-500" style={{ width: `${covered}%` }}></div></div>)}</div></td>
+                                            <td className={`px-4 py-3 text-center font-mono ${skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300')}`}>{skuMetric.toFixed(2)}</td>
+                                            <td className={`px-4 py-3 text-center font-mono ${salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300')}`}>{formatNum(salesMetric)}</td>
+                                            <td className={`px-4 py-3 text-center font-bold font-mono border-l border-gray-700 ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : (rm.recommendedGrowthPct < baseRate ? 'text-amber-400' : 'text-indigo-300')}`}>{rm.recommendedGrowthPct > 0 ? '+' : ''}{rm.recommendedGrowthPct.toFixed(1)}%</td>
                                             <td className="px-4 py-3 text-center border-r border-gray-700"><button onClick={(e) => handleAnalyzeClick(e, rm)} className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1.5 mx-auto transition-colors">Анализ</button></td>
-                                            <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20 whitespace-nowrap">{formatNum(rm.nextYearPlan)}<div className="text-[10px] text-gray-500 font-normal">+{formatNum(rm.nextYearPlan - rm.totalFact)}</div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-amber-500/10" title={`Показать клиентов A для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div><div className="font-bold font-mono text-amber-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countA}</div></div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-emerald-500/10" title={`Показать клиентов B для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div><div className="font-bold font-mono text-emerald-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countB}</div></div></td>
-                                            <td className="px-4 py-3 text-center cursor-pointer transition-colors hover:bg-slate-500/10" title={`Показать клиентов C для ${rm.rmName}`} onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}><div className="flex flex-col items-center justify-center group/cell"><div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div><div className="font-bold font-mono text-slate-400 text-lg group-hover/cell:scale-110 transition-transform">{rm.countC}</div></div></td>
+                                            <td className="px-4 py-3 text-center font-bold font-mono text-white bg-gray-800/20 whitespace-nowrap">{formatNum(rm.nextYearPlan)}</td>
+                                            <td className="px-4 py-3 text-center cursor-pointer hover:bg-amber-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'A'); }}><div className="flex flex-col items-center justify-center"><div className="text-[10px] font-mono text-amber-200/70">{formatNum(rm.factA)}</div><div className="font-bold font-mono text-amber-400 text-lg">{rm.countA}</div></div></td>
+                                            <td className="px-4 py-3 text-center cursor-pointer hover:bg-emerald-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'B'); }}><div className="flex flex-col items-center justify-center"><div className="text-[10px] font-mono text-emerald-200/70">{formatNum(rm.factB)}</div><div className="font-bold font-mono text-emerald-400 text-lg">{rm.countB}</div></div></td>
+                                            <td className="px-4 py-3 text-center cursor-pointer hover:bg-slate-500/10" onClick={(e) => { e.stopPropagation(); handleAbcClick(rm.rmName, 'C'); }}><div className="flex flex-col items-center justify-center"><div className="text-[10px] font-mono text-slate-300/70">{formatNum(rm.factC)}</div><div className="font-bold font-mono text-slate-400 text-lg">{rm.countC}</div></div></td>
                                         </tr>
                                         {isExpanded && (
                                             <tr className="z-20 relative shadow-2xl scale-[1.005]">
                                                 <td colSpan={13} className="p-0 bg-gray-900/95 border-b border-x border-indigo-500/30 rounded-b-lg shadow-inner">
                                                     <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in-down">
                                                         <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-800/40">
-                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">Детализация по Регионам (Нажмите на строку для списка)</div>
+                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700">Детализация по Регионам</div>
                                                             <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
                                                                 <table className="w-full text-xs text-left">
                                                                     <thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10"><tr><th className="px-3 py-2">Регион</th><th className="px-3 py-2 text-right">Покрытие / E-com</th><th className="px-3 py-2 text-right">Рост</th><th className="px-3 py-2 text-right">Факт</th><th className="px-3 py-2 text-right">План {nextYear}</th></tr></thead>
                                                                     <tbody className="divide-y divide-gray-700/50 text-gray-300">
                                                                         {rm.regions.map(reg => {
-                                                                            const regShareKnown = !Number.isNaN(reg.marketShare); const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
-                                                                            const regShareColor = !regShareKnown ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'));
-                                                                            const regGrowthColor = reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400';
-                                                                            // Idea 3: E-com Share (Mocked from Market Data)
+                                                                            const regCovered = reg.marketShare ? Math.min(100, reg.marketShare) : 0;
                                                                             const marketInfo = getMarketData(reg.name);
                                                                             return (
                                                                                 <tr key={reg.name} className="hover:bg-indigo-500/20 cursor-pointer transition-colors" onClick={() => handleRegionClick(rm.rmName, reg.name)}>
                                                                                     <td className="px-3 py-2 font-medium flex items-center gap-1">{reg.name}<span className="text-[10px] text-gray-500 ml-1">↗</span></td>
-                                                                                    <td className={`px-3 py-2 text-right font-mono`} title={regShareKnown ? `АКБ: ${reg.activeCount}\nОКБ: ${reg.totalCount}\nПокрытие: ${regCovered.toFixed(1)}%` : ''}>
+                                                                                    <td className="px-3 py-2 text-right font-mono">
                                                                                         <div className="flex flex-col items-end">
-                                                                                            <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${regShareColor}`}>({regShareKnown ? `${regCovered.toFixed(0)}%` : '0%'})</span></div>
+                                                                                            <div className="text-gray-500 text-[10px] mb-0.5">{reg.activeCount}/{reg.totalCount} <span className={`ml-1 font-bold ${Number.isNaN(reg.marketShare) ? 'text-yellow-300' : (reg.marketShare! >= 90 ? 'text-emerald-400' : (reg.marketShare! < 40 ? 'text-yellow-400' : 'text-indigo-300'))}`}>({!Number.isNaN(reg.marketShare) ? `${regCovered.toFixed(0)}%` : '0%'})</span></div>
                                                                                             <div className="flex items-center gap-1"><span className="text-[9px] text-indigo-400">e-com: {marketInfo.eComPenetration.toFixed(0)}%</span></div>
                                                                                         </div>
                                                                                     </td>
-                                                                                    <td className={`px-3 py-2 text-right font-mono font-bold ${regGrowthColor}`}>{reg.growthPct.toFixed(1)}%</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(reg.fact)}</td>
-                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium whitespace-nowrap">{formatNum(reg.plan)}</td>
+                                                                                    <td className={`px-3 py-2 text-right font-mono font-bold ${reg.growthPct > baseRate ? 'text-emerald-400' : 'text-amber-400'}`}>{reg.growthPct.toFixed(1)}%</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(reg.fact)}</td>
+                                                                                    <td className="px-3 py-2 text-right font-mono text-white font-medium">{formatNum(reg.plan)}</td>
                                                                                 </tr>
                                                                             );
                                                                         })}
@@ -545,8 +502,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                             </div>
                                                         </div>
                                                         <div className="border border-gray-700 rounded-lg overflow-hidden h-fit bg-gray-800/40">
-                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center"><span>Детализация: Регионы и Бренды</span><button onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }} className="text-gray-500 hover:text-emerald-400 transition-colors" title="Выгрузить в Excel"><ExportIcon /></button></div>
-                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar"><table className="w-full text-xs text-left"><thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10"><tr><th className="px-3 py-2 pl-6">Бренд</th><th className="px-3 py-2 text-right">Инд. Рост</th><th className="px-3 py-2 text-right">Факт</th><th className="px-3 py-2 text-right">План {nextYear}</th></tr></thead><tbody className="text-gray-300">{rm.regions.map(reg => (<React.Fragment key={`breakdown-${reg.name}`}><tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm"><td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">{reg.name}</td></tr>{reg.brands?.map(br => (<tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0"><td className="px-3 py-2 pl-6 text-gray-300"><button onClick={() => handleBrandClick(br, reg.name)} className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 hover:decoration-solid font-medium truncate max-w-[150px]" title="Нажмите для детализации по фасовке">{br.name}</button></td><td className="px-3 py-2 text-right font-mono"><button onClick={(e) => handleExplanationClick(e, br)} className="hover:underline text-emerald-400 font-bold" title="Нажмите для обоснования процента роста">+{br.growthPct.toFixed(1)}%</button></td><td className="px-3 py-2 text-right font-mono text-gray-400 whitespace-nowrap">{formatNum(br.fact)}</td><td className="px-3 py-2 text-right font-mono text-white font-bold whitespace-nowrap">{formatNum(br.plan)}</td></tr>))}</React.Fragment>))}</tbody></table></div>
+                                                            <div className="bg-gray-800/50 px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider border-b border-gray-700 flex justify-between items-center"><span>Регионы и Бренды</span><button onClick={(e) => { e.stopPropagation(); handleExportRMDetails(rm); }} className="text-gray-500 hover:text-emerald-400 transition-colors"><ExportIcon /></button></div>
+                                                            <div className="max-h-[400px] overflow-y-auto custom-scrollbar"><table className="w-full text-xs text-left"><thead className="bg-gray-800 text-gray-400 font-normal sticky top-0 z-10"><tr><th className="px-3 py-2 pl-6">Бренд</th><th className="px-3 py-2 text-right">Инд. Рост</th><th className="px-3 py-2 text-right">Факт</th><th className="px-3 py-2 text-right">План {nextYear}</th></tr></thead><tbody className="text-gray-300">{rm.regions.map(reg => (<React.Fragment key={`breakdown-${reg.name}`}><tr className="bg-gray-800/60 border-y border-gray-700/50 sticky top-[32px] z-0 backdrop-blur-sm"><td colSpan={4} className="px-3 py-1.5 font-bold text-indigo-300 text-[11px] uppercase tracking-wide">{reg.name}</td></tr>{reg.brands?.map(br => (<tr key={`${reg.name}-${br.name}`} className="hover:bg-gray-700/20 border-b border-gray-800/50 last:border-0"><td className="px-3 py-2 pl-6 text-gray-300"><button onClick={() => handleBrandClick(br, reg.name)} className="w-full text-left text-accent hover:text-white transition-colors underline decoration-dotted underline-offset-4 font-medium truncate max-w-[150px]">{br.name}</button></td><td className="px-3 py-2 text-right font-mono"><button onClick={(e) => handleExplanationClick(e, br)} className="hover:underline text-emerald-400 font-bold">+{br.growthPct.toFixed(1)}%</button></td><td className="px-3 py-2 text-right font-mono text-gray-400">{formatNum(br.fact)}</td><td className="px-3 py-2 text-right font-mono text-white font-bold">{formatNum(br.plan)}</td></tr>))}</React.Fragment>))}</tbody></table></div>
                                                         </div>
                                                     </div>
                                                 </td>
@@ -559,50 +516,26 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     </table>
                 </div>
             </div>
-            
-            {/* Modals */}
             {selectedRegionDetails && <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails.rmName} regionName={selectedRegionDetails.regionName} activeClients={selectedRegionDetails.activeClients} potentialClients={selectedRegionDetails.potentialClients} onEditClient={onEditClient} />}
             {selectedRMForAnalysis && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }} rmData={selectedRMForAnalysis} baseRate={baseRate} />}
             {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} title={abcModalTitle} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { if (onEditClient) onEditClient(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
             {selectedBrandForDetails && <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(metric) => setExplanationData(metric)} onAnalyze={handleAnalyzePackaging} />}
             <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
             {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} zIndex="z-[60]" />}
-            
-            {/* Idea 10: Gamification Modal */}
-            <GamificationModal 
-                isOpen={isLeagueModalOpen}
-                onClose={() => setIsLeagueModalOpen(false)}
-                data={metricsData}
-            />
-
-            {/* Reuse Export Modal code... (omitted for brevity as it's unchanged) */}
-            <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Настройка выгрузки непокрытого потенциала" footer={<div className="flex justify-between p-4 bg-gray-900/50 rounded-b-2xl border-t border-gray-700 flex-shrink-0"><button onClick={() => setIsExportModalOpen(false)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"><ArrowLeftIcon /> Отмена</button><button onClick={performExport} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2"><ExportIcon /> Скачать Excel ({uncoveredRowsCache.filter(r => selectedCountries.has(findValueInRow(r, ['страна', 'country']) || 'Не указана') && selectedRegions.has(findValueInRow(r, ['субъект', 'регион', 'region', 'область']) || 'Не указан')).length} строк)</button></div>}>
+            <GamificationModal isOpen={isLeagueModalOpen} onClose={() => setIsLeagueModalOpen(false)} data={metricsData} />
+            <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Настройка выгрузки" footer={<div className="flex justify-between p-4 bg-gray-900/50 border-t border-gray-700"><button onClick={() => setIsExportModalOpen(false)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg">Отмена</button><button onClick={performExport} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg">Скачать Excel</button></div>}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
-                    {/* ... Export modal content ... */}
+                    <div className="border border-gray-700 rounded-xl overflow-hidden flex flex-col"><div className="bg-gray-800 p-2 text-xs font-bold uppercase">Страны</div><div className="flex-grow overflow-y-auto p-2">{availableCountries.map(c => (<label key={c} className="flex items-center p-2 hover:bg-gray-800 rounded cursor-pointer"><input type="checkbox" checked={selectedCountries.has(c)} onChange={() => toggleCountry(c)} className="mr-2" /><span>{c}</span></label>))}</div></div>
+                    <div className="border border-gray-700 rounded-xl overflow-hidden flex flex-col"><div className="bg-gray-800 p-2"><input type="text" placeholder="Поиск региона..." value={regionSearch} onChange={e => setRegionSearch(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs" /></div><div className="flex-grow overflow-y-auto p-2">{filteredRegions.map(r => (<label key={r} className="flex items-center p-2 hover:bg-gray-800 rounded cursor-pointer"><input type="checkbox" checked={selectedRegions.has(r)} onChange={() => toggleRegion(r)} className="mr-2" /><span>{r}</span></label>))}</div></div>
                 </div>
             </Modal>
         </>
     );
 
     if (mode === 'page') {
-        return (
-             <div className="space-y-6 animate-fade-in">
-                <div className="flex justify-between items-center border-b border-gray-800 pb-4">
-                    <div className="flex items-center gap-4">
-                         <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-lg"><ArrowLeftIcon /></button>
-                        <div><h2 className="text-2xl font-bold text-white">Дашборд <span className="text-gray-500 font-normal text-lg">/ План-Факт</span></h2><p className="text-gray-400 text-sm mt-1">Детальное планирование и анализ эффективности (Sales Efficiency).</p></div>
-                    </div>
-                </div>
-                {mainContent}
-             </div>
-        );
+        return (<div className="space-y-6 animate-fade-in"><div className="flex justify-between items-center border-b border-gray-800 pb-4"><div className="flex items-center gap-4"><button onClick={onClose} className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-800 rounded-lg"><ArrowLeftIcon /></button><div><h2 className="text-2xl font-bold text-white">Дашборд План-Факт</h2></div></div></div>{mainContent}</div>);
     }
-
-    return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Панель управления: План/Факт">
-            {mainContent}
-        </Modal>
-    );
+    return (<Modal isOpen={isOpen} onClose={onClose} title="Панель управления: План/Факт">{mainContent}</Modal>);
 };
 
 export default RMDashboard;
