@@ -4,7 +4,7 @@ export interface AggregatedDataRow {
     rm: string;
     clientName: string;
     brand: string;
-    packaging: string;
+    packaging: string; // New field
     city: string; 
     region: string;
     fact: number;
@@ -12,10 +12,12 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthPercentage: number;
     potentialClients?: PotentialClient[];
-    clients: MapPoint[];
-    planMetric?: PlanMetric;
-    costToServeScore?: number;
-    eComShare?: number;
+    clients: MapPoint[]; // List of individual client objects in the group
+    planMetric?: PlanMetric; // Stores the detailed plan calculation for this specific row
+    
+    // New Strategic Metrics
+    costToServeScore?: number; // 1-10 scale
+    eComShare?: number; // Estimated % of online sales in this segment
 }
 
 export type MapPointStatus = 'match' | 'potential';
@@ -31,17 +33,19 @@ export interface MapPoint {
     region: string;
     rm: string;
     brand: string;
-    packaging: string;
+    packaging: string; // New field
     type: string;
     contacts?: string;
-    isCached?: boolean;
-    isGeocoding?: boolean;
-    geocodingError?: string;
-    originalRow: any;
-    fact?: number;
-    abcCategory?: 'A' | 'B' | 'C';
-    lastUpdated?: number;
-    comment?: string;
+    isCached?: boolean; // To distinguish between new and cached clients on the map
+    isGeocoding?: boolean; // New flag: indicates if coordinates are currently being fetched
+    geocodingError?: string; // New field: error message from external geocoder
+    originalRow: any; // To hold the full original data row for detailed viewing
+    fact?: number; // Sales volume for this specific point
+    abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
+    lastUpdated?: number; // Timestamp of the last edit
+    comment?: string; // User comments from Column E
+    
+    // Risk Analysis
     churnRisk?: 'high' | 'medium' | 'low';
 }
 
@@ -82,14 +86,14 @@ export interface UnidentifiedRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    packagings: string[];
+    packagings: string[]; // New field
     regions: string[];
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
-    packaging: string[];
+    packaging: string[]; // New field
     region: string[];
 }
 
@@ -104,7 +108,7 @@ export interface SummaryMetrics {
         name: string;
         value: number;
     };
-    channelCounts: Record<string, number>;
+    channelCounts: Record<string, number>; // Добавлено: количество ТТ по каналам
 }
 
 export interface NotificationMessage {
@@ -121,6 +125,13 @@ export type OkbStatus = {
     coordsCount?: number;
 };
 
+// Types for the Web Worker communication
+export type WorkerProgressPayload = {
+    percentage: number;
+    message: string;
+    isBackground?: boolean;
+};
+
 export type WorkerResultPayload = {
     aggregatedData: AggregatedDataRow[];
     unidentifiedRows: UnidentifiedRow[];
@@ -129,10 +140,68 @@ export type WorkerResultPayload = {
     totalRowsProcessed: number;
 };
 
+export type WorkerErrorPayload = string;
+
+export type WorkerBackgroundMessage = 
+    | { type: 'save_cache_batch', payload: { rmName: string, rows: { address: string }[], batchId: string } }
+    | { type: 'start_geocoding_tasks', payload: { tasks: { [rmName: string]: string[] } } };
+
+// --- NEW STREAMING TYPES FOR OUTPUT ---
+export type WorkerStreamInit = {
+    type: 'result_init';
+    payload: {
+        okbRegionCounts: { [key: string]: number };
+        dateRange?: string;
+        totalUnidentified: number;
+    }
+};
+
+export type WorkerStreamChunk = {
+    type: 'result_chunk_aggregated' | 'result_chunk_unidentified';
+    payload: any[]; 
+};
+
+export type WorkerStreamFinish = {
+    type: 'result_finished';
+    payload: WorkerResultPayload;
+};
+
+// --- NEW TYPES FOR INPUT (Streaming to Worker) ---
+export type WorkerInputInit = {
+    type: 'INIT_STREAM';
+    payload: {
+        okbData: OkbDataRow[];
+        cacheData: CoordsCache;
+    };
+};
+
+export type WorkerInputChunk = {
+    type: 'PROCESS_CHUNK';
+    payload: {
+        rawData: any[][];
+        isFirstChunk: boolean;
+        fileName?: string;
+    };
+};
+
+export type WorkerInputFinalize = {
+    type: 'FINALIZE_STREAM';
+};
+
+export type WorkerInputAck = {
+    type: 'ACK';
+    payload: {
+        batchId: string;
+    };
+};
+
 export type WorkerMessage =
-    | { type: 'progress', payload: { percentage: number, message: string } }
-    | { type: 'error', payload: string }
-    | { type: 'result_finished', payload: WorkerResultPayload };
+    | { type: 'progress', payload: WorkerProgressPayload }
+    | { type: 'error', payload: WorkerErrorPayload }
+    | { type: 'background', payload: WorkerBackgroundMessage }
+    | WorkerStreamInit
+    | WorkerStreamChunk
+    | WorkerStreamFinish;
 
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;
 
@@ -159,17 +228,12 @@ export interface PlanMetric {
     plan: number;
     growthPct: number; 
     marketShare?: number; 
-    eCom?: number;
+    activeCount?: number; 
+    totalCount?: number; 
+    brands?: PlanMetric[]; 
+    packagingDetails?: AggregatedDataRow[]; 
     factors?: GrowthFactors;
     details?: GrowthDetails; 
-    brands?: PlanMetric[];
-}
-
-export interface PlanningContext {
-    baseRate: number;
-    globalAvgSku: number;
-    globalAvgSales: number;
-    riskLevel: 'low' | 'medium' | 'high';
 }
 
 export interface RMMetrics {
@@ -178,18 +242,29 @@ export interface RMMetrics {
     totalOkbCount: number; 
     totalFact: number;
     totalPotential: number;
+    avgFactPerClient: number;
     marketShare: number; 
     countA: number;
     countB: number;
     countC: number;
+    factA: number; 
+    factB: number; 
+    factC: number; 
     recommendedGrowthPct: number; 
     nextYearPlan: number;
     regions: PlanMetric[];
     brands: PlanMetric[];
-    factA: number;
-    factB: number;
-    factC: number;
-    avgFactPerClient: number;
+    avgSkuPerClient?: number;
+    avgSalesPerSku?: number;
+    globalAvgSku?: number;
+    globalAvgSalesSku?: number;
+}
+
+export interface PlanningContext {
+    baseRate: number;
+    globalAvgSku: number;
+    globalAvgSales: number;
+    riskLevel: 'low' | 'medium' | 'high'; 
 }
 
 export interface FileProcessingState {

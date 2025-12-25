@@ -30,7 +30,17 @@ type EditableData = MapPoint | UnidentifiedRow;
 type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
 
-// Fix: Removed duplicate declaration of AddressEditModalProps
+interface AddressEditModalProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onBack: () => void;
+    data: EditableData | null;
+    onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
+    onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
+    onDelete: (key: string) => void;
+    globalTheme: Theme;
+}
+
 interface AddressEditModalProps {
     isOpen: boolean;
     onClose: () => void;
