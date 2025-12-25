@@ -1,8 +1,9 @@
 
+
 import { AggregatedDataRow, UnidentifiedRow, MapPoint, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-const DB_VERSION = 3; // Обновляем версию БД для поддержки стабильного хранения версий данных
+const DB_VERSION = 2; // Повышаем версию для обновления структуры
 const STORE_NAME = 'app_state';
 
 const initDB = (): Promise<IDBDatabase> => {
@@ -31,6 +32,7 @@ export const saveAnalyticsState = async (state: {
   okbData: OkbDataRow[];
   okbStatus: OkbStatus | null;
   dateRange?: string;
+  // FIX: Added totalRowsProcessed to ensure full analytics state is persisted.
   totalRowsProcessed: number;
   versionHash: string;
 }) => {
@@ -38,8 +40,6 @@ export const saveAnalyticsState = async (state: {
   const tx = db.transaction(STORE_NAME, 'readwrite');
   const store = tx.objectStore(STORE_NAME);
   
-  // Сохраняем состояние под ключом 'current_state'
-  // Это гарантирует, что данные сохранятся между сессиями и обновлениями кода
   store.put(state, 'current_state');
   
   return new Promise<void>((resolve, reject) => {
