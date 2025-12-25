@@ -138,7 +138,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        // Счётчик увеличивается для каждой строки, независимо от валидности адреса
         state_processedRowsCount++;
         
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
@@ -146,6 +145,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
+
+        // Более точный поиск канала
+        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
+        if (!channel || channel.length < 2) channel = 'Не определен';
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
@@ -181,20 +184,41 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 status: 'match',
                 name: String(row[state_clientNameHeader || ''] || 'ТТ'),
                 address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
-                type: 'Retail', originalRow: row, fact: weight
+                type: channel,
+                originalRow: row, fact: 0,
+                abcCategory: 'C' // Default
             });
         }
         
         const pt = state_uniquePlottableClients.get(normAddr);
-        if (pt) state_aggregatedData[groupKey].clients.set(normAddr, pt);
+        if (pt) {
+            pt.fact = (pt.fact || 0) + (isNaN(weight) ? 0 : weight);
+            state_aggregatedData[groupKey].clients.set(normAddr, pt);
+        }
     }
     
-    // Промежуточный прогресс (необязательно, но приятно для пользователя)
     const currentProgress = Math.min(95, 10 + (state_processedRowsCount / 50000) * 80);
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработано ${state_processedRowsCount} строк...` } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
+    // 1. Расчет ABC Анализа
+    const allClients = Array.from(state_uniquePlottableClients.values());
+    allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+    
+    const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+    let runningSum = 0;
+
+    allClients.forEach(client => {
+        runningSum += (client.fact || 0);
+        const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
+        
+        if (pct <= 80) client.abcCategory = 'A';
+        else if (pct <= 95) client.abcCategory = 'B';
+        else client.abcCategory = 'C';
+    });
+
+    // 2. Сборка финального результата
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
         potential: item.fact * 1.15,

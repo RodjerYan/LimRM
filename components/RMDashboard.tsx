@@ -38,21 +38,6 @@ ChartJS.register(
   ArcElement
 );
 
-interface RMDashboardProps {
-    isOpen: boolean;
-    onClose: () => void;
-    data: AggregatedDataRow[];
-    okbRegionCounts: { [key: string]: number } | null;
-    okbData: OkbDataRow[];
-    mode?: 'modal' | 'page';
-    metrics?: SummaryMetrics | null;
-    okbStatus?: OkbStatus | null;
-    onActiveClientsClick?: () => void;
-    onEditClient?: (client: MapPoint) => void;
-    dateRange?: string; // New Prop
-}
-
-// ... (PackagingCharts component remains same) ...
 const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number }> = ({ fact, plan, growthPct }) => {
     const gap = Math.max(0, plan - fact);
     const percentage = plan > 0 ? (fact / plan) * 100 : 0;
@@ -140,7 +125,6 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
     );
 };
 
-// ... (PackagingAnalysisModal & BrandPackagingModal remain same) ...
 const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; title: string; content: string; isLoading: boolean; chartData?: { fact: number; plan: number; growthPct: number } | null; }> = ({ isOpen, onClose, title, content, isLoading, chartData }) => {
     const sanitizedHtml = DOMPurify.sanitize(marked.parse(content) as string);
     return (
@@ -234,6 +218,21 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
     );
 };
 
+// Fix: Define the missing RMDashboardProps interface.
+interface RMDashboardProps {
+    isOpen: boolean;
+    onClose: () => void;
+    data: AggregatedDataRow[];
+    okbRegionCounts: { [key: string]: number } | null;
+    okbData: OkbDataRow[];
+    mode?: 'modal' | 'page';
+    metrics: SummaryMetrics | null;
+    okbStatus: OkbStatus | null;
+    onActiveClientsClick?: () => void;
+    onEditClient?: (client: MapPoint) => void;
+    dateRange?: string;
+}
+
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
@@ -241,7 +240,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [expandedRM, setExpandedRM] = useState<string | null>(null);
     const [isAbcModalOpen, setIsAbcModalOpen] = useState(false);
     const [abcClients, setAbcClients] = useState<MapPoint[]>([]);
-    const [abcModalTitle, setAbcModalTitle] = useState('');
+    const [abcModalTitle, setAbcModalTitle] = useState<React.ReactNode>(''); // Изменен тип состояния
     const [isRegionModalOpen, setIsRegionModalOpen] = useState(false);
     const [selectedRegionDetails, setSelectedRegionDetails] = useState<{ rmName: string; regionName: string; activeClients: MapPoint[]; potentialClients: PotentialClient[]; } | null>(null);
     const [explanationData, setExplanationData] = useState<PlanMetric | null>(null);
@@ -370,7 +369,48 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const missingOkbRegions: string[] = (metricsData as any).__missingOkbRegions || [];
     const formatNum = (n: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(n);
     const handleAnalyzeClick = (e: React.MouseEvent, rm: RMMetrics) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); };
-    const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => { const clients: MapPoint[] = []; const normalizedTargetRm = normalizeRmNameForMatching(rmName); data.forEach(group => { const normalizedGroupRm = normalizeRmNameForMatching(group.rm); if (normalizedGroupRm === normalizedTargetRm) { group.clients.forEach(client => { if (client.abcCategory === category) { clients.push(client); } }); } }); clients.sort((a, b) => (b.fact || 0) - (a.fact || 0)); setAbcClients(clients); setAbcModalTitle(`${rmName}: Клиенты категории ${category} (${clients.length})`); setIsAbcModalOpen(true); };
+    
+    // ОБНОВЛЕННЫЙ МЕТОД: Формирование заголовка с подписью
+    const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => { 
+        const clients: MapPoint[] = []; 
+        const normalizedTargetRm = normalizeRmNameForMatching(rmName); 
+        data.forEach(group => { 
+            const normalizedGroupRm = normalizeRmNameForMatching(group.rm); 
+            if (normalizedGroupRm === normalizedTargetRm) { 
+                group.clients.forEach(client => { 
+                    if (client.abcCategory === category) { 
+                        clients.push(client); 
+                    } 
+                }); 
+            } 
+        }); 
+        clients.sort((a, b) => (b.fact || 0) - (a.fact || 0)); 
+        
+        setAbcClients(clients); 
+
+        // Описания для каждой категории
+        const descriptions = {
+            'A': 'Лидеры (обеспечивают 80% продаж)',
+            'B': 'Середняки (следующие 15% продаж)',
+            'C': 'Малообъемные (оставшиеся 5% продаж)'
+        };
+
+        // Создание богатого заголовка с подписью
+        const titleNode = (
+            <div className="flex flex-col">
+                <span className="text-xl font-bold text-white">
+                    {rmName}: Категория {category} ({clients.length})
+                </span>
+                <span className="text-sm font-normal text-indigo-400 mt-1 uppercase tracking-tight">
+                    {descriptions[category]}
+                </span>
+            </div>
+        );
+
+        setAbcModalTitle(titleNode); 
+        setIsAbcModalOpen(true); 
+    };
+
     const handleRegionClick = (rmName: string, regionName: string) => { const active: MapPoint[] = []; let potential: PotentialClient[] = []; const normalizedTargetRm = normalizeRmNameForMatching(rmName); data.forEach(group => { if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { active.push(...group.clients); if (potential.length === 0 && group.potentialClients && group.potentialClients.length > 0) { potential = group.potentialClients; } } }); setSelectedRegionDetails({ rmName, regionName, activeClients: active, potentialClients: potential }); setIsRegionModalOpen(true); };
     const toggleExpand = (rmName: string) => { setExpandedRM(prev => prev === rmName ? null : rmName); };
     const handleExplanationClick = (e: React.MouseEvent, metric: PlanMetric) => { e.stopPropagation(); setExplanationData(metric); };
@@ -523,7 +563,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             {/* Modals */}
             {selectedRegionDetails && <RegionDetailsModal isOpen={isRegionModalOpen} onClose={() => setIsRegionModalOpen(false)} rmName={selectedRegionDetails.rmName} regionName={selectedRegionDetails.regionName} activeClients={selectedRegionDetails.activeClients} potentialClients={selectedRegionDetails.potentialClients} onEditClient={onEditClient} />}
             {selectedRMForAnalysis && <RMAnalysisModal isOpen={isAnalysisModalOpen} onClose={() => { setIsAnalysisModalOpen(false); setSelectedRMForAnalysis(null); }} rmData={selectedRMForAnalysis} baseRate={baseRate} />}
-            {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { if (onEditClient) onEditClient(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
+            {isAbcModalOpen && <ClientsListModal isOpen={isAbcModalOpen} onClose={() => setIsAbcModalOpen(false)} title={abcModalTitle} clients={abcClients} onClientSelect={() => {}} onStartEdit={(client) => { if (onEditClient) onEditClient(client); setIsAbcModalOpen(false); }} showAbcLegend={true} />}
             {selectedBrandForDetails && <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(metric) => setExplanationData(metric)} onAnalyze={handleAnalyzePackaging} />}
             <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
             {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} zIndex="z-[60]" />}

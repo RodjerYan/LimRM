@@ -8,6 +8,7 @@ import { SearchIcon, CopyIcon, CheckIcon, SortIcon, SortUpIcon, SortDownIcon, Lo
 interface ClientsListModalProps {
     isOpen: boolean;
     onClose: () => void;
+    title: React.ReactNode; // Изменено со string на React.ReactNode
     clients: MapPoint[];
     onClientSelect: (client: MapPoint) => void;
     onStartEdit: (client: MapPoint) => void;
@@ -71,7 +72,7 @@ const ClientRow: React.FC<{ client: MapPoint; onStartEdit: (client: MapPoint) =>
     );
 };
 
-const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, clients, onClientSelect, onStartEdit, showAbcLegend }) => {
+const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, title, clients, onClientSelect, onStartEdit, showAbcLegend }) => {
     const [sortConfig, setSortConfig] = useState<{ key: keyof MapPoint; direction: 'ascending' | 'descending' } | null>({ key: 'fact', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
@@ -113,7 +114,7 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, cl
     React.useEffect(() => { if (isOpen) { setSearchTerm(''); setCurrentPage(1); setSortConfig({ key: 'fact', direction: 'descending' }); } }, [isOpen]);
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={`Список активных клиентов (${clients.length})`} maxWidth="max-w-7xl">
+        <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-7xl">
             <div className="flex flex-col h-[70vh]">
                 {showAbcLegend && (
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-gray-900/30 border-b border-gray-700 text-xs text-gray-400 flex-shrink-0">

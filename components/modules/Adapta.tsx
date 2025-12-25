@@ -147,29 +147,40 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             </div>
                         </div>
 
-                        {/* НОВЫЙ БЛОК: Разбивку по каналам продаж */}
+                        {/* ОБНОВЛЕННЫЙ БЛОК: Разбивка по каналам продаж (Компактный заголовок) */}
                         <div className="bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 shadow-xl">
-                            <div className="flex items-center justify-between mb-6">
-                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                    <ChannelIcon small className="text-indigo-400" />
-                                    Разбивка по каналам продаж
-                                </h3>
-                                <span className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded border border-gray-700 font-mono">
-                                    Total n={props.activeClientsCount}
-                                </span>
+                            <div className="flex items-center justify-between mb-8 border-b border-gray-800/50 pb-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20 shadow-inner">
+                                        <ChannelIcon small />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-base font-bold text-white tracking-tight uppercase">Разбивка по каналам</h3>
+                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Структура сбыта ТТ</p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                    <span className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter mb-1">Общий охват</span>
+                                    <span className="text-sm font-mono text-indigo-300 bg-indigo-900/20 px-3 py-1 rounded-full border border-indigo-500/30 shadow-sm">
+                                        n={props.activeClientsCount.toLocaleString('ru-RU')}
+                                    </span>
+                                </div>
                             </div>
 
                             {channelStats.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                                     {channelStats.map((stat, idx) => (
-                                        <div key={idx} className="space-y-2 group">
-                                            <div className="flex justify-between text-xs font-bold uppercase tracking-wider">
-                                                <span className="text-gray-400 group-hover:text-indigo-300 transition-colors">{stat.name}</span>
-                                                <span className="text-white font-mono">{stat.count} ТТ <span className="text-gray-500 font-normal">({stat.percentage.toFixed(1)}%)</span></span>
+                                        <div key={idx} className="space-y-2.5 group">
+                                            <div className="flex justify-between items-end">
+                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-300 transition-colors">{stat.name}</span>
+                                                <span className="text-xs font-mono text-gray-300">
+                                                    <strong className="text-white">{stat.count}</strong> 
+                                                    <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
+                                                </span>
                                             </div>
-                                            <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
+                                            <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
                                                 <div 
-                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out shadow-[0_0_8px_rgba(99,102,241,0.3)]"
+                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out shadow-[0_0_8px_rgba(99,102,241,0.4)]"
                                                     style={{ width: `${stat.percentage}%` }}
                                                 ></div>
                                             </div>
@@ -183,9 +194,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 </div>
                             )}
 
-                            <div className="mt-8 p-4 bg-gray-800/30 border border-gray-700/50 rounded-xl flex items-start gap-4">
-                                <div className="mt-0.5 text-gray-500"><InfoIcon small /></div>
-                                <div className="text-[11px] text-gray-400 leading-relaxed italic">
+                            <div className="mt-10 p-4 bg-indigo-900/10 border border-indigo-500/10 rounded-xl flex items-start gap-4">
+                                <div className="mt-0.5 text-indigo-400"><InfoIcon small /></div>
+                                <div className="text-[10px] text-gray-500 leading-relaxed italic uppercase tracking-tight">
                                     Классификация каналов сбыта (Зоо сети, Розница, Бридер канал) используется для уточнения алгоритмов 
                                     <strong> Smart Planning</strong> и выявления специфических трендов в каждом сегменте.
                                 </div>
