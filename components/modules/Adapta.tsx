@@ -55,28 +55,22 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
-        
-        // ГАРАНТИЯ УНИКАЛЬНОСТИ: Считаем Set ключей (адресов) для каждого канала
         const acc: Record<string, { uniqueKeys: Set<string>; volume: number }> = {};
         const globalUniqueKeys = new Set<string>();
-
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
-                
-                acc[type].uniqueKeys.add(client.key); // Ключ — это уникальный адрес
+                acc[type].uniqueKeys.add(client.key);
                 acc[type].volume += (client.fact || 0);
                 globalUniqueKeys.add(client.key);
             });
         });
-
         const totalUniqueCount = globalUniqueKeys.size;
-
         return Object.entries(acc)
             .map(([name, data]) => ({
                 name,
-                count: data.uniqueKeys.size, // Только уникальные физические точки
+                count: data.uniqueKeys.size,
                 volumeTons: data.volume / 1000,
                 percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
@@ -85,9 +79,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
-
         const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
-        
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
                 if ((c.type || 'Не определен') === selectedChannel) {
@@ -102,7 +94,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 }
             });
         });
-
         const hierarchy: Record<string, Record<string, (MapPoint & { totalFact: number })[]>> = {};
         uniqueClientsInChannel.forEach(c => {
             const rm = c.rm || 'Не указан';
@@ -111,22 +102,22 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             if (!hierarchy[rm][city]) hierarchy[rm][city] = [];
             hierarchy[rm][city].push(c);
         });
-
         return hierarchy;
     }, [selectedChannel, props.uploadedData, channelSearchTerm]);
 
+    // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
-        return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
-    }, [props.processingState.totalRowsProcessed]);
+        const workerCount = props.processingState.totalRowsProcessed || 0;
+        const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
+        // Во время прогресса воркера берем максимум, чтобы избежать сброса в 0 в начале синхронизации
+        const count = Math.max(workerCount, currentDataCount);
+        return count.toLocaleString('ru-RU');
+    }, [props.processingState.totalRowsProcessed, props.uploadedData]);
 
-    // Корректный расчет охвата: сколько точек из ОКБ мы "закрыли" своими продажами
     const coverageOkb = useMemo(() => {
-        if (!props.okbStatus?.coordsCount || props.okbStatus.coordsCount === 0) return 0;
-        // Мы берем количество активных ТТ, которые есть в базе ОКБ (match)
-        // Для простоты здесь используем отношение уникальных активных к общему числу в ОКБ, 
-        // но ограничиваем 100%, так как "охват" не может быть 200% по логике
-        return Math.min(100, Math.round((props.activeClientsCount / props.okbStatus.coordsCount) * 100));
-    }, [props.activeClientsCount, props.okbStatus?.coordsCount]);
+        if (!props.okbStatus?.rowCount || props.okbStatus.rowCount === 0) return 0;
+        return Math.min(100, Math.round((props.activeClientsCount / props.okbStatus.rowCount) * 100));
+    }, [props.activeClientsCount, props.okbStatus?.rowCount]);
 
     return (
         <div className="space-y-6 animate-fade-in">
@@ -208,10 +199,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Строк в Excel</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">СТРОК В EXCEL</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
-                                        {props.processingState.isProcessing ? 'Чтение файлов...' : 'Всего записей'}
+                                        {props.processingState.isProcessing ? 'Синхронизация файлов...' : 'Всего записей'}
                                     </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
@@ -244,18 +235,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     </div>
                                 </div>
                             </div>
-
                             {channelStats.length > 0 ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
                                     {channelStats.map((stat, idx) => (
-                                        <div 
-                                            key={idx} 
-                                            className="space-y-2 group cursor-pointer"
-                                            onClick={() => {
-                                                setSelectedChannel(stat.name);
-                                                setChannelSearchTerm('');
-                                            }}
-                                        >
+                                        <div key={idx} className="space-y-2 group cursor-pointer" onClick={() => { setSelectedChannel(stat.name); setChannelSearchTerm(''); }}>
                                             <div className="flex justify-between items-end">
                                                 <div className="flex flex-col">
                                                     <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">{stat.name}</span>
@@ -267,24 +250,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                                 </span>
                                             </div>
                                             <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
-                                                <div 
-                                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out group-hover:from-indigo-400 group-hover:to-purple-400"
-                                                    style={{ width: `${stat.percentage}%` }}
-                                                ></div>
+                                                <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out group-hover:from-indigo-400 group-hover:to-purple-400" style={{ width: `${stat.percentage}%` }}></div>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             ) : (
                                 <div className="h-40 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded-xl bg-black/10">
-                                    <p className="text-sm italic">Идет сканирование облачных файлов...</p>
+                                    <p className="text-sm italic">Сканирование облачных файлов...</p>
                                 </div>
                             )}
                         </div>
 
                         <div className="p-5 bg-indigo-900/10 border border-indigo-500/10 rounded-xl text-sm text-indigo-200">
                             <strong className="block mb-1 text-indigo-300 flex items-center gap-2"><InfoIcon small /> Технология Online Preview:</strong>
-                            Вы можете переходить в разделы «Аналитика» и «Дашборд» не дожидаясь завершения фонового процесса. Приложение будет автоматически пересчитывать показатели по мере поступления новых данных из Google Drive.
+                            Вы можете использовать аналитику, пока данные синхронизируются в фоне. Система обновляет расчеты в реальном времени при получении новых блоков строк.
                         </div>
                     </div>
                 </div>
@@ -319,76 +299,26 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 </div>
             )}
             
-            {/* Модальное окно детализации канала */}
             {selectedChannel && (
-                <Modal 
-                    isOpen={!!selectedChannel} 
-                    onClose={() => setSelectedChannel(null)} 
-                    title={
-                        <div className="flex flex-col">
-                            <span className="text-xl font-bold text-white">Канал: {selectedChannel}</span>
-                            <span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация уник. адресов по РМ и городам</span>
-                        </div>
-                    }
-                    maxWidth="max-w-5xl"
-                >
+                <Modal isOpen={!!selectedChannel} onClose={() => setSelectedChannel(null)} title={<div className="flex flex-col"><span className="text-xl font-bold text-white">Канал: {selectedChannel}</span><span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация уник. адресов по РМ и городам</span></div>} maxWidth="max-w-5xl">
                     <div className="space-y-4">
                         <div className="relative mb-6">
-                            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500">
-                                <SearchIcon small />
-                            </div>
-                            <input 
-                                type="text" 
-                                placeholder="Поиск по адресу, названию ТТ или менеджеру..." 
-                                value={channelSearchTerm}
-                                onChange={(e) => setChannelSearchTerm(e.target.value)}
-                                className="w-full bg-gray-900 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                            />
+                            <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400"><SearchIcon small /></div>
+                            <input type="text" placeholder="Поиск по адресу, названию ТТ или менеджеру..." value={channelSearchTerm} onChange={(e) => setChannelSearchTerm(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                         </div>
-
                         <div className="max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
                             {groupedChannelData && Object.keys(groupedChannelData).length > 0 ? (
                                 <div className="space-y-8">
                                     {Object.entries(groupedChannelData).sort((a,b) => a[0].localeCompare(b[0])).map(([rm, cities]) => (
                                         <div key={rm} className="space-y-4">
-                                            <div className="sticky top-0 bg-card-bg/95 backdrop-blur z-10 py-2 border-b border-gray-800 flex justify-between items-center">
-                                                <h4 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                                                    <div className="p-1 bg-indigo-500/10 rounded-md"><UsersIcon small /></div> {rm}
-                                                </h4>
-                                                <span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">
-                                                    {Object.values(cities).flat().length} ТТ
-                                                </span>
-                                            </div>
+                                            <div className="sticky top-0 bg-card-bg/95 backdrop-blur z-10 py-2 border-b border-gray-800 flex justify-between items-center"><h4 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2"><div className="p-1 bg-indigo-500/10 rounded-md"><UsersIcon small /></div> {rm}</h4><span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">{Object.values(cities).flat().length} ТТ</span></div>
                                             <div className="pl-4 space-y-6">
                                                 {Object.entries(cities).sort((a,b) => a[0].localeCompare(b[0])).map(([city, clients]) => (
                                                     <div key={city} className="space-y-2">
-                                                        <h5 className="text-xs font-bold text-gray-300 flex items-center gap-2">
-                                                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>
-                                                            {city}
-                                                        </h5>
+                                                        <h5 className="text-xs font-bold text-gray-300 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>{city}</h5>
                                                         <div className="grid grid-cols-1 gap-2">
                                                             {clients.map((client, cIdx) => (
-                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-all flex justify-between items-start gap-4 group">
-                                                                    <div className="min-w-0">
-                                                                        <div className="text-xs font-bold text-white truncate" title={client.name}>{client.name}</div>
-                                                                        <div 
-                                                                            className="text-[10px] text-gray-500 mt-1 truncate cursor-pointer hover:text-indigo-400 flex items-center gap-1 transition-colors" 
-                                                                            title="Нажмите, чтобы открыть точку на карте"
-                                                                            onClick={() => props.onStartEdit?.(client)}
-                                                                        >
-                                                                            <span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>
-                                                                            {client.address}
-                                                                        </div>
-                                                                    </div>
-                                                                    <div className="flex flex-col items-end shrink-0">
-                                                                        <div className="text-[11px] font-mono font-bold text-emerald-400">
-                                                                            {(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span>
-                                                                        </div>
-                                                                        <div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">
-                                                                            {client.brand || 'Уникальная ТТ'}
-                                                                        </div>
-                                                                    </div>
-                                                                </div>
+                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-all flex justify-between items-start gap-4 group"><div className="min-w-0"><div className="text-xs font-bold text-white truncate" title={client.name}>{client.name}</div><div className="text-[10px] text-gray-500 mt-1 truncate cursor-pointer hover:text-indigo-400 flex items-center gap-1 transition-colors" onClick={() => props.onStartEdit?.(client)}><span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>{client.address}</div></div><div className="flex flex-col items-end shrink-0"><div className="text-[11px] font-mono font-bold text-emerald-400">{(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span></div><div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">{client.brand || 'Уникальная ТТ'}</div></div></div>
                                                             ))}
                                                         </div>
                                                     </div>
@@ -397,12 +327,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         </div>
                                     ))}
                                 </div>
-                            ) : (
-                                <div className="py-20 text-center text-gray-600 flex flex-col items-center gap-2">
-                                    <SearchIcon />
-                                    <p className="text-sm">Адреса не найдены по вашему запросу</p>
-                                </div>
-                            )}
+                            ) : <div className="py-20 text-center text-gray-600 flex flex-col items-center gap-2"><SearchIcon /><p className="text-sm">Адреса не найдены по вашему запросу</p></div>}
                         </div>
                     </div>
                 </Modal>
