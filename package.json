@@ -1,3 +1,4 @@
+
 {
   "name": "limkorm-geo-analyzer",
   "private": true,
@@ -11,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.2.0",
+    "@vercel/analytics": "^1.4.1",
     "@vercel/speed-insights": "^1.0.12",
     "chart.js": "^4.4.3",
     "date-fns": "^3.6.0",

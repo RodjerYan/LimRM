@@ -159,7 +159,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего записей (Excel)</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего строк</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
                                         {props.processingState.isProcessing ? 'Чтение файлов...' : 'Загружено из локальной БД'}
