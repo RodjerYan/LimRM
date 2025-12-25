@@ -11,22 +11,16 @@ import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
  * Normalizes an RM name for consistent matching.
- * Removes initials, punctuation, and case differences.
- * e.g. "Ivanov I.I." -> "ivanov"
  */
 export const normalizeRmNameForMatching = (str: string): string => {
     if (!str) return '';
     let clean = str.toLowerCase().trim();
-    // Split by spaces or dots to get the surname (assuming surname is first)
     const surname = clean.split(/[\s.]+/)[0];
     return surname.replace(/[^a-zа-я0-9]/g, '');
 };
 
 /**
  * Applies the current filter state to the aggregated data.
- * @param data The full array of aggregated data rows.
- * @param filters The current filter state from the UI.
- * @returns A new array containing only the rows that match the filters.
  */
 export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): AggregatedDataRow[] => {
   return data.filter(row => {
@@ -39,9 +33,7 @@ export const applyFilters = (data: AggregatedDataRow[], filters: FilterState): A
 };
 
 /**
- * Extracts all unique values for filter dropdowns from the aggregated data.
- * @param data The full array of aggregated data rows.
- * @returns An object containing arrays of unique RMs, brands, packagings, and regions.
+ * Extracts all unique values for filter dropdowns.
  */
 export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
   const rms = new Set<string>();
@@ -65,12 +57,10 @@ export const getFilterOptions = (data: AggregatedDataRow[]): FilterOptions => {
 };
 
 /**
- * Calculates summary metrics for a given set of data (usually filtered data).
+ * Calculates summary metrics.
  */
 export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetrics | null => {
-  if (data.length === 0) {
-    return null;
-  }
+  if (data.length === 0) return null;
 
   const metrics = data.reduce(
     (acc, row) => {
@@ -86,9 +76,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
           });
       }
 
-      if (!acc.rmGrowth[row.rm]) {
-        acc.rmGrowth[row.rm] = 0;
-      }
+      if (!acc.rmGrowth[row.rm]) acc.rmGrowth[row.rm] = 0;
       acc.rmGrowth[row.rm] += row.growthPotential;
 
       return acc;
@@ -127,22 +115,14 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
   };
 };
 
-
-/**
- * A robust helper to find a value in a row by searching for keywords in its keys.
- */
 export const findValueInRow = (row: { [key: string]: any }, keywords: string[]): string => {
     if (!row) return '';
     const rowKeys = Object.keys(row);
-
-    // 1. Priority: Exact Match
     for (const keyword of keywords) {
         const k = keyword.toLowerCase().trim();
         const exactKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === k);
         if (exactKey && row[exactKey] != null) return String(row[exactKey]);
     }
-
-    // 2. Priority: Word Boundary Match
     for (const keyword of keywords) {
         const k = keyword.toLowerCase().trim();
         const escapedK = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -150,70 +130,26 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
         const boundaryKey = rowKeys.find(rKey => regex.test(rKey.toLowerCase().trim()));
         if (boundaryKey && row[boundaryKey] != null) return String(row[boundaryKey]);
     }
-
-    // 3. Fallback: Loose Partial Match
     for (const keyword of keywords) {
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim().includes(keyword.toLowerCase().trim()));
-        if (foundKey && row[foundKey] != null) {
-            return String(row[foundKey]);
-        }
+        if (foundKey && row[foundKey] != null) return String(row[foundKey]);
     }
-    
     return '';
 };
 
-
-/**
- * A robust helper function to find an address value within a data row.
- */
 export const findAddressInRow = (row: { [key: string]: any }): string | null => {
     if (!row) return null;
     const rowKeys = Object.keys(row);
     const prioritizedKeys = ['адрес тт limkorm', 'фактический адрес', 'юридический адрес', 'адрес'];
-
     for (const pKey of prioritizedKeys) {
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
         if (foundKey && row[foundKey]) return String(row[foundKey]);
     }
-
     const addressKey = rowKeys.find(key => key.toLowerCase().includes('адрес'));
     if (addressKey && row[addressKey]) return String(row[addressKey]);
-    
-    const fallbackKey = rowKeys.find(key => 
-        (key.toLowerCase().includes('город') || key.toLowerCase().includes('регион')) && 
-        !key.toLowerCase().includes('субъект')
-    );
-    if (fallbackKey && row[fallbackKey]) return String(row[fallbackKey]);
-
     return null;
 };
 
-// --- UNIVERSAL REGION MATCHER GENERATOR ---
-const REGION_MATCHER_LIST = Object.values(REGION_KEYWORD_MAP).reduce((acc, regionName) => {
-    const lowerName = regionName.toLowerCase();
-    let root = lowerName
-        .replace(/\bобласть\b/g, '')
-        .replace(/\bкрай\b/g, '')
-        .replace(/\bреспублика\b/g, '')
-        .replace(/\bавтономный округ\b/g, '')
-        .replace(/\bао\b/g, '')
-        .replace(/\bг\.\s*/g, '') 
-        .replace(/[()]/g, '')     
-        .trim();
-    if (root.length > 2) {
-         if (!acc.some(item => item.root === root)) {
-             acc.push({ root, regionName });
-         }
-    }
-    return acc;
-}, [] as { root: string, regionName: string }[]);
-
-REGION_MATCHER_LIST.sort((a, b) => b.root.length - a.root.length);
-
-
-/**
- * Recovers a standardized region name from a potentially "dirty" string.
- */
 export const recoverRegion = (dirtyString: string, cityHint: string): string => {
     const lowerDirty = dirtyString 
         ? dirtyString.toLowerCase().replace(/ё/g, 'е').replace(/[^а-яa-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim() 
@@ -223,85 +159,53 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
         for (const [key, value] of Object.entries(REGION_KEYWORD_MAP)) {
              if (lowerDirty.includes(key)) return value;
         }
-        for (const { root, regionName } of REGION_MATCHER_LIST) {
-            if (lowerDirty.includes(root)) {
-                return regionName;
-            }
-        }
     }
     let lowerCity = cityHint ? cityHint.toLowerCase().trim() : '';
     if (lowerCity) {
-        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim();
-        lowerCity = lowerCity.replace(/ё/g, 'е');
+        lowerCity = lowerCity.replace(/^(г\.|город|пгт|пос\.|с\.|село|дер\.|д\.)\s*/, '').trim().replace(/ё/g, 'е');
     }
-    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) {
-        return REGION_BY_CITY_MAP[lowerCity];
-    }
+    if (lowerCity && REGION_BY_CITY_MAP[lowerCity]) return REGION_BY_CITY_MAP[lowerCity];
     return 'Регион не определен';
 };
 
 /**
- * Creates a comprehensive set of stopwords for address normalization.
+ * КРИТИЧЕСКИЙ ФИКС: Создание списка стоп-слов БЕЗ частей названий регионов.
+ * Это предотвратит удаление слова "Московская" из "Московская ул.".
  */
 const createStopwords = (): Set<string> => {
-    const genericStopwords = [
+    return new Set([
         'улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
         'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
         'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
         'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское',
-        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
-        'кыргызстан', 'киргизия', 'кыргызская', 'казахстан', 'россия', 'рф', 'беларусь', 'белоруссия',
-        'таджикистан', 'узбекистан', 'туркменистан', 'армения', 'азербайджан', 'молдова', 'грузия',
+        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н',
         'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит',
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'
-    ];
-    const regionNameParts = new Set<string>();
-    const allCities = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
-    for (const item of Object.entries(REGION_KEYWORD_MAP)) {
-        [item[0], item[1]].forEach(text => {
-            text.toLowerCase()
-                .replace(/[^а-я\s]/g, '') 
-                .split(/\s+/)
-                .filter(word => word.length > 2 && !allCities.has(word)) 
-                .forEach(word => regionNameParts.add(word));
-        });
-    }
-    return new Set([...genericStopwords, ...Array.from(regionNameParts)]);
+        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон'
+    ]);
 };
 
 const STOPWORDS = createStopwords();
-const ALL_CITIES = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
 
 /**
- * Performs deep normalization on an address string for robust matching.
+ * Глубокая нормализация адреса.
+ * ФИКС: Отключена сортировка и расширен список сохраняемых токенов.
  */
-export function normalizeAddress(address: string | null | undefined, options: { simplify?: boolean } = {}): string {
+export function normalizeAddress(address: string | null | undefined): string {
     if (!address) return "";
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
+    // Стандартизация номеров домов и корпусов
     cleaned = cleaned
         .replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2')
-        .replace(/\b(корпус|корп|к)\.?\s*([а-я])\b/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*([а-я])\b/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*([а-я])\b/g, 'л$2')
-        .replace(/\b(корпус|корп|к)\.?\s*(\d+[а-я]?\b)/g, 'к$2')
-        .replace(/\b(строение|стр)\.?\s*(\d+[а-я]?\b)/g, 'с$2')
-        .replace(/\b(литер|лит)\.?\s*(\d+[а-я]?\b)/g, 'л$2')
-        .replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2')
-        .replace(/\b(\d+)\s+([а-я])\b/g, '$1$2');
-    cleaned = cleaned.replace(/\b\d{5,6}\b/g, ''); 
+        .replace(/\b(корпус|корп|к)\.?\s*([а-я0-9]+)\b/g, 'к$2')
+        .replace(/\b(строение|стр|с)\.?\s*([а-я0-9]+)\b/g, 'с$2')
+        .replace(/\b(д|дом)\.?\s*(\d+[а-я]?\b)/g, '$2');
+    
+    // Удаление спецсимволов, кроме букв и цифр
     cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); 
-    let parts = cleaned.split(/\s+/)
-        .filter(part => part && !STOPWORDS.has(part));
-    if (options.simplify) {
-        parts = parts.filter(part => {
-            if (/^\d+.*$/.test(part) || /^[ксл]\d/.test(part) || /^[ксл][а-я]$/.test(part)) return true;
-            if (ALL_CITIES.has(part)) return true;
-            if (part.endsWith('ский') || part.endsWith('ской') || part.endsWith('цкий') || part.endsWith('ецкий')) {
-                return false;
-            }
-            return true;
-        });
-    }
-    parts.sort((a, b) => a.localeCompare(b, 'ru'));
+    
+    const parts = cleaned.split(/\s+/)
+        .filter(part => part && !STOPWORDS.has(part) && part.length > 0);
+        
+    // ФИКС: Не сортируем части! Порядок слов в адресе важен для отличия похожих улиц.
     return parts.join(' ').trim();
 }
