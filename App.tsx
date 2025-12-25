@@ -89,15 +89,17 @@ const App: React.FC = () => {
     const uploadSnapshot = useCallback(async (state: any) => {
         if (!state.allData || state.allData.length === 0) return;
         
-        // КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ ДЛЯ VERCEL: 
-        // Мы полностью удаляем массив 'clients' из снимка для облака.
-        // Это уменьшает размер JSON с 20Мб до 300Кб, что гарантирует проход через лимиты 4.5Мб.
-        // Данные таблиц и дашбордов сохранятся, а точки на карте восстановятся при синхронизации.
+        // ОПТИМИЗАЦИЯ СНИМКА: Мы оставляем точки на карте, но удаляем из них 'originalRow'.
+        // Именно originalRow занимает 90% объема JSON.
         const cloudState = {
             ...state,
             allData: state.allData.map((group: AggregatedDataRow) => ({
                 ...group,
-                clients: [] // Очищаем список точек для экономии места в облаке
+                clients: group.clients.map(c => ({ 
+                    key: c.key, lat: c.lat, lon: c.lon, name: c.name, 
+                    address: c.address, rm: c.rm, type: c.type, fact: c.fact 
+                    // originalRow НЕ ВКЛЮЧАЕМ
+                }))
             })),
             unidentifiedRows: state.unidentifiedRows.slice(0, 100).map((row: UnidentifiedRow) => ({
                 rm: row.rm,
@@ -106,15 +108,12 @@ const App: React.FC = () => {
         };
         
         try {
-            const res = await fetch(`/api/get-akb?mode=snapshot&year=2025`, {
+            await fetch(`/api/get-akb?mode=snapshot&year=2025`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(cloudState)
             });
-            if (res.ok) {
-                console.log(`Cloud Snapshot: Saved successfully at ${state.totalRowsProcessed} rows`);
-                setProcessingState(prev => ({ ...prev, backgroundMessage: `Облачный снимок обновлен (${state.totalRowsProcessed} стр.)` }));
-            }
+            setProcessingState(prev => ({ ...prev, backgroundMessage: `Снимок обновлен (${state.totalRowsProcessed} стр.)` }));
         } catch (e) {}
     }, []);
 
@@ -137,10 +136,8 @@ const App: React.FC = () => {
             versionHash: currentVersion
         };
         try {
-            // В IndexedDB сохраняем ВСЕ данные (без ограничений)
             await saveAnalyticsState(stateToSave);
             localStorage.setItem('last_sync_version', currentVersion);
-            // В облако отправляем только сжатую версию
             await uploadSnapshot(stateToSave);
         } catch (e) {}
     }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion, uploadSnapshot]);
@@ -203,7 +200,6 @@ const App: React.FC = () => {
                 setDbStatus('loading');
                 let saved = await loadAnalyticsState();
                 if (!saved || !saved.allData?.length) {
-                    // Загружаем из облака без лишнего шума в консоли
                     const cloudRes = await fetch(`/api/get-akb?mode=snapshot&year=2025&silent=true`);
                     if (cloudRes.ok) {
                         saved = await cloudRes.json();
@@ -260,12 +256,23 @@ const App: React.FC = () => {
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunk, totalProcessed } = msg.payload;
                 cumulativeDataRef.current = chunk; 
-                if (!isUpdate) setAllData(chunk);
+                
+                // ЖИВОЕ ОБНОВЛЕНИЕ КАРТЫ: Извлекаем точки из пришедшего куска
+                const chunkClientsMap = new Map<string, MapPoint>();
+                chunk.forEach(group => group.clients.forEach(c => chunkClientsMap.set(c.key, c)));
+                const currentPoints = Array.from(chunkClientsMap.values());
+                
+                if (!isUpdate) {
+                    setAllData(chunk);
+                    setAllActiveClients(currentPoints);
+                }
+                
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
 
+                // Сохраняем промежуточный снимок каждые 20к строк
                 if (totalProcessed >= lastSnapshotMilestone.current + 20000) {
                     lastSnapshotMilestone.current = totalProcessed;
-                    uploadSnapshot({ allData: cumulativeDataRef.current, unidentifiedRows: [], okbData, okbStatus, okbRegionCounts, totalRowsProcessed: totalProcessed });
+                    uploadSnapshot({ allData: chunk, unidentifiedRows: [], okbData, okbStatus, okbRegionCounts, totalRowsProcessed: totalProcessed });
                 }
             }
             else if (msg.type === 'result_finished') {
@@ -293,7 +300,6 @@ const App: React.FC = () => {
             for (const file of files) {
                 let offset = 0, hasMore = true, isFirst = true;
                 while (hasMore) {
-                    // УМЕНЬШАЕМ ЧАНК до 2000 для стабильности API
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=2000`);
                     if (!res.ok) { hasMore = false; break; }
                     const r = await res.json();
