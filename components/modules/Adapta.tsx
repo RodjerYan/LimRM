@@ -51,22 +51,26 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
-        const counts: Record<string, number> = {};
-        let total = 0;
+        const acc: Record<string, { count: number; volume: number }> = {};
+        let totalCount = 0;
 
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
                 const type = client.type || 'Не определен';
-                counts[type] = (counts[type] || 0) + 1;
-                total++;
+                const clientFact = client.fact || 0;
+                if (!acc[type]) acc[type] = { count: 0, volume: 0 };
+                acc[type].count++;
+                acc[type].volume += clientFact;
+                totalCount++;
             });
         });
 
-        return Object.entries(counts)
-            .map(([name, count]) => ({
+        return Object.entries(acc)
+            .map(([name, data]) => ({
                 name,
-                count,
-                percentage: total > 0 ? (count / total) * 100 : 0
+                count: data.count,
+                volumeTons: data.volume / 1000,
+                percentage: totalCount > 0 ? (data.count / totalCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
@@ -199,10 +203,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         <div key={idx} className="space-y-2 group">
                                             <div className="flex justify-between items-end">
                                                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-300 transition-colors">{stat.name}</span>
-                                                <span className="text-xs font-mono text-gray-300">
-                                                    <strong className="text-white">{stat.count.toLocaleString()}</strong> 
-                                                    <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
-                                                </span>
+                                                <div className="text-right">
+                                                    <div className="text-xs font-mono text-gray-300">
+                                                        <strong className="text-white">{stat.count.toLocaleString()}</strong> 
+                                                        <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
+                                                    </div>
+                                                    <div className="text-[9px] font-bold text-indigo-400 uppercase tracking-tighter">
+                                                        Объем: {stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.
+                                                    </div>
+                                                </div>
                                             </div>
                                             <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
                                                 <div 

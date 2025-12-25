@@ -177,6 +177,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = 'Не определен';
 
+        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
@@ -190,11 +193,21 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
-        const groupKey = `${reg}-${rm}`.toLowerCase();
+        // Группировка теперь включает бренд и фасовку для отображения в таблицах
+        const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
         if (!state_aggregatedData[groupKey]) {
             state_aggregatedData[groupKey] = {
-                key: groupKey, clientName: reg, brand: 'Все', packaging: 'Все', rm, city: parsed.city,
-                region: reg, fact: 0, potential: 0, growthPotential: 0, growthPercentage: 0,
+                key: groupKey, 
+                clientName: reg, // Для иерархии в таблице может использоваться регион или имя клиента
+                brand: brand, 
+                packaging: packaging, 
+                rm, 
+                city: parsed.city,
+                region: reg, 
+                fact: 0, 
+                potential: 0, 
+                growthPotential: 0, 
+                growthPercentage: 0,
                 clients: new Map(),
             };
         }
@@ -202,6 +215,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weight = parseFloat(String(findValueInRow(row, ['вес', 'количество']) || '0').replace(',', '.'));
         if (!isNaN(weight)) state_aggregatedData[groupKey].fact += weight;
 
+        // Для уникальных точек на карте все еще используем адрес как ключ
         if (!state_uniquePlottableClients.has(normAddr)) {
             const okb = state_okbCoordIndex.get(normAddr);
             state_uniquePlottableClients.set(normAddr, {
@@ -210,9 +224,15 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 lon: cacheEntry?.lon || okb?.lon,
                 status: 'match',
                 name: String(row[state_clientNameHeader || ''] || 'ТТ'),
-                address: rawAddr, city: parsed.city, region: reg, rm, brand: 'Все', packaging: 'Все',
+                address: rawAddr, 
+                city: parsed.city, 
+                region: reg, 
+                rm, 
+                brand: brand, 
+                packaging: packaging,
                 type: channel,
-                originalRow: row, fact: 0,
+                originalRow: row, 
+                fact: 0,
                 abcCategory: 'C'
             });
         }
@@ -228,7 +248,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     if (state_processedRowsCount - state_lastEmitCount > 5000) {
         state_lastEmitCount = state_processedRowsCount;
         
-        // ПРОВЕРКА: Делаем промежуточный ABC-анализ перед отправкой
         performIncrementalAbc();
 
         const partialData = Object.values(state_aggregatedData).map(item => ({
@@ -250,7 +269,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
-    // Финальный точный ABC-анализ
     performIncrementalAbc();
 
     const finalData = Object.values(state_aggregatedData).map(item => ({

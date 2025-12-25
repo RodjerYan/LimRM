@@ -34,39 +34,30 @@ export function enrichDataWithSmartPlan(
     const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
 
     // --- STEP 2: Region Level Aggregation (Context) ---
-    // We first need to know the total active clients in the region to calculate Market Share.
-    // This applies to all brands in that region equally.
     type RegionContext = {
         activeUniqueClients: Set<string>;
         matchedOkbCoords: number;
         totalOkbCapacity: number;
-        rmGlobalListings: number; // For acquisition bonus logic
-        rmGlobalFact: number;
     };
 
     const regionContextMap = new Map<string, RegionContext>(); // Key: "RM|Region"
     const rmStats = new Map<string, { totalFact: number; totalListings: number }>();
 
     data.forEach(row => {
-        // Normalize RM name to match Dashboard grouping logic
         const rm = normalizeRmNameForMatching(row.rm);
         const region = row.region;
         const regKey = `${rm}|${region}`;
 
-        // 2.1 Update RM Global Stats
         if (!rmStats.has(rm)) rmStats.set(rm, { totalFact: 0, totalListings: 0 });
         const stat = rmStats.get(rm)!;
         stat.totalFact += row.fact;
         stat.totalListings += row.clients.length;
 
-        // 2.2 Update Region Context
         if (!regionContextMap.has(regKey)) {
             regionContextMap.set(regKey, {
                 activeUniqueClients: new Set(),
                 matchedOkbCoords: 0,
-                totalOkbCapacity: globalOkbRegionCounts[region] || 0,
-                rmGlobalListings: 0,
-                rmGlobalFact: 0
+                totalOkbCapacity: globalOkbRegionCounts[region] || 0
             });
         }
         const ctx = regionContextMap.get(regKey)!;
@@ -74,8 +65,6 @@ export function enrichDataWithSmartPlan(
         row.clients.forEach(c => {
             if (!ctx.activeUniqueClients.has(c.key)) {
                 ctx.activeUniqueClients.add(c.key);
-                
-                // Match logic aligned with RMDashboard: Check intersection with OKB set
                 if (c.lat && c.lon) {
                     if (okbCoordSet) {
                         const hash = `${c.lat.toFixed(4)},${c.lon.toFixed(4)}`;
@@ -83,7 +72,6 @@ export function enrichDataWithSmartPlan(
                             ctx.matchedOkbCoords++;
                         }
                     } else {
-                        // Fallback if set not provided (legacy behavior)
                         ctx.matchedOkbCoords++;
                     }
                 }
@@ -91,7 +79,7 @@ export function enrichDataWithSmartPlan(
         });
     });
 
-    // --- STEP 3: Row (Brand) Level Calculation ---
+    // --- STEP 3: Row (Brand/Packaging) Level Calculation ---
     return data.map(row => {
         const rm = normalizeRmNameForMatching(row.rm);
         const region = row.region;
@@ -99,38 +87,21 @@ export function enrichDataWithSmartPlan(
         const ctx = regionContextMap.get(regKey)!;
         const rmStat = rmStats.get(rm)!;
 
-        // Brand Specific Metrics
         const brandFact = row.fact;
-        const brandListings = row.clients.length; // Number of clients buying THIS brand
-        
-        // 3.1 Calculate Brand Velocity (Kg per Point for this brand)
+        const brandListings = row.clients.length;
         const brandVelocity = brandListings > 0 ? brandFact / brandListings : 0;
-
-        // 3.2 Calculate Brand Width (Saturation within its own clients)
-        // If row represents a single brand, AvgSku is typically 1. 
         const brandAvgSku = 1; 
-
-        // 3.3 Calculate RM Global Velocity (Proxy for acquisition potential)
         const rmGlobalVelocity = rmStat.totalListings > 0 ? rmStat.totalFact / rmStat.totalListings : 0;
 
-        // 3.4 Call Engine for this specific Brand
         const result = PlanningEngine.calculateRMPlan(
             {
                 totalFact: brandFact,
-                // For a single brand, "potential" is hard to define without external data.
-                // We rely on the engine's growth logic relative to the Region's capacity.
                 totalPotential: ctx.totalOkbCapacity, 
-                
-                // REGIONAL Context (Shared)
                 matchedCount: ctx.matchedOkbCoords,
-                activeCount: ctx.activeUniqueClients.size, // PASS TOTAL ACTIVE CLIENTS
+                activeCount: ctx.activeUniqueClients.size,
                 totalRegionOkb: ctx.totalOkbCapacity,
-                
-                // BRAND Specifics
                 avgSku: brandAvgSku,
-                avgVelocity: brandVelocity, // Crucial: Use this brand's velocity
-                
-                // Fallback
+                avgVelocity: brandVelocity,
                 rmGlobalVelocity: rmGlobalVelocity
             },
             {
@@ -141,7 +112,6 @@ export function enrichDataWithSmartPlan(
             }
         );
 
-        // Special case for new entry logic
         let rate = result.growthPct;
         if (brandFact === 0 && result.plan > 0) {
             rate = 100; 
