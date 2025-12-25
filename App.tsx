@@ -35,7 +35,7 @@ import {
     WorkerResultPayload
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { LoaderIcon, CheckIcon, ErrorIcon } from './components/icons';
+import { LoaderIcon, CheckIcon, ErrorIcon, DataIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -50,11 +50,10 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // ПРИОРИТЕТ: сначала проверяем localStorage, но потом перепишем из IndexedDB
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
-    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
+    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading' | 'cloud'>('empty');
 
     const [processingState, setProcessingState] = useState<FileProcessingState>({
         isProcessing: false,
@@ -94,7 +93,7 @@ const App: React.FC = () => {
         rawCount: number,
         vHash?: string
     ) => {
-        const currentVersion = vHash || lastSyncVersion || 'manual_patch_' + Date.now();
+        const currentVersion = vHash || lastSyncVersion || 'manual_' + Date.now();
         const stateToSave = {
             allData: updatedData,
             unidentifiedRows: updatedUnidentified,
@@ -107,11 +106,16 @@ const App: React.FC = () => {
         };
         try {
             await saveAnalyticsState(stateToSave);
-            // Дублируем в localStorage для быстрой проверки при загрузке страницы
             localStorage.setItem('last_sync_version', currentVersion);
-        } catch (e) {
-            console.error("Local DB Sync: Failed", e);
-        }
+            
+            // НОВОЕ: Дублируем снимок в облако (Google Drive) в фоновом режиме
+            fetch(`/api/get-akb?mode=snapshot&year=2025`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(stateToSave)
+            }).catch(() => {});
+
+        } catch (e) { console.error("Sync Error", e); }
     }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
@@ -119,13 +123,10 @@ const App: React.FC = () => {
             clearInterval(pollingIntervals.current.get(oldKey));
             pollingIntervals.current.delete(oldKey);
         }
-
         setEditingClient(prev => (prev && 'key' in prev && (prev as MapPoint).key === oldKey ? newPoint : prev));
-
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
-
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             const updated = index !== -1 ? [...prev] : [...prev, newPoint];
@@ -133,7 +134,6 @@ const App: React.FC = () => {
             finalPoints = updated;
             return updated;
         });
-
         setAllData(prev => {
             finalData = prev.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -146,15 +146,10 @@ const App: React.FC = () => {
             });
             return finalData;
         });
-
         setUnidentifiedRows(prev => {
-            finalUnidentified = prev.filter(row => {
-                const rowAddr = normalizeAddress(findAddressInRow(row.rowData));
-                return rowAddr !== oldKey && rowAddr !== newPoint.key;
-            });
+            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey);
             return finalUnidentified;
         });
-
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
     }, [persistToDB, processingState.totalRowsProcessed]);
 
@@ -165,46 +160,40 @@ const App: React.FC = () => {
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
                 if (res.ok) {
                     const cached = await res.json();
-                    if (cached.isInvalid) {
-                        handleDataUpdate(tempKey, { ...basePoint, isGeocoding: false, geocodingError: 'Геокодер не смог найти этот адрес.', lastUpdated: Date.now() });
-                        addNotification(`Адрес не распознан: ${address}`, 'error');
-                        return;
-                    }
-                    if (cached.lat && cached.lon && !isNaN(cached.lat)) {
-                        handleDataUpdate(tempKey, { ...basePoint, lat: parseFloat(cached.lat), lon: parseFloat(cached.lon), isGeocoding: false, geocodingError: undefined, lastUpdated: Date.now() });
-                        addNotification(`Координаты определены: ${address}`, 'success');
+                    if (cached.lat && cached.lon) {
+                        handleDataUpdate(tempKey, { ...basePoint, lat: parseFloat(cached.lat), lon: parseFloat(cached.lon), isGeocoding: false });
+                        addNotification(`Адрес определен: ${address}`, 'success');
                     }
                 }
             } catch (e) {}
         }, 10000);
         pollingIntervals.current.set(tempKey, intervalId);
-        setTimeout(() => { if (pollingIntervals.current.has(tempKey)) { clearInterval(pollingIntervals.current.get(tempKey)); pollingIntervals.current.delete(tempKey); } }, 3600000);
     }, [handleDataUpdate, addNotification]);
 
     const handleDeleteClient = useCallback(async (key: string) => {
-        let finalData: AggregatedDataRow[] = [];
-        let finalUnidentified: UnidentifiedRow[] = [];
-        let finalPoints: MapPoint[] = [];
-
-        setAllActiveClients(prev => { finalPoints = prev.filter(c => c.key !== key); return finalPoints; });
-        setAllData(prev => { finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); return finalData; });
-        setUnidentifiedRows(prev => { finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); return finalUnidentified; });
-        
-        if (pollingIntervals.current.has(key)) {
-            clearInterval(pollingIntervals.current.get(key));
-            pollingIntervals.current.delete(key);
-        }
-
+        let fd: AggregatedDataRow[] = []; let fu: UnidentifiedRow[] = []; let fp: MapPoint[] = [];
+        setAllActiveClients(prev => { fp = prev.filter(c => c.key !== key); return fp; });
+        setAllData(prev => { fd = prev.map(g => ({ ...g, clients: g.clients.filter(c => c.key !== key) })); return fd; });
+        setUnidentifiedRows(prev => { fu = prev.filter(r => normalizeAddress(findAddressInRow(r.rowData)) !== key); return fu; });
         setEditingClient(null);
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
-        addNotification('Запись удалена', 'info');
-    }, [addNotification, persistToDB, processingState.totalRowsProcessed]);
+        setTimeout(() => persistToDB(fd, fu, fp, processingState.totalRowsProcessed || 0), 50);
+    }, [persistToDB, processingState.totalRowsProcessed]);
 
     useEffect(() => {
         const restore = async () => {
             try {
                 setDbStatus('loading');
-                const saved = await loadAnalyticsState();
+                let saved = await loadAnalyticsState();
+                
+                // Если локально пусто — пробуем тянуть из Cloud Snapshot
+                if (!saved || !saved.allData?.length) {
+                    const cloudRes = await fetch(`/api/get-akb?mode=snapshot&year=2025`);
+                    if (cloudRes.ok) {
+                        saved = await cloudRes.json();
+                        setDbStatus('cloud');
+                    }
+                }
+
                 if (saved && saved.allData?.length > 0) {
                     setAllData(saved.allData);
                     setUnidentifiedRows(saved.unidentifiedRows || []);
@@ -212,34 +201,20 @@ const App: React.FC = () => {
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    
-                    // КРИТИЧНО: восстанавливаем версию из DB, чтобы не было ложного ресинка
                     if (saved.versionHash) {
                         setLastSyncVersion(saved.versionHash);
                         localStorage.setItem('last_sync_version', saved.versionHash);
                     }
-                    
                     const clientsMap = new Map<string, MapPoint>();
                     saved.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
-                    const uniqueClients = Array.from(clientsMap.values());
-                    setAllActiveClients(uniqueClients);
-                    
-                    setProcessingState(prev => ({
-                        ...prev,
-                        totalRowsProcessed: saved.totalRowsProcessed || 0,
-                        message: 'Данные восстановлены из локальной базы'
-                    }));
-
-                    setDbStatus('ready');
+                    setAllActiveClients(Array.from(clientsMap.values()));
+                    setProcessingState(prev => ({ ...prev, totalRowsProcessed: saved.totalRowsProcessed || 0 }));
+                    if (dbStatus !== 'cloud') setDbStatus('ready');
                     setActiveModule('amp');
                 } else {
                     setDbStatus('empty');
                 }
-            } catch (e) {
-                setDbStatus('empty');
-            } finally {
-                setIsRestoring(false);
-            }
+            } catch (e) { setDbStatus('empty'); } finally { setIsRestoring(false); }
         };
         restore();
     }, []);
@@ -247,77 +222,41 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
-        
         const isUpdate = allData.length > 0;
         if (isUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        setProcessingState(prev => ({ 
-            ...prev,
-            isProcessing: true, 
-            progress: 0, 
-            message: isUpdate ? 'Обновление данных в фоне...' : 'Инициализация Live Sync...', 
-            fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            backgroundMessage: 'Синхронизация структуры файлов', 
-            startTime: Date.now(),
-            // Если это фоновое обновление, СОХРАНЯЕМ текущий счетчик строк, пока воркер не пришлет новые данные
-            totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
-        }));
+        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: isUpdate ? 'Обновление данных...' : 'Синхронизация...', startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0 }));
 
         let cacheData: CoordsCache = {};
-        try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-            if (response.ok) cacheData = await response.json();
-        } catch (error) {}
+        try { const res = await fetch(`/api/get-full-cache?t=${Date.now()}`); if (res.ok) cacheData = await res.json(); } catch (e) {}
 
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
 
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
-            if (msg.type === 'progress') {
-                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-            } 
-            else if (msg.type === 'result_init' && !isUpdate) {
-                setOkbRegionCounts(msg.payload.okbRegionCounts);
-            }
+            if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
+            else if (msg.type === 'result_init' && !isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
-                const { data: chunkData, totalProcessed } = msg.payload;
-                if (!isUpdate) {
-                    setAllData(chunkData);
-                    const clientsMap = new Map<string, MapPoint>();
-                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                }
+                const { data: chunk, totalProcessed } = msg.payload;
+                if (!isUpdate) { setAllData(chunk); const clientsMap = new Map<string, MapPoint>(); chunk.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c))); setAllActiveClients(Array.from(clientsMap.values())); }
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
-                const payload = msg.payload as WorkerResultPayload;
-                setOkbRegionCounts(payload.okbRegionCounts);
-                setAllData(payload.aggregatedData);
+                const p = msg.payload as WorkerResultPayload;
+                setOkbRegionCounts(p.okbRegionCounts);
+                setAllData(p.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setUnidentifiedRows(payload.unidentifiedRows);
+                p.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                const unique = Array.from(clientsMap.values());
+                setAllActiveClients(unique);
+                setUnidentifiedRows(p.unidentifiedRows);
                 setDbStatus('ready');
-                
-                const version = localStorage.getItem('pending_version_hash');
-                if (version) {
-                    await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                    setLastSyncVersion(version);
-                    localStorage.setItem('last_sync_version', version);
-                    localStorage.removeItem('pending_version_hash');
-                }
-
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    isProcessing: false, 
-                    progress: 100, 
-                    message: 'Синхронизировано', 
-                    totalRowsProcessed: payload.totalRowsProcessed 
-                }));
-                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены', 'success');
+                const v = localStorage.getItem('pending_version_hash');
+                if (v) { await persistToDB(p.aggregatedData, p.unidentifiedRows, unique, p.totalRowsProcessed, v); setLastSyncVersion(v); }
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: p.totalRowsProcessed }));
+                addNotification('Данные обновлены', 'success');
             }
         };
 
@@ -325,26 +264,22 @@ const App: React.FC = () => {
 
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
-            const allFiles = listRes.ok ? await listRes.json() : [];
-            const CHUNK_SIZE = 5000; 
-            for (const file of allFiles) {
-                let offset = 0, hasMore = true, isFirstChunk = true;
+            const files = listRes.ok ? await listRes.json() : [];
+            for (const file of files) {
+                let offset = 0, hasMore = true, isFirst = true;
                 while (hasMore) {
-                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
+                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=5000`);
                     if (!res.ok) break;
-                    const result = await res.json();
-                    if (result.rows?.length > 0) {
-                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
-                        isFirstChunk = false;
+                    const r = await res.json();
+                    if (r.rows?.length > 0) {
+                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: r.rows, isFirstChunk: isFirst, fileName: file.name } });
+                        isFirst = false;
                     } else hasMore = false;
-                    hasMore = result.hasMore;
-                    offset += CHUNK_SIZE;
+                    hasMore = r.hasMore; offset += 5000;
                 }
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
-        } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
-        }
+        } catch (e) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' })); }
     }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
 
     const checkCloudChanges = useCallback(async () => {
@@ -354,19 +289,12 @@ const App: React.FC = () => {
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                // ПРОВЕРКА ВЕРСИИ: если хеши не совпадают - грузим заново в фоне
-                if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
-                    handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
-                }
+                if (meta.versionHash && meta.versionHash !== lastSyncVersion) handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
             }
         } catch (e) { setIsLiveConnected(false); }
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
-    useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 300000); 
-        checkCloudChanges();
-        return () => clearInterval(timer);
-    }, [checkCloudChanges]);
+    useEffect(() => { const timer = setInterval(checkCloudChanges, 300000); checkCloudChanges(); return () => clearInterval(timer); }, [checkCloudChanges]);
 
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
@@ -375,11 +303,10 @@ const App: React.FC = () => {
     }, [allData, okbRegionCounts, okbData]);
 
     useEffect(() => { setFilteredData(applyFilters(smartData, filters)); }, [smartData, filters]);
-
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => {
-        const baseMetrics = calculateSummaryMetrics(filteredData);
-        return baseMetrics ? { ...baseMetrics, totalActiveClients: allActiveClients.length } : null;
+        const base = calculateSummaryMetrics(filteredData);
+        return base ? { ...base, totalActiveClients: allActiveClients.length } : null;
     }, [filteredData, allActiveClients.length]);
 
     const potentialClients = useMemo(() => {
@@ -396,24 +323,26 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-6">
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Local DB</span>
+                                <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' || dbStatus === 'cloud' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Storage</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Offline: Ready' : 'Initializing...'}</span>
+                            <span className="text-xs font-bold text-white">
+                                {dbStatus === 'ready' ? 'Local DB: OK' : dbStatus === 'cloud' ? 'Cloud Snapshot: OK' : 'Initializing...'}
+                            </span>
                         </div>
                         <div className="h-8 w-px bg-gray-800"></div>
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Sync</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online: Streaming' : 'Disconnected'}</span>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online' : 'Offline'}</span>
                         </div>
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
                                 <LoaderIcon className="w-3 h-3 text-indigo-400" />
-                                <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">
-                                    {allData.length > 0 ? 'Синхронизация' : 'Загрузка'}: {Math.round(processingState.progress)}%
+                                <span className="text-[10px] uppercase font-bold text-indigo-300">
+                                    Синхронизация: {Math.round(processingState.progress)}%
                                 </span>
                             </div>
                         )}
@@ -449,7 +378,7 @@ const App: React.FC = () => {
                             unidentifiedCount={unidentifiedRows.length}
                             activeClientsCount={allActiveClients.length}
                             uploadedData={allData}
-                            dbStatus={dbStatus}
+                            dbStatus={dbStatus === 'cloud' ? 'ready' : dbStatus}
                             onStartEdit={setEditingClient}
                         />
                     )}
