@@ -71,6 +71,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
 
+    // Определяем, какое число строк показывать (из процесса загрузки или из загруженных ТТ)
+    const rowsToDisplay = props.processingState.totalRowsProcessed && props.processingState.totalRowsProcessed > 0
+        ? props.processingState.totalRowsProcessed.toLocaleString('ru-RU')
+        : (props.activeClientsCount > 0 ? props.activeClientsCount.toLocaleString('ru-RU') : '0');
+
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
@@ -152,8 +157,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Всего строк</div>
-                                    <div className="text-xl font-bold text-gray-200 font-mono">{props.processingState.totalRowsProcessed?.toLocaleString() || (props.activeClientsCount > 0 ? props.activeClientsCount.toLocaleString() : '—')}</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">Файлы в обработке...</div>
+                                    <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
+                                        {props.processingState.isProcessing ? 'Файлы в обработке...' : 'Данные из локальной базы'}
+                                    </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Распознано ТТ</div>

@@ -251,7 +251,16 @@ const App: React.FC = () => {
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    setAllActiveClients(saved.allData.flatMap((row: any) => row.clients || []));
+                    const clients = saved.allData.flatMap((row: any) => row.clients || []);
+                    setAllActiveClients(clients);
+                    
+                    // Восстанавливаем счетчик строк в стейте обработки
+                    setProcessingState(prev => ({
+                        ...prev,
+                        totalRowsProcessed: clients.length,
+                        message: 'Система готова: данные загружены из локальной базы'
+                    }));
+
                     setDbStatus('ready');
                     setActiveModule('amp');
                 } else {
@@ -298,15 +307,16 @@ const App: React.FC = () => {
             if (msg.type === 'progress') {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
             } 
-            // Мгновенная инициализация структуры ОКБ для Дашборда
             else if (msg.type === 'result_init') {
                 setOkbRegionCounts(msg.payload.okbRegionCounts);
             }
-            // Инкрементальное обновление данных
             else if (msg.type === 'result_chunk_aggregated') {
                 const chunkData = msg.payload as AggregatedDataRow[];
                 setAllData(chunkData);
-                setAllActiveClients(chunkData.flatMap(row => row.clients || []));
+                const clients = chunkData.flatMap(row => row.clients || []);
+                setAllActiveClients(clients);
+                // В процессе потоковой загрузки обновляем счетчик строк
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: clients.length }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
