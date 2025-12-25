@@ -298,7 +298,9 @@ const App: React.FC = () => {
             message: isUpdate ? 'Обновление данных в фоне...' : 'Инициализация Live Sync...', 
             fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
             backgroundMessage: 'Синхронизация структуры файлов', 
-            startTime: Date.now()
+            startTime: Date.now(),
+            // Если это обновление - не сбрасываем старый счетчик строк до первых данных от воркера
+            totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
 
         let cacheData: CoordsCache = {};
@@ -316,14 +318,10 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
             } 
             else if (msg.type === 'result_init') {
-                // Во время обновления (Update) мы НЕ сбрасываем okbRegionCounts сразу, 
-                // чтобы не "моргали" карты и графики. Ждем полной готовности.
                 if (!isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             }
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                // Если это первая загрузка - показываем чанки сразу.
-                // Если это обновление - НЕ показываем чанки, чтобы не было "рваных" данных на графиках.
                 if (!isUpdate) {
                     setAllData(chunkData);
                     const clientsMap = new Map<string, MapPoint>();
@@ -331,12 +329,12 @@ const App: React.FC = () => {
                     const uniqueClients = Array.from(clientsMap.values());
                     setAllActiveClients(uniqueClients);
                 }
-                setProcessingState(prev => ({ ...prev, totalRowsProcessedInSync: totalProcessed }));
+                // ФИКС: исправлено название свойства с totalRowsProcessedInSync на totalRowsProcessed
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 
-                // Момент бесшовной подмены данных
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 
