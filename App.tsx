@@ -1,12 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import L from 'leaflet';
-import * as XLSX from 'xlsx';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
-import Prophet from './components/modules/Prophet';
-import AgileLearning from './components/modules/AgileLearning';
-import RoiGenome from './components/modules/RoiGenome'; 
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import Filters from './components/Filters';
 import PotentialChart from './components/PotentialChart';
@@ -29,13 +24,11 @@ import {
     MapPoint,
     UnidentifiedRow,
     FileProcessingState,
-    WorkerMessage,
     CoordsCache,
-    CloudLoadParams,
-    WorkerResultPayload
+    CloudLoadParams
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { LoaderIcon, CheckIcon, ErrorIcon } from './components/icons';
+import { LoaderIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -131,7 +124,8 @@ const App: React.FC = () => {
             }
             return group;
         }));
-        setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey && normalizeAddress(findAddressInRow(row.rowData)) !== newPoint.key));
+        const normAddr = normalizeAddress(findAddressInRow(newPoint.originalRow));
+        setUnidentifiedRows(prev => prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== oldKey && normalizeAddress(findAddressInRow(row.rowData)) !== normAddr));
     }, []);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
@@ -195,7 +189,7 @@ const App: React.FC = () => {
                 localStorage.setItem('last_sync_version', state.versionHash); 
             }
             const clientsMap = new Map<string, MapPoint>();
-            state.allData.forEach((row: AggregatedDataRow) => { 
+            (state.allData as AggregatedDataRow[]).forEach((row: AggregatedDataRow) => { 
                 row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)); 
             });
             setAllActiveClients(Array.from(clientsMap.values()));
@@ -231,42 +225,31 @@ const App: React.FC = () => {
             else if (msg.type === 'result_chunk_aggregated' && !isUpdate) {
                 setAllData(msg.payload.data);
                 const clientsMap = new Map<string, MapPoint>();
-                msg.payload.data.forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
+                (msg.payload.data as AggregatedDataRow[]).forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 setAllActiveClients(Array.from(clientsMap.values()));
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: msg.payload.totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as any;
                 const isCheckpoint = !!payload.isCheckpoint;
-                
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                payload.aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
+                (payload.aggregatedData as AggregatedDataRow[]).forEach((row: AggregatedDataRow) => row.clients.forEach((c: MapPoint) => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
-                
                 const version = localStorage.getItem('pending_version_hash') || 'hash_' + Date.now();
-                const stateToSave = {
-                    allData: payload.aggregatedData, unidentifiedRows: payload.unidentifiedRows, okbRegionCounts: payload.okbRegionCounts,
-                    okbData, okbStatus, dateRange, totalRowsProcessed: payload.totalRowsProcessed, versionHash: version,
-                    processedFileIds: localStorage.getItem('processed_file_ids'),
-                    isCheckpoint
-                };
-
+                const stateToSave = { allData: payload.aggregatedData, unidentifiedRows: payload.unidentifiedRows, okbRegionCounts: payload.okbRegionCounts, okbData, okbStatus, dateRange, totalRowsProcessed: payload.totalRowsProcessed, versionHash: version, isCheckpoint };
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 await uploadMasterSnapshot(stateToSave);
-
                 if (!isCheckpoint) {
                     setLastSyncVersion(version);
                     localStorage.setItem('last_sync_version', version);
                     localStorage.removeItem('pending_version_hash');
                     setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
-                } else {
-                    addNotification(`Автосохранение: ${payload.totalRowsProcessed.toLocaleString()} строк`, 'info');
-                }
+                } else { addNotification(`Автосохранение: ${payload.totalRowsProcessed.toLocaleString()} строк`, 'info'); }
             }
         };
 
@@ -277,12 +260,9 @@ const App: React.FC = () => {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             const CHUNK_SIZE = 5000; 
-            
             const processedIds = JSON.parse(localStorage.getItem('processed_file_ids') || '[]');
-            
             for (const file of allFiles) {
                 if (processedIds.includes(file.id)) continue; 
-
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
@@ -294,14 +274,11 @@ const App: React.FC = () => {
                     } else hasMore = false;
                     hasMore = result.hasMore; offset += CHUNK_SIZE;
                 }
-                
                 processedIds.push(file.id);
                 localStorage.setItem('processed_file_ids', JSON.stringify(processedIds));
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
-        } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
-        }
+        } catch (error) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' })); }
     }, [okbData, allData, unidentifiedRows, addNotification, persistToDB, uploadMasterSnapshot, okbStatus, dateRange, processingState.isProcessing, processingState.totalRowsProcessed]);
 
     const checkCloudChanges = useCallback(async () => {
@@ -319,7 +296,7 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 60000); // Опрос каждую минуту (60с)
+        const timer = setInterval(checkCloudChanges, 60000); 
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);
@@ -387,17 +364,9 @@ const App: React.FC = () => {
                         </div>
                     </div>
                 </div>
-
                 <div className="py-8 px-4 lg:px-8">
                     {activeModule === 'adapta' && (
-                        <Adapta 
-                            processingState={processingState} onStartProcessing={() => {}} onStartCloudProcessing={handleStartCloudProcessing}
-                            onFileProcessed={() => {}} onProcessingStateChange={() => {}} okbData={okbData}
-                            okbStatus={okbStatus} onOkbStatusChange={setOkbStatus} onOkbDataChange={setOkbData}
-                            disabled={processingState.isProcessing} unidentifiedCount={unidentifiedRows.length}
-                            activeClientsCount={allActiveClients.length} uploadedData={allData} dbStatus={dbStatus}
-                            onStartEdit={setEditingClient}
-                        />
+                        <Adapta processingState={processingState} onStartProcessing={() => {}} onStartCloudProcessing={handleStartCloudProcessing} onFileProcessed={() => {}} onProcessingStateChange={() => {}} okbData={okbData} okbStatus={okbStatus} onOkbStatusChange={setOkbStatus} onOkbDataChange={setOkbData} disabled={processingState.isProcessing} unidentifiedCount={unidentifiedRows.length} activeClientsCount={allActiveClients.length} uploadedData={allData} dbStatus={dbStatus} onStartEdit={setEditingClient} />
                     )}
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
@@ -418,11 +387,7 @@ const App: React.FC = () => {
             {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
             {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
             {editingClient && (
-                <AddressEditModal 
-                    isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} 
-                    data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={handleStartPolling} 
-                    onDelete={handleDeleteClient} globalTheme="dark"
-                />
+                <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={handleStartPolling} onDelete={handleDeleteClient} globalTheme="dark" />
             )}
         </div>
     );
