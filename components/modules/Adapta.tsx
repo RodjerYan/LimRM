@@ -54,26 +54,31 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
-        const acc: Record<string, { count: number; volume: number }> = {};
-        let totalCount = 0;
+        
+        // Используем Map для хранения данных о каналах
+        // И Set для хранения уникальных ключей ТТ внутри каждого канала
+        const acc: Record<string, { uniqueKeys: Set<string>; volume: number }> = {};
+        const globalUniqueKeys = new Set<string>();
 
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
                 const type = client.type || 'Не определен';
-                const clientFact = client.fact || 0;
-                if (!acc[type]) acc[type] = { count: 0, volume: 0 };
-                acc[type].count++;
-                acc[type].volume += clientFact;
-                totalCount++;
+                if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
+                
+                acc[type].uniqueKeys.add(client.key);
+                acc[type].volume += (client.fact || 0);
+                globalUniqueKeys.add(client.key);
             });
         });
+
+        const totalUniqueCount = globalUniqueKeys.size;
 
         return Object.entries(acc)
             .map(([name, data]) => ({
                 name,
-                count: data.count,
+                count: data.uniqueKeys.size, // Количество именно УНИКАЛЬНЫХ ТТ
                 volumeTons: data.volume / 1000,
-                percentage: totalCount > 0 ? (data.count / totalCount) * 100 : 0
+                percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
     }, [props.uploadedData]);
@@ -82,22 +87,28 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
 
-        const filteredClients: MapPoint[] = [];
+        // Важно: в рамках одного канала ТТ тоже могут дублироваться из-за разных брендов в uploadedData
+        // Схлопываем их по ключу перед группировкой
+        const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
+        
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
                 if ((c.type || 'Не определен') === selectedChannel) {
-                    // Применяем поиск если есть
                     const search = channelSearchTerm.toLowerCase();
                     if (!search || c.name.toLowerCase().includes(search) || c.address.toLowerCase().includes(search) || c.rm.toLowerCase().includes(search)) {
-                        filteredClients.push(c);
+                        if (!uniqueClientsInChannel.has(c.key)) {
+                            uniqueClientsInChannel.set(c.key, { ...c, totalFact: 0 });
+                        }
+                        const existing = uniqueClientsInChannel.get(c.key)!;
+                        existing.totalFact += (c.fact || 0);
                     }
                 }
             });
         });
 
         // Группировка: РМ -> Город -> Клиенты
-        const hierarchy: Record<string, Record<string, MapPoint[]>> = {};
-        filteredClients.forEach(c => {
+        const hierarchy: Record<string, Record<string, (MapPoint & { totalFact: number })[]>> = {};
+        uniqueClientsInChannel.forEach(c => {
             const rm = c.rm || 'Не указан';
             const city = c.city || 'Город не определен';
             if (!hierarchy[rm]) hierarchy[rm] = {};
@@ -359,10 +370,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                                                     </div>
                                                                     <div className="flex flex-col items-end shrink-0">
                                                                         <div className="text-[11px] font-mono font-bold text-emerald-400">
-                                                                            {(client.fact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span>
+                                                                            {(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span>
                                                                         </div>
                                                                         <div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">
-                                                                            {client.brand}
+                                                                            Уникальная ТТ
                                                                         </div>
                                                                     </div>
                                                                 </div>

@@ -72,6 +72,11 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     return null;
   }
 
+  // Для подсчета уникальных ТТ по всей выборке
+  const globalUniqueKeys = new Set<string>();
+  // Для подсчета уникальных ТТ внутри каждого канала
+  const channelUniqueKeys: Record<string, Set<string>> = {};
+
   const metrics = data.reduce(
     (acc, row) => {
       acc.totalFact += row.fact;
@@ -80,9 +85,11 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
       
       if (row.clients) {
           row.clients.forEach(client => {
-              acc.totalActiveClients += 1;
+              globalUniqueKeys.add(client.key);
+              
               const channel = client.type || 'Не определен';
-              acc.channelCounts[channel] = (acc.channelCounts[channel] || 0) + 1;
+              if (!channelUniqueKeys[channel]) channelUniqueKeys[channel] = new Set();
+              channelUniqueKeys[channel].add(client.key);
           });
       }
 
@@ -97,9 +104,7 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
       totalFact: 0,
       totalPotential: 0,
       totalGrowth: 0,
-      totalActiveClients: 0,
       rmGrowth: {} as { [key: string]: number },
-      channelCounts: {} as Record<string, number>
     }
   );
 
@@ -115,15 +120,21 @@ export const calculateSummaryMetrics = (data: AggregatedDataRow[]): SummaryMetri
     topPerformingRM = { name: topRMName, value: metrics.rmGrowth[topRMName] };
   }
 
+  // Преобразуем Sets в количество
+  const channelCounts: Record<string, number> = {};
+  Object.entries(channelUniqueKeys).forEach(([ch, set]) => {
+      channelCounts[ch] = set.size;
+  });
+
   return {
     totalFact: metrics.totalFact,
     totalPotential: metrics.totalPotential,
     totalGrowth: metrics.totalGrowth,
     totalClients: data.length, 
-    totalActiveClients: metrics.totalActiveClients, 
+    totalActiveClients: globalUniqueKeys.size, 
     averageGrowthPercentage,
     topPerformingRM,
-    channelCounts: metrics.channelCounts
+    channelCounts
   };
 };
 
