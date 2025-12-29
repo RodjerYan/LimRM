@@ -19,7 +19,7 @@ import {
     updateCacheCoords,
     updateAddressInCache,
     deleteAddressFromCache
-} from './_lib/sheets.js';
+} from './_lib/sheets';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = (req.query.action as string) || '';
@@ -30,7 +30,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const { prompt, tools } = req.body;
             if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            // Randomly select one of the available API keys to distribute load
+            const keys = [
+                process.env.API_KEY,
+                process.env.API_KEY_1,
+                process.env.API_KEY_2,
+                process.env.API_KEY_3,
+                process.env.API_KEY_4
+            ].filter(Boolean);
+            
+            const randomKey = keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : process.env.API_KEY;
+
+            const ai = new GoogleGenAI({ apiKey: randomKey as string });
             const model = 'gemini-3-flash-preview';
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -120,10 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(200).json({ success: true });
 
             case 'geocode': {
-                const q = req.query.address as string;
-                const gRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, { headers: { 'User-Agent': 'LimRM/1.1' } });
-                const gData = await gRes.json() as any[];
-                if (gData?.length > 0) return res.status(200).json({ lat: parseFloat(gData[0].lat), lon: parseFloat(gData[0].lon) });
+                // Return 404 to encourage client-side coordinates from OKB
                 return res.status(404).json({ error: 'Not found' });
             }
 

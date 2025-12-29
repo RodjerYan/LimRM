@@ -1,7 +1,11 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../../types';
 import { Readable } from 'stream';
+
+// Интерфейс для строки данных из таблицы
+export interface OkbDataRow {
+    [key: string]: any;
+}
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
@@ -18,8 +22,16 @@ const ROOT_FOLDERS: Record<string, string> = {
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
+    
+    let credentials;
+    try {
+        credentials = typeof serviceAccountKey === 'string' ? JSON.parse(serviceAccountKey) : serviceAccountKey;
+    } catch (e) {
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
+    }
+
     return new google.auth.GoogleAuth({
-        credentials: JSON.parse(serviceAccountKey),
+        credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
     });
 }
