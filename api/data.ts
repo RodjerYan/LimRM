@@ -25,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = (req.query.action as string) || '';
 
     try {
-        // --- ОБРАБОТКА GEMINI PROXY (Стриминг) ---
+        // --- GEMINI PROXY ---
         if (action === 'gemini-proxy') {
             if (req.method !== 'POST') return res.status(405).end();
             const { prompt, tools } = req.body;
@@ -34,7 +34,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
             const model = 'gemini-3-flash-preview';
 
-            // На Hobby плане Vercel Node.js поддерживает стриминг через res.write
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Transfer-Encoding', 'chunked');
 
@@ -46,20 +45,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             for await (const chunk of responseStream) {
                 const text = chunk.text;
-                if (text) {
-                    res.write(text);
-                }
+                if (text) res.write(text);
             }
             return res.end();
         }
 
-        // --- ОБРАБОТКА ОПЕРАЦИЙ С ДАННЫМИ ---
+        // --- DATA OPERATIONS ---
         switch (action) {
-            case 'get-okb': {
-                const okbData = await getOKBData();
-                res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-                return res.status(200).json(okbData);
-            }
+            case 'get-okb':
+                return res.status(200).json(await getOKBData());
+            
             case 'get-okb-status': {
                 if (req.method !== 'POST') return res.status(405).end();
                 const okbAddresses = await getOKBAddresses();
@@ -74,6 +69,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 await batchUpdateOKBStatus(updates);
                 return res.status(200).json({ success: true });
             }
+
             case 'get-akb': {
                 const year = (req.query.year as string) || '2025';
                 const mode = req.query.mode as string;
@@ -97,57 +93,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
                 return res.status(400).json({ error: 'Invalid mode' });
             }
-            case 'snapshot': {
-                if (req.method === 'GET') {
-                    const snap = await loadMasterSnapshot();
-                    return snap ? res.status(200).json(snap) : res.status(404).json({ error: 'Not found' });
-                }
-                if (req.method === 'POST') {
-                    const fid = await saveMasterSnapshot(req.body);
-                    return res.status(200).json({ success: true, fileId: fid });
-                }
+
+            case 'snapshot':
+                if (req.method === 'GET') return res.status(200).json(await loadMasterSnapshot());
+                if (req.method === 'POST') return res.status(200).json({ success: true, fileId: await saveMasterSnapshot(req.body) });
                 return res.status(405).end();
-            }
-            case 'full-cache': return res.status(200).json(await getFullCoordsCache());
-            case 'get-address': 
-            case 'get-cached-address': {
-                const resAddr = await getAddressFromCache(req.query.rmName as string, req.query.address as string);
-                return resAddr ? res.status(200).json(resAddr) : res.status(404).end();
-            }
-            case 'add-to-cache': {
-                const fmt = (req.body.rows as any[]).map((r: any) => [r.address, r.lat ?? '', r.lon ?? '']);
-                await appendToCache(req.body.rmName, fmt);
+
+            case 'full-cache':
+                return res.status(200).json(await getFullCoordsCache());
+
+            case 'get-cached-address':
+                return res.status(200).json(await getAddressFromCache(req.query.rmName as string, req.query.address as string));
+
+            case 'add-to-cache':
+                await appendToCache(req.body.rmName, req.body.rows.map((r: any) => [r.address, r.lat ?? '', r.lon ?? '']));
                 return res.status(200).json({ success: true });
-            }
-            case 'update-coords': {
+
+            case 'update-coords':
                 await updateCacheCoords(req.body.rmName, req.body.updates);
                 return res.status(200).json({ success: true });
-            }
-            case 'update-address': {
+
+            case 'update-address':
                 await updateAddressInCache(req.body.rmName, req.body.oldAddress, req.body.newAddress, req.body.comment);
                 return res.status(200).json({ success: true });
-            }
-            case 'delete-address': {
-                await deleteAddressFromCache(req.body.rmName, req.body.address);
+
+            case 'delete-address':
+                await deleteAddressFromCache(req.body.rmName, req.query.address as string);
                 return res.status(200).json({ success: true });
-            }
+
             case 'geocode': {
                 const q = req.query.address as string;
-                const gRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=ru,by,kz,kg,uz`, { headers: { 'User-Agent': 'LimRM/1.1' } });
+                const gRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`, { headers: { 'User-Agent': 'LimRM/1.1' } });
                 const gData = await gRes.json() as any[];
-                if (gData && gData.length > 0) return res.status(200).json({ lat: parseFloat(gData[0].lat), lon: parseFloat(gData[0].lon) });
+                if (gData?.length > 0) return res.status(200).json({ lat: parseFloat(gData[0].lat), lon: parseFloat(gData[0].lon) });
                 return res.status(404).json({ error: 'Not found' });
             }
-            case 'get-conflict-zones': {
+
+            case 'get-conflict-zones':
                 return res.status(200).json({ type: "FeatureCollection", features: [] });
-            }
-            default: return res.status(400).json({ error: `Action ${action} not found` });
+
+            default:
+                return res.status(400).json({ error: `Unknown action: ${action}` });
         }
     } catch (e: any) {
         console.error('API Error:', e);
-        if (!res.headersSent) {
-            return res.status(500).json({ error: e.message });
-        }
-        res.end();
+        if (!res.headersSent) res.status(500).json({ error: e.message });
+        else res.end();
     }
 }

@@ -6,7 +6,8 @@
   ],
   "functions": {
     "api/data.ts": {
-      "maxDuration": 30
+      "maxDuration": 60,
+      "memory": 1024
     }
   }
 }
