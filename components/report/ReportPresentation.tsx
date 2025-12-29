@@ -38,15 +38,13 @@ const AIComparativeAnalysis: React.FC<{ prompt: string; title: string }> = ({ pr
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt })
         });
+        
         if (!res.ok) throw new Error('API Error');
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader!.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          if (isMounted) setContent(prev => prev + chunk);
-        }
+        
+        // STABILITY FIX: Use JSON instead of streaming to prevent Vercel Serverless Function errors
+        const data = await res.json();
+        if (isMounted) setContent(data.text || '');
+        
       } catch (e) {
         if (isMounted) setContent('Ошибка загрузки анализа ИИ. Попробуйте позже.');
       } finally {

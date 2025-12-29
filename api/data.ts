@@ -45,48 +45,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        if (action === 'gemini-proxy') {
-            if (req.method !== 'POST') return res.status(405).end();
-            const { prompt, tools } = req.body;
-            if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
-
-            // Lazy load @google/genai to avoid startup penalty if not used
-            const { GoogleGenAI } = await import('@google/genai');
-
-            // Randomly select one of the available API keys
-            const keys = [
-                process.env.API_KEY,
-                process.env.API_KEY_1,
-                process.env.API_KEY_2,
-                process.env.API_KEY_3,
-                process.env.API_KEY_4
-            ].filter(Boolean);
-            
-            const randomKey = keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : process.env.API_KEY;
-
-            if (!randomKey) {
-                return res.status(500).json({ error: 'API Keys are not configured.' });
-            }
-
-            const ai = new GoogleGenAI({ apiKey: randomKey as string });
-            const model = 'gemini-3-flash-preview';
-
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader('Transfer-Encoding', 'chunked');
-
-            const responseStream = await ai.models.generateContentStream({
-                model,
-                contents: prompt,
-                config: { temperature: 0.7, tools: tools || [] }
-            });
-
-            for await (const chunk of responseStream) {
-                const text = chunk.text;
-                if (text) res.write(text);
-            }
-            return res.end();
-        }
-
         switch (action) {
             case 'get-okb':
                 return res.status(200).json(await getOKBData());

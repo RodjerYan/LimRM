@@ -172,7 +172,7 @@ export const streamPackagingInsights = async (
     return streamResponse(prompt, onChunk, onError, signal);
 };
 
-// Updated: Accepts tools argument
+// Updated: Now handles simple JSON response instead of stream to fix Vercel 500 errors
 async function streamResponse(
     prompt: string,
     onChunk: (chunk: string) => void,
@@ -196,16 +196,14 @@ async function streamResponse(
             throw new Error(errorData.error || `Ошибка сервера: ${response.statusText}`);
         }
 
-        if (!response.body) throw new Error('Ответ не содержит тела.');
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            onChunk(decoder.decode(value, { stream: true }));
+        // STABILITY FIX: switched from streaming to simple JSON response
+        const data = await response.json();
+        if (data && data.text) {
+            onChunk(data.text);
+        } else {
+            throw new Error('Пустой ответ от AI');
         }
+
     } catch (error) {
         if ((error as Error).name !== 'AbortError') {
              onError(error as Error);
