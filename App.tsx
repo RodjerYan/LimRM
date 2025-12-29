@@ -12,6 +12,7 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import ReportPresentation from './components/report/ReportPresentation';
 
 import { 
     AggregatedDataRow, 
@@ -37,7 +38,7 @@ const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
-    const [activeModule, setActiveModule] = useState('adapta');
+    const [activeModule, setActiveModule] = useState('amp');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
@@ -168,12 +169,12 @@ const App: React.FC = () => {
                         applyState(cloudSnapshot); 
                         setDbStatus('ready');
                         addNotification('Загружен Master Snapshot из облака', 'success');
-                        setIsRestoring(false); setActiveModule('amp'); return;
+                        setIsRestoring(false); return;
                     }
                 }
                 const saved = await loadAnalyticsState();
                 if (saved && saved.allData?.length > 0) {
-                    applyState(saved); setDbStatus('ready'); setActiveModule('amp');
+                    applyState(saved); setDbStatus('ready');
                 } else setDbStatus('empty');
             } catch (e) { setDbStatus('empty'); } finally { setIsRestoring(false); }
         };
@@ -211,7 +212,7 @@ const App: React.FC = () => {
 
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+            const response = await fetch(`/api/full-cache?t=${Date.now()}`);
             if (response.ok) cacheData = await response.json();
         } catch (error) {}
 
@@ -365,6 +366,9 @@ const App: React.FC = () => {
                     </div>
                 </div>
                 <div className="py-8 px-4 lg:px-8">
+                    {activeModule === 'report-2025' && (
+                        <ReportPresentation />
+                    )}
                     {activeModule === 'adapta' && (
                         <Adapta processingState={processingState} onStartProcessing={() => {}} onStartCloudProcessing={handleStartCloudProcessing} onFileProcessed={() => {}} onProcessingStateChange={() => {}} okbData={okbData} okbStatus={okbStatus} onOkbStatusChange={setOkbStatus} onOkbDataChange={setOkbData} disabled={processingState.isProcessing} unidentifiedCount={unidentifiedRows.length} activeClientsCount={allActiveClients.length} uploadedData={allData} dbStatus={dbStatus} onStartEdit={setEditingClient} />
                     )}

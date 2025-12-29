@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon, ChartBarIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -9,6 +9,7 @@ interface NavigationProps {
 
 const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     const navItems = [
+        { id: 'report-2025', label: 'ИТОГИ 2025 (Отчет)', icon: <ChartBarIcon small /> },
         { id: 'adapta', label: 'ADAPTA (Данные)', icon: <DataIcon small /> },
         { id: 'amp', label: 'AMP (Аналитика)', icon: <AnalyticsIcon small /> },
         { id: 'dashboard', label: 'Дашборд План/Факт', icon: <TargetIcon small /> },
@@ -29,13 +30,8 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                             GP
                             <div className="absolute -top-6 -right-4 w-10 h-10 pointer-events-none transform -rotate-6 filter drop-shadow-lg z-20">
                                 <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    {/* Red Hat Body - Tilted and floppy */}
                                     <path d="M12 50 L 30 6 C 40 4 52 18 54 32 L 48 50 Z" fill="#EF4444" />
-                                    
-                                    {/* White Fur Trim */}
                                     <rect x="6" y="48" width="48" height="12" rx="6" fill="white" />
-                                    
-                                    {/* White Pom Pom */}
                                     <circle cx="54" cy="32" r="7" fill="white" />
                                 </svg>
                             </div>

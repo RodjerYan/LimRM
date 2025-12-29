@@ -1,4 +1,3 @@
-
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OkbDataRow } from '../../types';
 import { Readable } from 'stream';
@@ -144,7 +143,7 @@ function norm(str: string): string { return String(str || '').toLowerCase().repl
 export async function getFullCoordsCache(): Promise<any> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID })) as any;
-    const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
+    const sheetTitles = (spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[]) || [];
     if (sheetTitles.length === 0) return {};
     const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges })) as any;

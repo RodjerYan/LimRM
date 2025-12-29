@@ -1,1 +1,1 @@
-export const config = { runtime: 'nodejs' }; export default (req: any, res: any) => res.status(404).send('Moved to /api/data');
+export {};

@@ -1,5 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenAI } from "@google/genai";
 import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
 import { 
@@ -7,6 +8,7 @@ import {
     getOKBAddresses, 
     batchUpdateOKBStatus, 
     listFilesForYear, 
+    listFilesForMonth,
     fetchFileContent, 
     getGoogleDriveClient,
     loadMasterSnapshot,
@@ -31,10 +33,30 @@ const MOCK_ZONES = {
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // Определяем действие либо из query.action (от Vercel rewrites), либо из прямого пути
     const action = (req.query.action as string) || '';
 
     try {
         switch (action) {
+            // --- AI PROXY (Consolidated) ---
+            case 'gemini-proxy': {
+                if (req.method !== 'POST') return res.status(405).end();
+                const { prompt, tools } = req.body;
+                if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+                const model = 'gemini-3-flash-preview';
+
+                const result = await ai.models.generateContent({
+                    model,
+                    contents: prompt,
+                    config: { temperature: 0.7, tools: tools || [] }
+                });
+
+                return res.status(200).send(result.text);
+            }
+
+            // --- DATA OPERATIONS ---
             case 'get-okb': {
                 const okbData = await getOKBData();
                 res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
@@ -59,13 +81,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const mode = req.query.mode as string;
                 if (mode === 'metadata') {
                     const drive = await getGoogleDriveClient();
-                    const files = await listFilesForYear(year);
+                    const monthStr = req.query.month as string;
+                    const files = monthStr ? await listFilesForMonth(year, parseInt(monthStr, 10)) : await listFilesForYear(year);
                     if (files.length === 0) return res.status(200).json({ version: 'none' });
                     const meta = await drive.files.get({ fileId: files[0].id, fields: 'modifiedTime, size' });
                     return res.status(200).json({ versionHash: `${meta.data.modifiedTime}-${meta.data.size}-${files.length}` });
                 }
                 if (mode === 'list') {
-                    return res.status(200).json(await listFilesForYear(year));
+                    const monthStr = req.query.month as string;
+                    return res.status(200).json(monthStr ? await listFilesForMonth(year, parseInt(monthStr, 10)) : await listFilesForYear(year));
                 }
                 if (req.query.fileId) {
                     const offset = parseInt(req.query.offset as string || '0', 10);
@@ -87,7 +111,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(405).end();
             }
             case 'full-cache': return res.status(200).json(await getFullCoordsCache());
-            case 'get-address': {
+            case 'get-address': 
+            case 'get-cached-address': {
                 const resAddr = await getAddressFromCache(req.query.rmName as string, req.query.address as string);
                 return resAddr ? res.status(200).json(resAddr) : res.status(404).end();
             }
@@ -119,7 +144,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
                 return res.status(200).json(MOCK_ZONES);
             }
-            default: return res.status(400).json({ error: 'Invalid action' });
+            default: return res.status(400).json({ error: `Action ${action} not found` });
         }
     } catch (e: any) {
         console.error('API Error:', e);
