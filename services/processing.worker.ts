@@ -54,6 +54,20 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     return '';
 };
 
+// Функция безопасного парсинга чисел (удаляет пробелы, NBSP и обрабатывает запятые)
+const parseCleanFloat = (val: any): number => {
+    if (typeof val === 'number') return val;
+    if (!val) return 0;
+    
+    const strVal = String(val);
+    // 1. Удаляем все виды пробелов (обычные, неразрывные и т.д.)
+    // 2. Заменяем запятую на точку
+    const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
+    
+    const floatVal = parseFloat(cleaned);
+    return isNaN(floatVal) ? 0 : floatVal;
+};
+
 const getCanonicalRegion = (row: any): string => {
     const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
@@ -211,8 +225,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             };
         }
 
-        const weight = parseFloat(String(findValueInRow(row, ['вес', 'количество']) || '0').replace(',', '.'));
-        if (!isNaN(weight)) state_aggregatedData[groupKey].fact += weight;
+        // КРИТИЧНОЕ ИСПРАВЛЕНИЕ: Расширенный список ключей и безопасный парсинг чисел с пробелами
+        const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
+        const weight = parseCleanFloat(weightRaw);
+        
+        state_aggregatedData[groupKey].fact += weight;
 
         if (!state_uniquePlottableClients.has(normAddr)) {
             const okb = state_okbCoordIndex.get(normAddr);
@@ -237,7 +254,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         const pt = state_uniquePlottableClients.get(normAddr);
         if (pt) {
-            pt.fact = (pt.fact || 0) + (isNaN(weight) ? 0 : weight);
+            pt.fact = (pt.fact || 0) + weight;
             state_aggregatedData[groupKey].clients.set(normAddr, pt);
         }
     }
