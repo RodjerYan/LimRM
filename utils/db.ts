@@ -1,9 +1,8 @@
 
-
-import { AggregatedDataRow, UnidentifiedRow, MapPoint, OkbDataRow, OkbStatus } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-const DB_VERSION = 2; // Повышаем версию для обновления структуры
+const DB_VERSION = 3; 
 const STORE_NAME = 'app_state';
 
 const initDB = (): Promise<IDBDatabase> => {
@@ -15,6 +14,10 @@ const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
+      // Clean up old stores if they exist from previous versions
+      if (db.objectStoreNames.contains('okb_cache')) {
+        db.deleteObjectStore('okb_cache');
+      }
     };
 
     request.onsuccess = () => resolve(request.result);
@@ -23,7 +26,7 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Сохранение всего состояния аналитики и справочников
+ * Сохранение состояния аналитики (только легкие данные: фильтры, агрегаты, но не сырая база)
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
@@ -32,7 +35,6 @@ export const saveAnalyticsState = async (state: {
   okbData: OkbDataRow[];
   okbStatus: OkbStatus | null;
   dateRange?: string;
-  // FIX: Added totalRowsProcessed to ensure full analytics state is persisted.
   totalRowsProcessed: number;
   versionHash: string;
 }) => {
@@ -40,7 +42,11 @@ export const saveAnalyticsState = async (state: {
   const tx = db.transaction(STORE_NAME, 'readwrite');
   const store = tx.objectStore(STORE_NAME);
   
-  store.put(state, 'current_state');
+  // Explicitly EXCLUDE the heavy raw OKB data from app state persistence
+  // We rely on the API cache for this now.
+  const { okbData, ...stateToSave } = state; 
+  
+  store.put(stateToSave, 'current_state');
   
   return new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -53,19 +59,27 @@ export const saveAnalyticsState = async (state: {
  */
 export const loadAnalyticsState = async (): Promise<any | null> => {
   const db = await initDB();
+  
   const tx = db.transaction(STORE_NAME, 'readonly');
-  const store = tx.objectStore(STORE_NAME);
-  const request = store.get('current_state');
+  const stateStore = tx.objectStore(STORE_NAME);
 
   return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result || null);
-    request.onerror = () => reject(request.error);
+      const req = stateStore.get('current_state');
+      req.onsuccess = () => {
+          const result = req.result;
+          if (result) {
+              // Return state with empty okbData, app will fetch it from API if needed
+              resolve({ ...result, okbData: [] });
+          } else {
+              resolve(null);
+          }
+      };
+      req.onerror = () => reject(req.error);
   });
 };
 
 export const clearAnalyticsState = async () => {
   const db = await initDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
-  const store = tx.objectStore(STORE_NAME);
-  store.delete('current_state');
+  tx.objectStore(STORE_NAME).delete('current_state');
 };

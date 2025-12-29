@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
@@ -12,20 +13,27 @@ interface OKBManagementProps {
 const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
     const [isFetching, setIsFetching] = useState(false);
 
-    const handleFetchData = useCallback(async () => {
+    // Direct fetch function relying on Server-Side Caching (Vercel CDN)
+    const handleFetchData = useCallback(async (forceUpdate = false) => {
         setIsFetching(true);
-        onStatusChange({ status: 'loading', message: 'Автоматическая загрузка данных ОКБ...' });
+        onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление данных...' : 'Загрузка базы ОКБ...' });
+        
         try {
-            const response = await fetch('/api/get-okb');
+            // Add timestamp if forceUpdate is true to bypass browser cache, 
+            // but Vercel CDN might still return cached data if s-maxage hasn't expired.
+            const url = forceUpdate ? `/api/get-okb?t=${Date.now()}` : '/api/get-okb';
+            
+            const response = await fetch(url);
             if (!response.ok) {
                 const errorData = await response.json();
                 throw new Error(errorData.details || errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);
             }
             const data: OkbDataRow[] = await response.json();
+            
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
-                message: `ОКБ успешно загружена.`,
+                message: `ОКБ успешно загружена (прямое подключение).`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
                 coordsCount: data.filter(d => d.lat && d.lon).length,
@@ -39,8 +47,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
     useEffect(() => {
         if (!status) {
-            // Автоматическая загрузка при старте (если статус отсутствует)
-            handleFetchData();
+            // Auto-load on mount
+            handleFetchData(false);
         }
     }, [status, handleFetchData]);
 
@@ -106,7 +114,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
                 {/* Action Button */}
                 <button
-                    onClick={handleFetchData}
+                    onClick={() => handleFetchData(true)}
                     disabled={isLoading || disabled}
                     className="w-full relative overflow-hidden group/btn bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:from-gray-700 disabled:to-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg shadow-indigo-900/20 transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
                 >
