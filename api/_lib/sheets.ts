@@ -19,24 +19,36 @@ const ROOT_FOLDERS: Record<string, string> = {
     '2026': '1S3O-kl_ct4dfh11uG8rLRDeNUVeF3o17'
 };
 
-// Lazy load googleapis to prevent cold start timeouts
+// Cache the google library instance to avoid repeated dynamic imports
+let googleLibCache: any = null;
+
 async function getGoogleLib() {
+    if (googleLibCache) return googleLibCache;
     try {
+        console.log('Dynamically importing googleapis...');
         const mod = await import('googleapis');
-        return mod.google;
+        googleLibCache = mod.google;
+        return googleLibCache;
     } catch (e) {
+        console.error('Failed to import googleapis:', e);
         throw new Error('Failed to load googleapis library. Check dependencies.');
     }
 }
 
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
+    if (!serviceAccountKey) {
+        console.error('GOOGLE_SERVICE_ACCOUNT_KEY is not set');
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
+    }
     
     let credentials;
     try {
-        credentials = typeof serviceAccountKey === 'string' ? JSON.parse(serviceAccountKey) : serviceAccountKey;
+        // Handle escaped newlines which often happen when copying to env vars
+        const keyString = typeof serviceAccountKey === 'string' ? serviceAccountKey.replace(/\\n/g, '\n') : serviceAccountKey;
+        credentials = typeof keyString === 'string' ? JSON.parse(keyString) : keyString;
     } catch (e) {
+        console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY', e);
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
     }
 
@@ -60,34 +72,44 @@ export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
 }
 
 export async function loadMasterSnapshot(): Promise<any | null> {
-    const drive = await getGoogleDriveClient();
-    const files = await drive.files.list({
-        q: `'${SNAPSHOT_FOLDER_ID}' in parents and name = '${SNAPSHOT_FILENAME}' and trashed = false`,
-        fields: 'files(id, name, modifiedTime)'
-    });
-    if (!files.data.files || files.data.files.length === 0) return null;
-    const res = await drive.files.get({ fileId: files.data.files[0].id!, alt: 'media' });
-    return res.data;
+    try {
+        const drive = await getGoogleDriveClient();
+        const files = await drive.files.list({
+            q: `'${SNAPSHOT_FOLDER_ID}' in parents and name = '${SNAPSHOT_FILENAME}' and trashed = false`,
+            fields: 'files(id, name, modifiedTime)'
+        });
+        if (!files.data.files || files.data.files.length === 0) return null;
+        const res = await drive.files.get({ fileId: files.data.files[0].id!, alt: 'media' });
+        return res.data;
+    } catch (e) {
+        console.error('Error loading master snapshot:', e);
+        throw e;
+    }
 }
 
 export async function saveMasterSnapshot(data: any): Promise<string> {
-    const drive = await getGoogleDriveClient();
-    const files = await drive.files.list({
-        q: `'${SNAPSHOT_FOLDER_ID}' in parents and name = '${SNAPSHOT_FILENAME}' and trashed = false`,
-        fields: 'files(id)'
-    });
-    const content = JSON.stringify(data);
-    const media = { mimeType: 'application/json', body: Readable.from([content]) };
-    if (files.data.files && files.data.files.length > 0) {
-        await drive.files.update({ fileId: files.data.files[0].id!, media });
-        return files.data.files[0].id!;
-    } else {
-        const res = await drive.files.create({
-            requestBody: { name: SNAPSHOT_FILENAME, parents: [SNAPSHOT_FOLDER_ID], mimeType: 'application/json' },
-            media: media,
-            fields: 'id'
+    try {
+        const drive = await getGoogleDriveClient();
+        const files = await drive.files.list({
+            q: `'${SNAPSHOT_FOLDER_ID}' in parents and name = '${SNAPSHOT_FILENAME}' and trashed = false`,
+            fields: 'files(id)'
         });
-        return res.data.id!;
+        const content = JSON.stringify(data);
+        const media = { mimeType: 'application/json', body: Readable.from([content]) };
+        if (files.data.files && files.data.files.length > 0) {
+            await drive.files.update({ fileId: files.data.files[0].id!, media });
+            return files.data.files[0].id!;
+        } else {
+            const res = await drive.files.create({
+                requestBody: { name: SNAPSHOT_FILENAME, parents: [SNAPSHOT_FOLDER_ID], mimeType: 'application/json' },
+                media: media,
+                fields: 'id'
+            });
+            return res.data.id!;
+        }
+    } catch (e) {
+        console.error('Error saving master snapshot:', e);
+        throw e;
     }
 }
 
@@ -99,6 +121,7 @@ async function callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
         } catch (error: any) {
             attempt++;
             const status = error.response?.status || error.code;
+            console.warn(`API call failed (attempt ${attempt}):`, error.message);
             if (attempt > 3 || (status !== 429 && status < 500)) throw error;
             await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
         }
@@ -106,17 +129,22 @@ async function callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function getOKBData(): Promise<OkbDataRow[]> {
-  const sheets = await getGoogleSheetsClient();
-  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:P` })) as any;
-  const rows = res.data.values;
-  if (!rows || rows.length < 2) return [];
-  const header = rows[0].map((h: any) => String(h || '').trim());
-  return rows.slice(1).map((rowArray: any[]) => {
-    if (!rowArray || rowArray.length === 0) return null;
-    const row: any = {};
-    header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
-    return row as OkbDataRow;
-  }).filter((row: any): row is OkbDataRow => row !== null);
+  try {
+      const sheets = await getGoogleSheetsClient();
+      const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:P` })) as any;
+      const rows = res.data.values;
+      if (!rows || rows.length < 2) return [];
+      const header = rows[0].map((h: any) => String(h || '').trim());
+      return rows.slice(1).map((rowArray: any[]) => {
+        if (!rowArray || rowArray.length === 0) return null;
+        const row: any = {};
+        header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
+        return row as OkbDataRow;
+      }).filter((row: any): row is OkbDataRow => row !== null);
+  } catch (e) {
+      console.error('Error fetching OKB data:', e);
+      throw e;
+  }
 }
 
 export async function getOKBAddresses(): Promise<string[]> {
