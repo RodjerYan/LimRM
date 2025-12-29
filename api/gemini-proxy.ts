@@ -1,18 +1,21 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenAI } from '@google/genai';
 
-// CRITICAL: Force Node.js runtime for Google GenAI compatibility
-export const runtime = 'nodejs';
+// Explicitly set Node.js 20.x runtime for Vercel
+export const runtime = "nodejs20.x";
+
+export const config = {
+    maxDuration: 60,
+    memory: 1024,
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Set CORS headers
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    // Unified CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
+    res.setHeader('Access-Control-Allow-Headers', '*');
 
     if (req.method === 'OPTIONS') {
         res.status(200).end();
@@ -25,9 +28,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { prompt, tools } = req.body;
         if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-        // Dynamic import to ensure proper bundling in Node.js runtime
-        const { GoogleGenAI } = await import('@google/genai');
-
         const keys = [
             process.env.API_KEY,
             process.env.API_KEY_1,
@@ -39,19 +39,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const randomKey = keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : process.env.API_KEY;
 
         if (!randomKey) {
-            return res.status(500).json({ error: 'API Keys are not configured.' });
+            console.error("API Keys missing in environment variables");
+            return res.status(500).json({ error: 'Server configuration error: API Keys not found.' });
         }
 
+        // Correct SDK usage for @google/genai v1.2.0+
         const ai = new GoogleGenAI({ apiKey: randomKey as string });
         const model = 'gemini-3-flash-preview';
 
-        // Standard generation (No Streaming for Vercel Serverless Stability)
         const response = await ai.models.generateContent({
             model,
             contents: prompt,
             config: { temperature: 0.7, tools: tools || [] }
         });
 
+        // The .text property is a getter in the new SDK
         return res.status(200).json({ text: response.text });
 
     } catch (e: any) {
