@@ -1,5 +1,6 @@
 
-import { Readable } from 'node:stream';
+import { Readable } from 'stream';
+import { google } from 'googleapis';
 import type { sheets_v4, drive_v3 } from 'googleapis';
 
 // Интерфейс для строки данных из таблицы
@@ -19,54 +20,35 @@ const ROOT_FOLDERS: Record<string, string> = {
     '2026': '1S3O-kl_ct4dfh11uG8rLRDeNUVeF3o17'
 };
 
-// Cache the google library instance to avoid repeated dynamic imports
-let googleLibCache: any = null;
-
-async function getGoogleLib() {
-    if (googleLibCache) return googleLibCache;
-    try {
-        console.log('Dynamically importing googleapis...');
-        const mod = await import('googleapis');
-        googleLibCache = mod.google;
-        return googleLibCache;
-    } catch (e) {
-        console.error('Failed to import googleapis:', e);
-        throw new Error('Failed to load googleapis library. Check dependencies.');
-    }
-}
-
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) {
-        console.error('GOOGLE_SERVICE_ACCOUNT_KEY is not set');
+        console.error('CRITICAL: GOOGLE_SERVICE_ACCOUNT_KEY is missing from environment variables.');
         throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
     }
     
     let credentials;
     try {
-        // Handle escaped newlines which often happen when copying to env vars on Vercel
-        // Also remove potential surrounding quotes if the user added them manually
         let keyString = serviceAccountKey.trim();
         
-        // Remove leading/trailing quotes if present (common mistake)
-        if (keyString.startsWith('"') && keyString.endsWith('"')) {
+        // Remove enclosing quotes if present (common copy-paste error)
+        if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
+            (keyString.startsWith("'") && keyString.endsWith("'"))) {
             keyString = keyString.slice(1, -1);
         }
         
+        // Unescape newlines (handles both literal \n characters and escaped newlines)
         keyString = keyString.replace(/\\n/g, '\n');
         
         credentials = JSON.parse(keyString);
-        
-        // In case it was double-stringified (e.g. "{\"type\":...}")
-        if (typeof credentials === 'string') {
-            credentials = JSON.parse(credentials);
-        }
-    } catch (e) {
-        console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY', e);
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is valid JSON.');
+    } catch (e: any) {
+        console.error('CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.');
+        console.error('Error details:', e.message);
+        // Log first few chars to debug format without leaking full key
+        console.error('Key (first 50 chars):', serviceAccountKey.substring(0, 50));
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Check Vercel logs for details.');
     }
 
-    const google = await getGoogleLib();
     return new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
@@ -75,13 +57,11 @@ async function getAuthClient() {
 
 export async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = await getAuthClient();
-    const google = await getGoogleLib();
     return google.sheets({ version: 'v4', auth });
 }
 
 export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     const auth = await getAuthClient();
-    const google = await getGoogleLib();
     return google.drive({ version: 'v3', auth });
 }
 
@@ -97,8 +77,8 @@ export async function loadMasterSnapshot(): Promise<any | null> {
         return res.data;
     } catch (e: any) {
         console.error('Error loading master snapshot:', e.message);
-        if (e.message.includes('insufficient authentication scopes') || e.code === 403) {
-             throw new Error('Service Account does not have permission to access the Snapshot Folder. Share folder ' + SNAPSHOT_FOLDER_ID + ' with the service account email.');
+        if (e.message?.includes('insufficient authentication scopes') || e.code === 403) {
+             throw new Error(`Service Account lacks permission. Share folder ${SNAPSHOT_FOLDER_ID} with client_email.`);
         }
         throw e;
     }
@@ -140,9 +120,8 @@ async function callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
             const status = error.response?.status || error.code;
             console.warn(`API call failed (attempt ${attempt}):`, error.message);
             
-            // Check for permission errors specifically
             if (status === 403 || (error.message && error.message.includes('permission'))) {
-                 throw new Error('Google API Permission Error. Ensure Service Account has Editor access to the Spreadsheet/Drive folder.');
+                 throw new Error('Google API Permission Error. Ensure Service Account has Editor access.');
             }
 
             if (attempt > 3 || (status !== 429 && status < 500)) throw error;
