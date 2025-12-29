@@ -19,13 +19,12 @@ import {
     updateCacheCoords,
     updateAddressInCache,
     deleteAddressFromCache
-} from './lib/sheets.js';
+} from './_lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = (req.query.action as string) || '';
 
     try {
-        // --- GEMINI PROXY ---
         if (action === 'gemini-proxy') {
             if (req.method !== 'POST') return res.status(405).end();
             const { prompt, tools } = req.body;
@@ -50,7 +49,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.end();
         }
 
-        // --- DATA OPERATIONS ---
         switch (action) {
             case 'get-okb':
                 return res.status(200).json(await getOKBData());
