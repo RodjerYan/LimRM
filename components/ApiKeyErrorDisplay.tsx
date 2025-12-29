@@ -12,28 +12,23 @@ const ApiKeyErrorDisplay: React.FC = () => (
                 <p className="font-semibold text-white mb-3">Чек-лист для Vercel:</p>
                 <ol className="list-decimal list-inside space-y-3 text-slate-400">
                     <li>
-                        <strong>Google Service Account Key:</strong>
+                        <strong>Google Service Account Key (САМОЕ ВАЖНОЕ):</strong>
                         <p className="ml-4 text-sm mt-1 text-slate-500">
                             Проверьте переменную <code>GOOGLE_SERVICE_ACCOUNT_KEY</code>.
                             <br/>
                             <span className="text-amber-400 font-bold">РЕКОМЕНДАЦИЯ:</span> Vercel часто ломает JSON с переносами строк.
                             Самый надежный способ — закодировать файл ключа в <strong>Base64</strong>:
                             <br/>
-                            <code className="bg-black/50 px-2 py-1 rounded mt-1 block w-fit">base64 -i service-account.json</code>
-                            Скопируйте полученную строку и вставьте её в переменную. Система автоматически распознает Base64.
+                            <code className="bg-black/50 px-2 py-1 rounded mt-1 block w-fit border border-gray-600 text-emerald-400">base64 -i service-account.json</code>
+                            <br/>
+                            Скопируйте полученную длинную строку (без переносов) и вставьте её в значение переменной в Vercel. Система автоматически распознает Base64 и декодирует его.
                         </p>
                     </li>
                     <li>
                         <strong>Доступ к Google Drive / Sheets:</strong>
                         <p className="ml-4 text-sm mt-1 text-slate-500">
                             Откройте файл JSON ключа, найдите поле <code>client_email</code>.
-                            Скопируйте этот email и дайте ему доступ <strong>"Редактор"</strong> к:
-                            <ul className="list-disc list-inside ml-2 mt-1">
-                                <li>Таблице с базой ОКБ (ID: <code>13Hkru...</code>)</li>
-                                <li>Таблице с кэшем (ID: <code>1peEj5...</code>)</li>
-                                <li>Папке для снепшотов (ID: <code>15Mu4B...</code>)</li>
-                                <li>Папкам с данными 2025/2026 (ID: <code>1uJX1d...</code>, <code>1S3O-kl...</code>)</li>
-                            </ul>
+                            Скопируйте этот email и дайте ему доступ <strong>"Редактор"</strong> к таблицам и папкам в Google Drive.
                         </p>
                     </li>
                     <li>
@@ -45,7 +40,7 @@ const ApiKeyErrorDisplay: React.FC = () => (
                      <li>
                         <strong>Redeploy:</strong>
                         <p className="ml-4 text-sm mt-1 text-slate-500">
-                            После изменения переменных обязательно сделайте <strong>Redeploy</strong> в Vercel.
+                            После изменения переменных обязательно сделайте <strong>Redeploy</strong> в Vercel, чтобы изменения вступили в силу.
                         </p>
                     </li>
                 </ol>

@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 import type { sheets_v4, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 
-// --- EMBEDDED SHEET LIB LOGIC (To resolve ERR_MODULE_NOT_FOUND) ---
+// --- EMBEDDED SHEET LIB LOGIC ---
 
 interface OkbDataRow {
     [key: string]: any;
@@ -32,40 +32,52 @@ async function getAuthClient() {
     
     let credentials;
     try {
+        // 1. Clean the input string
         let keyString = rawKey.trim();
 
-        // 1. Try Base64 decoding if it doesn't look like JSON (starts with '{')
-        // This is the most reliable fix for Vercel newline issues.
-        if (!keyString.startsWith('{')) {
-            try {
-                const decoded = Buffer.from(keyString, 'base64').toString('utf-8');
-                // Check if decoded string looks like JSON
-                if (decoded.trim().startsWith('{')) {
-                    keyString = decoded.trim();
-                }
-            } catch (e) {
-                // Ignore base64 error, assume it might be a raw string with issues
-            }
-        }
-
-        // 2. Remove outer quotes (common Vercel env var copy-paste artifact)
+        // 2. Remove accidental outer quotes (common Vercel/Terminal copy-paste artifact)
         if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
             (keyString.startsWith("'") && keyString.endsWith("'"))) {
             keyString = keyString.slice(1, -1);
         }
-        
-        // 3. Handle escaped newlines (Vercel often escapes \n to \\n)
+
+        // 3. Detect and decode Base64
+        // If it doesn't start with '{', it's extremely likely to be Base64
+        if (!keyString.startsWith('{')) {
+            try {
+                // Buffer.from handles whitespace in base64 strings gracefully usually, 
+                // but explicit stripping of newlines inside the base64 string helps.
+                const base64Clean = keyString.replace(/[\r\n\s]/g, '');
+                const decoded = Buffer.from(base64Clean, 'base64').toString('utf-8');
+                
+                // If decoding resulted in a JSON-like string, use it
+                if (decoded.trim().startsWith('{')) {
+                    keyString = decoded.trim();
+                }
+            } catch (e) {
+                // If decoding fails, assume it's a malformed raw string and proceed to try parsing it as is
+                console.warn('Tried Base64 decoding but failed, attempting raw parse.');
+            }
+        }
+
+        // 4. Handle escaped newlines
+        // Vercel UI often escapes '\n' to '\\n' when pasting multi-line strings. 
+        // We fix this for the 'private_key' field specifically later, or globally here.
         keyString = keyString.replace(/\\n/g, '\n');
         
+        // 5. Parse JSON
         credentials = JSON.parse(keyString);
         
-        // 4. Handle double-stringified JSON (sometimes happens in env vars)
+        // 6. Double-check if the value was double-stringified (JSON inside a string)
         if (typeof credentials === 'string') {
              credentials = JSON.parse(credentials);
         }
+
     } catch (e: any) {
         console.error('CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.');
         console.error('Error details:', e.message);
+        // Log a safe prefix to help debugging (first 10 chars)
+        console.error(`Key prefix received: ${rawKey.substring(0, 10)}...`);
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string or Base64 encoded JSON.');
     }
 
