@@ -61,7 +61,7 @@
     },
     {
       "path": "/api/get-okb",
-      "schedule": "0 5 * * *"
+      "schedule": "* * * * *"
     }
   ]
 }

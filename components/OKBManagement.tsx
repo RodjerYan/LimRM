@@ -16,7 +16,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
     // Direct fetch function relying on Server-Side Caching (Vercel CDN)
     const handleFetchData = useCallback(async (forceUpdate = false) => {
         setIsFetching(true);
-        onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление данных...' : 'Загрузка базы ОКБ...' });
+        onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление данных...' : 'Прямое подключение к серверу...' });
         
         try {
             // Add timestamp if forceUpdate is true to bypass browser cache, 
@@ -33,7 +33,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
-                message: `ОКБ успешно загружена (прямое подключение).`,
+                message: `ОКБ загружена (Server Cache: 60s).`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
                 coordsCount: data.filter(d => d.lat && d.lon).length,
@@ -47,7 +47,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
 
     useEffect(() => {
         if (!status) {
-            // Auto-load on mount
+            // Auto-load on mount if no status (which is always true on reload now)
             handleFetchData(false);
         }
     }, [status, handleFetchData]);
@@ -68,7 +68,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                     </div>
                     <div>
                         <h2 className="text-lg font-bold text-white leading-tight">База Клиентов (ОКБ)</h2>
-                        <p className="text-xs text-gray-400">Источник данных для анализа</p>
+                        <p className="text-xs text-gray-400">Источник данных (Auto-Sync 60s)</p>
                     </div>
                 </div>
 

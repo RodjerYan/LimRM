@@ -26,7 +26,8 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Сохранение состояния аналитики (только легкие данные: фильтры, агрегаты, но не сырая база)
+ * Сохранение состояния аналитики (только легкие данные: фильтры, агрегаты).
+ * КРИТИЧНО: Мы НЕ сохраняем okbData, чтобы каждый раз загружать свежую версию с сервера.
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
@@ -42,9 +43,9 @@ export const saveAnalyticsState = async (state: {
   const tx = db.transaction(STORE_NAME, 'readwrite');
   const store = tx.objectStore(STORE_NAME);
   
-  // Explicitly EXCLUDE the heavy raw OKB data from app state persistence
-  // We rely on the API cache for this now.
-  const { okbData, ...stateToSave } = state; 
+  // EXCLUDE okbData and okbStatus from persistence.
+  // This forces the app to re-fetch OKB from the API (which is cached on CDN) on every reload.
+  const { okbData, okbStatus, ...stateToSave } = state; 
   
   store.put(stateToSave, 'current_state');
   
@@ -68,8 +69,12 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
       req.onsuccess = () => {
           const result = req.result;
           if (result) {
-              // Return state with empty okbData, app will fetch it from API if needed
-              resolve({ ...result, okbData: [] });
+              // Return state with empty okbData, app will fetch it from API
+              resolve({ 
+                  ...result, 
+                  okbData: [],
+                  okbStatus: null 
+              });
           } else {
               resolve(null);
           }

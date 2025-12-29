@@ -13,11 +13,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const okbData = await getOKBData();
         
         // AGGRESSIVE SERVER-SIDE CACHING STRATEGY (Stale-While-Revalidate)
-        // s-maxage=86400: Кэш в CDN Vercel живет 24 часа.
-        // stale-while-revalidate=604800: Если кэш протух (старше 24ч, но моложе 7 дней), 
-        // сервер отдаст старую версию МГНОВЕННО, а в фоне обновит данные для следующего запроса.
-        // Это гарантирует, что пользователь никогда не ждет загрузку из Google Sheets.
-        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
+        // s-maxage=60: Кэш в CDN Vercel живет 60 секунд (обновление каждую минуту).
+        // stale-while-revalidate=604800: Если кэш протух, сервер отдает старую версию МГНОВЕННО,
+        // а в фоне запускает обновление. Cron-задача каждую минуту дергает этот эндпоинт, 
+        // чтобы данные всегда были "теплыми".
+        res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=604800');
         
         res.status(200).json(okbData);
     } catch (error) {
