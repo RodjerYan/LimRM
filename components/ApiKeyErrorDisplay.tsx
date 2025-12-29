@@ -15,7 +15,7 @@ const ApiKeyErrorDisplay: React.FC = () => (
                         <strong>Google Service Account Key:</strong>
                         <p className="ml-4 text-sm mt-1 text-slate-500">
                             Проверьте переменную <code>GOOGLE_SERVICE_ACCOUNT_KEY</code>.
-                            Вставьте <strong>весь</strong> JSON-файл целиком (начинается с <code>{</code> и заканчивается <code>}</code>).
+                            Вставьте <strong>весь</strong> JSON-файл целиком (начинается с <code>{'{'}</code> и заканчивается <code>{'}'}</code>).
                             Не добавляйте лишние кавычки вокруг JSON. Если ключ имеет переносы строк, это нормально.
                         </p>
                     </li>
