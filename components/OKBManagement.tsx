@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { OkbDataRow, OkbStatus } from '../types';
 import { LoaderIcon, SuccessIcon, ErrorIcon } from './icons';
@@ -19,24 +18,9 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         try {
             const response = await fetch('/api/get-okb');
             if (!response.ok) {
-                // Handle non-JSON errors (e.g. 500 HTML/Text from Vercel)
-                const text = await response.text();
-                let errorMessage = `Ошибка: ${response.status} ${response.statusText}`;
-                
-                try {
-                    const errorData = JSON.parse(text);
-                    if (errorData.error || errorData.details) {
-                        errorMessage = errorData.details || errorData.error;
-                    }
-                } catch (e) {
-                    // Response was not JSON, use the text body (likely "A server error has occurred")
-                    // Truncate if too long
-                    errorMessage = `Ошибка сервера (${response.status}): ${text.slice(0, 100)}`;
-                }
-                
-                throw new Error(errorMessage);
+                const errorData = await response.json();
+                throw new Error(errorData.details || errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);
             }
-            
             const data: OkbDataRow[] = await response.json();
             onDataChange(data);
             onStatusChange({
@@ -93,7 +77,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                     }`}>
                         {isLoading ? <LoaderIcon /> : isError ? <div className="w-4 h-4"><ErrorIcon /></div> : isReady ? <div className="w-4 h-4"><SuccessIcon /></div> : <div className="w-4 h-4 rounded-full bg-gray-500" />}
                     </div>
-                    <span className="text-sm font-medium truncate w-full" title={status?.message || ''}>
+                    <span className="text-sm font-medium truncate">
                         {status?.message || 'Ожидание действий...'}
                     </span>
                 </div>

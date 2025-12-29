@@ -1,62 +1,92 @@
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from "@google/genai";
 
-export const runtime = 'nodejs';
-
+// Configure for Vercel Edge runtime for optimal streaming performance.
 export const config = {
-    maxDuration: 60,
-    memory: 1024,
+  runtime: 'edge',
 };
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Unified CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', '*');
+/**
+ * Handles POST requests to proxy Gemini API calls.
+ * It takes a 'prompt' and optional 'tools' from the request body.
+ */
+export default async function handler(req: Request) {
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
+  try {
+    const { prompt, tools } = await req.json();
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: 'Prompt is required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
-    if (req.method !== 'POST') return res.status(405).end();
+    // Fix: Using process.env.API_KEY exclusively as per GenAI guidelines.
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
-    try {
-        const { prompt, tools } = req.body;
-        if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+    // Fix: Use 'gemini-3-flash-preview' for text tasks as per model selection guidelines.
+    const model = 'gemini-3-flash-preview';
 
-        const keys = [
-            process.env.API_KEY,
-            process.env.API_KEY_1,
-            process.env.API_KEY_2,
-            process.env.API_KEY_3,
-            process.env.API_KEY_4
-        ].filter(Boolean);
-
-        const randomKey = keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : process.env.API_KEY;
-
-        if (!randomKey) {
-            console.error("API Keys missing in environment variables");
-            return res.status(500).json({ error: 'Server configuration error: API Keys not found.' });
+    // Fix: Simplified content structure for text tasks as per GenAI guidelines.
+    const generateParams: any = {
+        model,
+        contents: prompt,
+        config: {
+            temperature: 0.7,
         }
+    };
 
-        // Correct SDK usage for @google/genai v1.2.0+
-        const ai = new GoogleGenAI({ apiKey: randomKey as string });
-        const model = 'gemini-3-flash-preview';
-
-        const response = await ai.models.generateContent({
-            model,
-            contents: prompt,
-            config: { temperature: 0.7, tools: tools || [] }
-        });
-
-        // Use the .text getter
-        return res.status(200).json({ text: response.text });
-
-    } catch (e: any) {
-        console.error('Gemini Proxy Error:', e);
-        return res.status(500).json({ error: e.message || 'Internal AI Error' });
+    // Attach tools if provided (e.g. { googleSearch: {} })
+    if (tools) {
+        generateParams.config.tools = tools;
     }
+
+    const responseStream = await ai.models.generateContentStream(generateParams);
+    
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+            for await (const chunk of responseStream) {
+              // Fix: Access the .text property directly instead of calling a method.
+              const chunkText = chunk.text;
+              if (chunkText) {
+                controller.enqueue(new TextEncoder().encode(chunkText));
+              }
+            }
+            controller.close();
+        } catch (streamError) {
+            console.error('Stream processing error:', streamError);
+            controller.error(streamError);
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+    });
+
+  } catch (error) {
+    console.error('Gemini proxy error:', error);
+    let errorMessage = 'An internal server error occurred.';
+    let statusCode = 500;
+    
+    if (error instanceof Error) {
+        errorMessage = error.message;
+        if ((error as any).status) {
+             statusCode = (error as any).status;
+        }
+    }
+    
+    return new Response(JSON.stringify({ error: 'Failed to get response from Gemini API', details: errorMessage }), {
+      status: statusCode,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 }

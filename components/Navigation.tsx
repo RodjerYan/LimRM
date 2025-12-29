@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon, ChannelIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -15,7 +15,6 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
         { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
         { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
         { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
-        { id: 'report', label: 'Отчет 2025', icon: <ChannelIcon small /> },
     ];
 
     return (
@@ -30,8 +29,13 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                             GP
                             <div className="absolute -top-6 -right-4 w-10 h-10 pointer-events-none transform -rotate-6 filter drop-shadow-lg z-20">
                                 <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    {/* Red Hat Body - Tilted and floppy */}
                                     <path d="M12 50 L 30 6 C 40 4 52 18 54 32 L 48 50 Z" fill="#EF4444" />
+                                    
+                                    {/* White Fur Trim */}
                                     <rect x="6" y="48" width="48" height="12" rx="6" fill="white" />
+                                    
+                                    {/* White Pom Pom */}
                                     <circle cx="54" cy="32" r="7" fill="white" />
                                 </svg>
                             </div>
@@ -67,7 +71,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                         <span className="text-gray-300">Система активна</span>
                     </div>
-                    <div className="text-[10px]">Версия 2.5.1 (by RodjerYan)</div>
+                    <div className="text-[10px]">Версия 2.5.0 (by RodjerYan)</div>
                 </div>
             </div>
         </nav>

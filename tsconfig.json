@@ -1,4 +1,3 @@
-
 {
   "compilerOptions": {
     "target": "es2022",
@@ -19,7 +18,6 @@
     "vite-env.d.ts"
   ],
   "exclude": [
-    "node_modules",
-    "api"
+    "node_modules"
   ]
 }
