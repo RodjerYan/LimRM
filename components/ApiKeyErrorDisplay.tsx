@@ -15,9 +15,12 @@ const ApiKeyErrorDisplay: React.FC = () => (
                         <strong>Google Service Account Key:</strong>
                         <p className="ml-4 text-sm mt-1 text-slate-500">
                             Проверьте переменную <code>GOOGLE_SERVICE_ACCOUNT_KEY</code>.
-                            Вставьте <strong>весь</strong> JSON-файл целиком (начинается с <code>{'{'}</code> и заканчивается <code>{'}'}</code>).
                             <br/>
-                            <span className="text-amber-400">Совет:</span> Если возникают ошибки парсинга (особенно с переносами строк), попробуйте закодировать весь JSON в <strong>Base64</strong> и вставить полученную строку. Система поддерживает оба формата.
+                            <span className="text-amber-400 font-bold">РЕКОМЕНДАЦИЯ:</span> Vercel часто ломает JSON с переносами строк.
+                            Самый надежный способ — закодировать файл ключа в <strong>Base64</strong>:
+                            <br/>
+                            <code className="bg-black/50 px-2 py-1 rounded mt-1 block w-fit">base64 -i service-account.json</code>
+                            Скопируйте полученную строку и вставьте её в переменную. Система автоматически распознает Base64.
                         </p>
                     </li>
                     <li>

@@ -5,7 +5,7 @@ import { google } from 'googleapis';
 import type { sheets_v4, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
 
-// --- EMBEDDED SHEET LIB LOGIC ---
+// --- EMBEDDED SHEET LIB LOGIC (To resolve ERR_MODULE_NOT_FOUND) ---
 
 interface OkbDataRow {
     [key: string]: any;
@@ -34,19 +34,21 @@ async function getAuthClient() {
     try {
         let keyString = rawKey.trim();
 
-        // 1. Try Base64 decoding if it doesn't look like JSON
+        // 1. Try Base64 decoding if it doesn't look like JSON (starts with '{')
+        // This is the most reliable fix for Vercel newline issues.
         if (!keyString.startsWith('{')) {
             try {
                 const decoded = Buffer.from(keyString, 'base64').toString('utf-8');
+                // Check if decoded string looks like JSON
                 if (decoded.trim().startsWith('{')) {
                     keyString = decoded.trim();
                 }
             } catch (e) {
-                // Ignore base64 error, assume it's raw string
+                // Ignore base64 error, assume it might be a raw string with issues
             }
         }
 
-        // 2. Remove outer quotes (common Vercel env var issue)
+        // 2. Remove outer quotes (common Vercel env var copy-paste artifact)
         if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
             (keyString.startsWith("'") && keyString.endsWith("'"))) {
             keyString = keyString.slice(1, -1);
@@ -57,7 +59,7 @@ async function getAuthClient() {
         
         credentials = JSON.parse(keyString);
         
-        // 4. Handle double-stringified JSON
+        // 4. Handle double-stringified JSON (sometimes happens in env vars)
         if (typeof credentials === 'string') {
              credentials = JSON.parse(credentials);
         }
