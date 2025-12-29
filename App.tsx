@@ -163,7 +163,15 @@ const App: React.FC = () => {
                 setDbStatus('loading');
                 const cloudRes = await fetch('/api/snapshot');
                 if (cloudRes.ok) {
-                    const cloudSnapshot = await cloudRes.json();
+                    // Try to parse JSON, handle if fails (e.g. 500 error page)
+                    let cloudSnapshot;
+                    try {
+                        cloudSnapshot = await cloudRes.json();
+                    } catch (e) {
+                        console.warn("Snapshot response was not JSON", e);
+                        cloudSnapshot = null;
+                    }
+
                     if (cloudSnapshot && cloudSnapshot.allData?.length > 0) {
                         applyState(cloudSnapshot); 
                         setDbStatus('ready');

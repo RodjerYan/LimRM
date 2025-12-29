@@ -1,6 +1,6 @@
 
-import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { Readable } from 'stream';
+import type { sheets_v4, drive_v3 } from 'googleapis';
 
 // Интерфейс для строки данных из таблицы
 export interface OkbDataRow {
@@ -19,6 +19,16 @@ const ROOT_FOLDERS: Record<string, string> = {
     '2026': '1S3O-kl_ct4dfh11uG8rLRDeNUVeF3o17'
 };
 
+// Lazy load googleapis to prevent cold start timeouts
+async function getGoogleLib() {
+    try {
+        const mod = await import('googleapis');
+        return mod.google;
+    } catch (e) {
+        throw new Error('Failed to load googleapis library. Check dependencies.');
+    }
+}
+
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
@@ -30,6 +40,7 @@ async function getAuthClient() {
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
     }
 
+    const google = await getGoogleLib();
     return new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
@@ -38,11 +49,13 @@ async function getAuthClient() {
 
 export async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = await getAuthClient();
+    const google = await getGoogleLib();
     return google.sheets({ version: 'v4', auth });
 }
 
 export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     const auth = await getAuthClient();
+    const google = await getGoogleLib();
     return google.drive({ version: 'v3', auth });
 }
 

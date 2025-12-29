@@ -1,7 +1,5 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from "@google/genai";
-import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
 import { 
     getOKBData, 
@@ -30,7 +28,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const { prompt, tools } = req.body;
             if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-            // Randomly select one of the available API keys to distribute load
+            // Lazy load @google/genai
+            const { GoogleGenAI } = await import('@google/genai');
+
+            // Randomly select one of the available API keys
             const keys = [
                 process.env.API_KEY,
                 process.env.API_KEY_1,
@@ -40,6 +41,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ].filter(Boolean);
             
             const randomKey = keys.length > 0 ? keys[Math.floor(Math.random() * keys.length)] : process.env.API_KEY;
+
+            if (!randomKey) {
+                return res.status(500).json({ error: 'API Keys are not configured.' });
+            }
 
             const ai = new GoogleGenAI({ apiKey: randomKey as string });
             const model = 'gemini-3-flash-preview';
@@ -66,6 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             case 'get-okb-status': {
                 if (req.method !== 'POST') return res.status(405).end();
+                
+                // Lazy load XLSX
+                const XLSX = await import('xlsx');
+                
                 const okbAddresses = await getOKBAddresses();
                 const buffer = Buffer.from(req.body.fileBase64, 'base64');
                 const workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -131,7 +140,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(200).json({ success: true });
 
             case 'geocode': {
-                // Return 404 to encourage client-side coordinates from OKB
                 return res.status(404).json({ error: 'Not found' });
             }
 
@@ -143,7 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
     } catch (e: any) {
         console.error('API Error:', e);
-        if (!res.headersSent) res.status(500).json({ error: e.message });
+        if (!res.headersSent) res.status(500).json({ error: e.message || 'Internal Server Error' });
         else res.end();
     }
 }
