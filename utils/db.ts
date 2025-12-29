@@ -2,7 +2,8 @@
 import { AggregatedDataRow, UnidentifiedRow, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-const DB_VERSION = 3; 
+// Увеличиваем версию, чтобы триггернуть удаление старого хранилища у пользователей
+const DB_VERSION = 4; 
 const STORE_NAME = 'app_state';
 
 const initDB = (): Promise<IDBDatabase> => {
@@ -14,7 +15,7 @@ const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
-      // Clean up old stores if they exist from previous versions
+      // Очищаем старое хранилище кэша, если оно есть
       if (db.objectStoreNames.contains('okb_cache')) {
         db.deleteObjectStore('okb_cache');
       }
@@ -26,8 +27,9 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Сохранение состояния аналитики (только легкие данные: фильтры, агрегаты).
- * КРИТИЧНО: Мы НЕ сохраняем okbData, чтобы каждый раз загружать свежую версию с сервера.
+ * Сохранение состояния аналитики.
+ * ВАЖНО: Мы удаляем okbData и okbStatus перед сохранением, чтобы при перезагрузке
+ * данные всегда тянулись с сервера.
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
@@ -43,8 +45,7 @@ export const saveAnalyticsState = async (state: {
   const tx = db.transaction(STORE_NAME, 'readwrite');
   const store = tx.objectStore(STORE_NAME);
   
-  // EXCLUDE okbData and okbStatus from persistence.
-  // This forces the app to re-fetch OKB from the API (which is cached on CDN) on every reload.
+  // Исключаем "тяжелые" данные из сохранения в IndexedDB
   const { okbData, okbStatus, ...stateToSave } = state; 
   
   store.put(stateToSave, 'current_state');
@@ -56,7 +57,8 @@ export const saveAnalyticsState = async (state: {
 };
 
 /**
- * Загрузка сохраненного состояния
+ * Загрузка сохраненного состояния.
+ * Возвращаем состояние без okbData - приложение должно запросить их через API.
  */
 export const loadAnalyticsState = async (): Promise<any | null> => {
   const db = await initDB();
@@ -69,7 +71,7 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
       req.onsuccess = () => {
           const result = req.result;
           if (result) {
-              // Return state with empty okbData, app will fetch it from API
+              // Возвращаем пустые okbData, чтобы спровоцировать fetch в компоненте
               resolve({ 
                   ...result, 
                   okbData: [],

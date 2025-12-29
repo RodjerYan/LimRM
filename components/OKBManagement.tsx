@@ -13,32 +13,33 @@ interface OKBManagementProps {
 const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
     const [isFetching, setIsFetching] = useState(false);
 
-    // Direct fetch function relying on Server-Side Caching (Vercel CDN)
+    // Только прямое подключение. Никакого IndexedDB.
     const handleFetchData = useCallback(async (forceUpdate = false) => {
         setIsFetching(true);
         onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление данных...' : 'Прямое подключение к серверу...' });
         
         try {
-            // Add timestamp if forceUpdate is true to bypass browser cache, 
-            // but Vercel CDN might still return cached data if s-maxage hasn't expired.
-            const url = forceUpdate ? `/api/get-okb?t=${Date.now()}` : '/api/get-okb';
+            // Добавляем timestamp для обхода кэша браузера, 
+            // но Vercel CDN все равно вернет кэшированную версию (s-maxage), если она свежая.
+            const url = `/api/get-okb?t=${Date.now()}`;
             
             const response = await fetch(url);
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.details || errorData.error || `Ошибка при загрузке ОКБ: ${response.statusText}`);
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.details || errorData.error || `Ошибка сервера: ${response.status} ${response.statusText}`);
             }
             const data: OkbDataRow[] = await response.json();
             
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
-                message: `ОКБ загружена (Server Cache: 60s).`,
+                message: `ОКБ загружена (Server Direct).`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
                 coordsCount: data.filter(d => d.lat && d.lon).length,
             });
         } catch (error) {
+            console.error("OKB Load Error:", error);
             onStatusChange({ status: 'error', message: (error as Error).message });
         } finally {
             setIsFetching(false);
@@ -46,8 +47,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
     }, [onStatusChange, onDataChange]);
 
     useEffect(() => {
-        if (!status) {
-            // Auto-load on mount if no status (which is always true on reload now)
+        // Автоматическая загрузка при старте, если данных нет
+        if (!status || status.status === 'idle') {
             handleFetchData(false);
         }
     }, [status, handleFetchData]);
@@ -86,7 +87,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                         {isLoading ? <LoaderIcon /> : isError ? <div className="w-4 h-4"><ErrorIcon /></div> : isReady ? <div className="w-4 h-4"><SuccessIcon /></div> : <div className="w-4 h-4 rounded-full bg-gray-500" />}
                     </div>
                     <span className="text-sm font-medium truncate">
-                        {status?.message || 'Ожидание действий...'}
+                        {status?.message || 'Ожидание подключения...'}
                     </span>
                 </div>
 
