@@ -21,42 +21,40 @@ import {
     deleteAddressFromCache
 } from './lib/sheets.js';
 
-const MOCK_ZONES = {
-    "type": "FeatureCollection",
-    "features": [
-        {
-            "type": "Feature",
-            "properties": { "name": "Линия боевого соприкосновения", "status": "line_of_contact" },
-            "geometry": { "type": "LineString", "coordinates": [[31.55, 46.52], [37.80, 50.15]] }
-        }
-    ]
-};
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Определяем действие либо из query.action (от Vercel rewrites), либо из прямого пути
     const action = (req.query.action as string) || '';
 
     try {
-        switch (action) {
-            // --- AI PROXY (Consolidated) ---
-            case 'gemini-proxy': {
-                if (req.method !== 'POST') return res.status(405).end();
-                const { prompt, tools } = req.body;
-                if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
+        // --- ОБРАБОТКА GEMINI PROXY (Стриминг) ---
+        if (action === 'gemini-proxy') {
+            if (req.method !== 'POST') return res.status(405).end();
+            const { prompt, tools } = req.body;
+            if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-                const model = 'gemini-3-flash-preview';
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+            const model = 'gemini-3-flash-preview';
 
-                const result = await ai.models.generateContent({
-                    model,
-                    contents: prompt,
-                    config: { temperature: 0.7, tools: tools || [] }
-                });
+            // На Hobby плане Vercel Node.js поддерживает стриминг через res.write
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Transfer-Encoding', 'chunked');
 
-                return res.status(200).send(result.text);
+            const responseStream = await ai.models.generateContentStream({
+                model,
+                contents: prompt,
+                config: { temperature: 0.7, tools: tools || [] }
+            });
+
+            for await (const chunk of responseStream) {
+                const text = chunk.text;
+                if (text) {
+                    res.write(text);
+                }
             }
+            return res.end();
+        }
 
-            // --- DATA OPERATIONS ---
+        // --- ОБРАБОТКА ОПЕРАЦИЙ С ДАННЫМИ ---
+        switch (action) {
             case 'get-okb': {
                 const okbData = await getOKBData();
                 res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
@@ -141,13 +139,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(404).json({ error: 'Not found' });
             }
             case 'get-conflict-zones': {
-                res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-                return res.status(200).json(MOCK_ZONES);
+                return res.status(200).json({ type: "FeatureCollection", features: [] });
             }
             default: return res.status(400).json({ error: `Action ${action} not found` });
         }
     } catch (e: any) {
         console.error('API Error:', e);
-        return res.status(500).json({ error: e.message });
+        if (!res.headersSent) {
+            return res.status(500).json({ error: e.message });
+        }
+        res.end();
     }
 }
