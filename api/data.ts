@@ -19,7 +19,10 @@ import {
     deleteAddressFromCache
 } from './_lib/sheets';
 
-// Explicitly define config for Vercel Node.js function
+// CRITICAL: Force Node.js runtime. 
+// Vercel Edge Runtime does not support 'googleapis', 'stream', or 'crypto' modules needed here.
+export const runtime = 'nodejs';
+
 export const config = {
   maxDuration: 60,
 };
@@ -27,13 +30,27 @@ export const config = {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = (req.query.action as string) || '';
 
+    // Set CORS headers for all responses to avoid browser blocking
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
     try {
         if (action === 'gemini-proxy') {
             if (req.method !== 'POST') return res.status(405).end();
             const { prompt, tools } = req.body;
             if (!prompt) return res.status(400).json({ error: 'Prompt is required' });
 
-            // Lazy load @google/genai
+            // Lazy load @google/genai to avoid startup penalty if not used
             const { GoogleGenAI } = await import('@google/genai');
 
             // Randomly select one of the available API keys

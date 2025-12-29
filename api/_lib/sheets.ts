@@ -37,15 +37,20 @@ async function getAuthClient() {
             keyString = keyString.slice(1, -1);
         }
         
-        // Unescape newlines (handles both literal \n characters and escaped newlines)
+        // Handle escaped newlines from Vercel env
         keyString = keyString.replace(/\\n/g, '\n');
         
         credentials = JSON.parse(keyString);
+        
+        // Handle case where the value itself was double-stringified
+        if (typeof credentials === 'string') {
+             credentials = JSON.parse(credentials);
+        }
     } catch (e: any) {
         console.error('CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.');
         console.error('Error details:', e.message);
         // Log first few chars to debug format without leaking full key
-        console.error('Key (first 50 chars):', serviceAccountKey.substring(0, 50));
+        console.error('Key prefix:', serviceAccountKey.substring(0, 10) + '...');
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Check Vercel logs for details.');
     }
 
