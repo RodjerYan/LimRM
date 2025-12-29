@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { Buffer } from 'buffer';
+import { Buffer } from 'node:buffer';
 import { 
     getOKBData, 
     getOKBAddresses, 
@@ -18,6 +18,11 @@ import {
     updateAddressInCache,
     deleteAddressFromCache
 } from './_lib/sheets';
+
+// Explicitly define config for Vercel Node.js function
+export const config = {
+  maxDuration: 60,
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = (req.query.action as string) || '';

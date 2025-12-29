@@ -1,5 +1,5 @@
 
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 import type { sheets_v4, drive_v3 } from 'googleapis';
 
 // Интерфейс для строки данных из таблицы
@@ -44,12 +44,26 @@ async function getAuthClient() {
     
     let credentials;
     try {
-        // Handle escaped newlines which often happen when copying to env vars
-        const keyString = typeof serviceAccountKey === 'string' ? serviceAccountKey.replace(/\\n/g, '\n') : serviceAccountKey;
-        credentials = typeof keyString === 'string' ? JSON.parse(keyString) : keyString;
+        // Handle escaped newlines which often happen when copying to env vars on Vercel
+        // Also remove potential surrounding quotes if the user added them manually
+        let keyString = serviceAccountKey.trim();
+        
+        // Remove leading/trailing quotes if present (common mistake)
+        if (keyString.startsWith('"') && keyString.endsWith('"')) {
+            keyString = keyString.slice(1, -1);
+        }
+        
+        keyString = keyString.replace(/\\n/g, '\n');
+        
+        credentials = JSON.parse(keyString);
+        
+        // In case it was double-stringified (e.g. "{\"type\":...}")
+        if (typeof credentials === 'string') {
+            credentials = JSON.parse(credentials);
+        }
     } catch (e) {
         console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY', e);
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is valid JSON.');
     }
 
     const google = await getGoogleLib();
@@ -81,8 +95,11 @@ export async function loadMasterSnapshot(): Promise<any | null> {
         if (!files.data.files || files.data.files.length === 0) return null;
         const res = await drive.files.get({ fileId: files.data.files[0].id!, alt: 'media' });
         return res.data;
-    } catch (e) {
-        console.error('Error loading master snapshot:', e);
+    } catch (e: any) {
+        console.error('Error loading master snapshot:', e.message);
+        if (e.message.includes('insufficient authentication scopes') || e.code === 403) {
+             throw new Error('Service Account does not have permission to access the Snapshot Folder. Share folder ' + SNAPSHOT_FOLDER_ID + ' with the service account email.');
+        }
         throw e;
     }
 }
@@ -122,6 +139,12 @@ async function callWithRetry<T>(fn: () => Promise<T>): Promise<T> {
             attempt++;
             const status = error.response?.status || error.code;
             console.warn(`API call failed (attempt ${attempt}):`, error.message);
+            
+            // Check for permission errors specifically
+            if (status === 403 || (error.message && error.message.includes('permission'))) {
+                 throw new Error('Google API Permission Error. Ensure Service Account has Editor access to the Spreadsheet/Drive folder.');
+            }
+
             if (attempt > 3 || (status !== 429 && status < 500)) throw error;
             await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)));
         }
