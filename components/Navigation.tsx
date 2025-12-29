@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon, ChartBarIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -9,7 +9,6 @@ interface NavigationProps {
 
 const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     const navItems = [
-        { id: 'report-2025', label: 'ИТОГИ 2025 (Отчет)', icon: <ChartBarIcon small /> },
         { id: 'adapta', label: 'ADAPTA (Данные)', icon: <DataIcon small /> },
         { id: 'amp', label: 'AMP (Аналитика)', icon: <AnalyticsIcon small /> },
         { id: 'dashboard', label: 'Дашборд План/Факт', icon: <TargetIcon small /> },

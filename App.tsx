@@ -12,7 +12,6 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import ReportPresentation from './components/report/ReportPresentation';
 
 import { 
     AggregatedDataRow, 
@@ -366,9 +365,6 @@ const App: React.FC = () => {
                     </div>
                 </div>
                 <div className="py-8 px-4 lg:px-8">
-                    {activeModule === 'report-2025' && (
-                        <ReportPresentation />
-                    )}
                     {activeModule === 'adapta' && (
                         <Adapta processingState={processingState} onStartProcessing={() => {}} onStartCloudProcessing={handleStartCloudProcessing} onFileProcessed={() => {}} onProcessingStateChange={() => {}} okbData={okbData} okbStatus={okbStatus} onOkbStatusChange={setOkbStatus} onOkbDataChange={setOkbData} disabled={processingState.isProcessing} unidentifiedCount={unidentifiedRows.length} activeClientsCount={allActiveClients.length} uploadedData={allData} dbStatus={dbStatus} onStartEdit={setEditingClient} />
                     )}
