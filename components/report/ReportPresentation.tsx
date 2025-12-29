@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Pie, Bar } from 'react-chartjs-2';
-import { BrainIcon, LoaderIcon, FactIcon, TargetIcon, TrendingUpIcon, UsersIcon, ChannelIcon } from '../icons';
+import { BrainIcon, LoaderIcon, ChannelIcon } from '../icons';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
@@ -19,7 +19,7 @@ const Slide: React.FC<SlideProps> = ({ title, subtitle, children }) => (
       <h2 className="text-3xl font-bold text-white tracking-tight leading-none mb-2">{title}</h2>
       {subtitle && <p className="text-lg text-gray-400 font-medium">{subtitle}</p>}
     </div>
-    <div className="flex-grow overflow-y-auto custom-scrollbar pr-2">
+    <div className="flex-grow overflow-y-auto custom-scrollbar pr-2 relative">
       {children}
     </div>
   </div>
@@ -76,7 +76,7 @@ const ReportPresentation: React.FC = () => {
 
   const slides = [
     // --- БЛОК 1: Зообизнес ---
-    <Slide title="Блок 1. Зообизнес" subtitle="Слайд 1: Что такое зообизнес">
+    <Slide key="b1-s1" title="Блок 1. Зообизнес" subtitle="Слайд 1: Что такое зообизнес">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full items-center">
         <div className="space-y-6">
           <p className="text-xl text-gray-300 leading-relaxed">
@@ -103,7 +103,7 @@ const ReportPresentation: React.FC = () => {
       </div>
     </Slide>,
 
-    <Slide title="Этапы развития зообизнеса" subtitle="Слайд 2: Эволюция рынка">
+    <Slide key="b1-s2" title="Этапы развития зообизнеса" subtitle="Слайд 2: Эволюция рынка">
       <div className="relative h-full flex items-center">
         <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-800 transform -translate-y-1/2"></div>
         <div className="grid grid-cols-4 gap-6 relative z-10 w-full">
@@ -113,7 +113,7 @@ const ReportPresentation: React.FC = () => {
             { period: '2020-2024', name: 'Омниканальность', desc: 'Бум маркетплейсов. Импортозамещение.' },
             { period: '2025+', name: 'Экосистемы', desc: 'Персонализация. IT-интеграция. Сервис 360°.' },
           ].map((item, idx) => (
-            <div key={idx} className="bg-gray-900 border border-gray-700 p-5 rounded-2xl hover:border-indigo-500 transition-all hover:-translate-y-2">
+            <div key={idx} className="bg-gray-900 border border-gray-700 p-5 rounded-2xl hover:border-indigo-500 transition-all hover:-translate-y-2 cursor-default">
               <div className="text-indigo-400 font-bold font-mono text-sm mb-2">{item.period}</div>
               <h4 className="text-lg font-bold text-white mb-2">{item.name}</h4>
               <p className="text-xs text-gray-500">{item.desc}</p>
@@ -123,7 +123,7 @@ const ReportPresentation: React.FC = () => {
       </div>
     </Slide>,
 
-    <Slide title="Вектор развития 5-10 лет" subtitle="Слайд 3: Трансформация">
+    <Slide key="b1-s3" title="Вектор развития 5-10 лет" subtitle="Слайд 3: Трансформация">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
         <AIComparativeAnalysis 
           title="AI Футурология: Зоорынок 2030"
@@ -140,13 +140,13 @@ const ReportPresentation: React.FC = () => {
             </div>
             <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
                 <h4 className="text-white font-bold mb-1">Сервисная модель</h4>
-                <p className="text-sm text-gray-400">Производитель продает не корм, а "здоровье по подписке".</p>
+                <p className="text-sm text-gray-400">Производитель продает не корм, а &quot;здоровье по подписке&quot;.</p>
             </div>
         </div>
       </div>
     </Slide>,
 
-    <Slide title="Основные тренды" subtitle="Слайд 4: Тренды современного зообизнеса">
+    <Slide key="b1-s4" title="Основные тренды" subtitle="Слайд 4: Тренды современного зообизнеса">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 h-full">
             {[
                 { title: 'Локализация', icon: '🏭', desc: 'Рост доверия к российскому производству.' },
@@ -163,7 +163,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Лимкорм Групп в России" subtitle="Слайд 5: Позиция на рынке">
+    <Slide key="b1-s5" title="Лимкорм Групп в России" subtitle="Слайд 5: Позиция на рынке">
       <div className="flex flex-col items-center justify-center h-full text-center space-y-8">
         <div className="relative">
             <div className="absolute -inset-4 bg-indigo-500/20 blur-3xl rounded-full"></div>
@@ -190,7 +190,7 @@ const ReportPresentation: React.FC = () => {
     </Slide>,
 
     // --- БЛОК 2: Компания глазами партнеров ---
-    <Slide title="Блок 2. Компания" subtitle="Слайд 1: Направления деятельности">
+    <Slide key="b2-s1" title="Блок 2. Компания" subtitle="Слайд 1: Направления деятельности">
         <div className="flex items-center justify-center h-full gap-10">
             <div className="w-1/2 max-w-md">
                 <Pie data={{
@@ -200,7 +200,7 @@ const ReportPresentation: React.FC = () => {
                         backgroundColor: ['#818cf8', '#34d399', '#fbbf24'],
                         borderWidth: 0
                     }]
-                }} options={{ plugins: { legend: { position: 'right', labels: { color: '#fff', font: { size: 14 } } } } } }} />
+                }} options={{ plugins: { legend: { position: 'right', labels: { color: '#fff', font: { size: 14 } } } } }} />
             </div>
             <div className="w-1/2 space-y-4">
                 <div className="p-4 border-l-4 border-indigo-500 bg-gray-800/30">
@@ -219,7 +219,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Этапы развития и Сравнение" subtitle="Слайд 2: Лимкорм vs Западные гиганты">
+    <Slide key="b2-s2" title="Этапы развития и Сравнение" subtitle="Слайд 2: Лимкорм vs Западные гиганты">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
             <div className="space-y-2 overflow-y-auto custom-scrollbar pr-2">
                 <h4 className="text-white font-bold mb-2">Хронология Лимкорм</h4>
@@ -243,10 +243,9 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Экосистема" subtitle="Слайд 3: Глазами компании">
+    <Slide key="b2-s3" title="Экосистема" subtitle="Слайд 3: Глазами компании">
         <div className="flex items-center justify-center h-full">
             <div className="relative w-full max-w-3xl aspect-video bg-gray-900 border border-gray-700 rounded-xl p-8 flex items-center justify-center">
-                {/* Visual Representation of Ecosystem */}
                 <div className="absolute inset-0 flex items-center justify-center opacity-20">
                     <div className="w-[500px] h-[500px] border border-dashed border-indigo-500 rounded-full animate-spin-slow"></div>
                 </div>
@@ -285,12 +284,12 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Современный сервис" subtitle="Слайд 4-6: Для покупателя">
+    <Slide key="b2-s4" title="Современный сервис" subtitle="Слайд 4-6: Для покупателя">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-full">
             <div className="bg-gray-800 p-6 rounded-2xl border border-gray-700">
                 <h4 className="text-lg font-bold text-white mb-4">Что это такое?</h4>
                 <ul className="text-sm text-gray-400 space-y-2">
-                    <li>• Скорость доставки < 24ч</li>
+                    <li>• Скорость доставки &lt; 24ч</li>
                     <li>• Персонализированный подбор</li>
                     <li>• Прозрачность состава (QR)</li>
                     <li>• Поддержка 24/7</li>
@@ -306,15 +305,15 @@ const ReportPresentation: React.FC = () => {
             </div>
             <div className="bg-indigo-900/20 p-6 rounded-2xl border border-indigo-500">
                 <h4 className="text-lg font-bold text-indigo-300 mb-4">Вызов 2026</h4>
-                <p className="text-sm text-white font-medium mb-4">Создать "Бесшовный путь клиента":</p>
+                <p className="text-sm text-white font-medium mb-4">Создать &quot;Бесшовный путь клиента&quot;:</p>
                 <div className="text-xs text-gray-400">
-                    Увидел рекламу -> Получил пробник -> Купил -> Подписался на доставку.
+                    Увидел рекламу &rarr; Получил пробник &rarr; Купил &rarr; Подписался на доставку.
                 </div>
             </div>
         </div>
     </Slide>,
 
-    <Slide title="Любовь к продукту" subtitle="Слайд 7: Доверие потребителей">
+    <Slide key="b2-s5" title="Любовь к продукту" subtitle="Слайд 7: Доверие потребителей">
         <div className="flex flex-col items-center justify-center h-full text-center">
             <h3 className="text-3xl font-bold text-white mb-6">Сделано в России. Сделано с любовью.</h3>
             <p className="text-gray-400 max-w-2xl mb-10">
@@ -339,7 +338,7 @@ const ReportPresentation: React.FC = () => {
     </Slide>,
 
     // --- БЛОК 3: Бренды ---
-    <Slide title="Блок 3. Роль брендов" subtitle="Слайд 1-2: Ценность и Портфель">
+    <Slide key="b3-s1" title="Блок 3. Роль брендов" subtitle="Слайд 1-2: Ценность и Портфель">
         <div className="space-y-8">
             <div className="bg-gradient-to-r from-gray-800 to-gray-900 p-6 rounded-xl border-l-4 border-indigo-500">
                 <h4 className="text-xl font-bold text-white mb-2">Бренд — это актив</h4>
@@ -374,7 +373,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Диспропорция портфеля" subtitle="Слайд 3: Объем vs Выручка">
+    <Slide key="b3-s2" title="Диспропорция портфеля" subtitle="Слайд 3: Объем vs Выручка">
         <div className="grid grid-cols-2 gap-10 h-full items-center">
             <div className="flex flex-col items-center">
                 <h4 className="text-lg font-bold text-gray-400 mb-6 uppercase tracking-widest">Доля в ОБЪЕМЕ (кг)</h4>
@@ -405,7 +404,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Стратегия по брендам" subtitle="Слайд 4: Фокусные задачи">
+    <Slide key="b3-s3" title="Стратегия по брендам" subtitle="Слайд 4: Фокусные задачи">
         <div className="grid grid-cols-1 gap-4 h-full overflow-y-auto custom-scrollbar pr-2">
             {[
                 { name: 'Одно Мясо, AJO, Sirius', goal: 'Увеличение объемов', desc: 'Кратно увеличить доходность компании (высокая маржа).' },
@@ -424,7 +423,7 @@ const ReportPresentation: React.FC = () => {
     </Slide>,
 
     // --- БЛОК 4: Каналы сбыта ---
-    <Slide title="Блок 4. Каналы сбыта" subtitle="Слайд 1: Классификация">
+    <Slide key="b4-s1" title="Блок 4. Каналы сбыта" subtitle="Слайд 1: Классификация">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 h-full">
             {['Зоосети (Нац/Локал)', 'Зоорозница', 'Вет. канал', 'Бридеры (Заводчики)', 'Тендеры', 'Интернет-канал', 'FMCG'].map((ch, i) => (
                 <div key={i} className="bg-gray-900 border border-gray-700 p-4 rounded-xl flex flex-col items-center justify-center text-center">
@@ -435,7 +434,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Доли каналов: Тренды" subtitle="Слайд 2: Сейчас vs 5-10 лет">
+    <Slide key="b4-s2" title="Доли каналов: Тренды" subtitle="Слайд 2: Сейчас vs 5-10 лет">
         <div className="h-full flex flex-col gap-6">
             <div className="flex-grow">
                 <Bar data={{
@@ -452,7 +451,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Инструменты роста" subtitle="Слайд 4: Укрепление позиций">
+    <Slide key="b4-s3" title="Инструменты роста" subtitle="Слайд 4: Укрепление позиций">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 h-full">
             <div className="space-y-4">
                 <h4 className="text-lg font-bold text-white">Оффлайн каналы:</h4>
@@ -470,7 +469,7 @@ const ReportPresentation: React.FC = () => {
         </div>
     </Slide>,
 
-    <Slide title="Вектор 2026" subtitle="Слайд 5: Итоги стратегии">
+    <Slide key="b4-s4" title="Вектор 2026" subtitle="Слайд 5: Итоги стратегии">
         <div className="flex flex-col items-center justify-center h-full text-center space-y-8">
             <div className="p-8 bg-indigo-900/30 border border-indigo-500 rounded-3xl max-w-4xl shadow-2xl">
                 <h3 className="text-3xl font-bold text-white mb-4">Принцип соответствия</h3>
@@ -479,7 +478,7 @@ const ReportPresentation: React.FC = () => {
                 </p>
                 <div className="mt-8 flex justify-center gap-4">
                     <span className="px-4 py-2 bg-indigo-600 rounded-full text-white font-bold">Рынок растет в онлайн</span>
-                    <span className="px-4 py-2 bg-gray-700 text-gray-400">-></span>
+                    <span className="px-4 py-2 bg-gray-700 text-gray-400">&rarr;</span>
                     <span className="px-4 py-2 bg-emerald-600 rounded-full text-white font-bold">Мы растем в онлайн</span>
                 </div>
             </div>

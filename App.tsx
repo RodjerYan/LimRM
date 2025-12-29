@@ -12,6 +12,10 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import Prophet from './components/modules/Prophet';
+import AgileLearning from './components/modules/AgileLearning';
+import RoiGenome from './components/modules/RoiGenome';
+import ReportPresentation from './components/report/ReportPresentation';
 
 import { 
     AggregatedDataRow, 
@@ -388,6 +392,18 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
+                    )}
+                    {activeModule === 'prophet' && (
+                        <Prophet data={filteredData} />
+                    )}
+                    {activeModule === 'agile' && (
+                        <AgileLearning data={filteredData} />
+                    )}
+                    {activeModule === 'roi-genome' && (
+                        <RoiGenome data={filteredData} />
+                    )}
+                    {activeModule === 'report' && (
+                        <ReportPresentation />
                     )}
                 </div>
             </main>

@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon, ChannelIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -15,6 +15,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
         { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
         { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
         { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
+        { id: 'report', label: 'Отчет 2025', icon: <ChannelIcon small /> },
     ];
 
     return (
@@ -66,7 +67,7 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                         <span className="text-gray-300">Система активна</span>
                     </div>
-                    <div className="text-[10px]">Версия 2.5.0 (by RodjerYan)</div>
+                    <div className="text-[10px]">Версия 2.5.1 (by RodjerYan)</div>
                 </div>
             </div>
         </nav>
