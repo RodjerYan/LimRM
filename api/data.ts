@@ -24,34 +24,47 @@ const ROOT_FOLDERS: Record<string, string> = {
 };
 
 async function getAuthClient() {
-    const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!serviceAccountKey) {
+    const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    if (!rawKey) {
         console.error('CRITICAL: GOOGLE_SERVICE_ACCOUNT_KEY is missing from environment variables.');
         throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
     }
     
     let credentials;
     try {
-        let keyString = serviceAccountKey.trim();
-        // Remove enclosing quotes if present (common copy-paste error)
+        let keyString = rawKey.trim();
+
+        // 1. Try Base64 decoding if it doesn't look like JSON
+        if (!keyString.startsWith('{')) {
+            try {
+                const decoded = Buffer.from(keyString, 'base64').toString('utf-8');
+                if (decoded.trim().startsWith('{')) {
+                    keyString = decoded.trim();
+                }
+            } catch (e) {
+                // Ignore base64 error, assume it's raw string
+            }
+        }
+
+        // 2. Remove outer quotes (common Vercel env var issue)
         if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
             (keyString.startsWith("'") && keyString.endsWith("'"))) {
             keyString = keyString.slice(1, -1);
         }
         
-        // Handle escaped newlines from Vercel env
+        // 3. Handle escaped newlines (Vercel often escapes \n to \\n)
         keyString = keyString.replace(/\\n/g, '\n');
         
         credentials = JSON.parse(keyString);
         
-        // Handle case where the value itself was double-stringified
+        // 4. Handle double-stringified JSON
         if (typeof credentials === 'string') {
              credentials = JSON.parse(credentials);
         }
     } catch (e: any) {
         console.error('CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.');
         console.error('Error details:', e.message);
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Check Vercel logs for details.');
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string or Base64 encoded JSON.');
     }
 
     return new google.auth.GoogleAuth({

@@ -52,7 +52,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             config: { temperature: 0.7, tools: tools || [] }
         });
 
-        // The .text property is a getter in the new SDK
+        // Use the .text getter
         return res.status(200).json({ text: response.text });
 
     } catch (e: any) {
