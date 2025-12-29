@@ -26,64 +26,90 @@ const ROOT_FOLDERS: Record<string, string> = {
 async function getAuthClient() {
     const rawKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!rawKey) {
-        console.error('CRITICAL: GOOGLE_SERVICE_ACCOUNT_KEY is missing from environment variables.');
-        throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY is not set.');
+        console.error('CRITICAL: GOOGLE_SERVICE_ACCOUNT_KEY is missing.');
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set');
+    }
+
+    // Debug logging (safe)
+    console.log('=== GOOGLE_SERVICE_ACCOUNT_KEY DIAGNOSTICS ===');
+    console.log('Raw key length:', rawKey.length);
+    console.log('First 10 chars:', rawKey.substring(0, 10));
+    console.log('Last 10 chars:', rawKey.substring(Math.max(0, rawKey.length - 10)));
+
+    let keyString = rawKey.trim();
+    
+    // 1. Remove accidental surrounding quotes (common copy-paste issue from shell)
+    if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
+        (keyString.startsWith("'") && keyString.endsWith("'"))) {
+        keyString = keyString.slice(1, -1).trim();
+    }
+
+    let credentials;
+    let parseMethod = 'unknown';
+    
+    // STRATEGY 1: Try as Base64
+    // We clean all whitespace/newlines because Vercel/Shell might wrap long Base64 strings
+    try {
+        const cleanForBase64 = keyString.replace(/\s/g, '');
+        // Check if characters look like Base64 before attempting decode to avoid false positives on simple JSON
+        // However, a robust try/catch is safer than a regex here.
+        
+        const decoded = Buffer.from(cleanForBase64, 'base64').toString('utf8');
+        
+        // Basic check if decode looks like JSON
+        if (decoded.trim().startsWith('{')) {
+            credentials = JSON.parse(decoded);
+            parseMethod = 'base64';
+            console.log('✅ Successfully parsed GOOGLE_SERVICE_ACCOUNT_KEY from Base64');
+        }
+    } catch (base64Error) {
+        // Silent fail, proceed to JSON strategy
     }
     
-    let credentials;
-    try {
-        // 1. Clean the input string
-        let keyString = rawKey.trim();
-
-        // 2. Remove accidental outer quotes (common Vercel/Terminal copy-paste artifact)
-        if ((keyString.startsWith('"') && keyString.endsWith('"')) || 
-            (keyString.startsWith("'") && keyString.endsWith("'"))) {
-            keyString = keyString.slice(1, -1);
+    // STRATEGY 2: Try as plain JSON
+    if (!credentials) {
+        try {
+            // Handle escaped newlines (common in Vercel env vars: \n becomes literal \\n)
+            let jsonString = keyString.replace(/\\n/g, '\n');
+            
+            // Handle double escaping if present
+            jsonString = jsonString.replace(/\\\\n/g, '\\n');
+            
+            credentials = JSON.parse(jsonString);
+            parseMethod = 'plain_json';
+            console.log('✅ Successfully parsed GOOGLE_SERVICE_ACCOUNT_KEY from plain JSON');
+        } catch (jsonError: any) {
+            console.error('JSON Parse Error:', jsonError.message);
+            
+            throw new Error(
+                `Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. ` +
+                `Evaluated as Base64: Failed. ` +
+                `Evaluated as JSON: Failed (${jsonError.message}). ` +
+                `Key Length: ${keyString.length}`
+            );
         }
+    }
 
-        // 3. Detect and decode Base64
-        // If it doesn't start with '{', it's extremely likely to be Base64
-        if (!keyString.startsWith('{')) {
-            try {
-                // Buffer.from handles whitespace in base64 strings gracefully usually, 
-                // but explicit stripping of newlines inside the base64 string helps.
-                const base64Clean = keyString.replace(/[\r\n\s]/g, '');
-                const decoded = Buffer.from(base64Clean, 'base64').toString('utf-8');
-                
-                // If decoding resulted in a JSON-like string, use it
-                if (decoded.trim().startsWith('{')) {
-                    keyString = decoded.trim();
-                }
-            } catch (e) {
-                // If decoding fails, assume it's a malformed raw string and proceed to try parsing it as is
-                console.warn('Tried Base64 decoding but failed, attempting raw parse.');
-            }
-        }
+    // 4. Validate Structure
+    const requiredFields = ['type', 'project_id', 'private_key', 'client_email'];
+    const missingFields = requiredFields.filter(field => !credentials[field]);
+    
+    if (missingFields.length > 0) {
+        throw new Error(`Service account key missing required fields: ${missingFields.join(', ')}`);
+    }
 
-        // 4. Handle escaped newlines
-        // Vercel UI often escapes '\n' to '\\n' when pasting multi-line strings. 
-        // We fix this for the 'private_key' field specifically later, or globally here.
-        keyString = keyString.replace(/\\n/g, '\n');
-        
-        // 5. Parse JSON
-        credentials = JSON.parse(keyString);
-        
-        // 6. Double-check if the value was double-stringified (JSON inside a string)
-        if (typeof credentials === 'string') {
-             credentials = JSON.parse(credentials);
-        }
-
-    } catch (e: any) {
-        console.error('CRITICAL: Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.');
-        console.error('Error details:', e.message);
-        // Log a safe prefix to help debugging (first 10 chars)
-        console.error(`Key prefix received: ${rawKey.substring(0, 10)}...`);
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Ensure it is a valid JSON string or Base64 encoded JSON.');
+    // 5. Fix Private Key formatting (ensure real newlines)
+    if (credentials.private_key && typeof credentials.private_key === 'string') {
+        // Ensure standard PEM format newlines
+        credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
     }
 
     return new google.auth.GoogleAuth({
         credentials,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
+        scopes: [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ],
     });
 }
 
