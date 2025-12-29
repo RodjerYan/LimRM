@@ -13,14 +13,12 @@ interface OKBManagementProps {
 const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataChange, status, disabled }) => {
     const [isFetching, setIsFetching] = useState(false);
 
-    // Только прямое подключение. Никакого IndexedDB.
     const handleFetchData = useCallback(async (forceUpdate = false) => {
         setIsFetching(true);
-        onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление данных...' : 'Прямое подключение к серверу...' });
+        onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление с сервера...' : 'Подключение к серверу...' });
         
         try {
-            // Добавляем timestamp для обхода кэша браузера, 
-            // но Vercel CDN все равно вернет кэшированную версию (s-maxage), если она свежая.
+            // Timestamp нужен, чтобы обойти локальный кэш браузера, если заголовки Vercel не сработали
             const url = `/api/get-okb?t=${Date.now()}`;
             
             const response = await fetch(url);
@@ -33,7 +31,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
             onDataChange(data);
             onStatusChange({
                 status: 'ready',
-                message: `ОКБ загружена (Server Direct).`,
+                message: `ОКБ Онлайн (v5 Live)`,
                 timestamp: new Date().toISOString(),
                 rowCount: data.length,
                 coordsCount: data.filter(d => d.lat && d.lon).length,
@@ -47,7 +45,6 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
     }, [onStatusChange, onDataChange]);
 
     useEffect(() => {
-        // Автоматическая загрузка при старте, если данных нет
         if (!status || status.status === 'idle') {
             handleFetchData(false);
         }
@@ -68,8 +65,11 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                         1
                     </div>
                     <div>
-                        <h2 className="text-lg font-bold text-white leading-tight">База Клиентов (ОКБ)</h2>
-                        <p className="text-xs text-gray-400">Источник данных (Auto-Sync 60s)</p>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-lg font-bold text-white leading-tight">База Клиентов</h2>
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-[10px] text-indigo-300 font-mono">LIVE</span>
+                        </div>
+                        <p className="text-xs text-gray-400">Прямое подключение (60s Update)</p>
                     </div>
                 </div>
 
@@ -108,7 +108,7 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
                     <div className="col-span-2 bg-gray-800/40 p-3 rounded-xl border border-white/5 flex justify-between items-center">
                         <p className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Версия от</p>
                         <p className="text-xs font-medium text-gray-300 font-mono">
-                            {status?.timestamp ? new Date(status.timestamp).toLocaleString('ru-RU') : 'Не загружена'}
+                            {status?.timestamp ? new Date(status.timestamp).toLocaleTimeString('ru-RU') : '...'}
                         </p>
                     </div>
                 </div>
