@@ -2,8 +2,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
-// Explicitly set Node.js 20.x runtime for Vercel
-export const runtime = "nodejs20.x";
+export const runtime = 'nodejs';
 
 export const config = {
     maxDuration: 60,
