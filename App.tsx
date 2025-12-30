@@ -99,8 +99,8 @@ const App: React.FC = () => {
             allData: updatedData,
             unidentifiedRows: updatedUnidentified,
             okbRegionCounts,
-            okbData,
-            okbStatus,
+            okbData, // This will be ignored by saveAnalyticsState logic to save space
+            okbStatus, // This too
             dateRange,
             totalRowsProcessed: rawCount,
             versionHash: currentVersion
@@ -260,10 +260,56 @@ const App: React.FC = () => {
             fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
             backgroundMessage: 'Синхронизация структуры файлов', 
             startTime: Date.now(),
-            // Если это фоновое обновление, СОХРАНЯЕМ текущий счетчик строк, пока воркер не пришлет новые данные
             totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
 
+        // --- NEW STEP: TRY TO LOAD SHARED SNAPSHOT FIRST ---
+        // This avoids re-processing for new users if someone else has already done it.
+        // We only do this if it's NOT a forced update (when targetVersion is passed, it implies an update)
+        if (!isUpdate || targetVersion) {
+            try {
+                setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
+                const snapshotRes = await fetch('/api/snapshot');
+                
+                if (snapshotRes.ok) {
+                    const snapshot = await snapshotRes.json();
+                    if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
+                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
+                        
+                        // Check if snapshot is newer or same as target. 
+                        const snapshotHash = snapshot.versionHash;
+                        
+                        // Use Snapshot!
+                        setOkbRegionCounts(okbRegionCounts);
+                        setAllData(aggregatedData);
+                        const clientsMap = new Map<string, MapPoint>();
+                        aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                        const uniqueClients = Array.from(clientsMap.values());
+                        setAllActiveClients(uniqueClients);
+                        setUnidentifiedRows(unidentifiedRows);
+                        setDbStatus('ready');
+                        
+                        const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
+                        await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, newVersion);
+                        setLastSyncVersion(newVersion);
+                        
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            isProcessing: false, 
+                            progress: 100, 
+                            message: 'Загружено из Облачного Кэша', 
+                            totalRowsProcessed 
+                        }));
+                        addNotification('Данные мгновенно загружены из общего кэша', 'success');
+                        return; // EXIT EARLY - Skip worker processing
+                    }
+                }
+            } catch (e) {
+                console.warn("Snapshot load failed, falling back to full processing", e);
+            }
+        }
+
+        // --- FALLBACK: FULL PROCESSING (WORKER) ---
         let cacheData: CoordsCache = {};
         try {
             const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
@@ -302,22 +348,41 @@ const App: React.FC = () => {
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 
-                const version = localStorage.getItem('pending_version_hash');
-                if (version) {
-                    await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                    setLastSyncVersion(version);
-                    localStorage.setItem('last_sync_version', version);
-                    localStorage.removeItem('pending_version_hash');
-                }
+                const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
+                
+                // SAVE LOCAL DB
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                setLastSyncVersion(version);
+                localStorage.setItem('last_sync_version', version);
+                localStorage.removeItem('pending_version_hash');
 
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    isProcessing: false, 
-                    progress: 100, 
-                    message: 'Синхронизировано', 
-                    totalRowsProcessed: payload.totalRowsProcessed 
-                }));
-                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены', 'success');
+                // --- NEW STEP: UPLOAD SNAPSHOT TO CLOUD FOR OTHERS ---
+                // We perform this optimistically in the background
+                setProcessingState(prev => ({ ...prev, message: 'Сохранение общего кэша...', progress: 100 }));
+                
+                fetch('/api/snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).then(res => {
+                    if (res.ok) {
+                        addNotification('Общий кэш обновлен для всех пользователей', 'success');
+                    } else {
+                        console.warn("Could not save snapshot to cloud (likely too big or permission error)");
+                    }
+                }).catch(err => {
+                    console.warn("Snapshot save error:", err);
+                }).finally(() => {
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        isProcessing: false, 
+                        progress: 100, 
+                        message: 'Синхронизировано', 
+                        totalRowsProcessed: payload.totalRowsProcessed 
+                    }));
+                });
+
+                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены и обработаны', 'success');
             }
         };
 
@@ -413,7 +478,7 @@ const App: React.FC = () => {
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
                                 <LoaderIcon className="w-3 h-3 text-indigo-400" />
                                 <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">
-                                    {allData.length > 0 ? 'Синхронизация' : 'Загрузка'}: {Math.round(processingState.progress)}%
+                                    {processingState.message || (allData.length > 0 ? 'Синхронизация' : 'Загрузка')}: {Math.round(processingState.progress)}%
                                 </span>
                             </div>
                         )}
@@ -465,6 +530,15 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
+                    )}
+                    {activeModule === 'prophet' && (
+                        <Prophet data={filteredData} />
+                    )}
+                    {activeModule === 'agile' && (
+                        <AgileLearning data={filteredData} />
+                    )}
+                    {activeModule === 'roi-genome' && (
+                        <RoiGenome data={filteredData} />
                     )}
                 </div>
             </main>

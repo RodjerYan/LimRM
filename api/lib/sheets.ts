@@ -7,6 +7,7 @@ import { Readable } from 'stream';
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
+const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
 
 // ID корневых папок с данными по годам
 const ROOT_FOLDERS: Record<string, string> = {
@@ -56,7 +57,7 @@ async function getAuthClient() {
         credentials,
         scopes: [
             'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive.readonly' 
+            'https://www.googleapis.com/auth/drive' // Expanded scope for write access
         ],
     });
 }
@@ -118,6 +119,80 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
             console.warn(`[${context}] Attempt ${attempt} failed (Status ${status}). Retrying in ${Math.round(delay)}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
+    }
+}
+
+// --- SNAPSHOT FUNCTIONS (SHARED CACHE) ---
+
+export async function saveSnapshot(data: any): Promise<void> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025']; // Store snapshot in 2025 folder root
+
+    if (!folderId) {
+        throw new Error("Folder ID for 2025 not configured.");
+    }
+
+    // 1. Check if snapshot exists
+    // Explicitly casting response to any to handle googleapis dynamic types safely
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    }), 'checkSnapshot') as any;
+
+    const fileId = listRes.data.files?.[0]?.id;
+
+    const media = {
+        mimeType: 'application/json',
+        body: JSON.stringify(data)
+    };
+
+    if (fileId) {
+        await callWithRetry(() => drive.files.update({
+            fileId,
+            media,
+        }), 'updateSnapshot');
+    } else {
+        await callWithRetry(() => drive.files.create({
+            requestBody: {
+                name: SNAPSHOT_FILENAME,
+                parents: [folderId],
+            },
+            media,
+        }), 'createSnapshot');
+    }
+}
+
+export async function getSnapshot(): Promise<any | null> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+
+    if (!folderId) return null;
+
+    // Explicitly casting to any to avoid TS issues
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id, modifiedTime, size)',
+    }), 'findSnapshot') as any;
+
+    const file = listRes.data.files?.[0];
+    if (!file || !file.id) return null;
+
+    try {
+        const res = await callWithRetry(() => drive.files.get({
+            fileId: file.id!,
+            alt: 'media',
+        }), 'downloadSnapshot') as any;
+
+        // drive.files.get with alt='media' usually returns the parsed JSON in 'data'
+        // if the content-type header is set correctly by Drive.
+        return {
+            data: res.data,
+            versionHash: file.modifiedTime, // Use modified time as ETag/Hash
+            size: file.size
+        };
+    } catch (e) {
+        console.error("Failed to download snapshot content", e);
+        return null;
     }
 }
 
