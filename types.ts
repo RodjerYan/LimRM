@@ -1,10 +1,11 @@
 
+
 export interface AggregatedDataRow {
     key: string;
     rm: string;
     clientName: string;
     brand: string;
-    packaging: string; // New field
+    packaging: string;
     city: string; 
     region: string;
     fact: number;
@@ -12,12 +13,10 @@ export interface AggregatedDataRow {
     growthPotential: number;
     growthPercentage: number;
     potentialClients?: PotentialClient[];
-    clients: MapPoint[]; // List of individual client objects in the group
-    planMetric?: PlanMetric; // Stores the detailed plan calculation for this specific row
-    
-    // New Strategic Metrics
-    costToServeScore?: number; // 1-10 scale
-    eComShare?: number; // Estimated % of online sales in this segment
+    clients: MapPoint[];
+    planMetric?: PlanMetric;
+    costToServeScore?: number;
+    eComShare?: number;
 }
 
 export type MapPointStatus = 'match' | 'potential';
@@ -33,19 +32,17 @@ export interface MapPoint {
     region: string;
     rm: string;
     brand: string;
-    packaging: string; // New field
+    packaging: string;
     type: string;
     contacts?: string;
-    isCached?: boolean; // To distinguish between new and cached clients on the map
-    isGeocoding?: boolean; // New flag: indicates if coordinates are currently being fetched
-    geocodingError?: string; // New field: error message from external geocoder
-    originalRow: any; // To hold the full original data row for detailed viewing
-    fact?: number; // Sales volume for this specific point
-    abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
-    lastUpdated?: number; // Timestamp of the last edit
-    comment?: string; // User comments from Column E
-    
-    // Risk Analysis
+    isCached?: boolean;
+    isGeocoding?: boolean;
+    geocodingError?: string;
+    originalRow: any;
+    fact?: number;
+    abcCategory?: 'A' | 'B' | 'C';
+    lastUpdated?: number;
+    comment?: string;
     churnRisk?: 'high' | 'medium' | 'low';
 }
 
@@ -86,14 +83,14 @@ export interface UnidentifiedRow {
 export interface FilterOptions {
     rms: string[];
     brands: string[];
-    packagings: string[]; // New field
+    packagings: string[];
     regions: string[];
 }
 
 export interface FilterState {
     rm: string;
     brand: string[];
-    packaging: string[]; // New field
+    packaging: string[];
     region: string[];
 }
 
@@ -108,7 +105,7 @@ export interface SummaryMetrics {
         name: string;
         value: number;
     };
-    channelCounts: Record<string, number>; // Добавлено: количество ТТ по каналам
+    channelCounts: Record<string, number>;
 }
 
 export interface NotificationMessage {
@@ -125,7 +122,6 @@ export type OkbStatus = {
     coordsCount?: number;
 };
 
-// Types for the Web Worker communication
 export type WorkerProgressPayload = {
     percentage: number;
     message: string;
@@ -146,7 +142,6 @@ export type WorkerBackgroundMessage =
     | { type: 'save_cache_batch', payload: { rmName: string, rows: { address: string }[], batchId: string } }
     | { type: 'start_geocoding_tasks', payload: { tasks: { [rmName: string]: string[] } } };
 
-// --- NEW STREAMING TYPES FOR OUTPUT ---
 export type WorkerStreamInit = {
     type: 'result_init';
     payload: {
@@ -176,7 +171,6 @@ export type WorkerStreamFinish = {
     payload: WorkerResultPayload;
 };
 
-// --- NEW TYPES FOR INPUT (Streaming to Worker) ---
 export type WorkerInputInit = {
     type: 'INIT_STREAM';
     payload: {
@@ -303,6 +297,7 @@ export interface MarketData {
     avgOwnerAge: number; 
 }
 
+// Added SalesLeagueMember interface to support gamification features
 export interface SalesLeagueMember {
     rank: number;
     name: string;
@@ -310,5 +305,5 @@ export interface SalesLeagueMember {
     achievementPct: number;
     volume: number;
     trend: 'up' | 'down' | 'flat';
-    badge?: 'champion' | 'rising_star' | 'grinder' | 'risk';
+    badge?: 'champion' | 'rising_star' | 'risk' | 'grinder';
 }
