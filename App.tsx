@@ -275,7 +275,6 @@ const App: React.FC = () => {
                         message: 'Данные восстановлены из локальной базы'
                     }));
                     setDbStatus('ready');
-                    setActiveModule('adapta');
                 } else {
                     setDbStatus('empty');
                 }
