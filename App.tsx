@@ -50,7 +50,6 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // ПРИОРИТЕТ: сначала проверяем localStorage, но потом перепишем из IndexedDB
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
@@ -88,105 +87,57 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- STREAMING JSON GENERATOR (Generator Function) ---
-    // Yields strings chunk by chunk to avoid creating a massive JSON string in memory
     async function* jsonStreamGenerator(payload: any) {
         yield '{';
-        
-        // Header fields
         yield `"versionHash":"${payload.versionHash}",`;
         yield `"totalRowsProcessed":${payload.totalRowsProcessed},`;
         yield `"okbRegionCounts":${JSON.stringify(payload.okbRegionCounts)},`;
-        
-        // Unidentified Rows (Array)
         yield `"unidentifiedRows":[`;
         for (let i = 0; i < payload.unidentifiedRows.length; i++) {
             if (i > 0) yield ',';
             yield JSON.stringify(payload.unidentifiedRows[i]);
         }
         yield '],';
-
-        // Aggregated Data (The Big Array)
         yield `"aggregatedData":[`;
         const data = payload.aggregatedData;
         const CHUNK_SIZE = 50; 
         for (let i = 0; i < data.length; i++) {
             if (i > 0) yield ',';
             yield JSON.stringify(data[i]);
-            
-            // Yield to event loop occasionally to prevent UI freeze
             if (i % CHUNK_SIZE === 0) {
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
         }
         yield ']';
-        
         yield '}';
     }
 
-    // --- DIRECT UPLOAD STRATEGY (BROWSER -> GOOGLE) ---
     const uploadToCloudDirectly = async (payload: any) => {
-        if (isUploadingRef.current) {
-            console.log("Skipping upload: another upload is in progress.");
-            return;
-        }
-        
+        if (isUploadingRef.current) return;
         isUploadingRef.current = true;
-        
         try {
-            // 1. Get Session URL from our backend
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot-upload', { method: 'POST' });
             if (!initRes.ok) throw new Error("Failed to init upload session");
             const { sessionUrl } = await initRes.json();
-
-            // 2. Create a ReadableStream from our generator
-            // We use a TransformStream to encode strings to Uint8Array
             const encoder = new TextEncoder();
             const iterator = jsonStreamGenerator(payload);
-            
             const underlyingSource = {
                 async pull(controller: ReadableStreamDefaultController) {
                     const { value, done } = await iterator.next();
-                    if (done) {
-                        controller.close();
-                    } else {
-                        // FIX: value can be undefined if done is true, but we are in else block so done is false.
-                        // However, TS inference for generator return types is sometimes tricky.
-                        // We cast to string to satisfy the compiler.
-                        controller.enqueue(encoder.encode(value as string));
-                    }
+                    if (done) controller.close();
+                    else controller.enqueue(encoder.encode(value as string));
                 }
             };
-            
             const rawStream = new ReadableStream(underlyingSource);
-
-            // 3. Compress the stream (GZIP)
-            // Ideally use CompressionStream if available (supported in modern browsers)
-            let uploadStream = rawStream;
-            let headers: Record<string, string> = {
-                'Content-Type': 'application/json'
-            };
-
-            if ('CompressionStream' in window) {
-                // REVERTING COMPRESSION for compatibility with existing `getSnapshot` reader.
-                // The stream is efficient enough to not crash memory.
-                uploadStream = new ReadableStream(underlyingSource);
-            }
-
-            // 4. PUT the stream to Google Drive
-            // Fetch supports request body as ReadableStream (duplex: 'half')
             await fetch(sessionUrl, {
                 method: 'PUT',
-                headers,
-                body: uploadStream,
-                // @ts-ignore - 'duplex' is a new standard not yet in all TS definitions
+                headers: { 'Content-Type': 'application/json' },
+                body: rawStream,
+                // @ts-ignore
                 duplex: 'half' 
             });
-            
-            console.log("Cloud snapshot saved successfully via Direct Stream.");
         } catch (e) {
             console.error("Direct upload failed:", e);
-            throw e;
         } finally {
             isUploadingRef.current = false;
         }
@@ -207,9 +158,7 @@ const App: React.FC = () => {
             totalRowsProcessed: rawCount,
             versionHash: currentVersion,
         };
-        
         try {
-            // Local DB Save
             await saveAnalyticsState({ 
                 allData: updatedData, 
                 unidentifiedRows: updatedUnidentified, 
@@ -221,16 +170,8 @@ const App: React.FC = () => {
                 versionHash: currentVersion 
             });
             localStorage.setItem('last_sync_version', currentVersion);
-
-            // Cloud Save (Direct Streaming Upload)
-            // We use the debounced logic inside uploadToCloudDirectly via ref
-            uploadToCloudDirectly(stateToSave).catch(err => {
-                console.warn("Background cloud sync failed (non-critical):", err);
-            });
-
-        } catch (e) {
-            console.error("Local DB Sync: Failed", e);
-        }
+            uploadToCloudDirectly(stateToSave).catch(() => {});
+        } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSyncVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
@@ -238,13 +179,10 @@ const App: React.FC = () => {
             clearInterval(pollingIntervals.current.get(oldKey));
             pollingIntervals.current.delete(oldKey);
         }
-
         setEditingClient(prev => (prev && 'key' in prev && (prev as MapPoint).key === oldKey ? newPoint : prev));
-
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
-
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             const updated = index !== -1 ? [...prev] : [...prev, newPoint];
@@ -252,7 +190,6 @@ const App: React.FC = () => {
             finalPoints = updated;
             return updated;
         });
-
         setAllData(prev => {
             finalData = prev.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -265,7 +202,6 @@ const App: React.FC = () => {
             });
             return finalData;
         });
-
         setUnidentifiedRows(prev => {
             finalUnidentified = prev.filter(row => {
                 const rowAddr = normalizeAddress(findAddressInRow(row.rowData));
@@ -273,7 +209,6 @@ const App: React.FC = () => {
             });
             return finalUnidentified;
         });
-
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
     }, [persistToDB, processingState.totalRowsProcessed]);
 
@@ -297,27 +232,22 @@ const App: React.FC = () => {
             } catch (e) {}
         }, 10000);
         pollingIntervals.current.set(tempKey, intervalId);
-        setTimeout(() => { if (pollingIntervals.current.has(tempKey)) { clearInterval(pollingIntervals.current.get(tempKey)); pollingIntervals.current.delete(tempKey); } }, 3600000);
     }, [handleDataUpdate, addNotification]);
 
     const handleDeleteClient = useCallback(async (key: string) => {
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
-
         setAllActiveClients(prev => { finalPoints = prev.filter(c => c.key !== key); return finalPoints; });
         setAllData(prev => { finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); return finalData; });
         setUnidentifiedRows(prev => { finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); return finalUnidentified; });
-        
         if (pollingIntervals.current.has(key)) {
             clearInterval(pollingIntervals.current.get(key));
             pollingIntervals.current.delete(key);
         }
-
         setEditingClient(null);
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
-        addNotification('Запись удалена', 'info');
-    }, [addNotification, persistToDB, processingState.totalRowsProcessed]);
+    }, [persistToDB, processingState.totalRowsProcessed]);
 
     useEffect(() => {
         const restore = async () => {
@@ -331,26 +261,21 @@ const App: React.FC = () => {
                     setOkbData(saved.okbData || []);
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
-                    
-                    // КРИТИЧНО: восстанавливаем версию из DB, чтобы не было ложного ресинка
                     if (saved.versionHash) {
                         setLastSyncVersion(saved.versionHash);
                         localStorage.setItem('last_sync_version', saved.versionHash);
                     }
-                    
                     const clientsMap = new Map<string, MapPoint>();
                     saved.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
                     const uniqueClients = Array.from(clientsMap.values());
                     setAllActiveClients(uniqueClients);
-                    
                     setProcessingState(prev => ({
                         ...prev,
                         totalRowsProcessed: saved.totalRowsProcessed || 0,
                         message: 'Данные восстановлены из локальной базы'
                     }));
-
                     setDbStatus('ready');
-                    setActiveModule('amp');
+                    setActiveModule('adapta');
                 } else {
                     setDbStatus('empty');
                 }
@@ -366,34 +291,23 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
-        
         const isUpdate = allData.length > 0;
         if (isUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
-        
         setProcessingState(prev => ({ 
             ...prev,
-            isProcessing: true, 
-            progress: 0, 
-            message: isUpdate ? 'Обновление данных в фоне...' : 'Инициализация Live Sync...', 
+            isProcessing: true, progress: 0, message: isUpdate ? 'Обновление данных...' : 'Подключение к облаку...', 
             fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            backgroundMessage: 'Синхронизация структуры файлов', 
-            startTime: Date.now(),
-            totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
+            startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
-
-        // --- NEW STEP: TRY TO LOAD SHARED SNAPSHOT FIRST ---
         if (!isUpdate || targetVersion) {
             try {
-                setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
                 const snapshotRes = await fetch('/api/snapshot');
-                
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
-                        
                         setOkbRegionCounts(okbRegionCounts);
                         setAllData(aggregatedData);
                         const clientsMap = new Map<string, MapPoint>();
@@ -402,45 +316,26 @@ const App: React.FC = () => {
                         setAllActiveClients(uniqueClients);
                         setUnidentifiedRows(unidentifiedRows);
                         setDbStatus('ready');
-                        
                         const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
                         await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, newVersion);
                         setLastSyncVersion(newVersion);
-                        
-                        setProcessingState(prev => ({ 
-                            ...prev, 
-                            isProcessing: false, 
-                            progress: 100, 
-                            message: 'Загружено из Облачного Кэша', 
-                            totalRowsProcessed 
-                        }));
-                        addNotification('Данные мгновенно загружены из общего кэша', 'success');
-                        return; // EXIT EARLY
+                        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Загружено', totalRowsProcessed }));
+                        return;
                     }
                 }
-            } catch (e) {
-                console.warn("Snapshot load failed, falling back to full processing", e);
-            }
+            } catch (e) {}
         }
-
-        // --- FALLBACK: FULL PROCESSING (WORKER) ---
         let cacheData: CoordsCache = {};
         try {
             const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
             if (response.ok) cacheData = await response.json();
         } catch (error) {}
-
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
-
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
-            if (msg.type === 'progress') {
-                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-            } 
-            else if (msg.type === 'result_init' && !isUpdate) {
-                setOkbRegionCounts(msg.payload.okbRegionCounts);
-            }
+            if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
+            else if (msg.type === 'result_init' && !isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
                 if (!isUpdate) {
@@ -452,26 +347,16 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'CHECKPOINT') {
-                // --- INCREMENTAL CHECKPOINT SAVE ---
                 const payload = msg.payload;
-                const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
-                
-                // Update Local UI State
-                setAllData(aggregatedData);
+                setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
                 setAllActiveClients(uniqueClients);
-                setUnidentifiedRows(unidentifiedRows);
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
-
-                // Save to IndexedDB (Instant)
+                setUnidentifiedRows(payload.unidentifiedRows);
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
-                await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
-                
-                // Save to Cloud (Direct Streaming Upload)
-                // Use ref-guarded upload to avoid overlaps
-                uploadToCloudDirectly(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                uploadToCloudDirectly(payload).catch(() => {});
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -483,54 +368,25 @@ const App: React.FC = () => {
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
-                
                 const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
-                
-                // SAVE LOCAL DB
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 setLastSyncVersion(version);
                 localStorage.setItem('last_sync_version', version);
-                localStorage.removeItem('pending_version_hash');
-
-                // --- NEW STEP: UPLOAD SNAPSHOT TO CLOUD FOR OTHERS (DIRECT STREAMING) ---
-                // We perform this optimistically in the background
-                setProcessingState(prev => ({ ...prev, message: 'Сохранение общего кэша...', progress: 100 }));
-                
-                uploadToCloudDirectly(payload).then(() => {
-                    addNotification('Общий кэш обновлен для всех пользователей', 'success');
-                }).catch(err => {
-                    console.warn("Snapshot save error:", err);
-                    addNotification('Ошибка сохранения в облако (проверьте права доступа к папке 2025)', 'warning');
-                }).finally(() => {
-                    setProcessingState(prev => ({ 
-                        ...prev, 
-                        isProcessing: false, 
-                        progress: 100, 
-                        message: 'Синхронизировано', 
-                        totalRowsProcessed: payload.totalRowsProcessed 
-                    }));
+                uploadToCloudDirectly(payload).finally(() => {
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
                 });
-
-                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены и обработаны', 'success');
             }
         };
-
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
-
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
-            // FIX: REDUCED CHUNK SIZE TO 1000 TO AVOID VERCEL 10s TIMEOUT
-            // Smaller chunks ensure Vercel functions don't time out during parsing.
             const CHUNK_SIZE = 1000; 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
-                    if (!res.ok) {
-                        console.error(`Fetch failed for offset ${offset}`, res.statusText);
-                        break;
-                    }
+                    if (!res.ok) break;
                     const result = await res.json();
                     if (result.rows?.length > 0) {
                         workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
@@ -541,23 +397,19 @@ const App: React.FC = () => {
                 }
             }
         } catch (error) {
-            console.error("Processing error:", error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         } finally {
-            // ALWAYS finalize stream to ensure at least partial data is shown
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
+    }, [okbData, allData.length, persistToDB, processingState.isProcessing]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            // Live Sync: Проверяем метаданные файлов каждую минуту
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025&t=${Date.now()}`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                // ПРОВЕРКА ВЕРСИИ: если хеши не совпадают - грузим заново в фоне
                 if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
@@ -566,7 +418,6 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        // ОБНОВЛЕНИЕ: Интервал уменьшен до 60 секунд (60000 мс) для режима Live Sync
         const timer = setInterval(checkCloudChanges, 60000); 
         checkCloudChanges();
         return () => clearInterval(timer);

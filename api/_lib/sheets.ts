@@ -1,6 +1,6 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../../types.js';
+import { OkbDataRow } from '../../types';
 import { Readable } from 'stream';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
@@ -75,8 +75,6 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
-// --- RESUMABLE UPLOAD LOGIC (DIRECT BROWSER UPLOAD) ---
-
 export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
     const auth = await getAuthClient();
     const folderId = ROOT_FOLDERS['2025'];
@@ -84,31 +82,23 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     
     const drive = google.drive({ version: 'v3', auth });
     
-    // 1. Check if file exists to overwrite
     const listRes = await drive.files.list({
         q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
         fields: 'files(id)',
     });
     const existingFileId = listRes.data.files?.[0]?.id;
 
-    // 2. Prepare Metadata
-    // For new files, metadata goes in body. For existing (PATCH), it's typically minimal or just in params.
-    // For Resumable upload of NEW file: POST to /upload/drive/v3/files?uploadType=resumable
-    // Body contains metadata.
     const metadata = {
         name: SNAPSHOT_FILENAME,
         mimeType: 'application/json',
         parents: existingFileId ? undefined : [folderId]
     };
 
-    // 3. Initiate Session
     const token = await auth.getAccessToken();
     const method = existingFileId ? 'PATCH' : 'POST';
     const url = existingFileId 
         ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
         : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
-
-    console.log(`[Snapshot] Initiating ${method} upload. Existing ID: ${existingFileId}`);
 
     const res = await fetch(url, {
         method: method,
@@ -116,14 +106,12 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
             'X-Upload-Content-Type': 'application/json',
-            // IMPORTANT: We don't know the length yet, but Drive requires X-Upload-Content-Type for init
         },
         body: JSON.stringify(metadata)
     });
 
     if (!res.ok) {
         const txt = await res.text();
-        console.error(`[Snapshot] Init failed: ${res.status} ${txt}`);
         throw new Error(`Failed to init upload: ${res.status} ${txt}`);
     }
 
@@ -133,7 +121,6 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     return { sessionUrl };
 }
 
-// Keep legacy for small files or reads
 export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
@@ -236,7 +223,6 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): 
     return res.data.values || [];
 }
 
-// --- COORDINATE CACHE FUNCTIONS ---
 function normalizeForComparison(str: string): string {
     return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
 }

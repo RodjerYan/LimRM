@@ -10,17 +10,15 @@ import {
     getSnapshot,
     saveSnapshot,
     initResumableSnapshotUpload
-} from './_lib/sheets.js';
+} from './_lib/sheets';
 
 export const config = {
     maxDuration: 60,
     api: {
-        // Disabling body parsing to handle large JSON payloads manually
         bodyParser: false,
     },
 };
 
-// Helper to read raw body
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
     for await (const chunk of req) {
@@ -68,9 +66,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-        
-        // --- CHUNKED UPLOAD HANDLERS (RAW BODY) ---
-        
         if (action === 'init-snapshot-upload') {
             try {
                 const result = await initResumableSnapshotUpload();
@@ -81,9 +76,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // --- STANDARD HANDLERS (JSON BODY) ---
-        
-        // For other actions, parse body manually
         let body: any;
         try {
             const raw = await getRawBody(req);
@@ -134,7 +126,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (action === 'save-snapshot') {
-            // Legacy handler for small files (if any)
             try {
                 await saveSnapshot(body);
                 return res.json({ success: true });

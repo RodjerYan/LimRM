@@ -6,13 +6,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "postinstall": "node cleanup.js",
-    "build": "node cleanup.js && tsc && vite build",
+    "build": "tsc && vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.2.0",
+    "@google/genai": "^1.29.0",
     "@vercel/analytics": "^1.4.1",
     "@vercel/speed-insights": "^1.0.12",
     "chart.js": "^4.4.3",
