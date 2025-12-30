@@ -8,7 +8,8 @@ import {
     updateAddressInCache, 
     updateCacheCoords,
     getSnapshot,
-    saveSnapshot
+    saveSnapshot,
+    initResumableSnapshotUpload
 } from './_lib/sheets.js';
 
 export const config = {
@@ -20,12 +21,12 @@ export const config = {
 };
 
 // Helper to read raw body
-async function getRawBody(req: VercelRequest): Promise<string> {
+async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
     for await (const chunk of req) {
         buffers.push(chunk);
     }
-    return Buffer.concat(buffers).toString('utf8');
+    return Buffer.concat(buffers);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -67,11 +68,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-        // Manually parse body since bodyParser is disabled
+        
+        // --- CHUNKED UPLOAD HANDLERS (RAW BODY) ---
+        
+        if (action === 'init-snapshot-upload') {
+            try {
+                const result = await initResumableSnapshotUpload();
+                return res.json(result);
+            } catch (error) {
+                console.error("Init upload error:", error);
+                return res.status(500).json({ error: (error as Error).message });
+            }
+        }
+
+        // --- STANDARD HANDLERS (JSON BODY) ---
+        
+        // For other actions, parse body manually
         let body: any;
         try {
             const raw = await getRawBody(req);
-            if (raw) body = JSON.parse(raw);
+            if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
         } catch (e) {
             return res.status(400).json({ error: 'Invalid JSON body' });
         }
@@ -118,6 +134,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (action === 'save-snapshot') {
+            // Legacy handler for small files (if any)
             try {
                 await saveSnapshot(body);
                 return res.json({ success: true });

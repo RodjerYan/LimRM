@@ -1,6 +1,6 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../../types';
+import { OkbDataRow } from '../../types.js';
 import { Readable } from 'stream';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
@@ -75,21 +75,70 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
+// --- RESUMABLE UPLOAD LOGIC (DIRECT BROWSER UPLOAD) ---
+
+export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
+    const auth = await getAuthClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    const drive = google.drive({ version: 'v3', auth });
+    
+    // 1. Check if file exists to overwrite
+    const listRes = await drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    });
+    const existingFileId = listRes.data.files?.[0]?.id;
+
+    // 2. Prepare Metadata
+    const metadata = {
+        name: SNAPSHOT_FILENAME,
+        mimeType: 'application/json',
+        parents: existingFileId ? undefined : [folderId]
+    };
+
+    // 3. Initiate Session
+    const token = await auth.getAccessToken();
+    const method = existingFileId ? 'PATCH' : 'POST';
+    const url = existingFileId 
+        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
+        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable`;
+
+    const res = await fetch(url, {
+        method: method,
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            // CRITICAL: Allow CORS requests from the browser to this session URL
+            'X-Upload-Content-Type': 'application/json',
+            'X-Upload-Content-Length': '' // Unknown length initially
+        },
+        body: JSON.stringify(metadata)
+    });
+
+    if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to init upload: ${res.status} ${txt}`);
+    }
+
+    const sessionUrl = res.headers.get('Location');
+    if (!sessionUrl) throw new Error("No session URL returned from Drive.");
+
+    return { sessionUrl };
+}
+
+// NOTE: uploadSnapshotChunk is removed/deprecated as we now upload directly from frontend
+// to avoid Vercel timeouts and bandwidth limits for large datasets.
+
+// Keep legacy for small files or reads
 export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
-    if (!folderId) throw new Error("Folder ID for 2025 not configured.");
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    }), 'checkSnapshot') as any;
+    const listRes = await drive.files.list({ q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents`, fields: 'files(id)' });
     const fileId = listRes.data.files?.[0]?.id;
     const media = { mimeType: 'application/json', body: JSON.stringify(data) };
-    if (fileId) {
-        await callWithRetry(() => drive.files.update({ fileId, media }), 'updateSnapshot');
-    } else {
-        await callWithRetry(() => drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media }), 'createSnapshot');
-    }
+    if (fileId) await drive.files.update({ fileId, media });
+    else await drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media });
 }
 
 export async function getSnapshot(): Promise<any | null> {

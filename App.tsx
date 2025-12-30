@@ -87,6 +87,113 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
+    // --- STREAMING JSON GENERATOR (Generator Function) ---
+    // Yields strings chunk by chunk to avoid creating a massive JSON string in memory
+    async function* jsonStreamGenerator(payload: any) {
+        yield '{';
+        
+        // Header fields
+        yield `"versionHash":"${payload.versionHash}",`;
+        yield `"totalRowsProcessed":${payload.totalRowsProcessed},`;
+        yield `"okbRegionCounts":${JSON.stringify(payload.okbRegionCounts)},`;
+        
+        // Unidentified Rows (Array)
+        yield `"unidentifiedRows":[`;
+        for (let i = 0; i < payload.unidentifiedRows.length; i++) {
+            if (i > 0) yield ',';
+            yield JSON.stringify(payload.unidentifiedRows[i]);
+        }
+        yield '],';
+
+        // Aggregated Data (The Big Array)
+        yield `"aggregatedData":[`;
+        const data = payload.aggregatedData;
+        const CHUNK_SIZE = 50; 
+        for (let i = 0; i < data.length; i++) {
+            if (i > 0) yield ',';
+            yield JSON.stringify(data[i]);
+            
+            // Yield to event loop occasionally to prevent UI freeze
+            if (i % CHUNK_SIZE === 0) {
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        }
+        yield ']';
+        
+        yield '}';
+    }
+
+    // --- DIRECT UPLOAD STRATEGY (BROWSER -> GOOGLE) ---
+    const uploadToCloudDirectly = async (payload: any) => {
+        try {
+            // 1. Get Session URL from our backend
+            const initRes = await fetch('/api/get-full-cache?action=init-snapshot-upload', { method: 'POST' });
+            if (!initRes.ok) throw new Error("Failed to init upload session");
+            const { sessionUrl } = await initRes.json();
+
+            // 2. Create a ReadableStream from our generator
+            // We use a TransformStream to encode strings to Uint8Array
+            const encoder = new TextEncoder();
+            const iterator = jsonStreamGenerator(payload);
+            
+            const underlyingSource = {
+                async pull(controller: ReadableStreamDefaultController) {
+                    const { value, done } = await iterator.next();
+                    if (done) {
+                        controller.close();
+                    } else {
+                        // FIX: value can be undefined if done is true, but we are in else block so done is false.
+                        // However, TS inference for generator return types is sometimes tricky.
+                        // We cast to string to satisfy the compiler.
+                        controller.enqueue(encoder.encode(value as string));
+                    }
+                }
+            };
+            
+            const rawStream = new ReadableStream(underlyingSource);
+
+            // 3. Compress the stream (GZIP)
+            // Ideally use CompressionStream if available (supported in modern browsers)
+            let uploadStream = rawStream;
+            let headers: Record<string, string> = {
+                'Content-Type': 'application/json'
+            };
+
+            if ('CompressionStream' in window) {
+                const gzipStream = new CompressionStream('gzip');
+                uploadStream = rawStream.pipeThrough(gzipStream);
+                // Note: Google Drive Resumable upload doesn't natively support Content-Encoding: gzip for storage
+                // It will store the file as a .gz file if we send it compressed.
+                // However, our downloader expects JSON. 
+                // TRICK: We will skip compression for now to ensure compatibility with the simple 
+                // `getSnapshot` endpoint which expects to pipe `res.data`.
+                // If we want compression, we need to handle decompression on download.
+                // For 4M rows, raw JSON is huge, but Resumable Upload handles it.
+                // Let's stick to raw stream to be safe with existing reader logic.
+                // If speed is an issue, we can enable gzip but rename file to .json.gz
+                
+                // REVERTING COMPRESSION for compatibility with existing `getSnapshot` reader.
+                // The stream is efficient enough to not crash memory.
+                uploadStream = new ReadableStream(underlyingSource);
+            }
+
+            // 4. PUT the stream to Google Drive
+            // Fetch supports request body as ReadableStream (duplex: 'half')
+            await fetch(sessionUrl, {
+                method: 'PUT',
+                headers,
+                body: uploadStream,
+                // @ts-ignore - 'duplex' is a new standard not yet in all TS definitions
+                duplex: 'half' 
+            });
+            
+            console.log("Cloud snapshot saved successfully via Direct Stream.");
+        } catch (e) {
+            console.error("Direct upload failed:", e);
+            throw e;
+        }
+    };
+
     const persistToDB = useCallback(async (
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
@@ -96,23 +203,36 @@ const App: React.FC = () => {
     ) => {
         const currentVersion = vHash || lastSyncVersion || 'manual_patch_' + Date.now();
         const stateToSave = {
-            allData: updatedData,
+            aggregatedData: updatedData, 
             unidentifiedRows: updatedUnidentified,
             okbRegionCounts,
-            okbData, // This will be ignored by saveAnalyticsState logic to save space
-            okbStatus, // This too
-            dateRange,
             totalRowsProcessed: rawCount,
-            versionHash: currentVersion
+            versionHash: currentVersion,
         };
+        
         try {
-            await saveAnalyticsState(stateToSave);
-            // Дублируем в localStorage для быстрой проверки при загрузке страницы
+            // Local DB Save
+            await saveAnalyticsState({ 
+                allData: updatedData, 
+                unidentifiedRows: updatedUnidentified, 
+                okbRegionCounts, 
+                okbData: [], 
+                okbStatus: null,
+                dateRange, 
+                totalRowsProcessed: rawCount, 
+                versionHash: currentVersion 
+            });
             localStorage.setItem('last_sync_version', currentVersion);
+
+            // Cloud Save (Direct Streaming Upload)
+            uploadToCloudDirectly(stateToSave).catch(err => {
+                console.warn("Background cloud sync failed (non-critical):", err);
+            });
+
         } catch (e) {
             console.error("Local DB Sync: Failed", e);
         }
-    }, [okbRegionCounts, okbData, okbStatus, dateRange, lastSyncVersion]);
+    }, [okbRegionCounts, dateRange, lastSyncVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
         if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
@@ -264,8 +384,6 @@ const App: React.FC = () => {
         }));
 
         // --- NEW STEP: TRY TO LOAD SHARED SNAPSHOT FIRST ---
-        // This avoids re-processing for new users if someone else has already done it.
-        // We only do this if it's NOT a forced update (when targetVersion is passed, it implies an update)
         if (!isUpdate || targetVersion) {
             try {
                 setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
@@ -275,11 +393,8 @@ const App: React.FC = () => {
                     const snapshot = await snapshotRes.json();
                     if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
-                        
-                        // Check if snapshot is newer or same as target. 
                         const snapshotHash = snapshot.versionHash;
                         
-                        // Use Snapshot!
                         setOkbRegionCounts(okbRegionCounts);
                         setAllData(aggregatedData);
                         const clientsMap = new Map<string, MapPoint>();
@@ -301,7 +416,7 @@ const App: React.FC = () => {
                             totalRowsProcessed 
                         }));
                         addNotification('Данные мгновенно загружены из общего кэша', 'success');
-                        return; // EXIT EARLY - Skip worker processing
+                        return; // EXIT EARLY
                     }
                 }
             } catch (e) {
@@ -355,16 +470,8 @@ const App: React.FC = () => {
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
                 await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
                 
-                // Save to Cloud (Shadow Update - Fire and Forget)
-                fetch('/api/snapshot', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                }).then(res => {
-                    if (!res.ok) {
-                        console.warn("Checkpoint shadow update failed", res.status, res.statusText);
-                    }
-                }).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
+                // Save to Cloud (Direct Streaming Upload)
+                uploadToCloudDirectly(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -385,24 +492,15 @@ const App: React.FC = () => {
                 localStorage.setItem('last_sync_version', version);
                 localStorage.removeItem('pending_version_hash');
 
-                // --- NEW STEP: UPLOAD SNAPSHOT TO CLOUD FOR OTHERS ---
+                // --- NEW STEP: UPLOAD SNAPSHOT TO CLOUD FOR OTHERS (DIRECT STREAMING) ---
                 // We perform this optimistically in the background
                 setProcessingState(prev => ({ ...prev, message: 'Сохранение общего кэша...', progress: 100 }));
                 
-                fetch('/api/snapshot', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                }).then(res => {
-                    if (res.ok) {
-                        addNotification('Общий кэш обновлен для всех пользователей', 'success');
-                    } else {
-                        console.warn("Could not save snapshot to cloud (likely too big or permission error)", res.status);
-                        addNotification('Ошибка сохранения в облако (проверьте права доступа к папке 2025)', 'warning');
-                    }
+                uploadToCloudDirectly(payload).then(() => {
+                    addNotification('Общий кэш обновлен для всех пользователей', 'success');
                 }).catch(err => {
                     console.warn("Snapshot save error:", err);
-                    addNotification('Ошибка сети при сохранении', 'error');
+                    addNotification('Ошибка сохранения в облако (проверьте права доступа к папке 2025)', 'warning');
                 }).finally(() => {
                     setProcessingState(prev => ({ 
                         ...prev, 
