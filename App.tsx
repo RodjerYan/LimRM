@@ -247,12 +247,11 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({
                     ...prev,
                     isProcessing: true,
-                    progress: 50, // Indeterminate mostly
+                    progress: 50,
                     message: status.message || `Фоновая обработка: ${status.processedRows} строк...`
                 }));
                 setTimeout(pollJobStatus, 3000);
             } else if (status.status === 'completed') {
-                // Job done, reload snapshot
                 await handleLoadSnapshot();
             } else if (status.status === 'error') {
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сервера' }));
@@ -301,23 +300,18 @@ const App: React.FC = () => {
         }
     };
 
-    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         if (processingState.isProcessing) return;
-        
-        // 1. Try to load existing snapshot first (Fast Path)
-        // If we have a target version and it matches local, skip.
-        // If not, try fetching snapshot.
         
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, 
             progress: 0, 
-            message: 'Инициализация...', 
+            message: 'Подготовка диапазона...', 
             startTime: Date.now()
         }));
 
         try {
-            // Check if a job is already running
             const statusRes = await fetch('/api/process?action=status');
             const status = await statusRes.json();
             
@@ -327,10 +321,19 @@ const App: React.FC = () => {
                 return;
             }
 
-            // Start new job
-            const startRes = await fetch('/api/process?action=start');
+            const queryParams = new URLSearchParams({
+                action: 'start',
+                startYear: params.startYear,
+                startMonth: params.startMonth.toString(),
+                endYear: params.endYear,
+                endMonth: params.endMonth.toString()
+            });
+
+            const startRes = await fetch(`/api/process?${queryParams.toString()}`);
             if (startRes.ok) {
-                addNotification('Задача запущена на сервере. Можете закрыть вкладку.', 'success');
+                const rangeStr = `${params.startMonth}/${params.startYear} - ${params.endMonth}/${params.endYear}`;
+                setDateRange(rangeStr);
+                addNotification(`Синхронизация диапазона ${rangeStr} запущена.`, 'success');
                 pollJobStatus();
             } else {
                 throw new Error('Failed to start job');
@@ -347,9 +350,7 @@ const App: React.FC = () => {
         try {
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025&t=${Date.now()}`);
             if (res.ok) {
-                const meta = await res.json();
                 setIsLiveConnected(true);
-                // Auto-sync logic if needed
             }
         } catch (e) { setIsLiveConnected(false); }
     }, [isRestoring, processingState.isProcessing, okbStatus]);

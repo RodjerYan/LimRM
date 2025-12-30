@@ -156,7 +156,6 @@ export type WorkerStreamInit = {
     }
 };
 
-// FIX: Updated WorkerStreamChunk to be a discriminated union to handle different payload shapes for different chunk types.
 export type WorkerStreamChunk = 
     | {
         type: 'result_chunk_aggregated';
@@ -290,9 +289,10 @@ export interface FileProcessingState {
 }
 
 export interface CloudLoadParams {
-    year: string;
-    quarter?: number; 
-    month?: number;   
+    startYear: string;
+    startMonth: number;
+    endYear: string;
+    endMonth: number;
 }
 
 export interface MarketData {
