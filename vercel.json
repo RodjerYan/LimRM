@@ -59,6 +59,10 @@
       "destination": "/api/get-full-cache?action=get-snapshot"
     },
     {
+      "source": "/api/process-background",
+      "destination": "/api/cron-sync"
+    },
+    {
       "source": "/:path*",
       "destination": "/index.html"
     }
@@ -87,6 +91,10 @@
     {
       "path": "/api/get-okb",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron-sync",
+      "schedule": "*/10 * * * *"
     }
   ]
 }
