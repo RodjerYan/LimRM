@@ -14,11 +14,19 @@ import {
 export const config = {
     maxDuration: 60,
     api: {
-        bodyParser: {
-            sizeLimit: '4.5mb',
-        },
+        // Disabling body parsing to handle large JSON payloads manually
+        bodyParser: false,
     },
 };
+
+// Helper to read raw body
+async function getRawBody(req: VercelRequest): Promise<string> {
+    const buffers = [];
+    for await (const chunk of req) {
+        buffers.push(chunk);
+    }
+    return Buffer.concat(buffers).toString('utf8');
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string;
@@ -59,9 +67,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
+        // Manually parse body since bodyParser is disabled
+        let body: any;
+        try {
+            const raw = await getRawBody(req);
+            if (raw) body = JSON.parse(raw);
+        } catch (e) {
+            return res.status(400).json({ error: 'Invalid JSON body' });
+        }
+
         if (action === 'add-to-cache') {
             try {
-                const { rmName, rows } = req.body;
+                const { rmName, rows } = body;
                 const formattedRows = rows.map((r: any) => [r.address, r.lat ?? '', r.lon ?? '']);
                 await appendToCache(rmName, formattedRows);
                 return res.status(200).json({ success: true });
@@ -72,7 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'update-address') {
             try {
-                const { rmName, oldAddress, newAddress, comment } = req.body;
+                const { rmName, oldAddress, newAddress, comment } = body;
                 await updateAddressInCache(rmName, oldAddress, newAddress, comment);
                 return res.status(200).json({ success: true });
             } catch (error) {
@@ -82,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'update-coords') {
             try {
-                const { rmName, updates } = req.body;
+                const { rmName, updates } = body;
                 await updateCacheCoords(rmName, updates);
                 return res.status(200).json({ success: true });
             } catch (error) {
@@ -92,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'delete-address') {
             try {
-                const { rmName, address } = req.body;
+                const { rmName, address } = body;
                 await deleteAddressFromCache(rmName, address);
                 return res.status(200).json({ success: true });
             } catch (error) {
@@ -102,9 +119,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'save-snapshot') {
             try {
-                await saveSnapshot(req.body);
+                await saveSnapshot(body);
                 return res.json({ success: true });
             } catch (error) {
+                console.error("Snapshot save error:", error);
                 return res.status(500).json({ error: (error as Error).message });
             }
         }

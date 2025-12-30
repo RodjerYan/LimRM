@@ -360,6 +360,10 @@ const App: React.FC = () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
+                }).then(res => {
+                    if (!res.ok) {
+                        console.warn("Checkpoint shadow update failed", res.status, res.statusText);
+                    }
                 }).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
@@ -393,10 +397,12 @@ const App: React.FC = () => {
                     if (res.ok) {
                         addNotification('Общий кэш обновлен для всех пользователей', 'success');
                     } else {
-                        console.warn("Could not save snapshot to cloud (likely too big or permission error)");
+                        console.warn("Could not save snapshot to cloud (likely too big or permission error)", res.status);
+                        addNotification('Ошибка сохранения в облако (проверьте права доступа к папке 2025)', 'warning');
                     }
                 }).catch(err => {
                     console.warn("Snapshot save error:", err);
+                    addNotification('Ошибка сети при сохранении', 'error');
                 }).finally(() => {
                     setProcessingState(prev => ({ 
                         ...prev, 
