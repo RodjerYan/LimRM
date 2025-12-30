@@ -47,4 +47,11 @@ pathsToDelete.forEach(item => {
     }
 });
 
+// Force check if api/lib still exists (Vercel sometimes restores it from cache)
+const apiLib = path.join(__dirname, 'api/lib');
+if (fs.existsSync(apiLib)) {
+    console.log('Force removing api/lib again...');
+    fs.rmSync(apiLib, { recursive: true, force: true });
+}
+
 console.log('--- CLEANUP FINISHED ---');
