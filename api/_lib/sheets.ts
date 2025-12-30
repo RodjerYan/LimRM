@@ -15,19 +15,22 @@ const ROOT_FOLDERS: Record<string, string> = {
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) {
-        throw new Error('Environment variable GOOGLE_SERVICE_ACCOUNT_KEY is not set');
+        throw new Error('Variable GOOGLE_SERVICE_ACCOUNT_KEY is empty. Check Vercel Settings.');
     }
 
     let credentials;
     try {
-        // Remove possible whitespace/hidden chars from env variable
-        credentials = JSON.parse(serviceAccountKey.trim());
+        const trimmedKey = serviceAccountKey.trim();
+        credentials = JSON.parse(trimmedKey);
+        
+        // Ensure the private key has correct line breaks for OpenSSL
         if (credentials.private_key) {
-            // Ensure private key has actual newlines
             credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+        } else {
+             throw new Error('JSON key is valid, but private_key property is missing.');
         }
     } catch (error) {
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON: ' + (error as Error).message);
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Make sure it is valid JSON string.');
     }
 
     return new google.auth.GoogleAuth({
@@ -52,8 +55,7 @@ export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
 }
 
 async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
-    // Reduced retries to avoid Vercel timeout (Hobby limit 10s)
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 1; // Minimal retries for lambda to avoid timeout
     let attempt = 0;
     while (true) {
         try {
@@ -61,14 +63,12 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
         } catch (error: any) {
             attempt++;
             const status = error.response?.status || error.code;
-            const isRetryable = status === 429 || (status >= 500 && status <= 504);
+            console.error(`Error in ${context} (Attempt ${attempt}):`, error.message);
             
-            if (attempt > MAX_RETRIES || !isRetryable) {
-                console.error(`Critical API Error in ${context}:`, error.message);
+            if (attempt > MAX_RETRIES) {
                 throw error;
             }
-            // Small delay for retry
-            await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
 }
@@ -81,7 +81,10 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
       valueRenderOption: 'FORMATTED_VALUE'
   }), 'getOKBData') as any;
   
-  if (!res || !res.data || !res.data.values) return [];
+  if (!res || !res.data || !res.data.values) {
+      console.warn('Sheets API returned empty or no values.');
+      return [];
+  }
   
   const rows = res.data.values;
   if (rows.length < 2) return [];
@@ -97,6 +100,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         let latVal = row['lat'] || row['latitude'];
         let lonVal = row['lon'] || row['longitude'];
         
+        // Custom logic for column-based mapping
         if (rowArray.length > 12) {
              const rawLon = rowArray[11]; const rawLat = rowArray[12];
              if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
@@ -156,12 +160,12 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
 export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
-    if (!rootFolderId) throw new Error(`Folder for year ${year} not configured.`);
-    return []; // Placeholder for CIS specific logic
+    if (!rootFolderId) return [];
+    return [];
 }
 
 export async function listFilesForYear(year: string): Promise<{ id: string, name: string }[]> {
-    return []; // Placeholder
+    return [];
 }
 
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): Promise<any[][]> {
@@ -170,10 +174,7 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): 
     return res.data.values || [];
 }
 
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
-    return {}; // Placeholder
-}
-
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> { return {}; }
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string): Promise<void> {}
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {}
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {}
