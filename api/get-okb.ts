@@ -1,3 +1,4 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
@@ -50,25 +51,20 @@ const MOCK_CONFLICT_ZONES_GEOJSON: FeatureCollection = {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string;
 
-    if (req.method === 'GET') {
-        if (action === 'get-okb' || !action) {
-            try {
+    try {
+        if (req.method === 'GET') {
+            if (action === 'get-okb' || !action) {
                 const okbData = await getOKBData();
                 res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, stale-while-revalidate=60');
                 return res.status(200).json(okbData);
-            } catch (error) {
-                return res.status(500).json({ error: 'Failed to load OKB', details: (error as Error).message });
             }
-        }
 
-        if (action === 'get-akb') {
-            try {
+            if (action === 'get-akb') {
                 const year = (req.query.year as string) || '2025';
                 const mode = req.query.mode as string;
 
                 if (mode === 'metadata') {
                     res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=30, stale-while-revalidate=30');
-                    
                     const drive = await getGoogleDriveClient();
                     const monthStr = req.query.month as string;
                     let files = monthStr ? await listFilesForMonth(year, parseInt(monthStr, 10)) : await listFilesForYear(year);
@@ -102,17 +98,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     return res.status(200).json({ fileId, rows: chunk, offset, limit, hasMore });
                 }
                 return res.status(400).json({ error: 'Invalid AKB params' });
-            } catch (error) {
-                return res.status(500).json({ error: 'AKB error', details: (error as Error).message });
             }
-        }
 
-        if (action === 'geocode') {
-            const address = req.query.address as string;
-            if (!address) return res.status(400).json({ error: 'Address required' });
-            const countryCodes = 'ru,by,kz,ua,kg,uz,tj,tm,am,az,ge,md';
-            const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=${countryCodes}`;
-            try {
+            if (action === 'geocode') {
+                const address = req.query.address as string;
+                if (!address) return res.status(400).json({ error: 'Address required' });
+                const countryCodes = 'ru,by,kz,ua,kg,uz,tj,tm,am,az,ge,md';
+                const nominatimUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=${countryCodes}`;
                 const nominatimRes = await fetch(nominatimUrl, { headers: { 'User-Agent': 'LimkormGeoAnalyzer/1.0' } });
                 if (!nominatimRes.ok) throw new Error(`Nominatim error: ${nominatimRes.status}`);
                 const data = await nominatimRes.json() as any[];
@@ -122,22 +114,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     return res.status(200).json({ lat: parseFloat(lat), lon: parseFloat(lon) });
                 }
                 return res.status(404).json({ error: 'Not found' });
-            } catch (error) {
-                return res.status(500).json({ error: 'Geocoding failed', details: (error as Error).message });
+            }
+
+            if (action === 'get-conflict-zones') {
+                const data = MOCK_CONFLICT_ZONES_GEOJSON;
+                if (data.features[0].properties) data.features[0].properties.last_updated = new Date().toISOString();
+                res.setHeader('Cache-Control', 's-maxage=3600');
+                return res.status(200).json(data);
             }
         }
 
-        if (action === 'get-conflict-zones') {
-            const data = MOCK_CONFLICT_ZONES_GEOJSON;
-            if (data.features[0].properties) data.features[0].properties.last_updated = new Date().toISOString();
-            res.setHeader('Cache-Control', 's-maxage=3600');
-            return res.status(200).json(data);
-        }
-    }
-
-    if (req.method === 'POST') {
-        if (action === 'get-okb-status') {
-            try {
+        if (req.method === 'POST') {
+            if (action === 'get-okb-status') {
                 if (!req.body || !req.body.fileBase64) return res.status(400).json({ error: 'File required' });
                 const buffer = Buffer.from(req.body.fileBase64, 'base64');
                 const workbook = XLSX.read(buffer, { type: 'buffer' });
@@ -155,11 +143,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 });
                 if (updates.length > 0) await batchUpdateOKBStatus(updates);
                 return res.status(200).json({ results });
-            } catch (error) {
-                return res.status(500).json({ error: 'Status check failed', details: (error as Error).message });
             }
         }
-    }
 
-    return res.status(400).json({ error: 'Unknown action' });
+        return res.status(400).json({ error: 'Unknown action or method' });
+    } catch (error) {
+        console.error("Critical API Error:", error);
+        return res.status(500).json({ 
+            error: 'Server Error', 
+            details: (error as Error).message || 'Internal error occurred'
+        });
+    }
 }

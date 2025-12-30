@@ -1,7 +1,6 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OkbDataRow } from '../../types';
-import { Readable } from 'stream';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
@@ -26,23 +25,41 @@ const RUSSIAN_MONTHS_ORDER = [
 
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!serviceAccountKey) throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
+    if (!serviceAccountKey) {
+        throw new Error('Environment variable GOOGLE_SERVICE_ACCOUNT_KEY is not set');
+    }
+
     let credentials;
-    try { credentials = JSON.parse(serviceAccountKey); } catch (error) { throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY.'); }
-    return new google.auth.GoogleAuth({
+    try {
+        credentials = JSON.parse(serviceAccountKey.trim());
+        // Critical: fix private key formatting if it has literal \n as strings
+        if (credentials.private_key) {
+            credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+        }
+    } catch (error) {
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON: ' + (error as Error).message);
+    }
+
+    const auth = new google.auth.GoogleAuth({
         credentials,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
+        scopes: [
+            'https://www.googleapis.com/auth/spreadsheets', 
+            'https://www.googleapis.com/auth/drive'
+        ],
     });
+    return auth;
 }
 
 export async function getGoogleSheetsClient(): Promise<sheets_v4.Sheets> {
     const auth = await getAuthClient();
-    return google.sheets({ version: 'v4', auth });
+    const authClient = await auth.getClient() as any;
+    return google.sheets({ version: 'v4', auth: authClient });
 }
 
 export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     const auth = await getAuthClient();
-    return google.drive({ version: 'v3', auth });
+    const authClient = await auth.getClient() as any;
+    return google.drive({ version: 'v3', auth: authClient });
 }
 
 let lastRequestTime = 0;
@@ -58,7 +75,7 @@ async function throttle() {
 }
 
 async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
-    const MAX_RETRIES = 5;
+    const MAX_RETRIES = 3;
     let attempt = 0;
     while (true) {
         try {
@@ -68,8 +85,13 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
             attempt++;
             const status = error.response?.status || error.code;
             const isRetryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) throw error;
-            const delay = Math.min(2000 * Math.pow(2, attempt - 1), 30000);
+            
+            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) {
+                console.error(`API Error in ${context}:`, error.response?.data || error.message);
+                throw error;
+            }
+            
+            const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
@@ -80,13 +102,13 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     const folderId = ROOT_FOLDERS['2025'];
     if (!folderId) throw new Error("Folder ID for 2025 is missing");
     
-    const drive = google.drive({ version: 'v3', auth });
-    
+    const drive = await getGoogleDriveClient();
     const listRes = await drive.files.list({
         q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
         fields: 'files(id)',
     });
-    const existingFileId = listRes.data.files?.[0]?.id;
+    // FIX: Access .data from drive.files.list response
+    const existingFileId = (listRes as any).data.files?.[0]?.id;
 
     const metadata = {
         name: SNAPSHOT_FILENAME,
@@ -94,7 +116,7 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
         parents: existingFileId ? undefined : [folderId]
     };
 
-    const token = await auth.getAccessToken();
+    const token = await (await auth.getClient()).getAccessToken();
     const method = existingFileId ? 'PATCH' : 'POST';
     const url = existingFileId 
         ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
@@ -103,7 +125,7 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     const res = await fetch(url, {
         method: method,
         headers: {
-            'Authorization': `Bearer ${token}`,
+            'Authorization': `Bearer ${token.token}`,
             'Content-Type': 'application/json',
             'X-Upload-Content-Type': 'application/json',
         },
@@ -125,7 +147,8 @@ export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
     const listRes = await drive.files.list({ q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents`, fields: 'files(id)' });
-    const fileId = listRes.data.files?.[0]?.id;
+    // FIX: Access .data from drive.files.list response
+    const fileId = (listRes as any).data.files?.[0]?.id;
     const media = { mimeType: 'application/json', body: JSON.stringify(data) };
     if (fileId) await drive.files.update({ fileId, media });
     else await drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media });
@@ -135,13 +158,18 @@ export async function getSnapshot(): Promise<any | null> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
     if (!folderId) return null;
+    
+    // FIX: Cast listRes to any to access .data
     const listRes = await callWithRetry(() => drive.files.list({
         q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
         fields: 'files(id, modifiedTime, size)',
     }), 'findSnapshot') as any;
+    
     const file = listRes.data.files?.[0];
     if (!file || !file.id) return null;
+    
     try {
+        // FIX: Cast res to any to access .data
         const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'downloadSnapshot') as any;
         return { data: res.data, versionHash: file.modifiedTime, size: file.size };
     } catch (e) { return null; }
@@ -149,14 +177,23 @@ export async function getSnapshot(): Promise<any | null> {
 
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
-  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:P` }), 'getOKBData') as any;
+  // FIX: Cast res to any to access .data
+  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ 
+      spreadsheetId: SPREADSHEET_ID, 
+      range: `${SHEET_NAME}!A:P`,
+      valueRenderOption: 'FORMATTED_VALUE'
+  }), 'getOKBData') as any;
+  
+  if (!res || !res.data) throw new Error('Failed to get data from Sheets API');
   const rows = res.data.values;
   if (!rows || rows.length < 2) return [];
+  
   const header = rows[0].map((h: any) => String(h || '').trim());
   return rows.slice(1).map((rowArray: any[]) => {
-        if (rowArray.every(cell => !cell)) return null;
+        if (!rowArray || rowArray.every(cell => !cell)) return null;
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
+        
         let latVal = row['lat'] || row['latitude'];
         let lonVal = row['lon'] || row['longitude'];
         if (rowArray.length > 12) {
@@ -174,6 +211,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
 
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
+    // FIX: Cast res to any to access .data
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!C2:C` }), 'getOKBAddresses') as any;
     return (res.data.values || []).flat().map((address: any) => String(address || '').trim()).filter(Boolean);
 }
@@ -192,33 +230,37 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
     const mName = RUSSIAN_MONTHS_ORDER[month - 1];
     const engMonthName = MONTH_MAP[mName];
     if (!engMonthName) return [];
-    return callWithRetry(async () => {
-        const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 });
-        const monthFolder = folderListRes.data.files?.find(f => f.name?.toLowerCase() === engMonthName.toLowerCase());
-        if (!monthFolder || !monthFolder.id) return [];
-        const fileListRes = await drive.files.list({ q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, fields: 'files(id, name)', pageSize: 100 });
-        return (fileListRes.data.files || []).map(f => ({ id: f.id!, name: f.name || 'Untitled' }));
-    }, `listFilesForMonth-${year}-${month}`);
+    
+    // FIX: Cast folderListRes to any to access .data
+    const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 }) as any;
+    const monthFolder = folderListRes.data.files?.find((f: any) => f.name?.toLowerCase() === engMonthName.toLowerCase());
+    if (!monthFolder || !monthFolder.id) return [];
+    
+    // FIX: Cast fileListRes to any to access .data
+    const fileListRes = await drive.files.list({ q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, fields: 'files(id, name)', pageSize: 100 }) as any;
+    return (fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled' }));
 }
 
 export async function listFilesForYear(year: string): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) throw new Error(`Папка для года ${year} не настроена.`);
-    return callWithRetry(async () => {
-        const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 });
-        const allFiles: { id: string, name: string }[] = [];
-        for (const folder of (folderListRes.data.files || [])) {
-            if (!folder.id) continue;
-            const fileListRes = await drive.files.list({ q: `'${folder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, fields: 'files(id, name)', pageSize: 100 });
-            allFiles.push(...(fileListRes.data.files || []).map(f => ({ id: f.id!, name: f.name || 'Untitled' })));
-        }
-        return allFiles;
-    }, `listFilesForYear-${year}`);
+    
+    // FIX: Cast folderListRes to any to access .data
+    const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 }) as any;
+    const allFiles: { id: string, name: string }[] = [];
+    for (const folder of (folderListRes.data.files || [])) {
+        if (!folder.id) continue;
+        // FIX: Cast fileListRes to any to access .data
+        const fileListRes = await drive.files.list({ q: `'${folder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`, fields: 'files(id, name)', pageSize: 100 }) as any;
+        allFiles.push(...(fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled' })));
+    }
+    return allFiles;
 }
 
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): Promise<any[][]> {
     const sheets = await getGoogleSheetsClient();
+    // FIX: Cast res to any to access .data
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: fileId, range: range, valueRenderOption: 'UNFORMATTED_VALUE' }), `fetchFileContent-${fileId}-${range}`) as any;
     return res.data.values || [];
 }
@@ -238,10 +280,12 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
 
 export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
+    // FIX: Cast spreadsheet to any to access .data
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
     const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
     const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
+    // FIX: Cast response to any to access .data
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
     const cache: Record<string, any[]> = {};
     const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
@@ -268,6 +312,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 }
 
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
+    // FIX: Cast spreadsheet to any to access .data
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
     const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
     if (existingSheet) return existingSheet.properties!.title!;
@@ -280,6 +325,7 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     if (rowsToAppend.length === 0) return;
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    // FIX: Cast existing to any to access .data
     const existing = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A2:A` }), 'checkExisting') as any;
     const existingAddresses = new Set(existing.data.values?.flat().map((a: any) => normalizeForComparison(String(a))) || []);
     const unique = rowsToAppend.filter(row => row[0] && !existingAddresses.has(normalizeForComparison(String(row[0]))));
@@ -291,6 +337,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     if (updates.length === 0) return;
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    // FIX: Cast response to any to access .data
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:A` }), 'getAddrForUpdate') as any;
     const addressIndexMap = new Map<string, number>();
     (response.data.values?.flat() || []).forEach((addr: any, i: number) => { if(addr) addressIndexMap.set(normalizeForComparison(String(addr)), i + 1); });
@@ -305,6 +352,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    // FIX: Cast response to any to access .data
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:E` }), 'getAddrForUpdate2') as any;
     const rows = response.data.values || [];
     const oldNorm = normalizeForComparison(oldAddress);
@@ -329,6 +377,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    // FIX: Cast response to any to access .data
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:A` }), 'getAddrForDelete') as any;
     const rowIndex = (response.data.values?.flat() || []).findIndex((a: any) => normalizeForComparison(String(a)) === normalizeForComparison(address));
     if (rowIndex !== -1) {
@@ -338,10 +387,12 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 
 export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
     const sheets = await getGoogleSheetsClient();
+    // FIX: Cast spreadsheet to any to access .data
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
     const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
     if (!existingSheet) return null;
-    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:E` }), 'getAddrData') as any;
+    // FIX: Cast response to any to access .data
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties!.title}'!A:E` }), 'getAddrData') as any;
     const values = response.data.values || [];
     const addressNorm = normalizeForComparison(address);
     let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);

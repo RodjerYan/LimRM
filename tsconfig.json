@@ -19,8 +19,6 @@
     "vite-env.d.ts"
   ],
   "exclude": [
-    "node_modules",
-    "api/lib",
-    "api/_lib"
+    "node_modules"
   ]
 }
