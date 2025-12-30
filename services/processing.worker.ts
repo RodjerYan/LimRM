@@ -29,6 +29,9 @@ let state_okbRegionCounts: { [key: string]: number } = {};
 let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
+let state_lastCheckpointCount = 0;
+
+const CHECKPOINT_THRESHOLD = 15000;
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -118,6 +121,7 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
     state_headers = [];
     state_processedRowsCount = 0;
     state_lastEmitCount = 0;
+    state_lastCheckpointCount = 0;
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
@@ -225,7 +229,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             };
         }
 
-        // КРИТИЧНОЕ ИСПРАВЛЕНИЕ: Расширенный список ключей и безопасный парсинг чисел с пробелами
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const weight = parseCleanFloat(weightRaw);
         
@@ -259,7 +262,33 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    if (state_processedRowsCount - state_lastEmitCount > 5000) {
+    // --- CHECKPOINT LOGIC ---
+    if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
+        state_lastCheckpointCount = state_processedRowsCount;
+        performIncrementalAbc();
+        
+        const checkpointData = Object.values(state_aggregatedData).map(item => ({
+            ...item,
+            potential: item.fact * 1.15,
+            growthPotential: item.fact * 0.15,
+            growthPercentage: 15,
+            clients: Array.from(item.clients.values())
+        }));
+
+        postMessage({
+            type: 'CHECKPOINT',
+            payload: {
+                aggregatedData: checkpointData,
+                unidentifiedRows: state_unidentifiedRows,
+                okbRegionCounts: state_okbRegionCounts,
+                totalRowsProcessed: state_processedRowsCount
+            }
+        });
+        
+        // Also emit regular visual chunk so UI updates smoothly
+        state_lastEmitCount = state_processedRowsCount;
+    }
+    else if (state_processedRowsCount - state_lastEmitCount > 5000) {
         state_lastEmitCount = state_processedRowsCount;
         
         performIncrementalAbc();

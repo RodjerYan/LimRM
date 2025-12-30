@@ -1,5 +1,4 @@
 
-
 export interface AggregatedDataRow {
     key: string;
     rm: string;
@@ -168,6 +167,11 @@ export type WorkerStreamChunk =
         payload: UnidentifiedRow[];
       };
 
+export type WorkerStreamCheckpoint = {
+    type: 'CHECKPOINT';
+    payload: WorkerResultPayload;
+};
+
 export type WorkerStreamFinish = {
     type: 'result_finished';
     payload: WorkerResultPayload;
@@ -208,6 +212,7 @@ export type WorkerMessage =
     | { type: 'background', payload: WorkerBackgroundMessage }
     | WorkerStreamInit
     | WorkerStreamChunk
+    | WorkerStreamCheckpoint
     | WorkerStreamFinish;
 
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;

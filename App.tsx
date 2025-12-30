@@ -337,6 +337,31 @@ const App: React.FC = () => {
                 }
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
+            else if (msg.type === 'CHECKPOINT') {
+                // --- INCREMENTAL CHECKPOINT SAVE ---
+                const payload = msg.payload;
+                const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
+                
+                // Update Local UI State
+                setAllData(aggregatedData);
+                const clientsMap = new Map<string, MapPoint>();
+                aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                const uniqueClients = Array.from(clientsMap.values());
+                setAllActiveClients(uniqueClients);
+                setUnidentifiedRows(unidentifiedRows);
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
+
+                // Save to IndexedDB (Instant)
+                const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
+                await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
+                
+                // Save to Cloud (Shadow Update - Fire and Forget)
+                fetch('/api/snapshot', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                }).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
+            }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
