@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const pathsToDelete = [
-    // Endpoint files to remove to save function slots
+    // Legacy deprecated endpoint files
     'api/add-to-cache.ts',
     'api/delete-address.ts',
     'api/get-akb.ts',
@@ -18,8 +18,9 @@ const pathsToDelete = [
     'api/update-address.ts',
     'api/update-coords.ts',
     'api/geocode.ts',
-    // Folders that Vercel might count if they contain TS files (unless start with _)
+    // Folders - ensure ALL variations of lib in API are gone
     'api/lib', 
+    'api/_lib',
     'api/_data' 
 ];
 

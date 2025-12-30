@@ -11,7 +11,7 @@ import {
     getGoogleDriveClient,
     getOKBAddresses, 
     batchUpdateOKBStatus 
-} from './_lib/sheets.js';
+} from '../lib/google-sheets.js';
 
 export const config = {
     maxDuration: 60,
