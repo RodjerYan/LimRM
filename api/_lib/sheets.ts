@@ -80,6 +80,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
 export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
     const auth = await getAuthClient();
     const folderId = ROOT_FOLDERS['2025'];
+    if (!folderId) throw new Error("Folder ID for 2025 is missing");
     
     const drive = google.drive({ version: 'v3', auth });
     
@@ -91,6 +92,9 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     const existingFileId = listRes.data.files?.[0]?.id;
 
     // 2. Prepare Metadata
+    // For new files, metadata goes in body. For existing (PATCH), it's typically minimal or just in params.
+    // For Resumable upload of NEW file: POST to /upload/drive/v3/files?uploadType=resumable
+    // Body contains metadata.
     const metadata = {
         name: SNAPSHOT_FILENAME,
         mimeType: 'application/json',
@@ -101,23 +105,25 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     const token = await auth.getAccessToken();
     const method = existingFileId ? 'PATCH' : 'POST';
     const url = existingFileId 
-        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
-        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable`;
+        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
+        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
+
+    console.log(`[Snapshot] Initiating ${method} upload. Existing ID: ${existingFileId}`);
 
     const res = await fetch(url, {
         method: method,
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
-            // CRITICAL: Allow CORS requests from the browser to this session URL
             'X-Upload-Content-Type': 'application/json',
-            'X-Upload-Content-Length': '' // Unknown length initially
+            // IMPORTANT: We don't know the length yet, but Drive requires X-Upload-Content-Type for init
         },
         body: JSON.stringify(metadata)
     });
 
     if (!res.ok) {
         const txt = await res.text();
+        console.error(`[Snapshot] Init failed: ${res.status} ${txt}`);
         throw new Error(`Failed to init upload: ${res.status} ${txt}`);
     }
 
@@ -126,9 +132,6 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
 
     return { sessionUrl };
 }
-
-// NOTE: uploadSnapshotChunk is removed/deprecated as we now upload directly from frontend
-// to avoid Vercel timeouts and bandwidth limits for large datasets.
 
 // Keep legacy for small files or reads
 export async function saveSnapshot(data: any): Promise<void> {

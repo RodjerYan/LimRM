@@ -160,18 +160,6 @@ const App: React.FC = () => {
             };
 
             if ('CompressionStream' in window) {
-                const gzipStream = new CompressionStream('gzip');
-                uploadStream = rawStream.pipeThrough(gzipStream);
-                // Note: Google Drive Resumable upload doesn't natively support Content-Encoding: gzip for storage
-                // It will store the file as a .gz file if we send it compressed.
-                // However, our downloader expects JSON. 
-                // TRICK: We will skip compression for now to ensure compatibility with the simple 
-                // `getSnapshot` endpoint which expects to pipe `res.data`.
-                // If we want compression, we need to handle decompression on download.
-                // For 4M rows, raw JSON is huge, but Resumable Upload handles it.
-                // Let's stick to raw stream to be safe with existing reader logic.
-                // If speed is an issue, we can enable gzip but rename file to .json.gz
-                
                 // REVERTING COMPRESSION for compatibility with existing `getSnapshot` reader.
                 // The stream is efficient enough to not crash memory.
                 uploadStream = new ReadableStream(underlyingSource);
@@ -520,7 +508,9 @@ const App: React.FC = () => {
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
-            const CHUNK_SIZE = 5000; 
+            // FIX: REDUCED CHUNK SIZE TO 2000 TO AVOID VERCEL 10s TIMEOUT
+            // Large chunks (5000) cause the backend function to time out during Excel parsing/fetching.
+            const CHUNK_SIZE = 2000; 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
