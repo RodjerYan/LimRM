@@ -29,10 +29,8 @@ import {
     MapPoint,
     UnidentifiedRow,
     FileProcessingState,
-    WorkerMessage,
     CoordsCache,
-    CloudLoadParams,
-    WorkerResultPayload
+    CloudLoadParams
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
 import { LoaderIcon, CheckIcon, ErrorIcon } from './components/icons';
@@ -50,7 +48,6 @@ const App: React.FC = () => {
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
-    // ПРИОРИТЕТ: сначала проверяем localStorage, но потом перепишем из IndexedDB
     const [lastSyncVersion, setLastSyncVersion] = useState<string | null>(localStorage.getItem('last_sync_version'));
     const [isLiveConnected, setIsLiveConnected] = useState(false);
     const [isRestoring, setIsRestoring] = useState(true);
@@ -66,7 +63,6 @@ const App: React.FC = () => {
         totalRowsProcessed: 0
     });
     
-    const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
     const isUploadingRef = useRef(false);
 
@@ -88,68 +84,6 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- DISTRIBUTED UPLOAD STRATEGY (SHARDING) ---
-    // Instead of sending one massive file, we chop it up and send sequentially.
-    // This is bulletproof against timeout/size limits.
-    const uploadToCloudDistributed = async (payload: any) => {
-        if (isUploadingRef.current) {
-            console.log("Skipping upload: another upload is in progress.");
-            return;
-        }
-        isUploadingRef.current = true;
-        
-        try {
-            // 1. Clear old chunks to keep folder clean (optional but good practice)
-            await fetch('/api/get-full-cache?action=clear-snapshots', { method: 'POST' });
-
-            // 2. Prepare Data Chunks
-            const aggregatedData = payload.aggregatedData as any[];
-            const CHUNK_SIZE = 5000;
-            const totalChunks = Math.ceil(aggregatedData.length / CHUNK_SIZE);
-            
-            console.log(`Starting distributed upload: ${aggregatedData.length} items in ${totalChunks} chunks`);
-
-            // 3. Upload Chunks Sequentially
-            for (let i = 0; i < totalChunks; i++) {
-                const chunk = aggregatedData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-                const filename = `snapshot_chunk_v2_${i}.json`;
-                
-                await fetch('/api/get-full-cache?action=save-chunk', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename, data: chunk })
-                });
-                
-                // Small delay to be nice to the API
-                await new Promise(r => setTimeout(r, 100));
-            }
-
-            // 4. Upload Manifest (Metadata + Unidentified Rows)
-            // The manifest DOES NOT contain aggregatedData, keeping it small.
-            const manifestData = {
-                versionHash: payload.versionHash,
-                totalRowsProcessed: payload.totalRowsProcessed,
-                okbRegionCounts: payload.okbRegionCounts,
-                unidentifiedRows: payload.unidentifiedRows,
-                // We add a timestamp to force freshness
-                timestamp: Date.now()
-            };
-
-            await fetch('/api/get-full-cache?action=save-manifest', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: 'snapshot_manifest_v2.json', data: manifestData })
-            });
-            
-            console.log("Distributed upload complete.");
-        } catch (e) {
-            console.error("Distributed upload failed:", e);
-            throw e;
-        } finally {
-            isUploadingRef.current = false;
-        }
-    };
-
     const persistToDB = useCallback(async (
         updatedData: AggregatedDataRow[], 
         updatedUnidentified: UnidentifiedRow[],
@@ -158,16 +92,7 @@ const App: React.FC = () => {
         vHash?: string
     ) => {
         const currentVersion = vHash || lastSyncVersion || 'manual_patch_' + Date.now();
-        const stateToSave = {
-            aggregatedData: updatedData, 
-            unidentifiedRows: updatedUnidentified,
-            okbRegionCounts,
-            totalRowsProcessed: rawCount,
-            versionHash: currentVersion,
-        };
-        
         try {
-            // Local DB Save
             await saveAnalyticsState({ 
                 allData: updatedData, 
                 unidentifiedRows: updatedUnidentified, 
@@ -179,12 +104,6 @@ const App: React.FC = () => {
                 versionHash: currentVersion 
             });
             localStorage.setItem('last_sync_version', currentVersion);
-
-            // Cloud Save (Distributed)
-            uploadToCloudDistributed(stateToSave).catch(err => {
-                console.warn("Background cloud sync failed (non-critical):", err);
-            });
-
         } catch (e) {
             console.error("Local DB Sync: Failed", e);
         }
@@ -319,185 +238,109 @@ const App: React.FC = () => {
         restore();
     }, []);
 
+    const pollJobStatus = async () => {
+        try {
+            const res = await fetch('/api/process?action=status');
+            const status = await res.json();
+            
+            if (status.status === 'processing') {
+                setProcessingState(prev => ({
+                    ...prev,
+                    isProcessing: true,
+                    progress: 50, // Indeterminate mostly
+                    message: status.message || `Фоновая обработка: ${status.processedRows} строк...`
+                }));
+                setTimeout(pollJobStatus, 3000);
+            } else if (status.status === 'completed') {
+                // Job done, reload snapshot
+                await handleLoadSnapshot();
+            } else if (status.status === 'error') {
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сервера' }));
+                addNotification(status.error || 'Ошибка обработки', 'error');
+            }
+        } catch (e) {
+            console.error(e);
+            setTimeout(pollJobStatus, 5000);
+        }
+    };
+
+    const handleLoadSnapshot = async () => {
+        setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка результатов...', progress: 90 }));
+        try {
+            const snapshotRes = await fetch('/api/snapshot');
+            if (snapshotRes.ok) {
+                const snapshot = await snapshotRes.json();
+                if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
+                    const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
+                    setOkbRegionCounts(okbRegionCounts);
+                    setAllData(aggregatedData);
+                    const clientsMap = new Map<string, MapPoint>();
+                    aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    const uniqueClients = Array.from(clientsMap.values());
+                    setAllActiveClients(uniqueClients);
+                    setUnidentifiedRows(unidentifiedRows);
+                    setDbStatus('ready');
+                    
+                    const newVersion = snapshot.versionHash || 'server_' + Date.now();
+                    await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, newVersion);
+                    setLastSyncVersion(newVersion);
+                    
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        isProcessing: false, 
+                        progress: 100, 
+                        message: 'Готово', 
+                        totalRowsProcessed 
+                    }));
+                    addNotification('Данные успешно загружены', 'success');
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка загрузки' }));
+        }
+    };
+
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
-        const { year, month } = params;
         
-        const isUpdate = allData.length > 0;
-        if (isUpdate) setActiveModule('amp');
-        if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
+        // 1. Try to load existing snapshot first (Fast Path)
+        // If we have a target version and it matches local, skip.
+        // If not, try fetching snapshot.
         
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, 
             progress: 0, 
-            message: 'Инициализация Turbo Sync...', 
-            fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            backgroundMessage: 'Анализ структуры файлов', 
-            startTime: Date.now(),
-            totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
+            message: 'Инициализация...', 
+            startTime: Date.now()
         }));
 
-        // --- SNAPSHOT STRATEGY ---
-        if (!isUpdate || targetVersion) {
-            try {
-                setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
-                // New logic: this will fetch and merge multiple files
-                const snapshotRes = await fetch('/api/snapshot');
-                
-                if (snapshotRes.ok) {
-                    const snapshot = await snapshotRes.json();
-                    if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
-                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
-                        const snapshotHash = snapshot.versionHash;
-                        
-                        setOkbRegionCounts(okbRegionCounts);
-                        setAllData(aggregatedData);
-                        const clientsMap = new Map<string, MapPoint>();
-                        aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                        const uniqueClients = Array.from(clientsMap.values());
-                        setAllActiveClients(uniqueClients);
-                        setUnidentifiedRows(unidentifiedRows);
-                        setDbStatus('ready');
-                        
-                        const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
-                        await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, newVersion);
-                        setLastSyncVersion(newVersion);
-                        
-                        setProcessingState(prev => ({ 
-                            ...prev, 
-                            isProcessing: false, 
-                            progress: 100, 
-                            message: 'Загружено из Облачного Кэша', 
-                            totalRowsProcessed 
-                        }));
-                        addNotification('Данные мгновенно загружены из общего кэша', 'success');
-                        return; // EXIT EARLY
-                    }
-                }
-            } catch (e) {
-                console.warn("Snapshot load failed, falling back to full processing", e);
-            }
-        }
-
-        // --- FALLBACK: FULL PROCESSING (WORKER) ---
-        let cacheData: CoordsCache = {};
         try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-            if (response.ok) cacheData = await response.json();
-        } catch (error) {}
-
-        if (workerRef.current) workerRef.current.terminate();
-        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
-
-        workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
-            const msg = e.data;
-            if (msg.type === 'progress') {
-                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-            } 
-            else if (msg.type === 'result_init' && !isUpdate) {
-                setOkbRegionCounts(msg.payload.okbRegionCounts);
-            }
-            else if (msg.type === 'result_chunk_aggregated') {
-                const { data: chunkData, totalProcessed } = msg.payload;
-                if (!isUpdate) {
-                    setAllData(chunkData);
-                    const clientsMap = new Map<string, MapPoint>();
-                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                }
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
-            }
-            else if (msg.type === 'CHECKPOINT') {
-                // --- INCREMENTAL CHECKPOINT SAVE ---
-                const payload = msg.payload;
-                const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
-                
-                setAllData(aggregatedData);
-                const clientsMap = new Map<string, MapPoint>();
-                aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setUnidentifiedRows(unidentifiedRows);
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
-
-                const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
-                await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
-                
-                // Using new distributed upload
-                uploadToCloudDistributed(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
-            }
-            else if (msg.type === 'result_finished') {
-                const payload = msg.payload as WorkerResultPayload;
-                setOkbRegionCounts(payload.okbRegionCounts);
-                setAllData(payload.aggregatedData);
-                const clientsMap = new Map<string, MapPoint>();
-                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setUnidentifiedRows(payload.unidentifiedRows);
-                setDbStatus('ready');
-                
-                const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
-                
-                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                setLastSyncVersion(version);
-                localStorage.setItem('last_sync_version', version);
-                localStorage.removeItem('pending_version_hash');
-
-                setProcessingState(prev => ({ ...prev, message: 'Финализация кэша...', progress: 100 }));
-                
-                uploadToCloudDistributed(payload).then(() => {
-                    addNotification('Данные сохранены в облаке для всех', 'success');
-                }).catch(err => {
-                    console.warn("Snapshot save error:", err);
-                    addNotification('Внимание: Облачный кэш не обновлен', 'warning');
-                }).finally(() => {
-                    setProcessingState(prev => ({ 
-                        ...prev, 
-                        isProcessing: false, 
-                        progress: 100, 
-                        message: 'Синхронизировано', 
-                        totalRowsProcessed: payload.totalRowsProcessed 
-                    }));
-                });
-
-                addNotification(isUpdate ? 'Данные успешно обновлены' : 'Загрузка завершена', 'success');
-            }
-        };
-
-        workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
-
-        try {
-            const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
-            const allFiles = listRes.ok ? await listRes.json() : [];
+            // Check if a job is already running
+            const statusRes = await fetch('/api/process?action=status');
+            const status = await statusRes.json();
             
-            const CHUNK_SIZE = 5000; 
-            
-            for (const file of allFiles) {
-                let offset = 0, hasMore = true, isFirstChunk = true;
-                while (hasMore) {
-                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
-                    if (!res.ok) {
-                        console.error(`Fetch failed for offset ${offset}`, res.statusText);
-                        break;
-                    }
-                    const result = await res.json();
-                    if (result.rows?.length > 0) {
-                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
-                        isFirstChunk = false;
-                    } else hasMore = false;
-                    hasMore = result.hasMore;
-                    offset += CHUNK_SIZE;
-                }
+            if (status.status === 'processing') {
+                addNotification('Присоединение к активной задаче...', 'info');
+                pollJobStatus();
+                return;
             }
+
+            // Start new job
+            const startRes = await fetch('/api/process?action=start');
+            if (startRes.ok) {
+                addNotification('Задача запущена на сервере. Можете закрыть вкладку.', 'success');
+                pollJobStatus();
+            } else {
+                throw new Error('Failed to start job');
+            }
+
         } catch (error) {
             console.error("Processing error:", error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
-        } finally {
-            workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
+    }, [processingState.isProcessing, addNotification]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
@@ -506,13 +349,10 @@ const App: React.FC = () => {
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                if ((meta.versionHash && meta.versionHash !== lastSyncVersion) || (meta.fileCount > 0 && processingState.totalRowsProcessed === 0 && !processingState.isProcessing)) {
-                    console.log("Sync trigger: Version mismatch or empty local state");
-                    handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
-                }
+                // Auto-sync logic if needed
             }
         } catch (e) { setIsLiveConnected(false); }
-    }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing, processingState.totalRowsProcessed]);
+    }, [isRestoring, processingState.isProcessing, okbStatus]);
 
     useEffect(() => {
         const timer = setInterval(checkCloudChanges, 30000); 
@@ -565,7 +405,7 @@ const App: React.FC = () => {
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
                                 <LoaderIcon className="w-3 h-3 text-indigo-400" />
                                 <span className="text-[10px] uppercase font-bold text-indigo-300 tracking-tighter">
-                                    {processingState.message || (allData.length > 0 ? 'Синхронизация' : 'Загрузка')}: {Math.round(processingState.progress)}%
+                                    {processingState.message}
                                 </span>
                             </div>
                         )}

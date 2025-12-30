@@ -8,6 +8,8 @@ const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
 const MANIFEST_FILENAME = 'snapshot_manifest_v2.json';
 const CHUNK_PREFIX = 'snapshot_chunk_v2_';
+const JOB_STATE_FILENAME = 'processing_job_state_v1.json';
+const TEMP_CHUNK_PREFIX = 'temp_proc_chunk_';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -74,6 +76,123 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
             await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
+}
+
+// --- JOB STATE MANAGEMENT (For Background Processing) ---
+
+export interface JobState {
+    status: 'idle' | 'processing' | 'completed' | 'error';
+    totalRows: number;
+    processedRows: number;
+    message: string;
+    startTime: number;
+    lastUpdated: number;
+    error?: string;
+    currentChunkIndex: number;
+    totalChunksEstimate: number;
+}
+
+export async function getJobState(): Promise<JobState | null> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    try {
+        const listRes = await callWithRetry(() => drive.files.list({
+            q: `name = '${JOB_STATE_FILENAME}' and '${folderId}' in parents and trashed = false`,
+            fields: 'files(id)',
+        }), 'findJobState') as any;
+
+        const file = listRes.data.files?.[0];
+        if (!file) return null;
+
+        const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'dlJobState') as any;
+        return res.data as JobState;
+    } catch (e) {
+        return null;
+    }
+}
+
+export async function updateJobState(state: JobState): Promise<void> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    // Check if file exists
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${JOB_STATE_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    }), 'findJobStateForUpdate') as any;
+    
+    const existingId = listRes.data.files?.[0]?.id;
+    const media = { mimeType: 'application/json', body: JSON.stringify(state) };
+
+    if (existingId) {
+        await callWithRetry(() => drive.files.update({ fileId: existingId, media }), 'updateJobState');
+    } else {
+        await callWithRetry(() => drive.files.create({ 
+            requestBody: { name: JOB_STATE_FILENAME, parents: [folderId] }, 
+            media 
+        }), 'createJobState');
+    }
+}
+
+export async function saveTempChunk(index: number, data: any): Promise<void> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    const filename = `${TEMP_CHUNK_PREFIX}${index}.json`;
+    
+    const media = { mimeType: 'application/json', body: JSON.stringify(data) };
+    await callWithRetry(() => drive.files.create({ 
+        requestBody: { name: filename, parents: [folderId] }, 
+        media 
+    }), 'saveTempChunk');
+}
+
+export async function clearTempChunks(): Promise<void> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    let pageToken: string | undefined = undefined;
+    do {
+        const listRes: any = await callWithRetry(() => drive.files.list({
+            q: `name contains '${TEMP_CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
+            fields: 'nextPageToken, files(id)',
+            pageToken
+        }), 'listTempChunks');
+        
+        const files = listRes.data.files || [];
+        // Delete in parallel
+        await Promise.all(files.map((file: any) => 
+            callWithRetry(() => drive.files.delete({ fileId: file.id! }), 'delTempChunk').catch(console.error)
+        ));
+        pageToken = listRes.data.nextPageToken;
+    } while (pageToken);
+}
+
+export async function loadAllTempChunks(): Promise<any[]> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name contains '${TEMP_CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id, name)',
+        pageSize: 1000
+    }), 'listAllTempChunks') as any;
+
+    const files = listRes.data.files || [];
+    // Sort by index
+    files.sort((a: any, b: any) => {
+        const ia = parseInt(a.name.replace(TEMP_CHUNK_PREFIX, '').replace('.json', '') || '0');
+        const ib = parseInt(b.name.replace(TEMP_CHUNK_PREFIX, '').replace('.json', '') || '0');
+        return ia - ib;
+    });
+
+    const results = await Promise.all(files.map((f: any) => 
+        callWithRetry(() => drive.files.get({ fileId: f.id!, alt: 'media' }), 'dlTempChunk')
+            .then((r: any) => r.data)
+            .catch(() => [])
+    ));
+
+    return results.flat();
 }
 
 // --- DISTRIBUTED SNAPSHOT LOGIC ---
