@@ -9,7 +9,7 @@ import {
     updateCacheCoords,
     getSnapshot,
     saveSnapshot
-} from '../lib/sheets-helper.js';
+} from './_lib/sheets.js';
 
 export const config = {
     maxDuration: 60,
