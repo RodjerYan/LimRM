@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 const ApiKeyErrorDisplay: React.FC = () => (
@@ -14,14 +15,14 @@ const ApiKeyErrorDisplay: React.FC = () => (
                         Перейдите в ваш проект на Vercel, откройте вкладку **"Settings"**, затем выберите **"Environment Variables"**.
                     </li>
                     <li>
-                        Добавьте следующие переменные:
+                        Добавьте ключи ИИ (поддерживается ротация до 20 ключей):
                         <ul className="list-disc list-inside ml-6 mt-3 space-y-4 text-slate-300">
                            <li>
                                 <div>
-                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_1</code> ... <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_4</code>
+                                    <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY</code> или <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_1</code> ... <code className="bg-gray-800 text-yellow-400 px-2 py-1 rounded">API_KEY_20</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1">
-                                    **(Секрет)** Ваши четыре ключа API от Google Gemini. Сервер будет использовать их случайным образом.
+                                    Вставьте ваши ключи Gemini (key1, key2...) в переменные с именами API_KEY_1, API_KEY_2 и т.д. Сервер будет выбирать случайный ключ для каждого запроса.
                                 </div>
                            </li>
                            <li>

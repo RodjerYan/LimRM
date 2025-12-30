@@ -7,6 +7,37 @@ export const config = {
 };
 
 /**
+ * Helper to select a random API key from available environment variables.
+ * Supports API_KEY and API_KEY_1 through API_KEY_20.
+ */
+function getRandomKey(): string {
+    const keys: string[] = [];
+
+    // Add main key if exists
+    if (process.env.API_KEY) keys.push(process.env.API_KEY);
+
+    // Add rotated keys API_KEY_1 to API_KEY_20
+    const rotatedKeys = [
+        process.env.API_KEY_1, process.env.API_KEY_2, process.env.API_KEY_3, process.env.API_KEY_4, 
+        process.env.API_KEY_5, process.env.API_KEY_6, process.env.API_KEY_7, process.env.API_KEY_8, 
+        process.env.API_KEY_9, process.env.API_KEY_10, process.env.API_KEY_11, process.env.API_KEY_12,
+        process.env.API_KEY_13, process.env.API_KEY_14, process.env.API_KEY_15, process.env.API_KEY_16,
+        process.env.API_KEY_17, process.env.API_KEY_18, process.env.API_KEY_19, process.env.API_KEY_20
+    ];
+
+    rotatedKeys.forEach(k => {
+        if (k && k.length > 0) keys.push(k);
+    });
+
+    if (keys.length === 0) {
+        throw new Error("No API keys configured. Please set API_KEY or API_KEY_1...N in environment variables.");
+    }
+
+    // Pick a random key
+    return keys[Math.floor(Math.random() * keys.length)];
+}
+
+/**
  * Handles POST requests to proxy Gemini API calls.
  * It takes a 'prompt' and optional 'tools' from the request body.
  */
@@ -28,8 +59,9 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Fix: Using process.env.API_KEY exclusively as per GenAI guidelines.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+    // Use rotation logic to get a key
+    const apiKey = getRandomKey();
+    const ai = new GoogleGenAI({ apiKey });
 
     // Fix: Use 'gemini-3-flash-preview' for text tasks as per model selection guidelines.
     const model = 'gemini-3-flash-preview';
