@@ -18,11 +18,13 @@ const pathsToDelete = [
     'api/update-address.ts',
     'api/update-coords.ts',
     'api/geocode.ts',
-    // Folders - ensure ALL variations of lib in API are gone
-    'api/lib', 
-    'api/_lib',
+    // Folders 
+    'api/_lib', // We can delete _lib safely as Vercel ignores underscore folders anyway
     'api/_data' 
 ];
+
+// NOTE: 'api/lib' is intentionally NOT deleted to avoid "File not found" errors in Vercel.
+// We handle 'api/lib/sheets.ts' by replacing its content with an empty export in the codebase.
 
 console.log('--- CLEANUP STARTED ---');
 
@@ -46,12 +48,5 @@ pathsToDelete.forEach(item => {
         console.log(`[SKIP] ${item} not found`);
     }
 });
-
-// Force check if api/lib still exists (Vercel sometimes restores it from cache)
-const apiLib = path.join(__dirname, 'api/lib');
-if (fs.existsSync(apiLib)) {
-    console.log('Force removing api/lib again...');
-    fs.rmSync(apiLib, { recursive: true, force: true });
-}
 
 console.log('--- CLEANUP FINISHED ---');
