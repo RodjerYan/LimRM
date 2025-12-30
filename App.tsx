@@ -415,7 +415,8 @@ const App: React.FC = () => {
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            const res = await fetch(`/api/get-akb?mode=metadata&year=2025`);
+            // Live Sync: Проверяем метаданные файлов каждую минуту
+            const res = await fetch(`/api/get-akb?mode=metadata&year=2025&t=${Date.now()}`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
@@ -428,7 +429,8 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 300000); 
+        // ОБНОВЛЕНИЕ: Интервал уменьшен до 60 секунд (60000 мс) для режима Live Sync
+        const timer = setInterval(checkCloudChanges, 60000); 
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);
@@ -472,7 +474,7 @@ const App: React.FC = () => {
                                 <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Online: Streaming' : 'Disconnected'}</span>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Live: 60s Polling' : 'Disconnected'}</span>
                         </div>
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
