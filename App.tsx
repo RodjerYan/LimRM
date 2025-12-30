@@ -88,45 +88,62 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- DIRECT UPLOAD STRATEGY (BLOB -> GOOGLE) ---
-    // HACKER MODE: Generator streams are flaky in some environments. 
-    // We switch to a monolithic BLOB approach to guarantee the file lands on the server.
-    const uploadToCloudDirectly = async (payload: any) => {
+    // --- DISTRIBUTED UPLOAD STRATEGY (SHARDING) ---
+    // Instead of sending one massive file, we chop it up and send sequentially.
+    // This is bulletproof against timeout/size limits.
+    const uploadToCloudDistributed = async (payload: any) => {
         if (isUploadingRef.current) {
             console.log("Skipping upload: another upload is in progress.");
             return;
         }
-        
         isUploadingRef.current = true;
         
         try {
-            // 1. Get Session URL from our backend
-            const initRes = await fetch('/api/get-full-cache?action=init-snapshot-upload', { method: 'POST' });
-            if (!initRes.ok) throw new Error("Failed to init upload session");
-            const { sessionUrl } = await initRes.json();
+            // 1. Clear old chunks to keep folder clean (optional but good practice)
+            await fetch('/api/get-full-cache?action=clear-snapshots', { method: 'POST' });
 
-            // 2. Prepare Payload (Brute Force Reliability)
-            // Create the JSON string in memory. Yes, it uses RAM, but it works 100% of the time unlike streams.
-            const jsonString = JSON.stringify(payload);
-            const blob = new Blob([jsonString], { type: 'application/json' });
-
-            // 3. PUT the blob to Google Drive
-            const uploadRes = await fetch(sessionUrl, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': blob.size.toString()
-                },
-                body: blob
-            });
-
-            if (!uploadRes.ok) {
-                throw new Error(`Cloud Storage rejected the payload: ${uploadRes.status}`);
-            }
+            // 2. Prepare Data Chunks
+            const aggregatedData = payload.aggregatedData as any[];
+            const CHUNK_SIZE = 5000;
+            const totalChunks = Math.ceil(aggregatedData.length / CHUNK_SIZE);
             
-            console.log("Cloud snapshot saved successfully via Blob.");
+            console.log(`Starting distributed upload: ${aggregatedData.length} items in ${totalChunks} chunks`);
+
+            // 3. Upload Chunks Sequentially
+            for (let i = 0; i < totalChunks; i++) {
+                const chunk = aggregatedData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                const filename = `snapshot_chunk_v2_${i}.json`;
+                
+                await fetch('/api/get-full-cache?action=save-chunk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, data: chunk })
+                });
+                
+                // Small delay to be nice to the API
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            // 4. Upload Manifest (Metadata + Unidentified Rows)
+            // The manifest DOES NOT contain aggregatedData, keeping it small.
+            const manifestData = {
+                versionHash: payload.versionHash,
+                totalRowsProcessed: payload.totalRowsProcessed,
+                okbRegionCounts: payload.okbRegionCounts,
+                unidentifiedRows: payload.unidentifiedRows,
+                // We add a timestamp to force freshness
+                timestamp: Date.now()
+            };
+
+            await fetch('/api/get-full-cache?action=save-manifest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: 'snapshot_manifest_v2.json', data: manifestData })
+            });
+            
+            console.log("Distributed upload complete.");
         } catch (e) {
-            console.error("Direct upload failed:", e);
+            console.error("Distributed upload failed:", e);
             throw e;
         } finally {
             isUploadingRef.current = false;
@@ -163,9 +180,8 @@ const App: React.FC = () => {
             });
             localStorage.setItem('last_sync_version', currentVersion);
 
-            // Cloud Save (Direct Upload)
-            // We use the debounced logic inside uploadToCloudDirectly via ref
-            uploadToCloudDirectly(stateToSave).catch(err => {
+            // Cloud Save (Distributed)
+            uploadToCloudDistributed(stateToSave).catch(err => {
                 console.warn("Background cloud sync failed (non-critical):", err);
             });
 
@@ -326,6 +342,7 @@ const App: React.FC = () => {
         if (!isUpdate || targetVersion) {
             try {
                 setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
+                // New logic: this will fetch and merge multiple files
                 const snapshotRes = await fetch('/api/snapshot');
                 
                 if (snapshotRes.ok) {
@@ -396,7 +413,6 @@ const App: React.FC = () => {
                 const payload = msg.payload;
                 const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
                 
-                // Update Local UI State
                 setAllData(aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
                 aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
@@ -405,12 +421,11 @@ const App: React.FC = () => {
                 setUnidentifiedRows(unidentifiedRows);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
 
-                // Save to IndexedDB
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
                 await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
                 
-                // Attempt Cloud Save
-                uploadToCloudDirectly(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
+                // Using new distributed upload
+                uploadToCloudDistributed(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -425,16 +440,14 @@ const App: React.FC = () => {
                 
                 const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
                 
-                // SAVE LOCAL DB
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 setLastSyncVersion(version);
                 localStorage.setItem('last_sync_version', version);
                 localStorage.removeItem('pending_version_hash');
 
-                // --- UPLOAD FINAL SNAPSHOT ---
                 setProcessingState(prev => ({ ...prev, message: 'Финализация кэша...', progress: 100 }));
                 
-                uploadToCloudDirectly(payload).then(() => {
+                uploadToCloudDistributed(payload).then(() => {
                     addNotification('Данные сохранены в облаке для всех', 'success');
                 }).catch(err => {
                     console.warn("Snapshot save error:", err);
@@ -459,8 +472,6 @@ const App: React.FC = () => {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             
-            // HACKER FIX: Increased to 5000 as requested.
-            // Note: If Vercel timeouts occur, this logic is designed to fail gracefully.
             const CHUNK_SIZE = 5000; 
             
             for (const file of allFiles) {
@@ -484,7 +495,6 @@ const App: React.FC = () => {
             console.error("Processing error:", error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         } finally {
-            // ALWAYS finalize stream to ensure partial data is saved
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
     }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
@@ -492,13 +502,10 @@ const App: React.FC = () => {
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            // Live Sync: Reduced polling to 30s for better responsiveness to external changes
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025&t=${Date.now()}`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                // ПРОВЕРКА ВЕРСИИ:
-                // Если хеш версии не совпадает ИЛИ если у нас локально 0 строк, но в облаке есть файлы -> грузим
                 if ((meta.versionHash && meta.versionHash !== lastSyncVersion) || (meta.fileCount > 0 && processingState.totalRowsProcessed === 0 && !processingState.isProcessing)) {
                     console.log("Sync trigger: Version mismatch or empty local state");
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
@@ -508,7 +515,7 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing, processingState.totalRowsProcessed]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 30000); // 30 sec interval
+        const timer = setInterval(checkCloudChanges, 30000); 
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);

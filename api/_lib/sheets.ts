@@ -6,7 +6,8 @@ import { Readable } from 'stream';
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
+const MANIFEST_FILENAME = 'snapshot_manifest_v2.json';
+const CHUNK_PREFIX = 'snapshot_chunk_v2_';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -75,90 +76,121 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
-// --- RESUMABLE UPLOAD LOGIC (DIRECT BROWSER UPLOAD) ---
+// --- DISTRIBUTED SNAPSHOT LOGIC ---
 
-export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
-    const auth = await getAuthClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    if (!folderId) throw new Error("Folder ID for 2025 is missing");
-    
-    const drive = google.drive({ version: 'v3', auth });
-    
-    // 1. Check if file exists to overwrite
-    const listRes = await drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    });
-    const existingFileId = listRes.data.files?.[0]?.id;
-
-    // 2. Prepare Metadata
-    // For Resumable Upload, we send the metadata in the body of the INIT request.
-    const metadata = {
-        name: SNAPSHOT_FILENAME,
-        mimeType: 'application/json',
-        // Important: Only set parents for NEW files. PATCH requests ignore parents or throw errors if mismatch.
-        parents: existingFileId ? undefined : [folderId] 
-    };
-
-    const token = await auth.getAccessToken();
-    const method = existingFileId ? 'PATCH' : 'POST';
-    
-    // Construct the correct endpoint for initiating resumable upload
-    const baseUrl = 'https://www.googleapis.com/upload/drive/v3/files';
-    const uploadUrl = existingFileId 
-        ? `${baseUrl}/${existingFileId}?uploadType=resumable`
-        : `${baseUrl}?uploadType=resumable`;
-
-    console.log(`[Snapshot] Initiating ${method} session for ${existingFileId || 'new file'}`);
-
-    const res = await fetch(uploadUrl, {
-        method: method,
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            // X-Upload-Content-Type is critical for the session to accept the subsequent PUT
-            'X-Upload-Content-Type': 'application/json', 
-        },
-        body: JSON.stringify(metadata)
-    });
-
-    if (!res.ok) {
-        const txt = await res.text();
-        console.error(`[Snapshot] Init failed: ${res.status} ${txt}`);
-        throw new Error(`Failed to init upload: ${res.status} ${txt}`);
-    }
-
-    const sessionUrl = res.headers.get('Location');
-    if (!sessionUrl) throw new Error("No session URL returned from Drive.");
-
-    return { sessionUrl };
-}
-
-// Keep legacy for small files or reads
-export async function saveSnapshot(data: any): Promise<void> {
+// 1. Save a single chunk (overwrite if exists with same name, or create new)
+export async function saveSnapshotChunk(filename: string, data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
-    const listRes = await drive.files.list({ q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents`, fields: 'files(id)' });
-    const fileId = listRes.data.files?.[0]?.id;
+    
+    // Check if file exists
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${filename}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    }), 'findChunk') as any;
+    
+    const existingId = listRes.data.files?.[0]?.id;
     const media = { mimeType: 'application/json', body: JSON.stringify(data) };
-    if (fileId) await drive.files.update({ fileId, media });
-    else await drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media });
+
+    if (existingId) {
+        await callWithRetry(() => drive.files.update({ fileId: existingId, media }), 'updateChunk');
+    } else {
+        await callWithRetry(() => drive.files.create({ 
+            requestBody: { name: filename, parents: [folderId] }, 
+            media 
+        }), 'createChunk');
+    }
 }
 
-export async function getSnapshot(): Promise<any | null> {
+// 2. Clear old chunks (garbage collection before a full save)
+export async function clearOldSnapshots(): Promise<void> {
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    
+    let pageToken: string | undefined = undefined;
+    do {
+        const listRes: any = await callWithRetry(() => drive.files.list({
+            q: `name contains '${CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
+            fields: 'nextPageToken, files(id)',
+            pageToken
+        }), 'listOldChunks');
+        
+        const files = listRes.data.files || [];
+        for (const file of files) {
+            if (file.id) {
+                // Async delete without awaiting to speed up
+                callWithRetry(() => drive.files.delete({ fileId: file.id! }), 'deleteChunk').catch(console.error);
+            }
+        }
+        pageToken = listRes.data.nextPageToken;
+    } while (pageToken);
+}
+
+// 3. Load distributed snapshot
+export async function getDistributedSnapshot(): Promise<any | null> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
     if (!folderId) return null;
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id, modifiedTime, size)',
-    }), 'findSnapshot') as any;
-    const file = listRes.data.files?.[0];
-    if (!file || !file.id) return null;
+
+    // A. Get Manifest
+    const manifestRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${MANIFEST_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id, modifiedTime)',
+    }), 'findManifest') as any;
+    
+    const manifestFile = manifestRes.data.files?.[0];
+    if (!manifestFile || !manifestFile.id) return null;
+
+    let manifestData: any;
     try {
-        const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'downloadSnapshot') as any;
-        return { data: res.data, versionHash: file.modifiedTime, size: file.size };
+        const res = await callWithRetry(() => drive.files.get({ fileId: manifestFile.id!, alt: 'media' }), 'dlManifest') as any;
+        manifestData = res.data;
     } catch (e) { return null; }
+
+    // B. Get All Chunks
+    const chunksRes = await callWithRetry(() => drive.files.list({
+        q: `name contains '${CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id, name)',
+        pageSize: 100 
+    }), 'listChunks') as any;
+
+    const chunkFiles = chunksRes.data.files || [];
+    // Sort by index (snapshot_chunk_v2_0.json, snapshot_chunk_v2_1.json...)
+    chunkFiles.sort((a: any, b: any) => {
+        const idxA = parseInt(a.name.replace(CHUNK_PREFIX, '').replace('.json', '') || '0');
+        const idxB = parseInt(b.name.replace(CHUNK_PREFIX, '').replace('.json', '') || '0');
+        return idxA - idxB;
+    });
+
+    // C. Download all chunks in parallel
+    const allAggregatedData: any[] = [];
+    const downloadPromises = chunkFiles.map((file: any) => 
+        callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), `dlChunk-${file.name}`)
+            .then((res: any) => res.data)
+            .catch((e) => { console.error(`Failed to download chunk ${file.name}`, e); return []; })
+    );
+
+    const results = await Promise.all(downloadPromises);
+    results.forEach(chunkData => {
+        if (Array.isArray(chunkData)) {
+            allAggregatedData.push(...chunkData);
+        }
+    });
+
+    // D. Reassemble
+    return {
+        data: {
+            ...manifestData,
+            aggregatedData: allAggregatedData
+        },
+        versionHash: manifestFile.modifiedTime,
+        size: 0 // Size is irrelevant in distributed mode
+    };
+}
+
+// Legacy support (redirects to distributed)
+export async function getSnapshot(): Promise<any | null> {
+    return getDistributedSnapshot();
 }
 
 export async function getOKBData(): Promise<OkbDataRow[]> {

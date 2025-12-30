@@ -7,20 +7,18 @@ import {
     deleteAddressFromCache, 
     updateAddressInCache, 
     updateCacheCoords,
-    getSnapshot,
-    saveSnapshot,
-    initResumableSnapshotUpload
+    getDistributedSnapshot,
+    saveSnapshotChunk,
+    clearOldSnapshots
 } from './_lib/sheets.js';
 
 export const config = {
     maxDuration: 60,
     api: {
-        // Disabling body parsing to handle large JSON payloads manually
         bodyParser: false,
     },
 };
 
-// Helper to read raw body
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
     for await (const chunk of req) {
@@ -57,7 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'get-snapshot') {
             try {
-                const snapshot = await getSnapshot();
+                // Now uses getDistributedSnapshot to fetch and merge all parts
+                const snapshot = await getDistributedSnapshot();
                 if (!snapshot) return res.status(404).json({ message: 'No snapshot' });
                 res.setHeader('Cache-Control', 's-maxage=60');
                 return res.json(snapshot);
@@ -68,22 +67,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-        
-        // --- CHUNKED UPLOAD HANDLERS (RAW BODY) ---
-        
-        if (action === 'init-snapshot-upload') {
-            try {
-                const result = await initResumableSnapshotUpload();
-                return res.json(result);
-            } catch (error) {
-                console.error("Init upload error:", error);
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
-        // --- STANDARD HANDLERS (JSON BODY) ---
-        
-        // For other actions, parse body manually
         let body: any;
         try {
             const raw = await getRawBody(req);
@@ -91,6 +74,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } catch (e) {
             return res.status(400).json({ error: 'Invalid JSON body' });
         }
+
+        // --- DISTRIBUTED SNAPSHOT ACTIONS ---
+
+        if (action === 'clear-snapshots') {
+            try {
+                await clearOldSnapshots();
+                return res.json({ success: true });
+            } catch (e) {
+                return res.status(500).json({ error: 'Clear failed' });
+            }
+        }
+
+        if (action === 'save-chunk') {
+            try {
+                // Expects { filename: "snapshot_chunk_v2_0.json", data: [...] }
+                const { filename, data } = body;
+                if (!filename || !data) return res.status(400).json({ error: 'Missing filename or data' });
+                await saveSnapshotChunk(filename, data);
+                return res.json({ success: true });
+            } catch (e) {
+                return res.status(500).json({ error: 'Save chunk failed', details: (e as Error).message });
+            }
+        }
+
+        if (action === 'save-manifest') {
+            try {
+                // Expects { filename: "snapshot_manifest_v2.json", data: {...} }
+                const { filename, data } = body;
+                await saveSnapshotChunk(filename, data);
+                return res.json({ success: true });
+            } catch (e) {
+                return res.status(500).json({ error: 'Save manifest failed' });
+            }
+        }
+
+        // --- STANDARD ACTIONS ---
 
         if (action === 'add-to-cache') {
             try {
@@ -130,17 +149,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(200).json({ success: true });
             } catch (error) {
                 return res.status(500).json({ error: 'Delete failed' });
-            }
-        }
-
-        if (action === 'save-snapshot') {
-            // Legacy handler for small files (if any)
-            try {
-                await saveSnapshot(body);
-                return res.json({ success: true });
-            } catch (error) {
-                console.error("Snapshot save error:", error);
-                return res.status(500).json({ error: (error as Error).message });
             }
         }
     }
