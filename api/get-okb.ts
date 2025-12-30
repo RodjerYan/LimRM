@@ -11,14 +11,12 @@ import {
     getGoogleDriveClient,
     getOKBAddresses, 
     batchUpdateOKBStatus 
-} from './lib/sheets.js';
+} from './_lib/sheets.js';
 
-// Configuration for Vercel
 export const config = {
     maxDuration: 60,
 };
 
-// --- MOCK DATA FOR CONFLICT ZONES (Merged from get-conflict-zones.ts) ---
 const MOCK_CONFLICT_ZONES_GEOJSON: FeatureCollection = {
     "type": "FeatureCollection",
     "features": [
@@ -50,14 +48,10 @@ const MOCK_CONFLICT_ZONES_GEOJSON: FeatureCollection = {
     ]
 };
 
-// --- DATA MASTER HANDLER ---
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string;
 
-    // --- GET ACTIONS ---
     if (req.method === 'GET') {
-        
-        // 1. Get OKB
         if (action === 'get-okb' || !action) {
             try {
                 const okbData = await getOKBData();
@@ -68,7 +62,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // 2. Get AKB
         if (action === 'get-akb') {
             try {
                 const year = (req.query.year as string) || '2025';
@@ -113,7 +106,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // 3. Geocode (Merged)
         if (action === 'geocode') {
             const address = req.query.address as string;
             if (!address) return res.status(400).json({ error: 'Address required' });
@@ -134,7 +126,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // 4. Conflict Zones (Merged)
         if (action === 'get-conflict-zones') {
             const data = MOCK_CONFLICT_ZONES_GEOJSON;
             if (data.features[0].properties) data.features[0].properties.last_updated = new Date().toISOString();
@@ -143,7 +134,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
     }
 
-    // --- POST ACTIONS ---
     if (req.method === 'POST') {
         if (action === 'get-okb-status') {
             try {

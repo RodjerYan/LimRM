@@ -9,25 +9,21 @@ import {
     updateCacheCoords,
     getSnapshot,
     saveSnapshot
-} from './lib/sheets.js';
+} from './_lib/sheets.js';
 
-// Configuration for Vercel
 export const config = {
     maxDuration: 60,
     api: {
         bodyParser: {
-            sizeLimit: '4.5mb', // Increased limit for snapshot saving
+            sizeLimit: '4.5mb',
         },
     },
 };
 
-// CACHE MASTER HANDLER
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string;
 
-    // --- GET ACTIONS ---
     if (req.method === 'GET') {
-        
         if (action === 'get-full-cache' || !action) {
             try {
                 const cacheData = await getFullCoordsCache();
@@ -50,7 +46,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // Snapshot GET (Merged)
         if (action === 'get-snapshot') {
             try {
                 const snapshot = await getSnapshot();
@@ -63,9 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
     }
 
-    // --- POST ACTIONS ---
     if (req.method === 'POST') {
-        
         if (action === 'add-to-cache') {
             try {
                 const { rmName, rows } = req.body;
@@ -107,7 +100,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // Snapshot SAVE (Merged)
         if (action === 'save-snapshot') {
             try {
                 await saveSnapshot(req.body);
