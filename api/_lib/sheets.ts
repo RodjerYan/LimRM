@@ -6,10 +6,7 @@ import { Readable } from 'stream';
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-const MANIFEST_FILENAME = 'snapshot_manifest_v2.json';
-const CHUNK_PREFIX = 'snapshot_chunk_v2_';
-const JOB_STATE_FILENAME = 'processing_job_state_v1.json';
-const TEMP_CHUNK_PREFIX = 'temp_proc_chunk_';
+const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -78,238 +75,89 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
-// --- JOB STATE MANAGEMENT (For Background Processing) ---
+// --- RESUMABLE UPLOAD LOGIC (DIRECT BROWSER UPLOAD) ---
 
-export interface JobState {
-    status: 'idle' | 'processing' | 'completed' | 'error';
-    totalRows: number;
-    processedRows: number;
-    message: string;
-    startTime: number;
-    lastUpdated: number;
-    error?: string;
-    currentChunkIndex: number;
-    totalChunksEstimate: number;
-}
-
-export async function getJobState(): Promise<JobState | null> {
-    const drive = await getGoogleDriveClient();
+export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
+    const auth = await getAuthClient();
     const folderId = ROOT_FOLDERS['2025'];
+    if (!folderId) throw new Error("Folder ID for 2025 is missing");
     
-    try {
-        const listRes = await callWithRetry(() => drive.files.list({
-            q: `name = '${JOB_STATE_FILENAME}' and '${folderId}' in parents and trashed = false`,
-            fields: 'files(id)',
-        }), 'findJobState') as any;
-
-        const file = listRes.data.files?.[0];
-        if (!file) return null;
-
-        const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'dlJobState') as any;
-        return res.data as JobState;
-    } catch (e) {
-        return null;
-    }
-}
-
-export async function updateJobState(state: JobState): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
+    const drive = google.drive({ version: 'v3', auth });
     
-    // Check if file exists
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${JOB_STATE_FILENAME}' and '${folderId}' in parents and trashed = false`,
+    // 1. Check if file exists to overwrite
+    const listRes = await drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
         fields: 'files(id)',
-    }), 'findJobStateForUpdate') as any;
-    
-    const existingId = listRes.data.files?.[0]?.id;
-    const media = { mimeType: 'application/json', body: JSON.stringify(state) };
+    });
+    const existingFileId = listRes.data.files?.[0]?.id;
 
-    if (existingId) {
-        await callWithRetry(() => drive.files.update({ fileId: existingId, media }), 'updateJobState');
-    } else {
-        await callWithRetry(() => drive.files.create({ 
-            requestBody: { name: JOB_STATE_FILENAME, parents: [folderId] }, 
-            media 
-        }), 'createJobState');
-    }
-}
+    // 2. Prepare Metadata
+    // For new files, metadata goes in body. For existing (PATCH), it's typically minimal or just in params.
+    // For Resumable upload of NEW file: POST to /upload/drive/v3/files?uploadType=resumable
+    // Body contains metadata.
+    const metadata = {
+        name: SNAPSHOT_FILENAME,
+        mimeType: 'application/json',
+        parents: existingFileId ? undefined : [folderId]
+    };
 
-export async function saveTempChunk(index: number, data: any): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    const filename = `${TEMP_CHUNK_PREFIX}${index}.json`;
-    
-    const media = { mimeType: 'application/json', body: JSON.stringify(data) };
-    await callWithRetry(() => drive.files.create({ 
-        requestBody: { name: filename, parents: [folderId] }, 
-        media 
-    }), 'saveTempChunk');
-}
+    // 3. Initiate Session
+    const token = await auth.getAccessToken();
+    const method = existingFileId ? 'PATCH' : 'POST';
+    const url = existingFileId 
+        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
+        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
 
-export async function clearTempChunks(): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    
-    let pageToken: string | undefined = undefined;
-    do {
-        const listRes: any = await callWithRetry(() => drive.files.list({
-            q: `name contains '${TEMP_CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
-            fields: 'nextPageToken, files(id)',
-            pageToken
-        }), 'listTempChunks');
-        
-        const files = listRes.data.files || [];
-        // Delete in parallel
-        await Promise.all(files.map((file: any) => 
-            callWithRetry(() => drive.files.delete({ fileId: file.id! }), 'delTempChunk').catch(console.error)
-        ));
-        pageToken = listRes.data.nextPageToken;
-    } while (pageToken);
-}
+    console.log(`[Snapshot] Initiating ${method} upload. Existing ID: ${existingFileId}`);
 
-export async function loadAllTempChunks(): Promise<any[]> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name contains '${TEMP_CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id, name)',
-        pageSize: 1000
-    }), 'listAllTempChunks') as any;
-
-    const files = listRes.data.files || [];
-    // Sort by index
-    files.sort((a: any, b: any) => {
-        const ia = parseInt(a.name.replace(TEMP_CHUNK_PREFIX, '').replace('.json', '') || '0');
-        const ib = parseInt(b.name.replace(TEMP_CHUNK_PREFIX, '').replace('.json', '') || '0');
-        return ia - ib;
+    const res = await fetch(url, {
+        method: method,
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': 'application/json',
+            // IMPORTANT: We don't know the length yet, but Drive requires X-Upload-Content-Type for init
+        },
+        body: JSON.stringify(metadata)
     });
 
-    const results = await Promise.all(files.map((f: any) => 
-        callWithRetry(() => drive.files.get({ fileId: f.id!, alt: 'media' }), 'dlTempChunk')
-            .then((r: any) => r.data)
-            .catch(() => [])
-    ));
-
-    return results.flat();
-}
-
-// --- DISTRIBUTED SNAPSHOT LOGIC ---
-
-// 1. Save a single chunk (overwrite if exists with same name, or create new)
-export async function saveSnapshotChunk(filename: string, data: any): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    
-    // Check if file exists
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${filename}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    }), 'findChunk') as any;
-    
-    const existingId = listRes.data.files?.[0]?.id;
-    const media = { mimeType: 'application/json', body: JSON.stringify(data) };
-
-    if (existingId) {
-        await callWithRetry(() => drive.files.update({ fileId: existingId, media }), 'updateChunk');
-    } else {
-        await callWithRetry(() => drive.files.create({ 
-            requestBody: { name: filename, parents: [folderId] }, 
-            media 
-        }), 'createChunk');
+    if (!res.ok) {
+        const txt = await res.text();
+        console.error(`[Snapshot] Init failed: ${res.status} ${txt}`);
+        throw new Error(`Failed to init upload: ${res.status} ${txt}`);
     }
+
+    const sessionUrl = res.headers.get('Location');
+    if (!sessionUrl) throw new Error("No session URL returned from Drive.");
+
+    return { sessionUrl };
 }
 
-// 2. Clear old chunks (garbage collection before a full save)
-export async function clearOldSnapshots(): Promise<void> {
+// Keep legacy for small files or reads
+export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
-    
-    let pageToken: string | undefined = undefined;
-    do {
-        const listRes: any = await callWithRetry(() => drive.files.list({
-            q: `name contains '${CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
-            fields: 'nextPageToken, files(id)',
-            pageToken
-        }), 'listOldChunks');
-        
-        const files = listRes.data.files || [];
-        for (const file of files) {
-            if (file.id) {
-                // Async delete without awaiting to speed up
-                callWithRetry(() => drive.files.delete({ fileId: file.id! }), 'deleteChunk').catch(console.error);
-            }
-        }
-        pageToken = listRes.data.nextPageToken;
-    } while (pageToken);
+    const listRes = await drive.files.list({ q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents`, fields: 'files(id)' });
+    const fileId = listRes.data.files?.[0]?.id;
+    const media = { mimeType: 'application/json', body: JSON.stringify(data) };
+    if (fileId) await drive.files.update({ fileId, media });
+    else await drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media });
 }
 
-// 3. Load distributed snapshot
-export async function getDistributedSnapshot(): Promise<any | null> {
+export async function getSnapshot(): Promise<any | null> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
     if (!folderId) return null;
-
-    // A. Get Manifest
-    const manifestRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${MANIFEST_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id, modifiedTime)',
-    }), 'findManifest') as any;
-    
-    const manifestFile = manifestRes.data.files?.[0];
-    if (!manifestFile || !manifestFile.id) return null;
-
-    let manifestData: any;
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id, modifiedTime, size)',
+    }), 'findSnapshot') as any;
+    const file = listRes.data.files?.[0];
+    if (!file || !file.id) return null;
     try {
-        const res = await callWithRetry(() => drive.files.get({ fileId: manifestFile.id!, alt: 'media' }), 'dlManifest') as any;
-        manifestData = res.data;
+        const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'downloadSnapshot') as any;
+        return { data: res.data, versionHash: file.modifiedTime, size: file.size };
     } catch (e) { return null; }
-
-    // B. Get All Chunks
-    const chunksRes = await callWithRetry(() => drive.files.list({
-        q: `name contains '${CHUNK_PREFIX}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id, name)',
-        pageSize: 100 
-    }), 'listChunks') as any;
-
-    const chunkFiles = chunksRes.data.files || [];
-    // Sort by index (snapshot_chunk_v2_0.json, snapshot_chunk_v2_1.json...)
-    chunkFiles.sort((a: any, b: any) => {
-        const idxA = parseInt(a.name.replace(CHUNK_PREFIX, '').replace('.json', '') || '0');
-        const idxB = parseInt(b.name.replace(CHUNK_PREFIX, '').replace('.json', '') || '0');
-        return idxA - idxB;
-    });
-
-    // C. Download all chunks in parallel
-    const allAggregatedData: any[] = [];
-    const downloadPromises = chunkFiles.map((file: any) => 
-        callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), `dlChunk-${file.name}`)
-            .then((res: any) => res.data)
-            .catch((e) => { console.error(`Failed to download chunk ${file.name}`, e); return []; })
-    );
-
-    const results = await Promise.all(downloadPromises);
-    results.forEach(chunkData => {
-        if (Array.isArray(chunkData)) {
-            allAggregatedData.push(...chunkData);
-        }
-    });
-
-    // D. Reassemble
-    return {
-        data: {
-            ...manifestData,
-            aggregatedData: allAggregatedData
-        },
-        versionHash: manifestFile.modifiedTime,
-        size: 0 // Size is irrelevant in distributed mode
-    };
-}
-
-// Legacy support (redirects to distributed)
-export async function getSnapshot(): Promise<any | null> {
-    return getDistributedSnapshot();
 }
 
 export async function getOKBData(): Promise<OkbDataRow[]> {

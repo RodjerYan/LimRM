@@ -1,4 +1,3 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import * as XLSX from 'xlsx';
 import { Buffer } from 'buffer';
@@ -11,7 +10,7 @@ import {
     getGoogleDriveClient,
     getOKBAddresses, 
     batchUpdateOKBStatus 
-} from './_lib/sheets.js';
+} from './_lib/sheets';
 
 export const config = {
     maxDuration: 60,
@@ -68,7 +67,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const mode = req.query.mode as string;
 
                 if (mode === 'metadata') {
-                    // CRITICAL: Short cache time for live sync metadata checks
                     res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=30, stale-while-revalidate=30');
                     
                     const drive = await getGoogleDriveClient();
