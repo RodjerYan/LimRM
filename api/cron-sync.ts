@@ -9,17 +9,19 @@ import {
     getFullCoordsCache
 } from './_lib/sheets.js';
 import { processObjectsOnServer } from './_lib/server-processor.js';
-import { normalizeAddress, findAddressInRow } from '../utils/dataUtils.js';
+import { findAddressInRow, normalizeAddress } from '../utils/dataUtils.js';
 
+// Vercel Hobby Plan Limit: 10 seconds execution time.
+// We set it explicitly to avoid timeouts.
 export const config = {
-    maxDuration: 10, // Hobby Plan limit is 10s (Pro is 60s)
+    maxDuration: 10, 
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string || 'auto';
 
     try {
-        // 1. Load Current Manifest / State
+        // 1. Load State
         const snapshot = await getDistributedSnapshot();
         const manifest = snapshot ? snapshot.data : { 
             versionHash: 'init', 
@@ -29,30 +31,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             unidentifiedRows: []
         };
 
-        // If explicitly stopped or not started, do nothing (unless forced)
         if (action === 'auto' && !manifest.isProcessing) {
             return res.status(200).json({ status: 'Idle', processed: manifest.totalRowsProcessed });
         }
 
-        // 2. Determine Next Batch
-        // CRITICAL FOR HOBBY PLAN: Reduced to 500 to fit in 10s timeout
+        // 2. Safety Batch Size for 10s Limit
+        // 500 rows is small enough to process + save to Google Drive within ~5-8 seconds.
         const BATCH_SIZE = 500; 
         const startOffset = manifest.totalRowsProcessed || 0;
 
-        // 3. Load Raw Data (AKB)
+        // 3. Find Files
         const drive = await getGoogleDriveClient();
         const ROOT_FOLDER_2025 = '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u'; 
         
-        // Find the target file
+        // We fetch the file list dynamically to ensure we are working on valid files
+        // Note: In a production app, we would cache this list in the manifest to save time.
         const filesRes = await fetch(`https://${req.headers.host}/api/get-akb?year=2025&mode=list`);
-        if (!filesRes.ok) throw new Error("Failed to list files");
+        if (!filesRes.ok) throw new Error("Failed to list files via internal API");
         const files = await filesRes.json();
         
         if (!files || files.length === 0) return res.json({ error: 'No files found' });
 
         const fileIndex = manifest.currentFileIndex || 0;
+        
+        // If we processed all files, stop.
         if (fileIndex >= files.length) {
-            // All Done
             if (manifest.isProcessing) {
                 manifest.isProcessing = false;
                 await saveSnapshotChunk('snapshot_manifest_v2.json', manifest);
@@ -63,19 +66,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const currentFileId = files[fileIndex].id;
         const fileOffset = manifest.fileRowsProcessed || 0;
         
-        // 4. Fetch Data Chunk
+        // 4. Fetch Chunk
         const rawData = await fetchFileContent(currentFileId, `A${fileOffset + 1}:CZ${fileOffset + BATCH_SIZE}`);
         
+        // If no data returned, we finished this file. Move to next.
         if (!rawData || rawData.length === 0) {
-            // End of this file, move to next
             manifest.currentFileIndex = fileIndex + 1;
             manifest.fileRowsProcessed = 0;
             await saveSnapshotChunk('snapshot_manifest_v2.json', manifest);
             return res.json({ status: 'Next File', file: files[fileIndex].name });
         }
 
-        // 5. Prepare Context (OKB + Cache)
-        // Optimization: We load this every time. In a real heavy app, we'd cache this in a separate JSON in /tmp
+        // 5. Context Loading (OKB + Cache)
+        // Optimization: This takes ~1-2s.
         const okbData = await getOKBData();
         const coordMap = new Map();
         okbData.forEach(r => {
@@ -89,7 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (c.address) cacheMap.set(normalizeAddress(c.address), c);
         });
 
-        // 6. PROCESS
+        // 6. Process on Server
         const { aggregatedData, unidentifiedRows, regionCounts } = processObjectsOnServer(
             rawData, 
             startOffset, 
@@ -97,7 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             cacheMap
         );
 
-        // 7. Save Chunk
+        // 7. Save Results
         const chunkName = `snapshot_chunk_v2_${Date.now()}.json`;
         await saveSnapshotChunk(chunkName, aggregatedData);
 
@@ -107,6 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
         
         const newUnidentified = [...(manifest.unidentifiedRows || []), ...unidentifiedRows];
+        // Limit unidentified rows history to prevent JSON bloat
         if (newUnidentified.length > 2000) newUnidentified.splice(0, newUnidentified.length - 2000);
         manifest.unidentifiedRows = newUnidentified;
 
@@ -126,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (e) {
         console.error("Background sync error:", e);
+        // Return 500 but strictly JSON so Vercel doesn't time out waiting for response
         return res.status(500).json({ error: (e as Error).message });
     }
 }
