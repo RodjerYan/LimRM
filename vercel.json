@@ -18,8 +18,12 @@
       "destination": "/api/get-okb?action=get-okb-status"
     },
     {
+      "source": "/api/geocode",
+      "destination": "/api/get-okb?action=geocode"
+    },
+    {
       "source": "/api/get-conflict-zones",
-      "destination": "/api/get-conflict-zones"
+      "destination": "/api/get-okb?action=get-conflict-zones"
     },
     {
       "source": "/api/get-full-cache",
@@ -46,8 +50,13 @@
       "destination": "/api/get-full-cache?action=get-cached-address"
     },
     {
-      "source": "/api/geocode",
-      "destination": "/api/geocode"
+      "source": "/api/snapshot",
+      "has": [{ "type": "header", "key": "content-type", "value": "application/json" }],
+      "destination": "/api/get-full-cache?action=save-snapshot"
+    },
+    {
+      "source": "/api/snapshot",
+      "destination": "/api/get-full-cache?action=get-snapshot"
     },
     {
       "source": "/:path*",
@@ -75,10 +84,6 @@
     }
   ],
   "crons": [
-    {
-      "path": "/api/get-conflict-zones",
-      "schedule": "0 6 * * *"
-    },
     {
       "path": "/api/get-okb",
       "schedule": "0 5 * * *"
