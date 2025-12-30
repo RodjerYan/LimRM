@@ -88,38 +88,9 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- SMART MERGE LOGIC FOR DISTRIBUTED CHUNKS ---
-    const mergeChunks = (chunks: AggregatedDataRow[]): AggregatedDataRow[] => {
-        const map = new Map<string, AggregatedDataRow>();
-        
-        chunks.forEach(row => {
-            const key = row.key || `${row.region}-${row.rm}-${row.brand}-${row.packaging}`.toLowerCase();
-            
-            if (!map.has(key)) {
-                map.set(key, { ...row, clients: [...row.clients] });
-            } else {
-                const existing = map.get(key)!;
-                existing.fact += row.fact;
-                existing.potential += row.potential;
-                // Merge clients, avoiding duplicates by key
-                const existingClientKeys = new Set(existing.clients.map(c => c.key));
-                row.clients.forEach(c => {
-                    if (!existingClientKeys.has(c.key)) {
-                        existing.clients.push(c);
-                        existingClientKeys.add(c.key);
-                    } else {
-                        // If client exists, update its stats
-                        const exClient = existing.clients.find(ec => ec.key === c.key);
-                        if (exClient) exClient.fact = (exClient.fact || 0) + (c.fact || 0);
-                    }
-                });
-            }
-        });
-        
-        return Array.from(map.values());
-    };
-
     // --- DISTRIBUTED UPLOAD STRATEGY (SHARDING) ---
+    // Instead of sending one massive file, we chop it up and send sequentially.
+    // This is bulletproof against timeout/size limits.
     const uploadToCloudDistributed = async (payload: any) => {
         if (isUploadingRef.current) {
             console.log("Skipping upload: another upload is in progress.");
@@ -128,14 +99,17 @@ const App: React.FC = () => {
         isUploadingRef.current = true;
         
         try {
+            // 1. Clear old chunks to keep folder clean (optional but good practice)
             await fetch('/api/get-full-cache?action=clear-snapshots', { method: 'POST' });
 
+            // 2. Prepare Data Chunks
             const aggregatedData = payload.aggregatedData as any[];
             const CHUNK_SIZE = 5000;
             const totalChunks = Math.ceil(aggregatedData.length / CHUNK_SIZE);
             
             console.log(`Starting distributed upload: ${aggregatedData.length} items in ${totalChunks} chunks`);
 
+            // 3. Upload Chunks Sequentially
             for (let i = 0; i < totalChunks; i++) {
                 const chunk = aggregatedData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
                 const filename = `snapshot_chunk_v2_${i}.json`;
@@ -146,14 +120,18 @@ const App: React.FC = () => {
                     body: JSON.stringify({ filename, data: chunk })
                 });
                 
+                // Small delay to be nice to the API
                 await new Promise(r => setTimeout(r, 100));
             }
 
+            // 4. Upload Manifest (Metadata + Unidentified Rows)
+            // The manifest DOES NOT contain aggregatedData, keeping it small.
             const manifestData = {
                 versionHash: payload.versionHash,
                 totalRowsProcessed: payload.totalRowsProcessed,
                 okbRegionCounts: payload.okbRegionCounts,
                 unidentifiedRows: payload.unidentifiedRows,
+                // We add a timestamp to force freshness
                 timestamp: Date.now()
             };
 
@@ -189,6 +167,7 @@ const App: React.FC = () => {
         };
         
         try {
+            // Local DB Save
             await saveAnalyticsState({ 
                 allData: updatedData, 
                 unidentifiedRows: updatedUnidentified, 
@@ -201,6 +180,7 @@ const App: React.FC = () => {
             });
             localStorage.setItem('last_sync_version', currentVersion);
 
+            // Cloud Save (Distributed)
             uploadToCloudDistributed(stateToSave).catch(err => {
                 console.warn("Background cloud sync failed (non-critical):", err);
             });
@@ -368,11 +348,7 @@ const App: React.FC = () => {
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
-                        const { aggregatedData: rawChunks, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
-                        
-                        // FIX: MERGE CHUNKS
-                        const aggregatedData = mergeChunks(rawChunks);
-                        
+                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
                         
                         setOkbRegionCounts(okbRegionCounts);
@@ -404,12 +380,7 @@ const App: React.FC = () => {
             }
         }
 
-        // --- TRIGGER SERVER-SIDE PROCESSING ---
-        // We trigger the server worker, but we also run locally for immediate feedback if the user stays on page.
-        // This gives the best of both worlds.
-        fetch('/api/process-background?action=start').catch(e => console.error("Failed to trigger background", e));
-
-        // --- FALLBACK: LOCAL PROCESSING (WORKER) ---
+        // --- FALLBACK: FULL PROCESSING (WORKER) ---
         let cacheData: CoordsCache = {};
         try {
             const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
@@ -429,46 +400,39 @@ const App: React.FC = () => {
             }
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                // Merge partial data
-                setAllData(prev => {
-                    const merged = mergeChunks([...prev, ...chunkData]);
-                    // Update Active Clients Map based on merged data
+                if (!isUpdate) {
+                    setAllData(chunkData);
                     const clientsMap = new Map<string, MapPoint>();
-                    merged.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
                     setAllActiveClients(Array.from(clientsMap.values()));
-                    return merged;
-                });
+                }
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'CHECKPOINT') {
+                // --- INCREMENTAL CHECKPOINT SAVE ---
                 const payload = msg.payload;
                 const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
                 
-                // Merge checkpoint with existing state to ensure we don't lose previous chunks
-                const mergedData = mergeChunks(aggregatedData);
-                
-                setAllData(mergedData);
+                setAllData(aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                mergedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(unidentifiedRows);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
 
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
-                await persistToDB(mergedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
+                await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
                 
-                uploadToCloudDistributed({ ...payload, aggregatedData: mergedData }).catch(err => console.warn("Checkpoint cloud upload failed", err));
+                // Using new distributed upload
+                uploadToCloudDistributed(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
-                
-                const mergedData = mergeChunks(payload.aggregatedData);
-                setAllData(mergedData);
-                
+                setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
-                mergedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
                 const uniqueClients = Array.from(clientsMap.values());
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(payload.unidentifiedRows);
@@ -476,14 +440,14 @@ const App: React.FC = () => {
                 
                 const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
                 
-                await persistToDB(mergedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 setLastSyncVersion(version);
                 localStorage.setItem('last_sync_version', version);
                 localStorage.removeItem('pending_version_hash');
 
                 setProcessingState(prev => ({ ...prev, message: 'Финализация кэша...', progress: 100 }));
                 
-                uploadToCloudDistributed({ ...payload, aggregatedData: mergedData }).then(() => {
+                uploadToCloudDistributed(payload).then(() => {
                     addNotification('Данные сохранены в облаке для всех', 'success');
                 }).catch(err => {
                     console.warn("Snapshot save error:", err);
@@ -542,7 +506,6 @@ const App: React.FC = () => {
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                // Trigger reload if version mismatch OR if we have 0 rows but cloud has files
                 if ((meta.versionHash && meta.versionHash !== lastSyncVersion) || (meta.fileCount > 0 && processingState.totalRowsProcessed === 0 && !processingState.isProcessing)) {
                     console.log("Sync trigger: Version mismatch or empty local state");
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);

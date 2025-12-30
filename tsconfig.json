@@ -20,6 +20,7 @@
   ],
   "exclude": [
     "node_modules",
-    "api"
+    "api/lib",
+    "api/_lib"
   ]
 }
