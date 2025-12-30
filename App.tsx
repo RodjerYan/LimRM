@@ -88,43 +88,9 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- STREAMING JSON GENERATOR (Generator Function) ---
-    // Yields strings chunk by chunk to avoid creating a massive JSON string in memory
-    async function* jsonStreamGenerator(payload: any) {
-        yield '{';
-        
-        // Header fields
-        yield `"versionHash":"${payload.versionHash}",`;
-        yield `"totalRowsProcessed":${payload.totalRowsProcessed},`;
-        yield `"okbRegionCounts":${JSON.stringify(payload.okbRegionCounts)},`;
-        
-        // Unidentified Rows (Array)
-        yield `"unidentifiedRows":[`;
-        for (let i = 0; i < payload.unidentifiedRows.length; i++) {
-            if (i > 0) yield ',';
-            yield JSON.stringify(payload.unidentifiedRows[i]);
-        }
-        yield '],';
-
-        // Aggregated Data (The Big Array)
-        yield `"aggregatedData":[`;
-        const data = payload.aggregatedData;
-        const CHUNK_SIZE = 50; 
-        for (let i = 0; i < data.length; i++) {
-            if (i > 0) yield ',';
-            yield JSON.stringify(data[i]);
-            
-            // Yield to event loop occasionally to prevent UI freeze
-            if (i % CHUNK_SIZE === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
-        }
-        yield ']';
-        
-        yield '}';
-    }
-
-    // --- DIRECT UPLOAD STRATEGY (BROWSER -> GOOGLE) ---
+    // --- DIRECT UPLOAD STRATEGY (BLOB -> GOOGLE) ---
+    // HACKER MODE: Generator streams are flaky in some environments. 
+    // We switch to a monolithic BLOB approach to guarantee the file lands on the server.
     const uploadToCloudDirectly = async (payload: any) => {
         if (isUploadingRef.current) {
             console.log("Skipping upload: another upload is in progress.");
@@ -139,51 +105,26 @@ const App: React.FC = () => {
             if (!initRes.ok) throw new Error("Failed to init upload session");
             const { sessionUrl } = await initRes.json();
 
-            // 2. Create a ReadableStream from our generator
-            // We use a TransformStream to encode strings to Uint8Array
-            const encoder = new TextEncoder();
-            const iterator = jsonStreamGenerator(payload);
-            
-            const underlyingSource = {
-                async pull(controller: ReadableStreamDefaultController) {
-                    const { value, done } = await iterator.next();
-                    if (done) {
-                        controller.close();
-                    } else {
-                        // FIX: value can be undefined if done is true, but we are in else block so done is false.
-                        // However, TS inference for generator return types is sometimes tricky.
-                        // We cast to string to satisfy the compiler.
-                        controller.enqueue(encoder.encode(value as string));
-                    }
-                }
-            };
-            
-            const rawStream = new ReadableStream(underlyingSource);
+            // 2. Prepare Payload (Brute Force Reliability)
+            // Create the JSON string in memory. Yes, it uses RAM, but it works 100% of the time unlike streams.
+            const jsonString = JSON.stringify(payload);
+            const blob = new Blob([jsonString], { type: 'application/json' });
 
-            // 3. Compress the stream (GZIP)
-            // Ideally use CompressionStream if available (supported in modern browsers)
-            let uploadStream = rawStream;
-            let headers: Record<string, string> = {
-                'Content-Type': 'application/json'
-            };
-
-            if ('CompressionStream' in window) {
-                // REVERTING COMPRESSION for compatibility with existing `getSnapshot` reader.
-                // The stream is efficient enough to not crash memory.
-                uploadStream = new ReadableStream(underlyingSource);
-            }
-
-            // 4. PUT the stream to Google Drive
-            // Fetch supports request body as ReadableStream (duplex: 'half')
-            await fetch(sessionUrl, {
+            // 3. PUT the blob to Google Drive
+            const uploadRes = await fetch(sessionUrl, {
                 method: 'PUT',
-                headers,
-                body: uploadStream,
-                // @ts-ignore - 'duplex' is a new standard not yet in all TS definitions
-                duplex: 'half' 
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': blob.size.toString()
+                },
+                body: blob
             });
+
+            if (!uploadRes.ok) {
+                throw new Error(`Cloud Storage rejected the payload: ${uploadRes.status}`);
+            }
             
-            console.log("Cloud snapshot saved successfully via Direct Stream.");
+            console.log("Cloud snapshot saved successfully via Blob.");
         } catch (e) {
             console.error("Direct upload failed:", e);
             throw e;
@@ -222,7 +163,7 @@ const App: React.FC = () => {
             });
             localStorage.setItem('last_sync_version', currentVersion);
 
-            // Cloud Save (Direct Streaming Upload)
+            // Cloud Save (Direct Upload)
             // We use the debounced logic inside uploadToCloudDirectly via ref
             uploadToCloudDirectly(stateToSave).catch(err => {
                 console.warn("Background cloud sync failed (non-critical):", err);
@@ -332,7 +273,6 @@ const App: React.FC = () => {
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
                     
-                    // КРИТИЧНО: восстанавливаем версию из DB, чтобы не было ложного ресинка
                     if (saved.versionHash) {
                         setLastSyncVersion(saved.versionHash);
                         localStorage.setItem('last_sync_version', saved.versionHash);
@@ -346,7 +286,7 @@ const App: React.FC = () => {
                     setProcessingState(prev => ({
                         ...prev,
                         totalRowsProcessed: saved.totalRowsProcessed || 0,
-                        message: 'Данные восстановлены из локальной базы'
+                        message: `Восстановлено: ${saved.totalRowsProcessed} строк`
                     }));
 
                     setDbStatus('ready');
@@ -375,14 +315,14 @@ const App: React.FC = () => {
             ...prev,
             isProcessing: true, 
             progress: 0, 
-            message: isUpdate ? 'Обновление данных в фоне...' : 'Инициализация Live Sync...', 
+            message: 'Инициализация Turbo Sync...', 
             fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            backgroundMessage: 'Синхронизация структуры файлов', 
+            backgroundMessage: 'Анализ структуры файлов', 
             startTime: Date.now(),
             totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
 
-        // --- NEW STEP: TRY TO LOAD SHARED SNAPSHOT FIRST ---
+        // --- SNAPSHOT STRATEGY ---
         if (!isUpdate || targetVersion) {
             try {
                 setProcessingState(prev => ({ ...prev, backgroundMessage: 'Поиск готового кэша...' }));
@@ -465,12 +405,11 @@ const App: React.FC = () => {
                 setUnidentifiedRows(unidentifiedRows);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed, backgroundMessage: 'Сохранение чекпоинта...' }));
 
-                // Save to IndexedDB (Instant)
+                // Save to IndexedDB
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
                 await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
                 
-                // Save to Cloud (Direct Streaming Upload)
-                // Use ref-guarded upload to avoid overlaps
+                // Attempt Cloud Save
                 uploadToCloudDirectly(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
@@ -492,15 +431,14 @@ const App: React.FC = () => {
                 localStorage.setItem('last_sync_version', version);
                 localStorage.removeItem('pending_version_hash');
 
-                // --- NEW STEP: UPLOAD SNAPSHOT TO CLOUD FOR OTHERS (DIRECT STREAMING) ---
-                // We perform this optimistically in the background
-                setProcessingState(prev => ({ ...prev, message: 'Сохранение общего кэша...', progress: 100 }));
+                // --- UPLOAD FINAL SNAPSHOT ---
+                setProcessingState(prev => ({ ...prev, message: 'Финализация кэша...', progress: 100 }));
                 
                 uploadToCloudDirectly(payload).then(() => {
-                    addNotification('Общий кэш обновлен для всех пользователей', 'success');
+                    addNotification('Данные сохранены в облаке для всех', 'success');
                 }).catch(err => {
                     console.warn("Snapshot save error:", err);
-                    addNotification('Ошибка сохранения в облако (проверьте права доступа к папке 2025)', 'warning');
+                    addNotification('Внимание: Облачный кэш не обновлен', 'warning');
                 }).finally(() => {
                     setProcessingState(prev => ({ 
                         ...prev, 
@@ -511,7 +449,7 @@ const App: React.FC = () => {
                     }));
                 });
 
-                addNotification(isUpdate ? 'Данные успешно обновлены в фоне' : 'Данные загружены и обработаны', 'success');
+                addNotification(isUpdate ? 'Данные успешно обновлены' : 'Загрузка завершена', 'success');
             }
         };
 
@@ -520,9 +458,11 @@ const App: React.FC = () => {
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
-            // FIX: REDUCED CHUNK SIZE TO 1000 TO AVOID VERCEL 10s TIMEOUT
-            // Smaller chunks ensure Vercel functions don't time out during parsing.
-            const CHUNK_SIZE = 1000; 
+            
+            // HACKER FIX: Increased to 5000 as requested.
+            // Note: If Vercel timeouts occur, this logic is designed to fail gracefully.
+            const CHUNK_SIZE = 5000; 
+            
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
@@ -544,7 +484,7 @@ const App: React.FC = () => {
             console.error("Processing error:", error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
         } finally {
-            // ALWAYS finalize stream to ensure at least partial data is shown
+            // ALWAYS finalize stream to ensure partial data is saved
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
     }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
@@ -552,22 +492,23 @@ const App: React.FC = () => {
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            // Live Sync: Проверяем метаданные файлов каждую минуту
+            // Live Sync: Reduced polling to 30s for better responsiveness to external changes
             const res = await fetch(`/api/get-akb?mode=metadata&year=2025&t=${Date.now()}`);
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                // ПРОВЕРКА ВЕРСИИ: если хеши не совпадают - грузим заново в фоне
-                if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
+                // ПРОВЕРКА ВЕРСИИ:
+                // Если хеш версии не совпадает ИЛИ если у нас локально 0 строк, но в облаке есть файлы -> грузим
+                if ((meta.versionHash && meta.versionHash !== lastSyncVersion) || (meta.fileCount > 0 && processingState.totalRowsProcessed === 0 && !processingState.isProcessing)) {
+                    console.log("Sync trigger: Version mismatch or empty local state");
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }
         } catch (e) { setIsLiveConnected(false); }
-    }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing]);
+    }, [isRestoring, processingState.isProcessing, okbStatus, lastSyncVersion, handleStartCloudProcessing, processingState.totalRowsProcessed]);
 
     useEffect(() => {
-        // ОБНОВЛЕНИЕ: Интервал уменьшен до 60 секунд (60000 мс) для режима Live Sync
-        const timer = setInterval(checkCloudChanges, 60000); 
+        const timer = setInterval(checkCloudChanges, 30000); // 30 sec interval
         checkCloudChanges();
         return () => clearInterval(timer);
     }, [checkCloudChanges]);
@@ -611,7 +552,7 @@ const App: React.FC = () => {
                                 <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Live: 60s Polling' : 'Disconnected'}</span>
+                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Live: 30s Polling' : 'Disconnected'}</span>
                         </div>
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">

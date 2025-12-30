@@ -92,31 +92,32 @@ export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: strin
     const existingFileId = listRes.data.files?.[0]?.id;
 
     // 2. Prepare Metadata
-    // For new files, metadata goes in body. For existing (PATCH), it's typically minimal or just in params.
-    // For Resumable upload of NEW file: POST to /upload/drive/v3/files?uploadType=resumable
-    // Body contains metadata.
+    // For Resumable Upload, we send the metadata in the body of the INIT request.
     const metadata = {
         name: SNAPSHOT_FILENAME,
         mimeType: 'application/json',
-        parents: existingFileId ? undefined : [folderId]
+        // Important: Only set parents for NEW files. PATCH requests ignore parents or throw errors if mismatch.
+        parents: existingFileId ? undefined : [folderId] 
     };
 
-    // 3. Initiate Session
     const token = await auth.getAccessToken();
     const method = existingFileId ? 'PATCH' : 'POST';
-    const url = existingFileId 
-        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
-        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
+    
+    // Construct the correct endpoint for initiating resumable upload
+    const baseUrl = 'https://www.googleapis.com/upload/drive/v3/files';
+    const uploadUrl = existingFileId 
+        ? `${baseUrl}/${existingFileId}?uploadType=resumable`
+        : `${baseUrl}?uploadType=resumable`;
 
-    console.log(`[Snapshot] Initiating ${method} upload. Existing ID: ${existingFileId}`);
+    console.log(`[Snapshot] Initiating ${method} session for ${existingFileId || 'new file'}`);
 
-    const res = await fetch(url, {
+    const res = await fetch(uploadUrl, {
         method: method,
         headers: {
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
-            'X-Upload-Content-Type': 'application/json',
-            // IMPORTANT: We don't know the length yet, but Drive requires X-Upload-Content-Type for init
+            // X-Upload-Content-Type is critical for the session to accept the subsequent PUT
+            'X-Upload-Content-Type': 'application/json', 
         },
         body: JSON.stringify(metadata)
     });
