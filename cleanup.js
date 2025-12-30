@@ -1,4 +1,4 @@
 
-console.log('--- CLEANUP SKIPPED (Handled via empty exports) ---');
-// No files are deleted to prevent Vercel build race conditions.
-// Legacy files contain "export {};" to be valid but empty modules.
+console.log('--- CLEANUP SKIPPED (Handled via .vercelignore) ---');
+// We rely on .vercelignore to prevent legacy files from being uploaded to Vercel.
+// This avoids build-time race conditions and function limits.
