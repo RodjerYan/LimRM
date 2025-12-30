@@ -68,6 +68,7 @@ const App: React.FC = () => {
     
     const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+    const isUploadingRef = useRef(false);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -125,6 +126,13 @@ const App: React.FC = () => {
 
     // --- DIRECT UPLOAD STRATEGY (BROWSER -> GOOGLE) ---
     const uploadToCloudDirectly = async (payload: any) => {
+        if (isUploadingRef.current) {
+            console.log("Skipping upload: another upload is in progress.");
+            return;
+        }
+        
+        isUploadingRef.current = true;
+        
         try {
             // 1. Get Session URL from our backend
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot-upload', { method: 'POST' });
@@ -179,6 +187,8 @@ const App: React.FC = () => {
         } catch (e) {
             console.error("Direct upload failed:", e);
             throw e;
+        } finally {
+            isUploadingRef.current = false;
         }
     };
 
@@ -213,6 +223,7 @@ const App: React.FC = () => {
             localStorage.setItem('last_sync_version', currentVersion);
 
             // Cloud Save (Direct Streaming Upload)
+            // We use the debounced logic inside uploadToCloudDirectly via ref
             uploadToCloudDirectly(stateToSave).catch(err => {
                 console.warn("Background cloud sync failed (non-critical):", err);
             });
@@ -459,6 +470,7 @@ const App: React.FC = () => {
                 await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, version);
                 
                 // Save to Cloud (Direct Streaming Upload)
+                // Use ref-guarded upload to avoid overlaps
                 uploadToCloudDirectly(payload).catch(err => console.warn("Checkpoint cloud upload failed (non-critical)", err));
             }
             else if (msg.type === 'result_finished') {
@@ -508,14 +520,17 @@ const App: React.FC = () => {
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
-            // FIX: REDUCED CHUNK SIZE TO 2000 TO AVOID VERCEL 10s TIMEOUT
-            // Large chunks (5000) cause the backend function to time out during Excel parsing/fetching.
-            const CHUNK_SIZE = 2000; 
+            // FIX: REDUCED CHUNK SIZE TO 1000 TO AVOID VERCEL 10s TIMEOUT
+            // Smaller chunks ensure Vercel functions don't time out during parsing.
+            const CHUNK_SIZE = 1000; 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
-                    if (!res.ok) break;
+                    if (!res.ok) {
+                        console.error(`Fetch failed for offset ${offset}`, res.statusText);
+                        break;
+                    }
                     const result = await res.json();
                     if (result.rows?.length > 0) {
                         workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
@@ -525,9 +540,12 @@ const App: React.FC = () => {
                     offset += CHUNK_SIZE;
                 }
             }
-            workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         } catch (error) {
+            console.error("Processing error:", error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
+        } finally {
+            // ALWAYS finalize stream to ensure at least partial data is shown
+            workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
     }, [okbData, allData.length, addNotification, persistToDB, processingState.isProcessing]);
 
