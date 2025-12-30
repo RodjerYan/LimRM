@@ -1,3 +1,3 @@
 
-// MOVED TO api/get-okb.ts
+// Legacy file. Logic moved to api/get-okb.ts
 export {};

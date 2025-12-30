@@ -1,3 +1,3 @@
 
-// MOVED TO api/get-full-cache.ts
+// Legacy file. Logic moved to api/get-full-cache.ts
 export {};
