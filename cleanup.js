@@ -1,9 +1,13 @@
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const pathsToDelete = [
-    // Endpoint files
+    // Endpoint files to remove to save function slots
     'api/add-to-cache.ts',
     'api/delete-address.ts',
     'api/get-akb.ts',
