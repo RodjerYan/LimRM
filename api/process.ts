@@ -12,8 +12,8 @@ import {
     clearOldSnapshots,
     getFullCoordsCache,
     listFilesForYear
-} from './_lib/sheets.js';
-import { processBatch } from './_lib/processing.js';
+} from './_lib/sheets'; // Убрали .js
+import { processBatch } from './_lib/processing'; // Убрали .js
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
 export const config = {
@@ -23,8 +23,17 @@ export const config = {
 const BATCH_SIZE = 1000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // Включаем CORS на всякий случай
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') return res.status(200).end();
+
     try {
         const action = req.query.action as string;
+        console.log(`API Process called with action: ${action}`);
+
         const protocol = req.headers['x-forwarded-proto'] || 'https';
         const host = req.headers.host;
         const selfUrl = `${protocol}://${host}/api/process`;
@@ -35,31 +44,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (action === 'start') {
+            console.log('Starting job...');
             await clearTempChunks();
-            const initialState: any = {
+            const initialState = {
                 status: 'processing',
                 totalRows: 0,
                 processedRows: 0,
                 message: 'Инициализация...',
                 startTime: Date.now(),
                 lastUpdated: Date.now(),
-                currentChunkIndex: 0,
-                totalChunksEstimate: 0
+                currentChunkIndex: 0
             };
-            await updateJobState(initialState);
+            await updateJobState(initialState as any);
 
-            // Запускаем фоновый процесс через fetch
-            fetch(`${selfUrl}?action=next_batch&t=${Date.now()}`).catch(console.error);
+            // Запускаем цепочку. 
+            // Используем фоновый fetch. В Vercel это не гарантировано, но обычно дает время на запуск первого батча.
+            fetch(`${selfUrl}?action=next_batch&t=${Date.now()}`).catch(e => console.error('Fetch background error:', e));
 
-            return res.json({ success: true, message: 'Process started' });
+            return res.json({ success: true, message: 'Processing triggered' });
         }
 
         if (action === 'next_batch') {
             const state = await getJobState();
             if (!state || state.status !== 'processing') {
+                console.log('Job not in processing state, stopping batch chain.');
                 return res.json({ status: 'stopped' });
             }
 
+            console.log(`Processing batch ${state.currentChunkIndex}...`);
+            
             const [okbData, cacheData, files] = await Promise.all([
                 getOKBData(),
                 getFullCoordsCache(),
@@ -67,7 +80,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ]);
 
             if (files.length === 0) {
-                await updateJobState({ ...state, status: 'error', message: 'Файлы не найдены' });
+                await updateJobState({ ...state, status: 'error', message: 'Файлы для загрузки не найдены в Google Drive' });
                 return res.json({ error: 'No files' });
             }
 
@@ -75,17 +88,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             okbData.forEach(row => {
                 const addr = findAddressInRow(row);
                 if (addr && row.lat && row.lon) {
-                    okbCoordIndex.set(normalizeAddress(addr), { lat: row.lat, lon: row.lon });
+                    okbCoordIndex.set(normalizeAddress(addr), { lat: Number(row.lat), lon: Number(row.lon) });
                 }
             });
 
             const cacheAddressMap = new Map();
-            Object.values(cacheData).flat().forEach(item => {
-                if (item.address && !item.isDeleted) {
-                    cacheAddressMap.set(normalizeAddress(item.address), { 
-                        lat: item.lat, lon: item.lon, isInvalid: item.isInvalid
-                    });
-                }
+            Object.entries(cacheData).forEach(([rm, rows]) => {
+                rows.forEach((item: any) => {
+                    if (item.address && !item.isDeleted) {
+                        cacheAddressMap.set(normalizeAddress(item.address), { 
+                            lat: item.lat, lon: item.lon
+                        });
+                    }
+                });
             });
 
             const targetFile = files[0];
@@ -93,7 +108,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             const rawData = await fetchFileContent(targetFile.id, `A${offset + 1}:CZ${offset + BATCH_SIZE}`);
 
             if (rawData.length === 0) {
-                fetch(`${selfUrl}?action=finalize&t=${Date.now()}`).catch(console.error);
+                console.log('No more data in file, finalizing...');
+                fetch(`${selfUrl}?action=finalize&t=${Date.now()}`).catch(e => console.error(e));
                 return res.json({ status: 'finalizing' });
             }
 
@@ -122,17 +138,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 lastUpdated: Date.now(),
                 message: `Обработано ${offset + rawData.length} строк...`
             };
-            await updateJobState(newState);
+            await updateJobState(newState as any);
 
-            fetch(`${selfUrl}?action=next_batch&t=${Date.now()}`).catch(console.error);
+            // Рекурсивный вызов следующего батча
+            fetch(`${selfUrl}?action=next_batch&t=${Date.now()}`).catch(e => console.error(e));
             return res.json({ status: 'continued', processed: rawData.length });
         }
 
         if (action === 'finalize') {
             const state = await getJobState();
-            if (!state) return res.status(404).json({ error: 'No job' });
+            if (!state) return res.status(404).json({ error: 'Job state missing' });
 
-            await updateJobState({ ...state, message: 'Финализация...' });
+            console.log('Finalizing all chunks...');
             const chunks = await loadAllTempChunks();
             
             const finalAggregation: Record<string, any> = {};
@@ -164,30 +181,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             await clearOldSnapshots();
             const CHUNK_SIZE = 2000;
-            for (let i = 0; i < Math.ceil(finalDataArray.length / CHUNK_SIZE); i++) {
+            const totalChunks = Math.ceil(finalDataArray.length / CHUNK_SIZE);
+            for (let i = 0; i < totalChunks; i++) {
                 const chunk = finalDataArray.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
                 await saveSnapshotChunk(`snapshot_chunk_v2_${i}.json`, chunk);
             }
             
             await saveSnapshotChunk('snapshot_manifest_v2.json', {
                 timestamp: Date.now(),
-                totalRows: state.processedRows,
-                unidentifiedRows: finalUnidentified
+                totalRowsProcessed: state.processedRows,
+                unidentifiedRows: finalUnidentified,
+                okbRegionCounts: {} 
             });
 
-            await clearTempChunks();
-            await updateJobState({ ...state, status: 'completed', message: 'Завершено' });
+            await updateJobState({ ...state, status: 'completed', message: 'Готово' } as any);
+            console.log('Job completed successfully.');
             return res.json({ success: true });
         }
 
         return res.status(400).json({ error: 'Unknown action' });
 
     } catch (error: any) {
-        console.error("API Error:", error);
+        console.error("API RUNTIME ERROR:", error);
+        // Возвращаем JSON с ошибкой вместо HTML страницы
         return res.status(500).json({ 
-            error: 'Internal Server Error', 
+            error: 'Server Process Failed', 
             details: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            stack: error.stack
         });
     }
 }
