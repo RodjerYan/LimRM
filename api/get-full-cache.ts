@@ -1,3 +1,4 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { 
     getFullCoordsCache, 
@@ -9,7 +10,7 @@ import {
     getDistributedSnapshot,
     saveSnapshotChunk,
     clearOldSnapshots
-} from './_lib/sheets';
+} from './_lib/sheets.js';
 
 export const config = {
     maxDuration: 60,
@@ -54,6 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'get-snapshot') {
             try {
+                // Now uses getDistributedSnapshot to fetch and merge all parts
                 const snapshot = await getDistributedSnapshot();
                 if (!snapshot) return res.status(404).json({ message: 'No snapshot' });
                 res.setHeader('Cache-Control', 's-maxage=60');
@@ -73,6 +75,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'Invalid JSON body' });
         }
 
+        // --- DISTRIBUTED SNAPSHOT ACTIONS ---
+
         if (action === 'clear-snapshots') {
             try {
                 await clearOldSnapshots();
@@ -84,6 +88,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'save-chunk') {
             try {
+                // Expects { filename: "snapshot_chunk_v2_0.json", data: [...] }
                 const { filename, data } = body;
                 if (!filename || !data) return res.status(400).json({ error: 'Missing filename or data' });
                 await saveSnapshotChunk(filename, data);
@@ -95,6 +100,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (action === 'save-manifest') {
             try {
+                // Expects { filename: "snapshot_manifest_v2.json", data: {...} }
                 const { filename, data } = body;
                 await saveSnapshotChunk(filename, data);
                 return res.json({ success: true });
@@ -102,6 +108,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(500).json({ error: 'Save manifest failed' });
             }
         }
+
+        // --- STANDARD ACTIONS ---
 
         if (action === 'add-to-cache') {
             try {
