@@ -100,7 +100,7 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    const performUpload = async (payload: any) => {
+    const performUpload = async (payload: any): Promise<string[]> => {
         try {
             console.log("Starting upload sequence...");
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
@@ -114,12 +114,13 @@ const App: React.FC = () => {
             let offset = 0;
             let chunkIndex = 0;
             
+            const uploadedFileIds: string[] = []; // Сюда копим ID
+
             while (offset < jsonString.length) {
                 setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
-                // ВАЖНО: Передаем partIndex
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -133,11 +134,19 @@ const App: React.FC = () => {
                     const text = await res.text();
                     throw new Error(`Upload failed: ${text.substring(0, 100)}`);
                 }
+                
+                // Получаем ID созданного файла от сервера
+                const data = await res.json();
+                if (data.fileId) {
+                    uploadedFileIds.push(data.fileId);
+                }
+
                 offset += CHUNK_SIZE;
                 chunkIndex++;
             }
             console.log('Snapshot uploaded successfully.');
             setUploadProgress(0);
+            return uploadedFileIds;
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -157,20 +166,20 @@ const App: React.FC = () => {
         setIsSavingToCloud(true); // START INDICATOR
 
         try {
-            await performUpload(payload);
+            // Загружаем и получаем список ID файлов
+            let fileIds = await performUpload(payload);
             
             // Если во время загрузки пришли новые данные, загружаем их
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
-                await performUpload(nextPayload);
+                fileIds = await performUpload(nextPayload);
                 // Обновляем reference payload для сохранения метаданных последней версии
                 payload = nextPayload;
             }
 
             // --- SAVE META FILE (MANIFEST) ---
-            // После успешной загрузки данных сохраняем маленький файл метаданных.
-            // Это гарантирует, что другие клиенты увидят точную версию мгновенно.
+            // После успешной загрузки данных сохраняем файл метаданных со списком чанков.
             console.log("Финализация: сохранение метаданных версии...");
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
@@ -178,7 +187,8 @@ const App: React.FC = () => {
                 body: JSON.stringify({
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
-                    processedFileIds: payload.processedFileIds // <--- ДОБАВЛЕНО: Сохраняем список обработанных файлов
+                    processedFileIds: payload.processedFileIds, // <--- ДОБАВЛЕНО: Сохраняем список обработанных файлов
+                    chunkFileIds: fileIds // <--- ВАЖНО: Передаем список чанков
                 })
             });
 

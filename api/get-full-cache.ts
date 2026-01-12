@@ -15,29 +15,15 @@ export const config = {
     api: { bodyParser: false },
 };
 
-const META_FILENAME = 'system_metadata.json';
-const SNAPSHOT_FOLDER_NAME = 'System_Snapshot_Data'; // Папка для хранения кусков
+const META_FILENAME = 'system_metadata_v2.json'; // v2 чтобы не конфликтовать со старым
 const ROOT_FOLDERS: Record<string, string> = {
-    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u', // ID корневой папки
+    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
 };
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
     for await (const chunk of req) { buffers.push(chunk); }
     return Buffer.concat(buffers);
-}
-
-// Получить ID папки для хранения чанков (создать если нет)
-async function getSnapshotFolderId(drive: any, parentId: string) {
-    const q = `name = '${SNAPSHOT_FOLDER_NAME}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const res = await drive.files.list({ q, fields: 'files(id)' });
-    if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
-    
-    const newFolder = await drive.files.create({
-        requestBody: { name: SNAPSHOT_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
-        fields: 'id'
-    });
-    return newFolder.data.id;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -49,57 +35,70 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const rootId = ROOT_FOLDERS['2025'];
 
         if (req.method === 'GET') {
-            // 1. Получить метаданные (версию)
+            // 1. Получить метаданные
             if (action === 'get-snapshot-meta') {
+                try {
+                    const list = await drive.files.list({
+                        q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
+                        fields: 'files(id)', pageSize: 1
+                    });
+                    
+                    if (list.data.files && list.data.files.length > 0) {
+                        const fileId = list.data.files[0].id;
+                        if (fileId) {
+                            const content = await drive.files.get({ fileId, alt: 'media' });
+                            return res.json(content.data);
+                        }
+                    }
+                    return res.json({ versionHash: 'none' });
+                } catch (e) {
+                    return res.json({ versionHash: 'none', error: (e as Error).message });
+                }
+            }
+
+            // 2. Скачать снимок (читает список файлов из метаданных и скачивает их)
+            if (action === 'get-snapshot') {
+                // Сначала получаем метаданные, чтобы узнать ID файлов-чанков
                 const metaRes = await drive.files.list({
                     q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
                     fields: 'files(id)', pageSize: 1
                 });
                 
-                if (metaRes.data.files && metaRes.data.files.length > 0) {
-                    const fileId = metaRes.data.files[0].id;
-                    if (fileId) {
-                        const content = await drive.files.get({ fileId: fileId, alt: 'media' });
-                        return res.json(content.data);
+                if (!metaRes.data.files || metaRes.data.files.length === 0) {
+                    return res.status(404).json({ error: 'Meta file not found' });
+                }
+
+                // Читаем сам файл метаданных
+                const fileId = metaRes.data.files[0].id;
+                if (!fileId) return res.status(404).json({ error: 'Meta file ID invalid' });
+
+                const metaContent = await drive.files.get({ fileId, alt: 'media' });
+                const meta = metaContent.data as any;
+
+                if (!meta.chunkFileIds || !Array.isArray(meta.chunkFileIds) || meta.chunkFileIds.length === 0) {
+                    return res.status(404).json({ error: 'No chunks listed in metadata' });
+                }
+
+                // Скачиваем все файлы по списку ID
+                const parts = await Promise.all(meta.chunkFileIds.map(async (fId: string) => {
+                    try {
+                        const resp = await drive.files.get({ fileId: fId, alt: 'media' });
+                        return typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data);
+                    } catch (e) {
+                        console.error(`Failed to download chunk ${fId}`, e);
+                        return ''; // Skip failed chunk or handle error appropriately
                     }
-                }
-                return res.json({ versionHash: 'none' });
-            }
-
-            // 2. Скачать и склеить весь снимок
-            if (action === 'get-snapshot') {
-                const folderId = await getSnapshotFolderId(drive, rootId);
-                // Получаем все части, отсортированные по имени (part_000, part_001...)
-                const listRes = await drive.files.list({
-                    q: `'${folderId}' in parents and trashed = false`,
-                    orderBy: 'name',
-                    fields: 'files(id, name)',
-                    pageSize: 1000
-                });
-
-                if (!listRes.data.files || listRes.data.files.length === 0) {
-                    return res.status(404).json({ error: 'No snapshot parts found' });
-                }
-
-                // Скачиваем все части параллельно
-                const parts = await Promise.all(listRes.data.files.map(async (file: any) => {
-                    const resp = await drive.files.get({ fileId: file.id, alt: 'media' });
-                    // resp.data может быть объектом или строкой, приводим к строке
-                    return typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data);
                 }));
 
-                // Склеиваем и отдаем
                 const fullJson = parts.join('');
                 try {
-                    const parsed = JSON.parse(fullJson);
-                    return res.json(parsed);
+                    return res.json(JSON.parse(fullJson));
                 } catch (e) {
-                    // Если вдруг склейка прошла криво, отдаем как текст (клиент разберется) или ошибку
-                    return res.send(fullJson); 
+                    // Fallback if parsing fails (e.g. valid partial data)
+                    return res.send(fullJson);
                 }
             }
             
-            // ... старые GET методы (get-full-cache и т.д.) ...
             if (action === 'get-full-cache' || !action) return res.json(await getFullCoordsCache());
             if (action === 'get-cached-address') {
                 const { rmName, address } = req.query;
@@ -110,42 +109,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (req.method === 'POST') {
             let body: any;
-            // Ручной парсинг body
             try {
                 const raw = await getRawBody(req);
                 if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
             } catch (e) { }
 
-            // 3. Инициализация: Очищаем папку с частями
+            // 3. Инициализация (Ничего не удаляем, просто говорим ОК)
             if (action === 'init-snapshot') {
-                const folderId = await getSnapshotFolderId(drive, rootId);
-                const files = await drive.files.list({ q: `'${folderId}' in parents and trashed = false`, fields: 'files(id)' });
-                if (files.data.files && files.data.files.length) {
-                    // Удаляем старые части
-                    // Google Drive API rate limits deletions, so we do it sequentially or limited parallel
-                    for (const f of files.data.files) {
-                        if (f.id) await drive.files.delete({ fileId: f.id });
-                    }
-                }
                 return res.json({ success: true });
             }
 
-            // 4. Добавление части: Создаем файл part_XXX.json
+            // 4. Загрузка части (Возвращает ID созданного файла)
             if (action === 'append-snapshot') {
                 const { chunk, partIndex } = body; 
-                const folderId = await getSnapshotFolderId(drive, rootId);
+                const fileName = `snap_chunk_${Date.now()}_${partIndex}.json`;
                 
-                // Имя файла с ведущими нулями для сортировки: part_001.json
-                const fileName = `part_${String(partIndex).padStart(5, '0')}.json`;
-                
-                await drive.files.create({
-                    requestBody: { name: fileName, parents: [folderId] },
-                    media: { mimeType: 'application/json', body: chunk }
+                const file = await drive.files.create({
+                    requestBody: { name: fileName, parents: [rootId] },
+                    media: { mimeType: 'application/json', body: chunk },
+                    fields: 'id'
                 });
-                return res.json({ success: true });
+                
+                // Возвращаем ID файла, чтобы клиент его запомнил
+                return res.json({ success: true, fileId: file.data.id });
             }
 
-            // 5. Сохранение метаданных (Манифест)
+            // 5. Финализация: Сохраняем список ID всех загруженных файлов
             if (action === 'save-meta') {
                 const q = `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`;
                 const list = await drive.files.list({ q, fields: 'files(id)' });
@@ -162,7 +151,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.json({ success: true });
             }
 
-            // ... старые POST методы ...
+            // ... старые методы ...
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
             if (action === 'update-address') { await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment); return res.json({success:true}); }
             if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
