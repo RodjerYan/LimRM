@@ -130,6 +130,7 @@ export type WorkerProgressPayload = {
     percentage: number;
     message: string;
     isBackground?: boolean;
+    totalProcessed?: number; // Added: Live row count update
 };
 
 export type WorkerResultPayload = {

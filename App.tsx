@@ -65,6 +65,9 @@ const App: React.FC = () => {
         totalRowsProcessed: 0
     });
     
+    // REF for reliable row counting across closures
+    const totalRowsProcessedRef = useRef<number>(0);
+    
     const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
     
@@ -159,6 +162,10 @@ const App: React.FC = () => {
         vHash?: string
     ) => {
         const currentVersion = vHash || lastSyncVersion || 'manual_patch_' + Date.now();
+        
+        // Sync Ref
+        totalRowsProcessedRef.current = rawCount;
+
         const stateToSave = {
             aggregatedData: updatedData, 
             unidentifiedRows: updatedUnidentified,
@@ -218,8 +225,8 @@ const App: React.FC = () => {
             });
             return finalUnidentified;
         });
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
-    }, [persistToDB, processingState.totalRowsProcessed]);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
+    }, [persistToDB]);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
         if (pollingIntervals.current.has(tempKey)) clearInterval(pollingIntervals.current.get(tempKey));
@@ -255,8 +262,8 @@ const App: React.FC = () => {
             pollingIntervals.current.delete(key);
         }
         setEditingClient(null);
-        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, processingState.totalRowsProcessed || 0), 50);
-    }, [persistToDB, processingState.totalRowsProcessed]);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
+    }, [persistToDB]);
 
     useEffect(() => {
         const restore = async () => {
@@ -278,9 +285,13 @@ const App: React.FC = () => {
                     saved.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
                     const uniqueClients = Array.from(clientsMap.values());
                     setAllActiveClients(uniqueClients);
+                    
+                    const restoredCount = saved.totalRowsProcessed || 0;
+                    totalRowsProcessedRef.current = restoredCount;
+                    
                     setProcessingState(prev => ({
                         ...prev,
-                        totalRowsProcessed: saved.totalRowsProcessed || 0,
+                        totalRowsProcessed: restoredCount,
                         message: 'Данные восстановлены из локальной базы'
                     }));
                     setDbStatus('ready');
@@ -348,6 +359,7 @@ const App: React.FC = () => {
                         
                         // Important: Set the offset for the fetcher logic
                         rowsProcessedSoFar = totalRowsProcessed || 0;
+                        totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
                         setProcessingState(prev => ({ 
                             ...prev, 
@@ -359,7 +371,9 @@ const App: React.FC = () => {
                     // FALLBACK: Snapshot missing, but we have local data!
                     // Use local data to hydrate worker and resume processing.
                     console.log("Snapshot 404, attempting to resume from local data...");
-                    rowsProcessedSoFar = processingState.totalRowsProcessed || 0;
+                    
+                    // Use Ref to ensure we get the latest count, not a stale state closure
+                    rowsProcessedSoFar = totalRowsProcessedRef.current || 0;
                     restoredDataForWorker = allData;
                     restoredUnidentifiedForWorker = unidentifiedRows;
                     
@@ -385,7 +399,16 @@ const App: React.FC = () => {
         
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
-            if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
+            if (msg.type === 'progress') {
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    progress: msg.payload.percentage, 
+                    message: msg.payload.message,
+                    // IMPORTANT: Update row count from worker progress even if no chunk emitted yet
+                    totalRowsProcessed: msg.payload.totalProcessed !== undefined ? msg.payload.totalProcessed : prev.totalRowsProcessed 
+                }));
+                if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
+            }
             else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
@@ -397,6 +420,7 @@ const App: React.FC = () => {
                     setAllActiveClients(Array.from(clientsMap.values()));
                 }
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
+                totalRowsProcessedRef.current = totalProcessed;
             }
             else if (msg.type === 'CHECKPOINT') {
                 const payload = msg.payload;
@@ -486,6 +510,11 @@ const App: React.FC = () => {
                             // Send partial or full chunk
                             let rowsToSend = chunkRows;
                             if (currentStreamRowCounter < rowsProcessedSoFar) {
+                                // If we are at the boundary, update UI to show we are crossing over
+                                setProcessingState(prev => ({ 
+                                    ...prev, 
+                                    message: `Обработка новых данных...`
+                                }));
                                 const rowsToSkipInChunk = rowsProcessedSoFar - currentStreamRowCounter;
                                 rowsToSend = chunkRows.slice(rowsToSkipInChunk);
                             }

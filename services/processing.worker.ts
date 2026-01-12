@@ -196,7 +196,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
         ? `Восстановление сессии (Локальная база): ${totalRowsProcessed} строк...` 
         : 'Связь установлена. Начало индексации...';
         
-    postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg } });
+    postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
@@ -349,7 +349,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     }
 
     const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 100000) * 85);
-    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...` } });
+    // Include totalProcessed in progress message to keep UI counter moving even between aggregations
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
