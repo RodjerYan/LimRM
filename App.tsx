@@ -311,6 +311,10 @@ const App: React.FC = () => {
         
         // This is key for resuming: tracked rows processed so far globally across all files
         let rowsProcessedSoFar = 0;
+        
+        // Data to restore worker state if snapshot is missing but local data exists
+        let restoredDataForWorker: AggregatedDataRow[] | undefined = undefined;
+        let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = undefined;
 
         setProcessingState(prev => ({ 
             ...prev,
@@ -351,9 +355,22 @@ const App: React.FC = () => {
                             totalRowsProcessed: rowsProcessedSoFar 
                         }));
                     }
+                } else if (snapshotRes.status === 404 && allData.length > 0) {
+                    // FALLBACK: Snapshot missing, but we have local data!
+                    // Use local data to hydrate worker and resume processing.
+                    console.log("Snapshot 404, attempting to resume from local data...");
+                    rowsProcessedSoFar = processingState.totalRowsProcessed || 0;
+                    restoredDataForWorker = allData;
+                    restoredUnidentifiedForWorker = unidentifiedRows;
+                    
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        message: `Восстановление из локальной базы (${rowsProcessedSoFar} строк)...`, 
+                        totalRowsProcessed: rowsProcessedSoFar 
+                    }));
                 }
             } catch (e) {
-                console.warn("Snapshot fetch failed or 404, proceeding to full process.");
+                console.warn("Snapshot fetch failed or 404, attempting fallback or full process.");
             }
         }
 
@@ -417,10 +434,16 @@ const App: React.FC = () => {
             }
         };
         
-        // Pass the already processed count to the worker so it knows where to resume counting
+        // Pass the already processed count AND RESTORED DATA to the worker so it knows where to resume counting and aggregating
         workerRef.current.postMessage({ 
             type: 'INIT_STREAM', 
-            payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar } 
+            payload: { 
+                okbData, 
+                cacheData, 
+                totalRowsProcessed: rowsProcessedSoFar,
+                restoredData: restoredDataForWorker,
+                restoredUnidentified: restoredUnidentifiedForWorker
+            } 
         });
         
         try {
@@ -450,10 +473,14 @@ const App: React.FC = () => {
                     if (chunkSize > 0) {
                         // Fast Forward Logic
                         if (currentStreamRowCounter + chunkSize <= rowsProcessedSoFar) {
-                            // Update UI during fast forward so user knows it's active
+                            // UPDATE UI so the user sees progress!
+                            // Even if we skip, we increment our "processed" counter concept in the UI
+                            // to show we are scanning through known territory.
+                            const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + chunkSize);
                             setProcessingState(prev => ({ 
                                 ...prev, 
-                                message: `Сверка данных: ${currentStreamRowCounter + chunkSize} / ${rowsProcessedSoFar}...` 
+                                message: `Сверка данных: ${visualCount} / ${rowsProcessedSoFar}...`,
+                                progress: (visualCount / (rowsProcessedSoFar || 1)) * 100 
                             }));
                         } else {
                             // Send partial or full chunk
@@ -486,7 +513,7 @@ const App: React.FC = () => {
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, allData.length, persistToDB, processingState.isProcessing]);
+    }, [okbData, allData, unidentifiedRows, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;

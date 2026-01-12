@@ -111,12 +111,18 @@ function performIncrementalAbc() {
     });
 }
 
-function initStream({ okbData, cacheData, totalRowsProcessed }: { okbData: OkbDataRow[], cacheData: CoordsCache, totalRowsProcessed?: number }, postMessage: PostMessageFn) {
+function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified }: { 
+    okbData: OkbDataRow[], 
+    cacheData: CoordsCache, 
+    totalRowsProcessed?: number,
+    restoredData?: AggregatedDataRow[],
+    restoredUnidentified?: UnidentifiedRow[]
+}, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
     state_unidentifiedRows = [];
     state_headers = [];
-    // Restore the counter if resuming, otherwise 0
+    
     state_processedRowsCount = totalRowsProcessed || 0;
     state_lastEmitCount = state_processedRowsCount;
     state_lastCheckpointCount = state_processedRowsCount;
@@ -147,15 +153,50 @@ function initStream({ okbData, cacheData, totalRowsProcessed }: { okbData: OkbDa
         });
     }
 
+    // --- REHYDRATION LOGIC ---
+    if (restoredData && restoredData.length > 0) {
+        restoredData.forEach(row => {
+            const { clients, ...rest } = row;
+            // Restore Aggregated Row structure
+            if (!state_aggregatedData[row.key]) {
+                state_aggregatedData[row.key] = {
+                    ...rest,
+                    clients: new Map()
+                };
+            }
+            
+            // Restore Clients and Unique Clients Map
+            if (Array.isArray(clients)) {
+                clients.forEach(client => {
+                    // Restore to unique map
+                    if (!state_uniquePlottableClients.has(client.key)) {
+                        state_uniquePlottableClients.set(client.key, client);
+                    }
+                    // Link to aggregation
+                    state_aggregatedData[row.key].clients.set(client.key, client);
+                });
+            }
+        });
+        
+        // Restore Unidentified
+        if (restoredUnidentified) {
+            state_unidentifiedRows = [...restoredUnidentified];
+        }
+    }
+
     postMessage({ 
         type: 'result_init', 
         payload: { 
             okbRegionCounts: state_okbRegionCounts,
-            totalUnidentified: 0 
+            totalUnidentified: state_unidentifiedRows.length 
         } 
     });
     
-    postMessage({ type: 'progress', payload: { percentage: 5, message: totalRowsProcessed ? `Восстановление сессии: ${totalRowsProcessed} строк...` : 'Связь установлена. Начало индексации...' } });
+    const statusMsg = totalRowsProcessed 
+        ? `Восстановление сессии (Локальная база): ${totalRowsProcessed} строк...` 
+        : 'Связь установлена. Начало индексации...';
+        
+    postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg } });
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {

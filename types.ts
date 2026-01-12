@@ -184,6 +184,8 @@ export type WorkerInputInit = {
         okbData: OkbDataRow[];
         cacheData: CoordsCache;
         totalRowsProcessed?: number; // Added to support resuming
+        restoredData?: AggregatedDataRow[]; // New: Allow restoring state from local data
+        restoredUnidentified?: UnidentifiedRow[]; // New
     };
 };
 
