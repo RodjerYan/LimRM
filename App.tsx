@@ -339,31 +339,55 @@ const App: React.FC = () => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
         
-        // VERSION GUARD: If targetVersion (Cloud) is different from local state, FORCE RESET.
-        // This handles the case where user replaced the file (e.g. 60k -> 15k rows) and we must not resume.
-        const currentLocalVersion = lastSyncVersion; // Loaded from state/localStorage
-        const isVersionMismatch = targetVersion && targetVersion !== currentLocalVersion;
+        let effectiveTargetVersion = targetVersion;
         
-        const isBackgroundUpdate = !isVersionMismatch && !!targetVersion && allDataRef.current.length > 0;
+        // 1. If no target version (Manual Trigger), fetch metadata to see if we need a reset
+        if (!effectiveTargetVersion) {
+             try {
+                 const metaRes = await fetch(`/api/get-akb?mode=metadata&year=${year}&t=${Date.now()}`);
+                 if(metaRes.ok) {
+                     const remoteMeta = await metaRes.json();
+                     effectiveTargetVersion = remoteMeta.versionHash;
+                 }
+             } catch(e) { console.error("Failed to check metadata for manual update", e); }
+        }
+
+        const currentLocalVersion = lastSyncVersion; 
+        const isVersionMismatch = effectiveTargetVersion && effectiveTargetVersion !== currentLocalVersion;
+        
+        const isBackgroundUpdate = !isVersionMismatch && !!effectiveTargetVersion && allDataRef.current.length > 0;
         
         if (!isBackgroundUpdate) setActiveModule('amp');
-        if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
+        if (effectiveTargetVersion) localStorage.setItem('pending_version_hash', effectiveTargetVersion);
         
-        console.log(`Starting processing. Mode: ${isBackgroundUpdate ? 'Resume/Append' : 'Fresh Start'}. Version Mismatch: ${isVersionMismatch}`);
+        console.log(`Starting processing. Mode: ${isBackgroundUpdate ? 'Resume/Append' : 'Fresh Start'}. Mismatch: ${isVersionMismatch}`);
         
-        // Prepare State for Processing
+        // 2. STATE RESET LOGIC
         if (isVersionMismatch) {
-            // FORCE RESET if versions don't match
+            console.log("Hard Reset Triggered: Clearing State...");
+            
+            // Explicitly clear React state and refs
             setAllData([]);
             setUnidentifiedRows([]);
             setOkbRegionCounts(null);
             setAllActiveClients([]);
+            setProcessingState(prev => ({ 
+                ...prev, 
+                progress: 0, 
+                message: 'Обнаружена новая версия. Полный перезапуск...',
+                totalRowsProcessed: 0
+            }));
+            
             totalRowsProcessedRef.current = 0;
-            allDataRef.current = []; // Clear Ref immediately
-            console.log("State reset due to version mismatch.");
+            allDataRef.current = [];
+            unidentifiedRowsRef.current = [];
+            
+            // CRITICAL: Force a small delay to let React flush the "empty" state to the DOM
+            // This prevents "Zombie" rows from a previous render persisting if the worker starts too fast.
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
 
-        // Data to restore worker state if we are resuming (and not resetting)
+        // Data to restore worker state (only if NOT resetting)
         let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
         let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
         let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
@@ -376,39 +400,34 @@ const App: React.FC = () => {
         }));
 
         // Try to load snapshot ONLY if versions match OR we don't have a target version constraint
-        // If isVersionMismatch is true, we ONLY accept a snapshot if its hash matches the NEW targetVersion.
-        if (!isBackgroundUpdate || targetVersion) {
+        if (!isBackgroundUpdate || effectiveTargetVersion) {
             try {
                 const snapshotRes = await fetch('/api/snapshot');
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     
                     // Critical: Validate snapshot version against target
-                    const snapshotValid = !targetVersion || snapshot.versionHash === targetVersion;
+                    const snapshotValid = !effectiveTargetVersion || snapshot.versionHash === effectiveTargetVersion;
                     
                     if (snapshotValid && snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
                         
-                        // Load data from snapshot
                         setOkbRegionCounts(okbRegionCounts);
                         setAllData(aggregatedData);
                         const clientsMap = new Map<string, MapPoint>();
                         aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                        const uniqueClients = Array.from(clientsMap.values());
-                        setAllActiveClients(uniqueClients);
+                        setAllActiveClients(Array.from(clientsMap.values()));
                         setUnidentifiedRows(unidentifiedRows);
                         setDbStatus('ready');
                         
-                        const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
+                        const newVersion = snapshotHash || effectiveTargetVersion || 'snapshot_' + Date.now();
                         setLastSyncVersion(newVersion);
                         
-                        // Set the offset for the fetcher logic
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
-                        // Since we loaded a snapshot matching the target, we don't need to fetch files from 0.
-                        // We continue from where snapshot left off.
+                        // Continue from where snapshot left off
                         restoredDataForWorker = aggregatedData;
                         restoredUnidentifiedForWorker = unidentifiedRows;
                         
@@ -417,13 +436,10 @@ const App: React.FC = () => {
                             message: `Загружен снимок (${rowsProcessedSoFar} строк). Синхронизация...`, 
                             totalRowsProcessed: rowsProcessedSoFar 
                         }));
-                    } else if (!snapshotValid) {
-                        console.log("Snapshot version mismatch. Ignoring snapshot and starting fresh.");
                     }
                 } else if (snapshotRes.status === 404 && !isVersionMismatch && allDataRef.current.length > 0) {
                     // FALLBACK: Snapshot missing, but we have local data AND versions match!
                     console.log("Snapshot 404, resuming from local data...");
-                    
                     rowsProcessedSoFar = totalRowsProcessedRef.current || 0;
                     restoredDataForWorker = allDataRef.current;
                     restoredUnidentifiedForWorker = unidentifiedRowsRef.current;
@@ -455,7 +471,6 @@ const App: React.FC = () => {
                     ...prev, 
                     progress: msg.payload.percentage, 
                     message: msg.payload.message,
-                    // IMPORTANT: Update row count from worker progress even if no chunk emitted yet
                     totalRowsProcessed: msg.payload.totalProcessed !== undefined ? msg.payload.totalProcessed : prev.totalRowsProcessed 
                 }));
                 if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
@@ -463,7 +478,6 @@ const App: React.FC = () => {
             else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                // ALLOW DATA UPDATE if we are in resume mode (not background update)
                 if (!isBackgroundUpdate) {
                     setAllData(chunkData);
                     const clientsMap = new Map<string, MapPoint>();
@@ -478,16 +492,14 @@ const App: React.FC = () => {
                 setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
                 payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
+                setAllActiveClients(Array.from(clientsMap.values()));
                 setUnidentifiedRows(payload.unidentifiedRows);
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
-                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, Array.from(clientsMap.values()), payload.totalRowsProcessed, version);
                 uploadToCloudServerSide(payload).catch(() => {});
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
-                // Even if empty, we might have reset the data, so we must update state to empty
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
@@ -506,7 +518,6 @@ const App: React.FC = () => {
             }
         };
         
-        // Pass the already processed count AND RESTORED DATA to the worker so it knows where to resume counting and aggregating
         workerRef.current.postMessage({ 
             type: 'INIT_STREAM', 
             payload: { 
@@ -527,14 +538,12 @@ const App: React.FC = () => {
                 return;
             }
 
-            // DYNAMIC CHUNK SIZE TO AVOID QUOTA LIMITS WHEN SKIPPING
             let currentStreamRowCounter = 0;
 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 
                 while (hasMore) {
-                    // DYNAMIC CHUNK SIZE LOGIC:
                     const remainingToSkip = Math.max(0, rowsProcessedSoFar - currentStreamRowCounter);
                     const CHUNK_SIZE = remainingToSkip > 2000 ? 2500 : 1000;
 
@@ -548,25 +557,18 @@ const App: React.FC = () => {
                     const fetchedChunkSize = chunkRows.length;
 
                     if (fetchedChunkSize > 0) {
-                        // Fast Forward Logic
                         if (currentStreamRowCounter + fetchedChunkSize <= rowsProcessedSoFar) {
-                            // UPDATE UI: Increment totalRowsProcessed VISUALLY so user sees progress
                             const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + fetchedChunkSize);
                             setProcessingState(prev => ({ 
                                 ...prev, 
                                 message: `Сверка данных...`,
-                                totalRowsProcessed: visualCount, // <--- IMPORTANT: Show counter climbing
+                                totalRowsProcessed: visualCount,
                                 progress: (visualCount / (rowsProcessedSoFar || 1)) * 100 
                             }));
                         } else {
-                            // Send partial or full chunk
                             let rowsToSend = chunkRows;
                             if (currentStreamRowCounter < rowsProcessedSoFar) {
-                                // If we are at the boundary, update UI to show we are crossing over
-                                setProcessingState(prev => ({ 
-                                    ...prev, 
-                                    message: `Обработка новых данных...`
-                                }));
+                                setProcessingState(prev => ({ ...prev, message: `Обработка новых данных...` }));
                                 const rowsToSkipInChunk = rowsProcessedSoFar - currentStreamRowCounter;
                                 rowsToSend = chunkRows.slice(rowsToSkipInChunk);
                             }
