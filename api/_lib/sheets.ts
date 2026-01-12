@@ -5,7 +5,7 @@ import type { OkbDataRow } from '../../types';
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
+const SNAPSHOT_SHEET_TITLE = 'System_Snapshot';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -115,47 +115,73 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     }).filter((row: any): row is OkbDataRow => row !== null);
 }
 
-export async function getSnapshot(): Promise<any | null> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    if (!folderId) return null;
-    
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id, modifiedTime, size)',
-    }), 'findSnapshot') as any;
-    
-    const file = listRes.data.files?.[0];
-    if (!file || !file.id) return null;
-    
-    try {
-        const res = await callWithRetry(() => drive.files.get({ fileId: file.id!, alt: 'media' }), 'downloadSnapshot') as any;
-        return { data: res.data, versionHash: file.modifiedTime, size: file.size };
-    } catch (e) { return null; }
+// --- NEW SHEET-BASED SNAPSHOT STORAGE ---
+// Bypasses Service Account Drive Storage Quota limits by using Sheets cells.
+
+async function ensureSnapshotSheet(sheets: sheets_v4.Sheets) {
+    const meta = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getMeta') as any;
+    const exists = meta.data.sheets?.some((s: any) => s.properties?.title === SNAPSHOT_SHEET_TITLE);
+    if (!exists) {
+        await callWithRetry(() => sheets.spreadsheets.batchUpdate({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            requestBody: { requests: [{ addSheet: { properties: { title: SNAPSHOT_SHEET_TITLE } } }] }
+        }), 'createSnapshotSheet');
+    }
 }
 
 export async function saveSnapshot(data: any): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
+    const sheets = await getGoogleSheetsClient();
+    await ensureSnapshotSheet(sheets);
     
-    const listRes = await callWithRetry(() => drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    }), 'checkSnapshot') as any;
+    // Google Sheets cell limit is 50,000 chars. We chunk the JSON.
+    const jsonString = JSON.stringify(data);
+    const CHUNK_SIZE = 45000; 
+    const chunks: string[] = [];
     
-    const fileId = listRes.data.files?.[0]?.id;
-    const media = {
-        mimeType: 'application/json',
-        body: JSON.stringify(data)
-    };
+    for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
+        chunks.push(jsonString.substring(i, i + CHUNK_SIZE));
+    }
+    
+    // Clear old data first
+    await callWithRetry(() => sheets.spreadsheets.values.clear({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
+    }), 'clearSnapshot');
+    
+    // Write new chunks vertically in Column A
+    const values = chunks.map(c => [c]);
+    
+    await callWithRetry(() => sheets.spreadsheets.values.update({
+        spreadsheetId: CACHE_SPREADSHEET_ID,
+        range: `'${SNAPSHOT_SHEET_TITLE}'!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values }
+    }), 'writeSnapshot');
+}
 
-    if (fileId) {
-        await callWithRetry(() => drive.files.update({ fileId, media }), 'updateSnapshot');
-    } else {
-        await callWithRetry(() => drive.files.create({ 
-            requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, 
-            media 
-        }), 'createSnapshot');
+export async function getSnapshot(): Promise<any | null> {
+    const sheets = await getGoogleSheetsClient();
+    try {
+        const res = await callWithRetry(() => sheets.spreadsheets.values.get({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
+        }), 'readSnapshot') as any;
+        
+        if (!res.data.values || res.data.values.length === 0) return null;
+        
+        // Join all chunks back together
+        const fullJson = res.data.values.map((row: any[]) => row[0]).join('');
+        const parsed = JSON.parse(fullJson);
+        
+        // Wrap to match expected frontend structure
+        return { 
+            data: parsed, 
+            versionHash: parsed.versionHash || `sheet_${Date.now()}`, 
+            size: fullJson.length 
+        };
+    } catch (e) {
+        console.warn("Snapshot sheet read failed (likely empty)", e);
+        return null; 
     }
 }
 
@@ -194,7 +220,13 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
     const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
-    const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
+    
+    // Exclude the snapshot sheet from cache loading
+    const cacheTitles = sheetTitles.filter((t: string) => t !== SNAPSHOT_SHEET_TITLE);
+    
+    if (cacheTitles.length === 0) return {};
+
+    const ranges = cacheTitles.map((title: string) => `'${title}'!A:E`); 
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
     const cache: Record<string, any[]> = {};
     const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
