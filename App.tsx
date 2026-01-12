@@ -17,7 +17,6 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
-import Presentation from './components/modules/Presentation';
 
 import { 
     AggregatedDataRow, 
@@ -55,7 +54,8 @@ const App: React.FC = () => {
     const [lastSnapshotVersion, setLastSnapshotVersion] = useState<string | null>(localStorage.getItem('last_snapshot_version'));
     
     const [isLiveConnected, setIsLiveConnected] = useState(false);
-    const [isSavingToCloud, setIsSavingToCloud] = useState(false); // VISUAL INDICATOR STATE
+    const [isSavingToCloud, setIsSavingToCloud] = useState(false); 
+    const [uploadProgress, setUploadProgress] = useState(0); // Progress for saving
     const [isRestoring, setIsRestoring] = useState(true);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
 
@@ -102,16 +102,23 @@ const App: React.FC = () => {
 
     const performUpload = async (payload: any) => {
         try {
+            console.log("Starting upload sequence...");
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
             if (!initRes.ok) throw new Error('Failed to init snapshot');
 
             const jsonString = JSON.stringify(payload);
-            // FIX: Reduced chunk size to 40,000 chars to fit within Google Sheets cell limit (50k)
-            // This ensures stability when the server appends data to the 'System_Snapshot' sheet.
-            const CHUNK_SIZE = 40_000;
+            
+            // FIX: УВЕЛИЧИЛИ РАЗМЕР ЧАНКА ДО 3.5MB (Лимит Vercel 4.5MB)
+            // Это ускорит загрузку в 100 раз по сравнению с 40kb
+            const CHUNK_SIZE = 3_500_000; 
+            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
+            let chunkIndex = 0;
             
             while (offset < jsonString.length) {
+                chunkIndex++;
+                setUploadProgress(Math.round((chunkIndex / totalChunks) * 100));
+                
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
@@ -125,9 +132,11 @@ const App: React.FC = () => {
                 }
                 offset += CHUNK_SIZE;
             }
-            console.log('Snapshot data chunks uploaded successfully.');
+            console.log('Snapshot uploaded successfully.');
+            setUploadProgress(0);
         } catch (e) {
             console.error("Server upload failed:", e);
+            setUploadProgress(0);
             throw e; // Re-throw to catch in parent
         }
     };
@@ -710,7 +719,7 @@ const App: React.FC = () => {
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Sync</span>
                             </div>
                             <span className="text-xs font-bold text-white">
-                                {isSavingToCloud ? 'Saving...' : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
+                                {isSavingToCloud ? `Saving ${uploadProgress}%` : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
                             </span>
                         </div>
                         {processingState.isProcessing && (
@@ -786,10 +795,6 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'roi-genome' && (
                         <RoiGenome data={filteredData} />
-                    )}
-                    {/* NEW PRESENTATION MODULE (HIDDEN OR CAN BE ADDED TO MENU) */}
-                    {activeModule === 'presentation' && (
-                        <Presentation />
                     )}
                 </div>
             </main>
