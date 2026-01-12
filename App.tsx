@@ -104,7 +104,9 @@ const App: React.FC = () => {
             if (!initRes.ok) throw new Error('Failed to init snapshot');
 
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 1_000_000;
+            // FIX: Reduced chunk size to 40,000 chars to fit within Google Sheets cell limit (50k)
+            // This ensures stability when the server appends data to the 'System_Snapshot' sheet.
+            const CHUNK_SIZE = 40_000;
             let offset = 0;
             
             while (offset < jsonString.length) {
