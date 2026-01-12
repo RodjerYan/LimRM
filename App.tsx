@@ -339,38 +339,54 @@ const App: React.FC = () => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
         
-        // IMPORTANT: Only treat as background update if it's an auto-trigger (targetVersion present)
-        // If user manually clicks (no targetVersion) OR we are resuming, we want visual updates.
-        // CHECK REF LENGTH, NOT STATE, TO AVOID CLOSURE STALENESS
-        const hasExistingData = allDataRef.current.length > 0;
-        const isBackgroundUpdate = !!targetVersion && hasExistingData;
+        // VERSION GUARD: If targetVersion (Cloud) is different from local state, FORCE RESET.
+        // This handles the case where user replaced the file (e.g. 60k -> 15k rows) and we must not resume.
+        const currentLocalVersion = lastSyncVersion; // Loaded from state/localStorage
+        const isVersionMismatch = targetVersion && targetVersion !== currentLocalVersion;
+        
+        const isBackgroundUpdate = !isVersionMismatch && !!targetVersion && allDataRef.current.length > 0;
         
         if (!isBackgroundUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        console.log(`Starting processing. Resume/Load: ${!isBackgroundUpdate}, Version: ${targetVersion || 'new'}`);
+        console.log(`Starting processing. Mode: ${isBackgroundUpdate ? 'Resume/Append' : 'Fresh Start'}. Version Mismatch: ${isVersionMismatch}`);
         
-        // This is key for resuming: tracked rows processed so far globally across all files
-        let rowsProcessedSoFar = 0;
-        
-        // Data to restore worker state if snapshot is missing but local data exists
-        let restoredDataForWorker: AggregatedDataRow[] | undefined = undefined;
-        let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = undefined;
+        // Prepare State for Processing
+        if (isVersionMismatch) {
+            // FORCE RESET if versions don't match
+            setAllData([]);
+            setUnidentifiedRows([]);
+            setOkbRegionCounts(null);
+            setAllActiveClients([]);
+            totalRowsProcessedRef.current = 0;
+            allDataRef.current = []; // Clear Ref immediately
+            console.log("State reset due to version mismatch.");
+        }
+
+        // Data to restore worker state if we are resuming (and not resetting)
+        let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
+        let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
+        let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
 
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, progress: 0, message: isBackgroundUpdate ? 'Фоновое обновление...' : 'Подключение к облаку...', 
             fileName: isBackgroundUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            startTime: Date.now(), totalRowsProcessed: isBackgroundUpdate ? prev.totalRowsProcessed : 0
+            startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
 
-        // Try to load snapshot first to resume
+        // Try to load snapshot ONLY if versions match OR we don't have a target version constraint
+        // If isVersionMismatch is true, we ONLY accept a snapshot if its hash matches the NEW targetVersion.
         if (!isBackgroundUpdate || targetVersion) {
             try {
                 const snapshotRes = await fetch('/api/snapshot');
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
-                    if (snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
+                    
+                    // Critical: Validate snapshot version against target
+                    const snapshotValid = !targetVersion || snapshot.versionHash === targetVersion;
+                    
+                    if (snapshotValid && snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
                         
@@ -387,22 +403,27 @@ const App: React.FC = () => {
                         const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
                         setLastSyncVersion(newVersion);
                         
-                        // Important: Set the offset for the fetcher logic
+                        // Set the offset for the fetcher logic
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
+                        
+                        // Since we loaded a snapshot matching the target, we don't need to fetch files from 0.
+                        // We continue from where snapshot left off.
+                        restoredDataForWorker = aggregatedData;
+                        restoredUnidentifiedForWorker = unidentifiedRows;
                         
                         setProcessingState(prev => ({ 
                             ...prev, 
                             message: `Загружен снимок (${rowsProcessedSoFar} строк). Синхронизация...`, 
                             totalRowsProcessed: rowsProcessedSoFar 
                         }));
+                    } else if (!snapshotValid) {
+                        console.log("Snapshot version mismatch. Ignoring snapshot and starting fresh.");
                     }
-                } else if (snapshotRes.status === 404 && hasExistingData) {
-                    // FALLBACK: Snapshot missing, but we have local data!
-                    // Use local data to hydrate worker and resume processing.
-                    console.log("Snapshot 404, attempting to resume from local data...");
+                } else if (snapshotRes.status === 404 && !isVersionMismatch && allDataRef.current.length > 0) {
+                    // FALLBACK: Snapshot missing, but we have local data AND versions match!
+                    console.log("Snapshot 404, resuming from local data...");
                     
-                    // Use Ref to ensure we get the latest count, not a stale state closure
                     rowsProcessedSoFar = totalRowsProcessedRef.current || 0;
                     restoredDataForWorker = allDataRef.current;
                     restoredUnidentifiedForWorker = unidentifiedRowsRef.current;
@@ -466,25 +487,22 @@ const App: React.FC = () => {
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
-                if (payload.aggregatedData.length > 0) {
-                    setOkbRegionCounts(payload.okbRegionCounts);
-                    setAllData(payload.aggregatedData);
-                    const clientsMap = new Map<string, MapPoint>();
-                    payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                    const uniqueClients = Array.from(clientsMap.values());
-                    setAllActiveClients(uniqueClients);
-                    setUnidentifiedRows(payload.unidentifiedRows);
-                    setDbStatus('ready');
-                    const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
-                    await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                    setLastSyncVersion(version);
-                    localStorage.setItem('last_sync_version', version);
-                    uploadToCloudServerSide(payload).finally(() => {
-                        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
-                    });
-                } else {
-                     setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 0, message: 'Нет данных в источнике' }));
-                }
+                // Even if empty, we might have reset the data, so we must update state to empty
+                setOkbRegionCounts(payload.okbRegionCounts);
+                setAllData(payload.aggregatedData);
+                const clientsMap = new Map<string, MapPoint>();
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                const uniqueClients = Array.from(clientsMap.values());
+                setAllActiveClients(uniqueClients);
+                setUnidentifiedRows(payload.unidentifiedRows);
+                setDbStatus('ready');
+                const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                setLastSyncVersion(version);
+                localStorage.setItem('last_sync_version', version);
+                uploadToCloudServerSide(payload).finally(() => {
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
+                });
             }
         };
         
@@ -581,7 +599,7 @@ const App: React.FC = () => {
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed]);
+    }, [okbData, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed, lastSyncVersion]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
