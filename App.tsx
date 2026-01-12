@@ -307,6 +307,27 @@ const App: React.FC = () => {
         restore();
     }, []);
 
+    // FETCH HELPER WITH RETRY LOGIC TO PREVENT QUOTA EXHAUSTION
+    const fetchWithRetry = async (url: string, retries = 3, backoff = 2000): Promise<Response> => {
+        try {
+            const res = await fetch(url);
+            if (res.status === 429 || res.status >= 500) {
+                if (retries > 0) {
+                    // API Quota hit or Server Error. Wait and retry.
+                    await new Promise(r => setTimeout(r, backoff));
+                    return fetchWithRetry(url, retries - 1, backoff * 2);
+                }
+            }
+            return res;
+        } catch (e) {
+            if (retries > 0) {
+                await new Promise(r => setTimeout(r, backoff));
+                return fetchWithRetry(url, retries - 1, backoff * 2);
+            }
+            throw e;
+        }
+    };
+
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
@@ -390,7 +411,7 @@ const App: React.FC = () => {
 
         let cacheData: CoordsCache = {};
         try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+            const response = await fetchWithRetry(`/api/get-full-cache?t=${Date.now()}`);
             if (response.ok) cacheData = await response.json();
         } catch (error) {}
         
@@ -471,7 +492,7 @@ const App: React.FC = () => {
         });
         
         try {
-            const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
+            const listRes = await fetchWithRetry(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             
             if (allFiles.length === 0) {
@@ -479,28 +500,35 @@ const App: React.FC = () => {
                 return;
             }
 
-            const CHUNK_SIZE = 1000; 
+            // DYNAMIC CHUNK SIZE TO AVOID QUOTA LIMITS WHEN SKIPPING
             let currentStreamRowCounter = 0;
 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 
                 while (hasMore) {
+                    // DYNAMIC CHUNK SIZE LOGIC:
+                    // If we need to skip a lot of rows (fast-forward), request larger chunks (e.g. 2500)
+                    // This reduces the number of API calls, preventing Quota Exceeded errors.
+                    // If we are near the processing point, use smaller chunks (1000) for smoother UI updates.
+                    const remainingToSkip = Math.max(0, rowsProcessedSoFar - currentStreamRowCounter);
+                    const CHUNK_SIZE = remainingToSkip > 2000 ? 2500 : 1000;
+
                     const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
-                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
+                    
+                    // Use fetchWithRetry here to handle 429/500 errors gracefully
+                    const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     if (!res.ok) break;
                     
                     const result = await res.json();
                     const chunkRows = result.rows || [];
-                    const chunkSize = chunkRows.length;
+                    const fetchedChunkSize = chunkRows.length;
 
-                    if (chunkSize > 0) {
+                    if (fetchedChunkSize > 0) {
                         // Fast Forward Logic
-                        if (currentStreamRowCounter + chunkSize <= rowsProcessedSoFar) {
+                        if (currentStreamRowCounter + fetchedChunkSize <= rowsProcessedSoFar) {
                             // UPDATE UI so the user sees progress!
-                            // Even if we skip, we increment our "processed" counter concept in the UI
-                            // to show we are scanning through known territory.
-                            const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + chunkSize);
+                            const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + fetchedChunkSize);
                             setProcessingState(prev => ({ 
                                 ...prev, 
                                 message: `Сверка данных: ${visualCount} / ${rowsProcessedSoFar}...`,
@@ -527,8 +555,13 @@ const App: React.FC = () => {
                             }
                         }
                         
-                        currentStreamRowCounter += chunkSize;
+                        currentStreamRowCounter += fetchedChunkSize;
                         isFirstChunk = false;
+                        
+                        // Add a small delay to prevent rapid-fire requests even on success
+                        if (remainingToSkip > 0) {
+                             await new Promise(r => setTimeout(r, 50)); 
+                        }
                     } else {
                         hasMore = false;
                     }
@@ -538,7 +571,8 @@ const App: React.FC = () => {
                 }
             }
         } catch (error) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи' }));
+            console.error(error);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи или лимит квот' }));
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
