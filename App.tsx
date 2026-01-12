@@ -54,6 +54,7 @@ const App: React.FC = () => {
     const [lastSnapshotVersion, setLastSnapshotVersion] = useState<string | null>(localStorage.getItem('last_snapshot_version'));
     
     const [isLiveConnected, setIsLiveConnected] = useState(false);
+    const [isSavingToCloud, setIsSavingToCloud] = useState(false); // VISUAL INDICATOR STATE
     const [isRestoring, setIsRestoring] = useState(true);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
 
@@ -126,6 +127,7 @@ const App: React.FC = () => {
             console.log('Snapshot uploaded successfully.');
         } catch (e) {
             console.error("Server upload failed:", e);
+            throw e; // Re-throw to catch in parent
         }
     };
 
@@ -136,7 +138,10 @@ const App: React.FC = () => {
             pendingUploadRef.current = payload;
             return;
         }
+        
         isUploadingRef.current = true;
+        setIsSavingToCloud(true); // START INDICATOR
+
         try {
             await performUpload(payload);
             while (pendingUploadRef.current) {
@@ -144,8 +149,12 @@ const App: React.FC = () => {
                 pendingUploadRef.current = null;
                 await performUpload(nextPayload);
             }
+        } catch (e) {
+            console.error("Cloud sync error:", e);
+            // Optional: addNotification("Ошибка сохранения в облако", "warning");
         } finally {
             isUploadingRef.current = false;
+            setIsSavingToCloud(false); // STOP INDICATOR
         }
     };
 
@@ -183,7 +192,9 @@ const App: React.FC = () => {
             localStorage.setItem('last_snapshot_version', currentVersion);
             setLastSnapshotVersion(currentVersion);
 
-            uploadToCloudServerSide(stateToSave).catch(() => {});
+            // This is now "safe" because uploadToCloudServerSide handles its own errors
+            // and we have visual feedback via isSavingToCloud
+            uploadToCloudServerSide(stateToSave);
         } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSnapshotVersion]);
 
@@ -270,62 +281,6 @@ const App: React.FC = () => {
         localStorage.removeItem('last_sync_version');
         processedFileIdsRef.current.clear();
         window.location.reload();
-    }, []);
-
-    useEffect(() => {
-        const restore = async () => {
-            try {
-                setDbStatus('loading');
-                const saved = await loadAnalyticsState();
-                if (saved && saved.allData?.length > 0) {
-                    setAllData(saved.allData);
-                    setUnidentifiedRows(saved.unidentifiedRows || []);
-                    setOkbRegionCounts(saved.okbRegionCounts || null);
-                    setOkbData(saved.okbData || []);
-                    setOkbStatus(saved.okbStatus || null);
-                    setDateRange(saved.dateRange);
-                    
-                    if (saved.processedFileIds) {
-                        processedFileIdsRef.current = new Set(saved.processedFileIds);
-                    }
-
-                    if (saved.versionHash) {
-                        setLastSnapshotVersion(saved.versionHash);
-                        localStorage.setItem('last_snapshot_version', saved.versionHash);
-                    }
-                    const clientsMap = new Map<string, MapPoint>();
-                    saved.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                    
-                    const restoredCount = saved.totalRowsProcessed || 0;
-                    totalRowsProcessedRef.current = restoredCount;
-                    
-                    setProcessingState(prev => ({
-                        ...prev,
-                        totalRowsProcessed: restoredCount,
-                        message: 'Данные восстановлены из локальной базы'
-                    }));
-                    setDbStatus('ready');
-                } else {
-                    setDbStatus('empty');
-                }
-            } catch (e) {
-                setDbStatus('empty');
-            } finally {
-                setIsRestoring(false);
-            }
-        };
-        restore();
-    }, []);
-
-    // Clean up workers on unmount
-    useEffect(() => {
-        return () => {
-            if (workerRef.current) {
-                workerRef.current.terminate();
-            }
-            pollingIntervals.current.forEach(clearInterval);
-        };
     }, []);
 
     const fetchWithRetry = async (url: string, retries = 5, backoff = 2000): Promise<Response> => {
@@ -597,22 +552,108 @@ const App: React.FC = () => {
         return () => clearInterval(timer);
     }, [checkCloudChanges, isRestoring, dbStatus]);
 
-    // NEW: Auto-resume Effect
+    // 1. Инициализация: СТРОГАЯ синхронизация с сервером при входе
     useEffect(() => {
-        if (isRestoring) return;
+        const initializeApp = async () => {
+            // Only runs once on mount
+            setDbStatus('loading');
+            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с командой...' }));
 
-        const autoResume = async () => {
-            console.log("Auto-resume: Initiating cloud sync check...");
-            // Always try to resume or start fresh. The function handles 'already processed' files internally.
-            // We pass lastSnapshotVersion so it knows we are continuing the current version, not wiping it.
-            await handleStartCloudProcessing({ year: '2025' }, lastSnapshotVersion || undefined);
+            try {
+                // ШАГ 1: Сначала загружаем то, что есть локально
+                const localState = await loadAnalyticsState();
+                let localVersion = null;
+
+                if (localState && localState.allData?.length > 0) {
+                    setAllData(localState.allData);
+                    setUnidentifiedRows(localState.unidentifiedRows || []);
+                    setOkbRegionCounts(localState.okbRegionCounts || null);
+                    setOkbData(localState.okbData || []);
+                    setOkbStatus(localState.okbStatus || null);
+                    setDateRange(localState.dateRange);
+                    
+                    if (localState.processedFileIds) {
+                        processedFileIdsRef.current = new Set(localState.processedFileIds);
+                    }
+
+                    if (localState.versionHash) {
+                        localVersion = localState.versionHash;
+                        setLastSnapshotVersion(localVersion);
+                        localStorage.setItem('last_snapshot_version', localVersion);
+                    }
+                    
+                    const clientsMap = new Map<string, MapPoint>();
+                    localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+                    setAllActiveClients(Array.from(clientsMap.values()));
+                    
+                    const restoredCount = localState.totalRowsProcessed || 0;
+                    totalRowsProcessedRef.current = restoredCount;
+                }
+
+                // ШАГ 2: Спрашиваем у сервера актуальную версию
+                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+                
+                if (metaRes.ok) {
+                    const serverMeta = await metaRes.json();
+                    
+                    // Check if server has data and it's different from local
+                    if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
+                        console.log(`Найден прогресс на сервере (${serverMeta.versionHash}). Загружаем...`);
+                        
+                        // Start cloud processing which will fetch snapshot and then continue
+                        await handleStartCloudProcessing({ year: '2025' }, serverMeta.versionHash);
+                        
+                        // handleStartCloudProcessing manages processingState, but we ensure restoring is done
+                        setIsRestoring(false); 
+                        return;
+                    }
+                }
+
+                // ШАГ 3: Если версии совпадают или сервер пуст
+                if (localState && localState.allData?.length > 0) {
+                    setDbStatus('ready');
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        message: 'Данные актуальны', 
+                        totalRowsProcessed: localState.totalRowsProcessed || 0,
+                        isProcessing: false // Ensure loading spinner stops
+                    }));
+                } else {
+                    setDbStatus('empty');
+                    setProcessingState(prev => ({ ...prev, message: 'Система готова', isProcessing: false }));
+                }
+
+            } catch (e) {
+                console.error("Ошибка инициализации:", e);
+                if (allDataRef.current.length > 0) setDbStatus('ready');
+                else setDbStatus('empty');
+            } finally {
+                setIsRestoring(false);
+            }
         };
 
-        // Delay slightly to ensure DB restore UI is settled
-        const t = setTimeout(autoResume, 500);
-        return () => clearTimeout(t);
+        initializeApp();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isRestoring]); // Run ONCE when restoration finishes
+    }, []);
+
+    // Clean up workers on unmount
+    useEffect(() => {
+        return () => {
+            if (workerRef.current) {
+                workerRef.current.terminate();
+            }
+            pollingIntervals.current.forEach(clearInterval);
+        };
+    }, []);
+
+    // Add saving on close/refresh
+    useEffect(() => {
+        const handleBeforeUnload = () => {
+            // Attempt to trigger a final save if needed, though unreliable
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, []);
 
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
@@ -650,10 +691,12 @@ const App: React.FC = () => {
                         <div className="h-8 w-px bg-gray-800"></div>
                         <div className="flex flex-col">
                             <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${isLiveConnected ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Link</span>
+                                <div className={`w-2 h-2 rounded-full ${isSavingToCloud ? 'bg-cyan-400 animate-ping' : (isLiveConnected ? 'bg-emerald-500' : 'bg-red-500')}`}></div>
+                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Sync</span>
                             </div>
-                            <span className="text-xs font-bold text-white">{isLiveConnected ? 'Live: 60s Polling' : 'Disconnected'}</span>
+                            <span className="text-xs font-bold text-white">
+                                {isSavingToCloud ? 'Saving...' : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
+                            </span>
                         </div>
                         {processingState.isProcessing && (
                             <div className="flex items-center gap-3 px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full animate-fade-in">
