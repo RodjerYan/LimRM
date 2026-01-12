@@ -338,7 +338,6 @@ const App: React.FC = () => {
 
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
-        const { year, month } = params;
         
         let effectiveTargetVersion = targetVersion;
         
@@ -503,77 +502,75 @@ const App: React.FC = () => {
         });
         
         try {
-            const listRes = await fetchWithRetry(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
-            const allFiles = listRes.ok ? await listRes.json() : [];
-            if (allFiles.length === 0) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Файлы не найдены в облаке' })); return; }
+            const YEARS_TO_SCAN = ['2025', '2026'];
 
-            for (const file of allFiles) {
-                // SKIP PROCESSED FILES: This is the critical fix for the resume hang.
-                if (processedFileIdsRef.current.has(file.id)) {
-                    console.log(`Skipping already processed file: ${file.name}`);
-                    continue;
+            for (const scanYear of YEARS_TO_SCAN) {
+                setProcessingState(prev => ({ ...prev, message: `Поиск файлов за ${scanYear} год...` }));
+                
+                const listRes = await fetchWithRetry(`/api/get-akb?year=${scanYear}&mode=list`);
+                const allFiles = listRes.ok ? await listRes.json() : [];
+                
+                if (allFiles.length === 0) {
+                    console.log(`Файлы за ${scanYear} год не найдены.`);
+                    continue; 
                 }
 
-                let offset = 0, hasMore = true, isFirstChunk = true;
-                while (hasMore) {
-                    // FIX: Уменьшаем размер чанка чтения с 2500 до 1000.
-                    // Глубокая пагинация (offset 90000+) в Google API работает медленно
-                    // и вызывает ошибку 500 (Timeout) при больших запросах.
-                    const CHUNK_SIZE = 1000; 
+                for (const file of allFiles) {
+                    if (processedFileIdsRef.current.has(file.id)) {
+                        console.log(`Skipping already processed file: ${file.name}`);
+                        continue;
+                    }
                     
-                    const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
+                    let offset = 0, hasMore = true, isFirstChunk = true;
                     
-                    setProcessingState(prev => ({ ...prev, message: `Обработка: ${file.name} (строки ${offset}-${offset + CHUNK_SIZE})` }));
-                    
-                    // Добавляем небольшую задержку, чтобы не получить бан от Google (Rate Limit)
-                    await new Promise(r => setTimeout(r, 200)); 
-
-                    const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
-                    
-                    if (!res.ok) {
-                        // FIX: Обработка ошибки "Range exceeds grid limits" (400 Bad Request)
-                        // Google API возвращает 400, если мы запрашиваем диапазон за пределами файла.
-                        // Это означает конец файла, а не ошибку сети.
-                        if (res.status === 400) {
-                            console.log(`Конец файла ${file.name} (Grid limit exceeded).`);
-                            hasMore = false;
-                            break; 
+                    while (hasMore) {
+                        const CHUNK_SIZE = 1000; 
+                        const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
+                        
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            fileName: file.name, 
+                            message: `Обработка: ${file.name} (строки ${offset}-${offset + CHUNK_SIZE})` 
+                        }));
+                        
+                        await new Promise(r => setTimeout(r, 200)); 
+                        const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
+                        
+                        if (!res.ok) {
+                            if (offset > 0 && (res.status === 400 || res.status === 500)) {
+                                 console.log(`File ${file.name} finished (grid limit reached at ${offset}).`);
+                                 hasMore = false; 
+                                 break; 
+                            } else {
+                                 console.error(`Failed to fetch chunk for ${file.name}, skipping file`);
+                                 break;
+                            }
+                        } else {
+                            const result = await res.json();
+                            const chunkRows = result.rows || [];
+                            
+                            if (chunkRows.length > 0) {
+                                workerRef.current?.postMessage({ 
+                                    type: 'PROCESS_CHUNK', 
+                                    payload: { rawData: chunkRows, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } 
+                                });
+                                isFirstChunk = false;
+                            } else {
+                                hasMore = false;
+                            }
+                            
+                            if (chunkRows.length < CHUNK_SIZE) hasMore = false;
+                            hasMore = result.hasMore && hasMore; 
+                            offset += CHUNK_SIZE;
                         }
-
-                        console.error(`Failed to fetch chunk for ${file.name} at offset ${offset}, skipping file`);
-                        // Если файл сломался на середине, мы его пропускаем, 
-                        // но то, что успели скачать, сохранится в persistToDB
-                        break; 
                     }
                     
-                    const result = await res.json();
-                    const chunkRows = result.rows || [];
+                    processedFileIdsRef.current.add(file.id);
                     
-                    if (chunkRows.length > 0) {
-                        workerRef.current?.postMessage({ 
-                            type: 'PROCESS_CHUNK', 
-                            payload: { rawData: chunkRows, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } 
-                        });
-                        isFirstChunk = false;
-                    } else {
-                        hasMore = false;
+                    if (workerRef.current) {
+                         const currentVersion = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
+                         persistToDB(allDataRef.current, unidentifiedRowsRef.current, [], totalRowsProcessedRef.current, currentVersion);
                     }
-                    
-                    // Если вернулось меньше, чем мы просили, значит это конец файла
-                    if (chunkRows.length < CHUNK_SIZE) {
-                        hasMore = false;
-                    }
-                    
-                    hasMore = result.hasMore && hasMore; // Double check
-                    offset += CHUNK_SIZE;
-                }
-                // Mark file as processed after full success
-                processedFileIdsRef.current.add(file.id);
-                // Trigger a lightweight save of the file ID list to prevent reprocessing on reload
-                if (workerRef.current) {
-                     const currentVersion = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
-                     // Persist current state including new file ID to enable resume next time
-                     persistToDB(allDataRef.current, unidentifiedRowsRef.current, [], totalRowsProcessedRef.current, currentVersion);
                 }
             }
         } catch (error) {
