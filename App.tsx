@@ -17,6 +17,7 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import Presentation from './components/modules/Presentation';
 
 import { 
     AggregatedDataRow, 
@@ -124,7 +125,7 @@ const App: React.FC = () => {
                 }
                 offset += CHUNK_SIZE;
             }
-            console.log('Snapshot uploaded successfully.');
+            console.log('Snapshot data chunks uploaded successfully.');
         } catch (e) {
             console.error("Server upload failed:", e);
             throw e; // Re-throw to catch in parent
@@ -144,11 +145,29 @@ const App: React.FC = () => {
 
         try {
             await performUpload(payload);
+            
+            // Если во время загрузки пришли новые данные, загружаем их
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
                 await performUpload(nextPayload);
+                // Обновляем reference payload для сохранения метаданных последней версии
+                payload = nextPayload;
             }
+
+            // --- SAVE META FILE (MANIFEST) ---
+            // После успешной загрузки данных сохраняем маленький файл метаданных.
+            // Это гарантирует, что другие клиенты увидят точную версию мгновенно.
+            console.log("Финализация: сохранение метаданных версии...");
+            await fetch('/api/get-full-cache?action=save-meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    versionHash: payload.versionHash,
+                    totalRowsProcessed: payload.totalRowsProcessed
+                })
+            });
+
         } catch (e) {
             console.error("Cloud sync error:", e);
             // Optional: addNotification("Ошибка сохранения в облако", "warning");
@@ -586,7 +605,7 @@ const App: React.FC = () => {
                     totalRowsProcessedRef.current = restoredCount;
                 }
 
-                // ШАГ 2: Спрашиваем у сервера актуальную версию
+                // ШАГ 2: Спрашиваем у сервера актуальную версию (через мета-файл)
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 
                 if (metaRes.ok) {
@@ -765,6 +784,10 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'roi-genome' && (
                         <RoiGenome data={filteredData} />
+                    )}
+                    {/* NEW PRESENTATION MODULE (HIDDEN OR CAN BE ADDED TO MENU) */}
+                    {activeModule === 'presentation' && (
+                        <Presentation />
                     )}
                 </div>
             </main>

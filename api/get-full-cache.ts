@@ -22,6 +22,7 @@ export const config = {
 };
 
 const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
+const META_FILENAME = 'system_metadata.json'; // Manifest file for instant version check
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
 };
@@ -34,12 +35,43 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
     return Buffer.concat(buffers);
 }
 
+// Функция для сохранения/обновления файла метаданных
+async function saveMetaFile(drive: any, folderId: string, data: any) {
+    // 1. Ищем существующий файл
+    const listRes = await drive.files.list({
+        q: `name = '${META_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    });
+    
+    const fileId = listRes.data.files?.[0]?.id;
+    const media = {
+        mimeType: 'application/json',
+        body: JSON.stringify(data)
+    };
+
+    if (fileId) {
+        // Обновляем
+        await drive.files.update({
+            fileId: fileId,
+            media: media,
+            fields: 'id'
+        });
+    } else {
+        // Создаем
+        await drive.files.create({
+            requestBody: {
+                name: META_FILENAME,
+                parents: [folderId]
+            },
+            media: media,
+            fields: 'id'
+        });
+    }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // FIX: Используем stale-while-revalidate.
-    // s-maxage=10: Vercel считает данные свежими 10 секунд.
-    // stale-while-revalidate=59: В течение 59 секунд Vercel может отдать старые данные, 
-    // но в фоне запустит обновление. Это спасает от лимитов Google API.
-    res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=59');
+    // Уменьшаем время кэширования для критически важных проверок версий
+    res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
 
     const action = req.query.action as string;
 
@@ -75,11 +107,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // NEW: Lightweight check for snapshot version
+        // ОБНОВЛЕННАЯ ПРОВЕРКА ВЕРСИИ
         if (action === 'get-snapshot-meta') {
             try {
                 const drive = await getGoogleDriveClient();
                 const folderId = ROOT_FOLDERS['2025'];
+                
+                // 1. Приоритет: Читаем файл метаданных (Manifest)
+                const metaRes = await drive.files.list({
+                    q: `name = '${META_FILENAME}' and '${folderId}' in parents and trashed = false`,
+                    fields: 'files(id, name)',
+                    pageSize: 1
+                });
+
+                if (metaRes.data.files && metaRes.data.files.length > 0) {
+                    const fileId = metaRes.data.files[0].id;
+                    // Скачиваем содержимое JSON
+                    const content = await drive.files.get({ fileId: fileId!, alt: 'media' });
+                    return res.status(200).json(content.data);
+                }
+
+                // 2. Фоллбэк: Если мета-файла нет, смотрим свойства большого файла снимка (старый метод)
                 const listRes = await drive.files.list({
                     q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
                     fields: 'files(id, modifiedTime, size)',
@@ -93,11 +141,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     id: file.id,
                     modifiedTime: file.modifiedTime,
                     size: file.size,
-                    versionHash: `${file.modifiedTime}_${file.size}`
+                    versionHash: `${file.modifiedTime}_${file.size}`,
+                    totalRowsProcessed: 0 // Неизвестно при фоллбэке
                 });
             } catch (error) {
                 console.error("Snapshot meta check failed:", error);
-                // Return 'none' instead of 500 to allow fallback logic in frontend
                 return res.status(200).json({ version: 'none', error: (error as Error).message });
             }
         }
@@ -141,6 +189,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.json({ success: true });
             } catch (error) {
                 console.error("Snapshot append error:", error);
+                return res.status(500).json({ error: (error as Error).message });
+            }
+        }
+
+        // НОВЫЙ МЕТОД: Сохранение метаданных (финализация)
+        if (action === 'save-meta') {
+            try {
+                const drive = await getGoogleDriveClient();
+                const folderId = ROOT_FOLDERS['2025'];
+                await saveMetaFile(drive, folderId, {
+                    versionHash: body.versionHash,
+                    totalRowsProcessed: body.totalRowsProcessed,
+                    lastUpdated: new Date().toISOString()
+                });
+                return res.json({ success: true });
+            } catch (error) {
+                console.error("Meta save error:", error);
                 return res.status(500).json({ error: (error as Error).message });
             }
         }
