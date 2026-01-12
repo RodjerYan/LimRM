@@ -31,8 +31,12 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Reduced from 15000 to 5000 for more frequent cloud saves
-const CHECKPOINT_THRESHOLD = 5000;
+// Увеличили порог для чекпоинта (сохранения в облако) до 50 000, 
+// чтобы не спамить сеть и не тормозить процесс на 3.5 млн строк.
+const CHECKPOINT_THRESHOLD = 50000; 
+
+// Увеличили порог обновления UI до 20 000, чтобы не перерисовывать React слишком часто.
+const UI_UPDATE_THRESHOLD = 20000;
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -97,6 +101,7 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
+    // Сортировка на миллионах строк - тяжелая операция. Делаем только в конце.
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
     
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
@@ -301,10 +306,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    // --- CHECKPOINT LOGIC ---
+    // --- OPTIMIZED CHECKPOINT LOGIC ---
+    // Сохраняем в облако (Checkpoint)
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
-        performIncrementalAbc();
+        
+        // ВНИМАНИЕ: НЕ запускаем ABC здесь для экономии ресурсов!
+        // performIncrementalAbc(); 
         
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
@@ -326,11 +334,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         state_lastEmitCount = state_processedRowsCount;
     }
-    else if (state_processedRowsCount - state_lastEmitCount > 5000) {
+    // Обновляем UI (Progress)
+    else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
         
-        performIncrementalAbc();
-
+        // НЕ запускаем ABC, просто отдаем агрегаты для отображения на карте
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -348,12 +356,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
     }
 
-    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 100000) * 85);
+    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); // Adjusted scale for 3.5M
     // Include totalProcessed in progress message to keep UI counter moving even between aggregations
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
+    // ЗАПУСКАЕМ ABC ТОЛЬКО В САМОМ КОНЦЕ
     performIncrementalAbc();
 
     const finalData = Object.values(state_aggregatedData).map(item => ({
