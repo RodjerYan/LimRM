@@ -64,7 +64,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const mode = req.query.mode as string;
 
                 if (mode === 'metadata') {
-                    res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=30, stale-while-revalidate=30');
+                    // FIX: Disable Vercel caching completely for metadata to prevent stale "fingerprints"
+                    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+                    res.setHeader('Pragma', 'no-cache');
+                    res.setHeader('Expires', '0');
+                    
                     const drive = await getGoogleDriveClient();
                     const monthStr = req.query.month as string;
                     let files = monthStr ? await listFilesForMonth(year, parseInt(monthStr, 10)) : await listFilesForYear(year);

@@ -10,7 +10,8 @@ import {
     getSnapshot,
     saveSnapshot,
     initSnapshot,
-    appendSnapshot
+    appendSnapshot,
+    getGoogleDriveClient
 } from './_lib/sheets.js';
 
 export const config = {
@@ -18,6 +19,11 @@ export const config = {
     api: {
         bodyParser: false,
     },
+};
+
+const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
+const ROOT_FOLDERS: Record<string, string> = {
+    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
 };
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
@@ -29,13 +35,18 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // FORCE NO CACHE GLOBALLY FOR THIS ENDPOINT
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
     const action = req.query.action as string;
 
     if (req.method === 'GET') {
         if (action === 'get-full-cache' || !action) {
             try {
                 const cacheData = await getFullCoordsCache();
-                res.setHeader('Cache-Control', 'no-store');
                 return res.status(200).json(cacheData);
             } catch (error) {
                 return res.status(500).json({ error: 'Cache failed', details: (error as Error).message });
@@ -58,8 +69,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             try {
                 const snapshot = await getSnapshot();
                 if (!snapshot) return res.status(404).json({ message: 'No snapshot' });
-                res.setHeader('Cache-Control', 's-maxage=60');
                 return res.json(snapshot);
+            } catch (error) {
+                return res.status(500).json({ error: (error as Error).message });
+            }
+        }
+
+        // NEW: Lightweight check for snapshot version
+        if (action === 'get-snapshot-meta') {
+            try {
+                const drive = await getGoogleDriveClient();
+                const folderId = ROOT_FOLDERS['2025'];
+                const listRes = await drive.files.list({
+                    q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+                    fields: 'files(id, modifiedTime, size)',
+                    pageSize: 1
+                });
+                
+                const file = listRes.data.files?.[0];
+                if (!file) return res.status(200).json({ version: 'none' });
+
+                return res.status(200).json({
+                    id: file.id,
+                    modifiedTime: file.modifiedTime,
+                    size: file.size,
+                    versionHash: `${file.modifiedTime}_${file.size}`
+                });
             } catch (error) {
                 return res.status(500).json({ error: (error as Error).message });
             }
@@ -69,7 +104,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'POST') {
         let body: any;
         
-        // Handle init-snapshot separately as it might have no body
         if (action === 'init-snapshot') {
             try {
                 await initSnapshot();

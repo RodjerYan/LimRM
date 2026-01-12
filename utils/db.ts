@@ -85,8 +85,18 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
   });
 };
 
+/**
+ * Полная очистка состояния аналитики из БД.
+ * Используется при несовпадении версий или ручном сбросе.
+ */
 export const clearAnalyticsState = async () => {
   const db = await initDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
-  tx.objectStore(STORE_NAME).delete('current_state');
+  const store = tx.objectStore(STORE_NAME);
+  
+  return new Promise<void>((resolve, reject) => {
+    const req = store.delete('current_state');
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
 };
