@@ -90,6 +90,9 @@ const App: React.FC = () => {
     // Server-side upload handler (Avoids CORS issues by proxying through API)
     const uploadToCloudServerSide = async (payload: any) => {
         if (isUploadingRef.current) return;
+        // Don't upload if payload is empty/invalid
+        if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
+        
         isUploadingRef.current = true;
         try {
             const res = await fetch('/api/snapshot', {
@@ -261,6 +264,9 @@ const App: React.FC = () => {
         const isUpdate = allData.length > 0;
         if (isUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
+        
+        console.log(`Starting processing for version: ${targetVersion || 'new'}`);
+        
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, progress: 0, message: isUpdate ? 'Обновление данных...' : 'Подключение к облаку...', 
@@ -272,7 +278,7 @@ const App: React.FC = () => {
                 const snapshotRes = await fetch('/api/snapshot');
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
-                    if (snapshot && snapshot.data && snapshot.data.aggregatedData) {
+                    if (snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
                         setOkbRegionCounts(okbRegionCounts);
@@ -330,32 +336,44 @@ const App: React.FC = () => {
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
-                setOkbRegionCounts(payload.okbRegionCounts);
-                setAllData(payload.aggregatedData);
-                const clientsMap = new Map<string, MapPoint>();
-                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
-                setUnidentifiedRows(payload.unidentifiedRows);
-                setDbStatus('ready');
-                const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
-                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                setLastSyncVersion(version);
-                localStorage.setItem('last_sync_version', version);
-                uploadToCloudServerSide(payload).finally(() => {
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
-                });
+                // Check if result is empty - if so, don't clear existing data unless explicit reset
+                if (payload.aggregatedData.length > 0) {
+                    setOkbRegionCounts(payload.okbRegionCounts);
+                    setAllData(payload.aggregatedData);
+                    const clientsMap = new Map<string, MapPoint>();
+                    payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    const uniqueClients = Array.from(clientsMap.values());
+                    setAllActiveClients(uniqueClients);
+                    setUnidentifiedRows(payload.unidentifiedRows);
+                    setDbStatus('ready');
+                    const version = localStorage.getItem('pending_version_hash') || 'processed_' + Date.now();
+                    await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
+                    setLastSyncVersion(version);
+                    localStorage.setItem('last_sync_version', version);
+                    uploadToCloudServerSide(payload).finally(() => {
+                        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
+                    });
+                } else {
+                     setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 0, message: 'Нет данных в источнике' }));
+                }
             }
         };
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
+            
+            if (allFiles.length === 0) {
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Файлы не найдены в облаке' }));
+                return;
+            }
+
             const CHUNK_SIZE = 1000; 
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
-                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
+                    const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
+                    const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     if (!res.ok) break;
                     const result = await res.json();
                     if (result.rows?.length > 0) {
@@ -380,7 +398,9 @@ const App: React.FC = () => {
             if (res.ok) {
                 const meta = await res.json();
                 setIsLiveConnected(true);
-                if (meta.versionHash && meta.versionHash !== lastSyncVersion) {
+                // Only trigger update if versionHash exists AND is different AND is NOT "none"
+                if (meta.versionHash && meta.versionHash !== 'none' && meta.versionHash !== lastSyncVersion) {
+                    console.log('Detected cloud change:', meta.versionHash);
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
                 }
             }
