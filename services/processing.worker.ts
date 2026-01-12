@@ -31,7 +31,8 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-const CHECKPOINT_THRESHOLD = 15000;
+// Reduced from 15000 to 5000 for more frequent cloud saves
+const CHECKPOINT_THRESHOLD = 5000;
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -57,14 +58,11 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     return '';
 };
 
-// Функция безопасного парсинга чисел (удаляет пробелы, NBSP и обрабатывает запятые)
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
     
     const strVal = String(val);
-    // 1. Удаляем все виды пробелов (обычные, неразрывные и т.д.)
-    // 2. Заменяем запятую на точку
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
     
     const floatVal = parseFloat(cleaned);
@@ -97,7 +95,6 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     return coordIndex;
 };
 
-// Функция инкрементального ABC-анализа
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
@@ -148,7 +145,6 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
         });
     }
 
-    // Мгновенно отправляем инициализацию с данными ОКБ
     postMessage({ 
         type: 'result_init', 
         payload: { 
@@ -285,7 +281,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             }
         });
         
-        // Also emit regular visual chunk so UI updates smoothly
         state_lastEmitCount = state_processedRowsCount;
     }
     else if (state_processedRowsCount - state_lastEmitCount > 5000) {

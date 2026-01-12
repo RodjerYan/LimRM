@@ -67,7 +67,10 @@ const App: React.FC = () => {
     
     const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+    
+    // Upload Queue Management
     const isUploadingRef = useRef(false);
+    const pendingUploadRef = useRef<any>(null);
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -87,12 +90,8 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // Server-side upload handler with CHUNKING to avoid Vercel 4.5MB limit
-    const uploadToCloudServerSide = async (payload: any) => {
-        if (isUploadingRef.current) return;
-        if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
-        
-        isUploadingRef.current = true;
+    // Internal function to perform the actual upload logic
+    const performUpload = async (payload: any) => {
         try {
             // 1. Initialize snapshot (clears the Sheet)
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
@@ -100,7 +99,7 @@ const App: React.FC = () => {
 
             // 2. Chunk and append
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 1_000_000; // 1MB chunks (well below 4.5MB limit)
+            const CHUNK_SIZE = 1_000_000; // 1MB chunks
             let offset = 0;
             
             while (offset < jsonString.length) {
@@ -119,9 +118,34 @@ const App: React.FC = () => {
                 offset += CHUNK_SIZE;
             }
             
-            console.log('Snapshot uploaded successfully via chunking.');
+            console.log('Snapshot uploaded successfully.');
         } catch (e) {
             console.error("Server upload failed:", e);
+        }
+    };
+
+    // Queued upload handler to prevent race conditions and dropping updates
+    const uploadToCloudServerSide = async (payload: any) => {
+        if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
+
+        if (isUploadingRef.current) {
+            // If busy, queue this payload as the latest pending one
+            pendingUploadRef.current = payload;
+            return;
+        }
+        
+        isUploadingRef.current = true;
+        
+        try {
+            // Process current request
+            await performUpload(payload);
+            
+            // Process any queued request that arrived while we were busy
+            while (pendingUploadRef.current) {
+                const nextPayload = pendingUploadRef.current;
+                pendingUploadRef.current = null; // Clear queue before processing
+                await performUpload(nextPayload);
+            }
         } finally {
             isUploadingRef.current = false;
         }
@@ -310,7 +334,6 @@ const App: React.FC = () => {
                         return;
                     }
                 }
-                // If 404 or invalid snapshot, proceed to Worker processing below (Fallthrough)
             } catch (e) {
                 console.warn("Snapshot fetch failed or 404, proceeding to full process.");
             }
