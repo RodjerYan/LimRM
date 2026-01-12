@@ -7,251 +7,161 @@ import {
     deleteAddressFromCache, 
     updateAddressInCache, 
     updateCacheCoords,
-    getSnapshot,
-    saveSnapshot,
-    initSnapshot,
-    appendSnapshot,
     getGoogleDriveClient
 } from './_lib/sheets.js';
 
 export const config = {
     maxDuration: 60,
-    api: {
-        bodyParser: false,
-    },
+    api: { bodyParser: false },
 };
 
-const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
-const META_FILENAME = 'system_metadata.json'; // Manifest file for instant version check
+const META_FILENAME = 'system_metadata.json';
+const SNAPSHOT_FOLDER_NAME = 'System_Snapshot_Data'; // Папка для хранения кусков
 const ROOT_FOLDERS: Record<string, string> = {
-    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
+    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u', // ID корневой папки
 };
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
-    for await (const chunk of req) {
-        buffers.push(chunk);
-    }
+    for await (const chunk of req) { buffers.push(chunk); }
     return Buffer.concat(buffers);
 }
 
-// Функция для сохранения/обновления файла метаданных
-async function saveMetaFile(drive: any, folderId: string, data: any) {
-    // 1. Ищем существующий файл
-    const listRes = await drive.files.list({
-        q: `name = '${META_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    });
+// Получить ID папки для хранения чанков (создать если нет)
+async function getSnapshotFolderId(drive: any, parentId: string) {
+    const q = `name = '${SNAPSHOT_FOLDER_NAME}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    const res = await drive.files.list({ q, fields: 'files(id)' });
+    if (res.data.files?.length > 0) return res.data.files[0].id;
     
-    const fileId = listRes.data.files?.[0]?.id;
-    const media = {
-        mimeType: 'application/json',
-        body: JSON.stringify(data)
-    };
-
-    if (fileId) {
-        // Обновляем
-        await drive.files.update({
-            fileId: fileId,
-            media: media,
-            fields: 'id'
-        });
-    } else {
-        // Создаем
-        await drive.files.create({
-            requestBody: {
-                name: META_FILENAME,
-                parents: [folderId]
-            },
-            media: media,
-            fields: 'id'
-        });
-    }
+    const newFolder = await drive.files.create({
+        requestBody: { name: SNAPSHOT_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+        fields: 'id'
+    });
+    return newFolder.data.id;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // Уменьшаем время кэширования для критически важных проверок версий
     res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
-
     const action = req.query.action as string;
 
-    if (req.method === 'GET') {
-        if (action === 'get-full-cache' || !action) {
-            try {
-                const cacheData = await getFullCoordsCache();
-                return res.status(200).json(cacheData);
-            } catch (error) {
-                return res.status(500).json({ error: 'Cache failed', details: (error as Error).message });
-            }
-        }
+    try {
+        const drive = await getGoogleDriveClient();
+        const rootId = ROOT_FOLDERS['2025'];
 
-        if (action === 'get-cached-address') {
-            try {
-                const { rmName, address } = req.query;
-                if (!rmName || !address) return res.status(400).json({ error: 'Missing params' });
-                const cachedAddress = await getAddressFromCache(rmName as string, address as string);
-                if (cachedAddress) return res.status(200).json(cachedAddress);
-                return res.status(404).json({ error: 'Not found' });
-            } catch (error) {
-                return res.status(500).json({ error: 'Fetch failed', details: (error as Error).message });
-            }
-        }
-
-        if (action === 'get-snapshot') {
-            try {
-                const snapshot = await getSnapshot();
-                if (!snapshot) return res.status(404).json({ message: 'No snapshot' });
-                return res.json(snapshot);
-            } catch (error) {
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
-        // ОБНОВЛЕННАЯ ПРОВЕРКА ВЕРСИИ
-        if (action === 'get-snapshot-meta') {
-            try {
-                const drive = await getGoogleDriveClient();
-                const folderId = ROOT_FOLDERS['2025'];
-                
-                // 1. Приоритет: Читаем файл метаданных (Manifest)
+        if (req.method === 'GET') {
+            // 1. Получить метаданные (версию)
+            if (action === 'get-snapshot-meta') {
                 const metaRes = await drive.files.list({
-                    q: `name = '${META_FILENAME}' and '${folderId}' in parents and trashed = false`,
+                    q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
+                    fields: 'files(id)', pageSize: 1
+                });
+                if (metaRes.data.files?.length > 0) {
+                    const content = await drive.files.get({ fileId: metaRes.data.files[0].id, alt: 'media' });
+                    return res.json(content.data);
+                }
+                return res.json({ versionHash: 'none' });
+            }
+
+            // 2. Скачать и склеить весь снимок
+            if (action === 'get-snapshot') {
+                const folderId = await getSnapshotFolderId(drive, rootId);
+                // Получаем все части, отсортированные по имени (part_000, part_001...)
+                const listRes = await drive.files.list({
+                    q: `'${folderId}' in parents and trashed = false`,
+                    orderBy: 'name',
                     fields: 'files(id, name)',
-                    pageSize: 1
+                    pageSize: 1000
                 });
 
-                if (metaRes.data.files && metaRes.data.files.length > 0) {
-                    const fileId = metaRes.data.files[0].id;
-                    // Скачиваем содержимое JSON
-                    const content = await drive.files.get({ fileId: fileId!, alt: 'media' });
-                    return res.status(200).json(content.data);
+                if (!listRes.data.files || listRes.data.files.length === 0) {
+                    return res.status(404).json({ error: 'No snapshot parts found' });
                 }
 
-                // 2. Фоллбэк: Если мета-файла нет, смотрим свойства большого файла снимка (старый метод)
-                const listRes = await drive.files.list({
-                    q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-                    fields: 'files(id, modifiedTime, size)',
-                    pageSize: 1
-                });
+                // Скачиваем все части параллельно
+                const parts = await Promise.all(listRes.data.files.map(async (file: any) => {
+                    const resp = await drive.files.get({ fileId: file.id, alt: 'media' });
+                    // resp.data может быть объектом или строкой, приводим к строке
+                    return typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data);
+                }));
+
+                // Склеиваем и отдаем
+                const fullJson = parts.join('');
+                try {
+                    const parsed = JSON.parse(fullJson);
+                    return res.json(parsed);
+                } catch (e) {
+                    // Если вдруг склейка прошла криво, отдаем как текст (клиент разберется) или ошибку
+                    return res.send(fullJson); 
+                }
+            }
+            
+            // ... старые GET методы (get-full-cache и т.д.) ...
+            if (action === 'get-full-cache' || !action) return res.json(await getFullCoordsCache());
+            if (action === 'get-cached-address') {
+                const { rmName, address } = req.query;
+                const cached = await getAddressFromCache(rmName as string, address as string);
+                return cached ? res.json(cached) : res.status(404).json({ error: 'Not found' });
+            }
+        }
+
+        if (req.method === 'POST') {
+            let body: any;
+            // Ручной парсинг body
+            try {
+                const raw = await getRawBody(req);
+                if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
+            } catch (e) { }
+
+            // 3. Инициализация: Очищаем папку с частями
+            if (action === 'init-snapshot') {
+                const folderId = await getSnapshotFolderId(drive, rootId);
+                const files = await drive.files.list({ q: `'${folderId}' in parents and trashed = false`, fields: 'files(id)' });
+                if (files.data.files?.length) {
+                    // Удаляем старые части
+                    await Promise.all(files.data.files.map((f: any) => drive.files.delete({ fileId: f.id })));
+                }
+                return res.json({ success: true });
+            }
+
+            // 4. Добавление части: Создаем файл part_XXX.json
+            if (action === 'append-snapshot') {
+                const { chunk, partIndex } = body; 
+                const folderId = await getSnapshotFolderId(drive, rootId);
                 
-                const file = listRes.data.files?.[0];
-                if (!file) return res.status(200).json({ version: 'none' });
-
-                return res.status(200).json({
-                    id: file.id,
-                    modifiedTime: file.modifiedTime,
-                    size: file.size,
-                    versionHash: `${file.modifiedTime}_${file.size}`,
-                    totalRowsProcessed: 0 // Неизвестно при фоллбэке
-                });
-            } catch (error) {
-                console.error("Snapshot meta check failed:", error);
-                return res.status(200).json({ version: 'none', error: (error as Error).message });
-            }
-        }
-    }
-
-    if (req.method === 'POST') {
-        let body: any;
-        
-        if (action === 'init-snapshot') {
-            try {
-                await initSnapshot();
-                return res.json({ success: true, message: 'Snapshot initialized (cleared)' });
-            } catch (error) {
-                console.error("Snapshot init error:", error);
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
-        try {
-            const raw = await getRawBody(req);
-            if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
-        } catch (e) {
-            return res.status(400).json({ error: 'Invalid JSON body' });
-        }
-
-        if (action === 'save-snapshot') {
-            try {
-                await saveSnapshot(body);
-                return res.json({ success: true });
-            } catch (error) {
-                console.error("Snapshot save error:", error);
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
-        if (action === 'append-snapshot') {
-            try {
-                const { chunk } = body;
-                if (!chunk) return res.status(400).json({ error: 'Missing chunk data' });
-                await appendSnapshot(chunk);
-                return res.json({ success: true });
-            } catch (error) {
-                console.error("Snapshot append error:", error);
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
-        // НОВЫЙ МЕТОД: Сохранение метаданных (финализация)
-        if (action === 'save-meta') {
-            try {
-                const drive = await getGoogleDriveClient();
-                const folderId = ROOT_FOLDERS['2025'];
-                await saveMetaFile(drive, folderId, {
-                    versionHash: body.versionHash,
-                    totalRowsProcessed: body.totalRowsProcessed,
-                    processedFileIds: body.processedFileIds, // <-- ИСПРАВЛЕНИЕ: Сохраняем список обработанных файлов
-                    lastUpdated: new Date().toISOString()
+                // Имя файла с ведущими нулями для сортировки: part_001.json
+                const fileName = `part_${String(partIndex).padStart(5, '0')}.json`;
+                
+                await drive.files.create({
+                    requestBody: { name: fileName, parents: [folderId] },
+                    media: { mimeType: 'application/json', body: chunk }
                 });
                 return res.json({ success: true });
-            } catch (error) {
-                console.error("Meta save error:", error);
-                return res.status(500).json({ error: (error as Error).message });
             }
+
+            // 5. Сохранение метаданных (Манифест)
+            if (action === 'save-meta') {
+                const q = `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`;
+                const list = await drive.files.list({ q, fields: 'files(id)' });
+                const fileId = list.data.files?.[0]?.id;
+                
+                const media = { mimeType: 'application/json', body: JSON.stringify(body) };
+                
+                if (fileId) await drive.files.update({ fileId, media });
+                else await drive.files.create({ requestBody: { name: META_FILENAME, parents: [rootId] }, media });
+                
+                return res.json({ success: true });
+            }
+
+            // ... старые POST методы ...
+            if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
+            if (action === 'update-address') { await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment); return res.json({success:true}); }
+            if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
+            if (action === 'delete-address') { await deleteAddressFromCache(body.rmName, body.address); return res.json({success:true}); }
         }
 
-        if (action === 'add-to-cache') {
-            try {
-                const { rmName, rows } = body;
-                const formattedRows = rows.map((r: any) => [r.address, r.lat ?? '', r.lon ?? '']);
-                await appendToCache(rmName, formattedRows);
-                return res.status(200).json({ success: true });
-            } catch (error) {
-                return res.status(500).json({ error: 'Add failed' });
-            }
-        }
-
-        if (action === 'update-address') {
-            try {
-                const { rmName, oldAddress, newAddress, comment } = body;
-                await updateAddressInCache(rmName, oldAddress, newAddress, comment);
-                return res.status(200).json({ success: true });
-            } catch (error) {
-                return res.status(500).json({ error: 'Update failed' });
-            }
-        }
-
-        if (action === 'update-coords') {
-            try {
-                const { rmName, updates } = body;
-                await updateCacheCoords(rmName, updates);
-                return res.status(200).json({ success: true });
-            } catch (error) {
-                return res.status(500).json({ error: 'Update failed' });
-            }
-        }
-
-        if (action === 'delete-address') {
-            try {
-                const { rmName, address } = body;
-                await deleteAddressFromCache(rmName, address);
-                return res.status(200).json({ success: true });
-            } catch (error) {
-                return res.status(500).json({ error: 'Delete failed' });
-            }
-        }
+    } catch (error) {
+        console.error("API Error:", error);
+        return res.status(500).json({ error: (error as Error).message });
     }
-
-    return res.status(400).json({ error: 'Unknown action' });
+    return res.status(400).json({ error: 'Invalid action' });
 }

@@ -381,13 +381,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     
     const handleAbcClick = (rmName: string, category: 'A' | 'B' | 'C') => { 
         const clients: MapPoint[] = []; 
+        const uniqueKeys = new Set<string>();
         const normalizedTargetRm = normalizeRmNameForMatching(rmName); 
+        
         data.forEach(group => { 
             const normalizedGroupRm = normalizeRmNameForMatching(group.rm); 
             if (normalizedGroupRm === normalizedTargetRm) { 
                 group.clients.forEach(client => { 
                     if (client.abcCategory === category) { 
-                        clients.push(client); 
+                        // DEDUPLICATION: Check if client key already processed
+                        const key = client.key || normalizeAddress(client.address);
+                        if (!uniqueKeys.has(key)) {
+                            uniqueKeys.add(key);
+                            clients.push(client); 
+                        }
                     } 
                 }); 
             } 
@@ -401,11 +408,24 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const handleRegionClick = (rmName: string, regionName: string) => { 
         const active: MapPoint[] = []; 
+        const uniqueKeys = new Set<string>();
         const normalizedTargetRm = normalizeRmNameForMatching(rmName); 
-        data.forEach(group => { if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { active.push(...group.clients); } }); 
+        
+        data.forEach(group => { 
+            if (normalizeRmNameForMatching(group.rm) === normalizedTargetRm && group.region === regionName) { 
+                group.clients.forEach(client => {
+                    // DEDUPLICATION: Ensure we list each address only once in the summary list
+                    const key = client.key || normalizeAddress(client.address);
+                    if (!uniqueKeys.has(key)) {
+                        uniqueKeys.add(key);
+                        active.push(client);
+                    }
+                });
+            } 
+        }); 
         
         // КРИТИЧНО: Фильтруем ОКБ для получения "Свободного потенциала" в данном регионе
-        const activeKeys = new Set(active.map(c => c.key));
+        const activeKeys = new Set(uniqueKeys); // Use deduplicated set
         const potential: PotentialClient[] = okbData.filter(row => {
             const rowRegion = recoverRegion(findValueInRow(row, ['субъект', 'регион', 'region', 'область']), findValueInRow(row, ['город', 'city']));
             if (rowRegion !== regionName) return false;
@@ -413,7 +433,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             if (!addr) return false;
             return !activeKeys.has(normalizeAddress(addr));
         }).map(row => ({
-            name: findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            name: findValueInRow(row, ['название клиента', 'клиент', 'наименование', 'контрагент']) || 'ТТ', // Prioritize "Client Name"
             address: findAddressInRow(row) || 'Адрес не указан',
             type: findValueInRow(row, ['вид деятельности', 'тип']) || 'н/д',
             lat: row.lat,

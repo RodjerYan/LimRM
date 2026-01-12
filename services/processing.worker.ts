@@ -217,7 +217,27 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             state_headers.forEach((h, i) => { if (h) obj[h] = row[i]; });
             return obj;
         });
-        state_clientNameHeader = state_headers.find(h => normalizeHeaderKey(h).includes('наименование'));
+        
+        // --- IMPROVED CLIENT NAME DETECTION ---
+        const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
+        
+        // Priority 1: Explicit "Client Name" or "Counterparty"
+        const clientHeader = normHeaders.find(h => 
+            h.norm.includes('названиеклиента') || 
+            h.norm.includes('наименованиеклиента') || 
+            h.norm.includes('клиент') || 
+            h.norm.includes('контрагент') ||
+            h.norm.includes('партнер')
+        );
+        
+        if (clientHeader) {
+            state_clientNameHeader = clientHeader.original;
+        } else {
+            // Priority 2: "Name" but exclude product-related terms
+            const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
+            state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
+        }
+        
     } else {
         jsonData = rawData.map(row => {
             const obj: any = {};
@@ -268,7 +288,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 fact: 0, 
                 potential: 0, 
                 growthPotential: 0, 
-                growthPercentage: 0,
+                growthPercentage: 0, 
                 clients: new Map(),
             };
         }

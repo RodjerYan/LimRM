@@ -108,42 +108,40 @@ const App: React.FC = () => {
 
             const jsonString = JSON.stringify(payload);
             
-            // FIX: 500KB is the safe spot.
-            // 3.5MB hits Vercel 413 Payload Too Large limits.
-            // 40KB is too slow.
-            const CHUNK_SIZE = 500_000; 
+            // Используем 1.5MB для безопасности и скорости
+            const CHUNK_SIZE = 1_500_000; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
             let chunkIndex = 0;
             
             while (offset < jsonString.length) {
-                chunkIndex++;
-                setUploadProgress(Math.round((chunkIndex / totalChunks) * 100));
+                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
+                
+                // ВАЖНО: Передаем partIndex
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk }) 
+                    body: JSON.stringify({ 
+                        chunk,
+                        partIndex: chunkIndex 
+                    }) 
                 });
                 
                 if (!res.ok) {
                     const text = await res.text();
-                    try {
-                        const err = JSON.parse(text);
-                        throw new Error(err.details || `Upload chunk failed at offset ${offset}`);
-                    } catch (e) {
-                        throw new Error(`Server error: ${res.status} ${res.statusText}`);
-                    }
+                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
                 }
                 offset += CHUNK_SIZE;
+                chunkIndex++;
             }
             console.log('Snapshot uploaded successfully.');
             setUploadProgress(0);
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
-            throw e; // Re-throw to catch in parent
+            throw e;
         }
     };
 
