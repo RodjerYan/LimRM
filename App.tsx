@@ -339,8 +339,8 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         
+        // 1. Предварительная проверка версии метаданных (без изменений)
         let effectiveTargetVersion = targetVersion;
-        
         if (!effectiveTargetVersion) {
              try {
                  const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
@@ -355,7 +355,6 @@ const App: React.FC = () => {
 
         const currentLocalVersion = lastSnapshotVersion; 
         const isVersionMismatch = effectiveTargetVersion && effectiveTargetVersion !== currentLocalVersion;
-        // Background update if we have data AND the versions match (meaning we are resuming) OR we just have data (simple resume check)
         const isBackgroundUpdate = (allDataRef.current.length > 0);
         
         if (!isBackgroundUpdate) setActiveModule('amp');
@@ -365,6 +364,7 @@ const App: React.FC = () => {
         
         console.log(`Cloud Sync. Local: ${currentLocalVersion}, Remote: ${effectiveTargetVersion}, Mismatch: ${isVersionMismatch}`);
         
+        // Сброс данных при несовпадении версий
         if (isVersionMismatch) {
             console.log("!!! SNAPSHOT MISMATCH: WIPING LOCAL DB & STATE !!!");
             await clearAnalyticsState();
@@ -372,45 +372,40 @@ const App: React.FC = () => {
             setUnidentifiedRows([]);
             setOkbRegionCounts(null);
             setAllActiveClients([]);
-            setProcessingState(prev => ({ 
-                ...prev, 
-                progress: 0, 
-                message: 'Обнаружена новая версия в облаке. Сброс...',
-                totalRowsProcessed: 0
-            }));
+            setProcessingState(prev => ({ ...prev, progress: 0, message: 'Загрузка новой версии...', totalRowsProcessed: 0 }));
             
             totalRowsProcessedRef.current = 0;
-            processedFileIdsRef.current.clear(); // Reset processed files on mismatch
+            processedFileIdsRef.current.clear(); 
             allDataRef.current = [];
             unidentifiedRowsRef.current = [];
-            
             await new Promise(resolve => setTimeout(resolve, 300));
         }
 
         let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
+        // Эти переменные нужны для воркера
         let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
         let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
 
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, progress: 0, 
-            message: isBackgroundUpdate ? 'Фоновое обновление...' : (isVersionMismatch ? 'Загрузка новой версии...' : 'Подключение к облаку...'), 
-            fileName: isBackgroundUpdate ? 'Синхронизация' : 'Подключение к облаку', 
+            message: 'Синхронизация...', 
             startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
-
-        // PRIORITY: Try to load the Snapshot FIRST if there is a mismatch or empty state
+        
+        // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT)
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                // ИСПРАВЛЕНИЕ: Используем правильный endpoint и добавляем timestamp, чтобы избежать кэширования
                 const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
-                
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     
-                    if (snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
-                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed, processedFileIds } = snapshot.data;
-                        const snapshotHash = snapshot.versionHash; 
+                    // --- FIX #1: Учитываем разную структуру (есть .data или нет) ---
+                    const data = snapshot.data || snapshot; 
+
+                    if (data && data.aggregatedData && data.aggregatedData.length > 0) {
+                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed, processedFileIds } = data;
+                        const snapshotHash = data.versionHash || effectiveTargetVersion; 
                         
                         setOkbRegionCounts(okbRegionCounts);
                         setAllData(aggregatedData);
@@ -426,21 +421,22 @@ const App: React.FC = () => {
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
+                        // Загружаем список уже обработанных файлов, чтобы не качать их снова
                         if (processedFileIds) {
                             processedFileIdsRef.current = new Set(processedFileIds);
+                            console.log(`Loaded ${processedFileIds.length} processed files from snapshot.`);
                         }
                         
-                        // IMPORTANT: Even if snapshot loaded, we don't return early. We proceed to check for new files.
-                        // We reset worker-related restore data because we just loaded it into state.
                         restoredDataForWorker = aggregatedData;
                         restoredUnidentifiedForWorker = unidentifiedRows;
                     }
                 }
             } catch (e) {
-                console.warn("Snapshot fetch failed or 404. Falling back to raw file processing.");
+                console.warn("Snapshot fetch failed. Falling back to raw file processing.");
             }
         }
 
+        // Подготовка кэша и воркера
         let cacheData: CoordsCache = {};
         try {
             const response = await fetchWithRetry(`/api/get-full-cache?t=${Date.now()}`);
@@ -450,10 +446,11 @@ const App: React.FC = () => {
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
         
+        // Обработчик сообщений от воркера (Checkpoint, Progress, Finish)
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
             if (msg.type === 'progress') {
-                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed !== undefined ? msg.payload.totalProcessed : prev.totalRowsProcessed }));
+                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed ?? prev.totalRowsProcessed }));
                 if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
             }
             else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
@@ -469,6 +466,7 @@ const App: React.FC = () => {
                 totalRowsProcessedRef.current = totalProcessed;
             }
             else if (msg.type === 'CHECKPOINT') {
+                // Автоматическое сохранение каждые N строк (делает воркер)
                 const payload = msg.payload;
                 setAllData(payload.aggregatedData);
                 setAllActiveClients(prev => { const map = new Map(prev.map(c => [c.key, c])); payload.aggregatedData.forEach(r => r.clients.forEach(c => map.set(c.key, c))); return Array.from(map.values()); });
@@ -478,18 +476,19 @@ const App: React.FC = () => {
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, version);
             }
             else if (msg.type === 'result_finished') {
+                // Финальное сохранение после обработки ВСЕХ файлов
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
                 const clientsMap = new Map<string, MapPoint>();
                 payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                const uniqueClients = Array.from(clientsMap.values());
-                setAllActiveClients(uniqueClients);
+                setAllActiveClients(Array.from(clientsMap.values()));
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 
                 const finalVersion = effectiveTargetVersion || `processed_${Date.now()}`;
-                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, finalVersion);
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, finalVersion);
+                
                 setLastSnapshotVersion(finalVersion);
                 localStorage.setItem('last_snapshot_version', finalVersion);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизация завершена', totalRowsProcessed: payload.totalRowsProcessed }));
@@ -501,21 +500,21 @@ const App: React.FC = () => {
             payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: restoredDataForWorker, restoredUnidentified: restoredUnidentifiedForWorker } 
         });
         
+        // 3. СКАНИРОВАНИЕ ФАЙЛОВ (ПО ГОДАМ)
         try {
+            // --- FIX #2: Добавили 2026 год в массив ---
             const YEARS_TO_SCAN = ['2025', '2026'];
 
             for (const scanYear of YEARS_TO_SCAN) {
-                setProcessingState(prev => ({ ...prev, message: `Поиск файлов за ${scanYear} год...` }));
+                setProcessingState(prev => ({ ...prev, message: `Поиск файлов за ${scanYear}...` }));
                 
                 const listRes = await fetchWithRetry(`/api/get-akb?year=${scanYear}&mode=list`);
                 const allFiles = listRes.ok ? await listRes.json() : [];
                 
-                if (allFiles.length === 0) {
-                    console.log(`Файлы за ${scanYear} год не найдены.`);
-                    continue; 
-                }
+                if (allFiles.length === 0) continue;
 
                 for (const file of allFiles) {
+                    // Проверка: обрабатывали ли мы этот файл ранее?
                     if (processedFileIdsRef.current.has(file.id)) {
                         console.log(`Skipping already processed file: ${file.name}`);
                         continue;
@@ -529,7 +528,7 @@ const App: React.FC = () => {
                         
                         setProcessingState(prev => ({ 
                             ...prev, 
-                            fileName: file.name, 
+                            fileName: file.name,
                             message: `Обработка: ${file.name} (строки ${offset}-${offset + CHUNK_SIZE})` 
                         }));
                         
@@ -537,8 +536,9 @@ const App: React.FC = () => {
                         const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                         
                         if (!res.ok) {
+                            // Если вышли за пределы файла - это нормально, завершаем файл
                             if (offset > 0 && (res.status === 400 || res.status === 500)) {
-                                 console.log(`File ${file.name} finished (grid limit reached at ${offset}).`);
+                                 console.log(`File ${file.name} finished (limit reached).`);
                                  hasMore = false; 
                                  break; 
                             } else {
@@ -565,18 +565,20 @@ const App: React.FC = () => {
                         }
                     }
                     
+                    // Помечаем файл как обработанный ЛОКАЛЬНО
                     processedFileIdsRef.current.add(file.id);
                     
-                    if (workerRef.current) {
-                         const currentVersion = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
-                         persistToDB(allDataRef.current, unidentifiedRowsRef.current, [], totalRowsProcessedRef.current, currentVersion);
-                    }
+                    // --- FIX #3: УБРАЛИ persistToDB ОТСЮДА ---
+                    // Больше не будет "вечного сохранения" после каждого файла.
+                    // Данные сохранятся в конце всех лет или через Checkpoint воркера.
                 }
             }
         } catch (error) {
             console.error(error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи или лимит квот' }));
         } finally {
+            // Сообщаем воркеру, что все файлы кончились. Он соберет итог и вызовет 'result_finished'
+            // В 'result_finished' произойдет финальное сохранение в облако.
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
     }, [okbData, persistToDB, processingState.isProcessing, lastSnapshotVersion]);
