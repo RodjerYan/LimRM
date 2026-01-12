@@ -516,15 +516,24 @@ const App: React.FC = () => {
 
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
-                    const CHUNK_SIZE = 2500;
+                    // FIX: Уменьшаем размер чанка чтения с 2500 до 1000.
+                    // Глубокая пагинация (offset 90000+) в Google API работает медленно
+                    // и вызывает ошибку 500 (Timeout) при больших запросах.
+                    const CHUNK_SIZE = 1000; 
+                    
                     const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
                     
-                    setProcessingState(prev => ({ ...prev, message: `Обработка: ${file.name}` }));
+                    setProcessingState(prev => ({ ...prev, message: `Обработка: ${file.name} (строки ${offset}-${offset + CHUNK_SIZE})` }));
                     
+                    // Добавляем небольшую задержку, чтобы не получить бан от Google (Rate Limit)
+                    await new Promise(r => setTimeout(r, 200)); 
+
                     const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
+                    
                     if (!res.ok) {
-                        console.error(`Failed to fetch chunk for ${file.name}, skipping file`);
-                        // CRITICAL FIX: Continue to next file instead of aborting everything
+                        console.error(`Failed to fetch chunk for ${file.name} at offset ${offset}, skipping file`);
+                        // Если файл сломался на середине, мы его пропускаем, 
+                        // но то, что успели скачать, сохранится в persistToDB
                         break; 
                     }
                     
@@ -541,7 +550,12 @@ const App: React.FC = () => {
                         hasMore = false;
                     }
                     
-                    hasMore = result.hasMore;
+                    // Если вернулось меньше, чем мы просили, значит это конец файла
+                    if (chunkRows.length < CHUNK_SIZE) {
+                        hasMore = false;
+                    }
+                    
+                    hasMore = result.hasMore && hasMore; // Double check
                     offset += CHUNK_SIZE;
                 }
                 // Mark file as processed after full success
