@@ -139,6 +139,7 @@ export type WorkerResultPayload = {
     okbRegionCounts: { [key: string]: number };
     dateRange?: string; 
     totalRowsProcessed: number;
+    processedFileIds?: string[]; // NEW: Track completed files
 };
 
 export type WorkerErrorPayload = string;

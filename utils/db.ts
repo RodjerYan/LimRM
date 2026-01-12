@@ -2,8 +2,8 @@
 import { AggregatedDataRow, UnidentifiedRow, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-// Увеличиваем версию, чтобы триггернуть удаление старого хранилища у пользователей
-const DB_VERSION = 4; 
+// Увеличиваем версию, чтобы триггернуть обновление схемы
+const DB_VERSION = 5; 
 const STORE_NAME = 'app_state';
 
 const initDB = (): Promise<IDBDatabase> => {
@@ -28,8 +28,6 @@ const initDB = (): Promise<IDBDatabase> => {
 
 /**
  * Сохранение состояния аналитики.
- * ВАЖНО: Мы удаляем okbData и okbStatus перед сохранением, чтобы при перезагрузке
- * данные всегда тянулись с сервера.
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
@@ -39,6 +37,7 @@ export const saveAnalyticsState = async (state: {
   okbStatus: OkbStatus | null;
   dateRange?: string;
   totalRowsProcessed: number;
+  processedFileIds?: string[]; // NEW
   versionHash: string;
 }) => {
   const db = await initDB();
@@ -58,7 +57,6 @@ export const saveAnalyticsState = async (state: {
 
 /**
  * Загрузка сохраненного состояния.
- * Возвращаем состояние без okbData - приложение должно запросить их через API.
  */
 export const loadAnalyticsState = async (): Promise<any | null> => {
   const db = await initDB();
@@ -87,7 +85,6 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
 
 /**
  * Полная очистка состояния аналитики из БД.
- * Используется при несовпадении версий или ручном сбросе.
  */
 export const clearAnalyticsState = async () => {
   const db = await initDB();

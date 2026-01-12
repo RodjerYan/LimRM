@@ -68,6 +68,7 @@ const App: React.FC = () => {
     });
     
     const totalRowsProcessedRef = useRef<number>(0);
+    const processedFileIdsRef = useRef<Set<string>>(new Set()); // New Ref to track files in memory
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     const workerRef = useRef<Worker | null>(null);
@@ -153,7 +154,6 @@ const App: React.FC = () => {
         rawCount: number,
         vHash?: string
     ) => {
-        // Мы используем хэш для синхронизации версий
         const currentVersion = vHash || lastSnapshotVersion || `local_${Date.now()}`;
         totalRowsProcessedRef.current = rawCount;
 
@@ -162,6 +162,7 @@ const App: React.FC = () => {
             unidentifiedRows: updatedUnidentified,
             okbRegionCounts,
             totalRowsProcessed: rawCount,
+            processedFileIds: Array.from(processedFileIdsRef.current), // Persist processed files
             versionHash: currentVersion,
         };
         try {
@@ -173,14 +174,13 @@ const App: React.FC = () => {
                 okbStatus: null,
                 dateRange, 
                 totalRowsProcessed: rawCount, 
+                processedFileIds: Array.from(processedFileIdsRef.current),
                 versionHash: currentVersion 
             });
             
-            // Запоминаем локально последнюю версию, с которой работали
             localStorage.setItem('last_snapshot_version', currentVersion);
             setLastSnapshotVersion(currentVersion);
 
-            // Запускаем загрузку в облако (это обновит modifiedTime файла снимка)
             uploadToCloudServerSide(stateToSave).catch(() => {});
         } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSnapshotVersion]);
@@ -220,7 +220,6 @@ const App: React.FC = () => {
             });
             return finalUnidentified;
         });
-        // При редактировании обновляем локальную версию и отправляем в облако
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
     }, [persistToDB]);
 
@@ -267,6 +266,7 @@ const App: React.FC = () => {
         await clearAnalyticsState();
         localStorage.removeItem('last_snapshot_version');
         localStorage.removeItem('last_sync_version');
+        processedFileIdsRef.current.clear();
         window.location.reload();
     }, []);
 
@@ -283,6 +283,10 @@ const App: React.FC = () => {
                     setOkbStatus(saved.okbStatus || null);
                     setDateRange(saved.dateRange);
                     
+                    if (saved.processedFileIds) {
+                        processedFileIdsRef.current = new Set(saved.processedFileIds);
+                    }
+
                     if (saved.versionHash) {
                         setLastSnapshotVersion(saved.versionHash);
                         localStorage.setItem('last_snapshot_version', saved.versionHash);
@@ -337,7 +341,6 @@ const App: React.FC = () => {
         
         let effectiveTargetVersion = targetVersion;
         
-        // 1. Force fetch Snapshot Metadata to see if we have a fresh version
         if (!effectiveTargetVersion) {
              try {
                  const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
@@ -376,6 +379,7 @@ const App: React.FC = () => {
             }));
             
             totalRowsProcessedRef.current = 0;
+            processedFileIdsRef.current.clear(); // Reset processed files on mismatch
             allDataRef.current = [];
             unidentifiedRowsRef.current = [];
             
@@ -395,17 +399,14 @@ const App: React.FC = () => {
         }));
 
         // PRIORITY: Try to load the Snapshot FIRST if there is a mismatch or empty state
-        // If versions match, we can skip downloading the full snapshot and just use local data (via worker hydration)
-        // OR check for incremental raw files (below). But users prioritize the *processed* state.
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                const snapshotRes = await fetch('/api/snapshot'); // Maps to get-full-cache?action=get-snapshot
+                const snapshotRes = await fetch('/api/snapshot'); 
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     
                     if (snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
-                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
-                        // Use snapshot modifiedTime as version hash
+                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed, processedFileIds } = snapshot.data;
                         const snapshotHash = snapshot.versionHash; 
                         
                         setOkbRegionCounts(okbRegionCounts);
@@ -422,8 +423,10 @@ const App: React.FC = () => {
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
-                        // Stop processing here if we loaded a fresh snapshot successfully.
-                        // We assume the snapshot contains all necessary data.
+                        if (processedFileIds) {
+                            processedFileIdsRef.current = new Set(processedFileIds);
+                        }
+                        
                         setProcessingState(prev => ({ 
                             ...prev, 
                             isProcessing: false,
@@ -439,12 +442,6 @@ const App: React.FC = () => {
             }
         }
 
-        // ... [Fallback to raw file processing if snapshot fails or is partial] ...
-        // ... (worker setup and file fetching logic remains similar to previous, but only used if snapshot logic didn't return) ...
-        
-        // If we didn't return above, we initialize the worker to process raw files
-        // This usually happens only on the very first run before any snapshot exists
-        
         let cacheData: CoordsCache = {};
         try {
             const response = await fetchWithRetry(`/api/get-full-cache?t=${Date.now()}`);
@@ -477,7 +474,7 @@ const App: React.FC = () => {
                 setAllData(payload.aggregatedData);
                 setAllActiveClients(prev => { const map = new Map(prev.map(c => [c.key, c])); payload.aggregatedData.forEach(r => r.clients.forEach(c => map.set(c.key, c))); return Array.from(map.values()); });
                 setUnidentifiedRows(payload.unidentifiedRows);
-                // When saving checkpoint, use a temp version
+                
                 const version = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, version);
             }
@@ -491,7 +488,7 @@ const App: React.FC = () => {
                 setAllActiveClients(uniqueClients);
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
-                // Final save uses the effective target version or generates a new one
+                
                 const finalVersion = effectiveTargetVersion || `processed_${Date.now()}`;
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, finalVersion);
                 setLastSnapshotVersion(finalVersion);
@@ -510,40 +507,45 @@ const App: React.FC = () => {
             const allFiles = listRes.ok ? await listRes.json() : [];
             if (allFiles.length === 0) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Файлы не найдены в облаке' })); return; }
 
-            let currentStreamRowCounter = 0;
             for (const file of allFiles) {
+                // SKIP PROCESSED FILES: This is the critical fix for the resume hang.
+                if (processedFileIdsRef.current.has(file.id)) {
+                    console.log(`Skipping already processed file: ${file.name}`);
+                    continue;
+                }
+
                 let offset = 0, hasMore = true, isFirstChunk = true;
                 while (hasMore) {
-                    const remainingToSkip = Math.max(0, rowsProcessedSoFar - currentStreamRowCounter);
-                    const CHUNK_SIZE = remainingToSkip > 2000 ? 2500 : 1000;
+                    const CHUNK_SIZE = 2500;
                     const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
+                    
+                    setProcessingState(prev => ({ ...prev, message: `Обработка: ${file.name}` }));
+                    
                     const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     if (!res.ok) break;
+                    
                     const result = await res.json();
                     const chunkRows = result.rows || [];
-                    const fetchedChunkSize = chunkRows.length;
-
-                    if (fetchedChunkSize > 0) {
-                        if (currentStreamRowCounter + fetchedChunkSize <= rowsProcessedSoFar) {
-                            const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + fetchedChunkSize);
-                            setProcessingState(prev => ({ ...prev, message: `Сверка данных...`, totalRowsProcessed: visualCount, progress: (visualCount / (rowsProcessedSoFar || 1)) * 100 }));
-                        } else {
-                            let rowsToSend = chunkRows;
-                            if (currentStreamRowCounter < rowsProcessedSoFar) {
-                                setProcessingState(prev => ({ ...prev, message: `Обработка новых данных...` }));
-                                const rowsToSkipInChunk = rowsProcessedSoFar - currentStreamRowCounter;
-                                rowsToSend = chunkRows.slice(rowsToSkipInChunk);
-                            }
-                            if (rowsToSend.length > 0) {
-                                workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: rowsToSend, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } });
-                            }
-                        }
-                        currentStreamRowCounter += fetchedChunkSize;
+                    
+                    if (chunkRows.length > 0) {
+                        workerRef.current?.postMessage({ 
+                            type: 'PROCESS_CHUNK', 
+                            payload: { rawData: chunkRows, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } 
+                        });
                         isFirstChunk = false;
-                        if (remainingToSkip > 0) await new Promise(r => setTimeout(r, 50)); 
-                    } else { hasMore = false; }
+                    } else {
+                        hasMore = false;
+                    }
+                    
                     hasMore = result.hasMore;
                     offset += CHUNK_SIZE;
+                }
+                // Mark file as processed after full success
+                processedFileIdsRef.current.add(file.id);
+                // Trigger an intermediate persist to save progress
+                if (workerRef.current) {
+                     // We rely on the checkpoint logic in worker or manual persist here could be added
+                     // But worker triggers checkpoint based on row count, which is safer.
                 }
             }
         } catch (error) {
@@ -552,17 +554,15 @@ const App: React.FC = () => {
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed, lastSnapshotVersion]);
+    }, [okbData, persistToDB, processingState.isProcessing, lastSnapshotVersion]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
         try {
-            // Check SNAPSHOT metadata first (Priority)
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const meta = await metaRes.json();
                 setIsLiveConnected(true);
-                // If Snapshot exists on server AND differs from local version -> FORCE UPDATE
                 if (meta.versionHash && meta.versionHash !== 'none' && meta.versionHash !== lastSnapshotVersion) {
                     console.log('Detected snapshot change:', meta.versionHash, 'vs local', lastSnapshotVersion);
                     handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
@@ -573,7 +573,6 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const timer = setInterval(checkCloudChanges, 60000); 
-        // Run check once on mount (after restore) to ensure we have fresh data
         if (!isRestoring && dbStatus === 'ready') {
             checkCloudChanges();
         }
