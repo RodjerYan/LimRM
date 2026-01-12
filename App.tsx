@@ -395,14 +395,10 @@ const App: React.FC = () => {
                             processedFileIdsRef.current = new Set(processedFileIds);
                         }
                         
-                        setProcessingState(prev => ({ 
-                            ...prev, 
-                            isProcessing: false,
-                            progress: 100,
-                            message: `Данные синхронизированы (${rowsProcessedSoFar} строк)`, 
-                            totalRowsProcessed: rowsProcessedSoFar 
-                        }));
-                        return; // EXIT EARLY
+                        // IMPORTANT: Even if snapshot loaded, we don't return early. We proceed to check for new files.
+                        // We reset worker-related restore data because we just loaded it into state.
+                        restoredDataForWorker = aggregatedData;
+                        restoredUnidentifiedForWorker = unidentifiedRows;
                     }
                 }
             } catch (e) {
@@ -461,7 +457,7 @@ const App: React.FC = () => {
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, finalVersion);
                 setLastSnapshotVersion(finalVersion);
                 localStorage.setItem('last_snapshot_version', finalVersion);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизация завершена', totalRowsProcessed: payload.totalRowsProcessed }));
             }
         };
         
@@ -596,31 +592,29 @@ const App: React.FC = () => {
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    // Check if server has data and it's different from local
+                    // ВАРИАНТ А: На сервере версия НОВЕЕ -> Полная перезагрузка из снимка
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
-                        console.log(`Найден прогресс на сервере (${serverMeta.versionHash}). Загружаем...`);
-                        
-                        // Start cloud processing which will fetch snapshot and then continue
+                        console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
                         await handleStartCloudProcessing({ year: '2025' }, serverMeta.versionHash);
-                        
-                        // handleStartCloudProcessing manages processingState, but we ensure restoring is done
                         setIsRestoring(false); 
                         return;
                     }
                 }
 
-                // ШАГ 3: Если версии совпадают или сервер пуст
+                // ШАГ 3: Версии совпадают ИЛИ сервер недоступен.
+                // ВАЖНО: Мы все равно запускаем handleStartCloudProcessing, чтобы проверить, 
+                // не появились ли новые файлы, которые еще не попали в снимок.
                 if (localState && localState.allData?.length > 0) {
                     setDbStatus('ready');
-                    setProcessingState(prev => ({ 
-                        ...prev, 
-                        message: 'Данные актуальны', 
-                        totalRowsProcessed: localState.totalRowsProcessed || 0,
-                        isProcessing: false // Ensure loading spinner stops
-                    }));
+                    console.log("Снимок актуален. Проверяем наличие необработанных файлов...");
+                    
+                    // ПРИНУДИТЕЛЬНО запускаем докачку файлов
+                    // Функция сама пропустит старые файлы благодаря processedFileIdsRef
+                    await handleStartCloudProcessing({ year: '2025' }, localVersion || undefined);
                 } else {
+                    // Локально пусто -> начинаем с нуля
                     setDbStatus('empty');
-                    setProcessingState(prev => ({ ...prev, message: 'Система готова', isProcessing: false }));
+                    handleStartCloudProcessing({ year: '2025' });
                 }
 
             } catch (e) {
