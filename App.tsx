@@ -299,23 +299,28 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         const { year, month } = params;
-        const isUpdate = allData.length > 0;
-        if (isUpdate) setActiveModule('amp');
+        
+        // IMPORTANT: Only treat as background update if it's an auto-trigger (targetVersion present)
+        // If user manually clicks (no targetVersion) OR we are resuming, we want visual updates.
+        const isBackgroundUpdate = !!targetVersion && allData.length > 0;
+        
+        if (!isBackgroundUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
         
-        console.log(`Starting processing for version: ${targetVersion || 'new'}`);
+        console.log(`Starting processing. Resume/Load: ${!isBackgroundUpdate}, Version: ${targetVersion || 'new'}`);
         
         // This is key for resuming: tracked rows processed so far globally across all files
         let rowsProcessedSoFar = 0;
 
         setProcessingState(prev => ({ 
             ...prev,
-            isProcessing: true, progress: 0, message: isUpdate ? 'Обновление данных...' : 'Подключение к облаку...', 
-            fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
-            startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
+            isProcessing: true, progress: 0, message: isBackgroundUpdate ? 'Фоновое обновление...' : 'Подключение к облаку...', 
+            fileName: isBackgroundUpdate ? 'Синхронизация' : 'Подключение к облаку', 
+            startTime: Date.now(), totalRowsProcessed: isBackgroundUpdate ? prev.totalRowsProcessed : 0
         }));
 
-        if (!isUpdate || targetVersion) {
+        // Try to load snapshot first to resume
+        if (!isBackgroundUpdate || targetVersion) {
             try {
                 const snapshotRes = await fetch('/api/snapshot');
                 if (snapshotRes.ok) {
@@ -364,10 +369,11 @@ const App: React.FC = () => {
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
             if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
-            else if (msg.type === 'result_init' && !isUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
+            else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                if (!isUpdate) {
+                // ALLOW DATA UPDATE if we are in resume mode (not background update)
+                if (!isBackgroundUpdate) {
                     setAllData(chunkData);
                     const clientsMap = new Map<string, MapPoint>();
                     chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
@@ -389,7 +395,6 @@ const App: React.FC = () => {
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
-                // Check if result is empty - if so, don't clear existing data unless explicit reset
                 if (payload.aggregatedData.length > 0) {
                     setOkbRegionCounts(payload.okbRegionCounts);
                     setAllData(payload.aggregatedData);
@@ -428,8 +433,6 @@ const App: React.FC = () => {
             }
 
             const CHUNK_SIZE = 1000; 
-            
-            // This local counter tracks how many rows we have encountered in the current stream from files.
             let currentStreamRowCounter = 0;
 
             for (const file of allFiles) {
@@ -445,24 +448,21 @@ const App: React.FC = () => {
                     const chunkSize = chunkRows.length;
 
                     if (chunkSize > 0) {
-                        // Fast Forward Logic:
-                        // If the rows in this chunk are already covered by rowsProcessedSoFar, skip them.
-                        // We check if the end of this chunk (currentStreamRowCounter + chunkSize) is <= rowsProcessedSoFar.
-                        
+                        // Fast Forward Logic
                         if (currentStreamRowCounter + chunkSize <= rowsProcessedSoFar) {
-                            // Fully skipped
-                            setProcessingState(prev => ({ ...prev, message: `Пропуск обработанных данных... (${currentStreamRowCounter}/${rowsProcessedSoFar})` }));
+                            // Update UI during fast forward so user knows it's active
+                            setProcessingState(prev => ({ 
+                                ...prev, 
+                                message: `Сверка данных: ${currentStreamRowCounter + chunkSize} / ${rowsProcessedSoFar}...` 
+                            }));
                         } else {
-                            // Either partially new or fully new
+                            // Send partial or full chunk
                             let rowsToSend = chunkRows;
-                            
                             if (currentStreamRowCounter < rowsProcessedSoFar) {
-                                // Partial overlap (Bridge chunk)
                                 const rowsToSkipInChunk = rowsProcessedSoFar - currentStreamRowCounter;
                                 rowsToSend = chunkRows.slice(rowsToSkipInChunk);
                             }
                             
-                            // Send to worker
                             if (rowsToSend.length > 0) {
                                 workerRef.current?.postMessage({ 
                                     type: 'PROCESS_CHUNK', 
