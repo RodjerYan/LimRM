@@ -531,6 +531,15 @@ const App: React.FC = () => {
                     const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     
                     if (!res.ok) {
+                        // FIX: Обработка ошибки "Range exceeds grid limits" (400 Bad Request)
+                        // Google API возвращает 400, если мы запрашиваем диапазон за пределами файла.
+                        // Это означает конец файла, а не ошибку сети.
+                        if (res.status === 400) {
+                            console.log(`Конец файла ${file.name} (Grid limit exceeded).`);
+                            hasMore = false;
+                            break; 
+                        }
+
                         console.error(`Failed to fetch chunk for ${file.name} at offset ${offset}, skipping file`);
                         // Если файл сломался на середине, мы его пропускаем, 
                         // но то, что успели скачать, сохранится в persistToDB
