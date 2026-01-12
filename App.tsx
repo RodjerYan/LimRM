@@ -388,7 +388,9 @@ const App: React.FC = () => {
         // PRIORITY: Try to load the Snapshot FIRST if there is a mismatch or empty state
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                const snapshotRes = await fetch('/api/snapshot'); 
+                // ИСПРАВЛЕНИЕ: Используем правильный endpoint и добавляем timestamp, чтобы избежать кэширования
+                const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
+                
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     
