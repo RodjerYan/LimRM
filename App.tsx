@@ -87,27 +87,41 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // Server-side upload handler (Avoids CORS issues by proxying through API)
+    // Server-side upload handler with CHUNKING to avoid Vercel 4.5MB limit
     const uploadToCloudServerSide = async (payload: any) => {
         if (isUploadingRef.current) return;
-        // Don't upload if payload is empty/invalid
         if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
         
         isUploadingRef.current = true;
         try {
-            const res = await fetch('/api/snapshot', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                throw new Error(err.details || 'Upload failed');
+            // 1. Initialize snapshot (clears the Sheet)
+            const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
+            if (!initRes.ok) throw new Error('Failed to init snapshot');
+
+            // 2. Chunk and append
+            const jsonString = JSON.stringify(payload);
+            const CHUNK_SIZE = 1_000_000; // 1MB chunks (well below 4.5MB limit)
+            let offset = 0;
+            
+            while (offset < jsonString.length) {
+                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
+                const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chunk }) 
+                });
+                
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.details || `Upload chunk failed at offset ${offset}`);
+                }
+                
+                offset += CHUNK_SIZE;
             }
-            console.log('Snapshot saved successfully via server.');
+            
+            console.log('Snapshot uploaded successfully via chunking.');
         } catch (e) {
             console.error("Server upload failed:", e);
-            // Don't show error notification to user to avoid spam, just log it.
         } finally {
             isUploadingRef.current = false;
         }
@@ -140,7 +154,7 @@ const App: React.FC = () => {
                 versionHash: currentVersion 
             });
             localStorage.setItem('last_sync_version', currentVersion);
-            // Use the new server-side upload method
+            // Trigger background upload
             uploadToCloudServerSide(stateToSave).catch(() => {});
         } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSyncVersion]);

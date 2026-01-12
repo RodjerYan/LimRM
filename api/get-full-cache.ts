@@ -8,7 +8,9 @@ import {
     updateAddressInCache, 
     updateCacheCoords,
     getSnapshot,
-    saveSnapshot
+    saveSnapshot,
+    initSnapshot,
+    appendSnapshot
 } from './_lib/sheets.js';
 
 export const config = {
@@ -65,8 +67,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-        // Parse body manually since bodyParser is false
         let body: any;
+        
+        // Handle init-snapshot separately as it might have no body
+        if (action === 'init-snapshot') {
+            try {
+                await initSnapshot();
+                return res.json({ success: true, message: 'Snapshot initialized (cleared)' });
+            } catch (error) {
+                console.error("Snapshot init error:", error);
+                return res.status(500).json({ error: (error as Error).message });
+            }
+        }
+
         try {
             const raw = await getRawBody(req);
             if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
@@ -80,6 +93,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.json({ success: true });
             } catch (error) {
                 console.error("Snapshot save error:", error);
+                return res.status(500).json({ error: (error as Error).message });
+            }
+        }
+
+        if (action === 'append-snapshot') {
+            try {
+                const { chunk } = body;
+                if (!chunk) return res.status(400).json({ error: 'Missing chunk data' });
+                await appendSnapshot(chunk);
+                return res.json({ success: true });
+            } catch (error) {
+                console.error("Snapshot append error:", error);
                 return res.status(500).json({ error: (error as Error).message });
             }
         }

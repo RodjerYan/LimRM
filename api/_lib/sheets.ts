@@ -142,36 +142,42 @@ async function ensureSnapshotSheet(sheets: sheets_v4.Sheets) {
     }
 }
 
+// Legacy single-shot save (kept for backward compat, but likely hits 4.5MB limit)
 export async function saveSnapshot(data: any): Promise<void> {
     if (!data || !data.aggregatedData || data.aggregatedData.length === 0) {
         console.warn("Attempted to save empty snapshot. Operation skipped.");
         return;
     }
+    await initSnapshot();
+    await appendSnapshot(JSON.stringify(data));
+}
 
+// New Chunked Upload Handlers
+export async function initSnapshot(): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     await ensureSnapshotSheet(sheets);
-    
-    const jsonString = JSON.stringify(data);
-    const CHUNK_SIZE = 45000; 
-    const chunks: string[] = [];
-    
-    for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
-        chunks.push(jsonString.substring(i, i + CHUNK_SIZE));
-    }
-    
     await callWithRetry(() => sheets.spreadsheets.values.clear({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
     }), 'clearSnapshot');
+}
+
+export async function appendSnapshot(chunk: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    // Google Sheets cell limit is 50,000 chars. We chunk the incoming string.
+    const CHUNK_SIZE = 45000; 
+    const values: string[][] = [];
     
-    const values = chunks.map(c => [c]);
+    for (let i = 0; i < chunk.length; i += CHUNK_SIZE) {
+        values.push([chunk.substring(i, i + CHUNK_SIZE)]);
+    }
     
-    await callWithRetry(() => sheets.spreadsheets.values.update({
+    await callWithRetry(() => sheets.spreadsheets.values.append({
         spreadsheetId: CACHE_SPREADSHEET_ID,
         range: `'${SNAPSHOT_SHEET_TITLE}'!A1`,
         valueInputOption: 'RAW',
         requestBody: { values }
-    }), 'writeSnapshot');
+    }), 'appendSnapshot');
 }
 
 export async function getSnapshot(): Promise<any | null> {
@@ -293,10 +299,7 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
     }, `listFilesForYear-${year}`);
 }
 
-// Updated to handle Excel files by downloading and parsing them
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ', mimeType?: string): Promise<any[][]> {
-    
-    // If it is an Excel file, download and parse
     if (mimeType === EXCEL_MIME || mimeType === 'application/vnd.ms-excel') {
         const drive = await getGoogleDriveClient();
         return callWithRetry(async () => {
@@ -304,15 +307,10 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ', m
             const workbook = XLSX.read(res.data, { type: 'buffer' });
             const sheetName = workbook.SheetNames[0];
             const worksheet = workbook.Sheets[sheetName];
-            
-            // Convert to JSON (array of arrays)
             const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-            
-            // Extract the range requested (roughly). Range format "A{start}:CZ{end}"
-            // We assume start is the number after A.
             const match = range.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
             if (match) {
-                const startRow = parseInt(match[1], 10) - 1; // 0-indexed
+                const startRow = parseInt(match[1], 10) - 1;
                 const endRow = parseInt(match[2], 10);
                 return rows.slice(startRow, endRow);
             }
@@ -320,7 +318,6 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ', m
         }, `fetchExcel-${fileId}`);
     }
 
-    // Default to Google Sheets API
     const sheets = await getGoogleSheetsClient();
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: fileId, range: range, valueRenderOption: 'UNFORMATTED_VALUE' }), `fetchFileContent-${fileId}-${range}`) as any;
     return res.data.values || [];
@@ -331,13 +328,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
     const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
-    
-    // Exclude the snapshot sheet from cache loading
-    const cacheTitles = sheetTitles.filter((t: string) => t !== SNAPSHOT_SHEET_TITLE);
-    
-    if (cacheTitles.length === 0) return {};
-
-    const ranges = cacheTitles.map((title: string) => `'${title}'!A:E`); 
+    const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
     const cache: Record<string, any[]> = {};
     const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
