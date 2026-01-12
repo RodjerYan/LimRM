@@ -201,6 +201,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 await saveMetaFile(drive, folderId, {
                     versionHash: body.versionHash,
                     totalRowsProcessed: body.totalRowsProcessed,
+                    processedFileIds: body.processedFileIds, // <-- ИСПРАВЛЕНИЕ: Сохраняем список обработанных файлов
                     lastUpdated: new Date().toISOString()
                 });
                 return res.json({ success: true });

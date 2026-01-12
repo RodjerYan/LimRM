@@ -179,7 +179,8 @@ const App: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     versionHash: payload.versionHash,
-                    totalRowsProcessed: payload.totalRowsProcessed
+                    totalRowsProcessed: payload.totalRowsProcessed,
+                    processedFileIds: payload.processedFileIds // <--- ДОБАВЛЕНО: Сохраняем список обработанных файлов
                 })
             });
 
@@ -348,6 +349,11 @@ const App: React.FC = () => {
                      const remoteMeta = await metaRes.json();
                      if (remoteMeta.versionHash) {
                          effectiveTargetVersion = remoteMeta.versionHash;
+                     }
+                     // --- ВАЖНО: Сразу загружаем список обработанных файлов из метаданных ---
+                     if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
+                         processedFileIdsRef.current = new Set(remoteMeta.processedFileIds);
+                         console.log(`Loaded ${remoteMeta.processedFileIds.length} processed files from metadata.`);
                      }
                  }
              } catch(e) { console.error("Failed to check snapshot metadata", e); }
@@ -649,6 +655,11 @@ const App: React.FC = () => {
                 
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
+                    
+                    // --- ВАЖНО: Загружаем список "исключений" (уже обработанных файлов) прямо из метаданных ---
+                    if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) {
+                        processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
+                    }
                     
                     // ВАРИАНТ А: На сервере версия НОВЕЕ -> Полная перезагрузка из снимка
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
