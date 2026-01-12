@@ -31,7 +31,7 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
 async function getSnapshotFolderId(drive: any, parentId: string) {
     const q = `name = '${SNAPSHOT_FOLDER_NAME}' and '${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     const res = await drive.files.list({ q, fields: 'files(id)' });
-    if (res.data.files?.length > 0) return res.data.files[0].id;
+    if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
     
     const newFolder = await drive.files.create({
         requestBody: { name: SNAPSHOT_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
@@ -55,9 +55,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
                     fields: 'files(id)', pageSize: 1
                 });
-                if (metaRes.data.files?.length > 0) {
-                    const content = await drive.files.get({ fileId: metaRes.data.files[0].id, alt: 'media' });
-                    return res.json(content.data);
+                
+                if (metaRes.data.files && metaRes.data.files.length > 0) {
+                    const fileId = metaRes.data.files[0].id;
+                    if (fileId) {
+                        const content = await drive.files.get({ fileId: fileId, alt: 'media' });
+                        return res.json(content.data);
+                    }
                 }
                 return res.json({ versionHash: 'none' });
             }
@@ -116,9 +120,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'init-snapshot') {
                 const folderId = await getSnapshotFolderId(drive, rootId);
                 const files = await drive.files.list({ q: `'${folderId}' in parents and trashed = false`, fields: 'files(id)' });
-                if (files.data.files?.length) {
+                if (files.data.files && files.data.files.length) {
                     // Удаляем старые части
-                    await Promise.all(files.data.files.map((f: any) => drive.files.delete({ fileId: f.id })));
+                    // Google Drive API rate limits deletions, so we do it sequentially or limited parallel
+                    for (const f of files.data.files) {
+                        if (f.id) await drive.files.delete({ fileId: f.id });
+                    }
                 }
                 return res.json({ success: true });
             }
@@ -142,12 +149,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'save-meta') {
                 const q = `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`;
                 const list = await drive.files.list({ q, fields: 'files(id)' });
-                const fileId = list.data.files?.[0]?.id;
                 
                 const media = { mimeType: 'application/json', body: JSON.stringify(body) };
                 
-                if (fileId) await drive.files.update({ fileId, media });
-                else await drive.files.create({ requestBody: { name: META_FILENAME, parents: [rootId] }, media });
+                if (list.data.files && list.data.files.length > 0 && list.data.files[0].id) {
+                    const fileId = list.data.files[0].id;
+                    await drive.files.update({ fileId, media });
+                } else {
+                    await drive.files.create({ requestBody: { name: META_FILENAME, parents: [rootId] }, media });
+                }
                 
                 return res.json({ success: true });
             }
