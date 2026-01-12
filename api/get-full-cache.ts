@@ -10,7 +10,7 @@ import {
     getSnapshot,
     saveSnapshot,
     initResumableSnapshotUpload
-} from './_lib/sheets';
+} from './_lib/sheets.js';
 
 export const config = {
     maxDuration: 60,

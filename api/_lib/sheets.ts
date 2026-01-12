@@ -1,6 +1,6 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../../types';
+import type { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
@@ -174,10 +174,186 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): 
     return res.data.values || [];
 }
 
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> { return {}; }
-export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string): Promise<void> {}
-export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {}
-export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {}
-export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> { return null; }
-export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {}
-export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> { return { sessionUrl: '' }; }
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
+    const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
+    if (sheetTitles.length === 0) return {};
+    const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
+    const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
+    const cache: Record<string, any[]> = {};
+    const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
+    response.data.valueRanges?.forEach((valueRange: any) => {
+        let title = valueRange.range?.split('!')[0] || 'Unknown';
+        if (title.startsWith("'") && title.endsWith("'")) title = title.substring(1, title.length - 1);
+        const values = valueRange.values || [];
+        if (values.length > 1) { 
+            cache[title] = values.slice(1).map((row: any) => {
+                const latStr = String(row[1] || '').trim(); const lonStr = String(row[2] || '').trim();
+                const isDeleted = latStr === 'DELETED' || lonStr === 'DELETED';
+                const isInvalid = BAD_STATUSES.some(status => latStr.toLowerCase().includes(status) || lonStr.toLowerCase().includes(status));
+                const lat = (!isDeleted && !isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
+                const lon = (!isDeleted && !isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
+                return {
+                    address: String(row[0] || '').trim(), lat, lon,
+                    history: row[3] ? String(row[3]).trim() : undefined, isDeleted, isInvalid,
+                    comment: row[4] ? String(row[4]).trim() : undefined
+                };
+            }).filter((item: any) => item.address); 
+        }
+    });
+    return cache;
+}
+
+async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    if (existingSheet) return existingSheet.properties!.title!;
+    await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
+    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии']] } }), 'initSheetHeader');
+    return rmName; 
+}
+
+export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
+    if (rowsToAppend.length === 0) return;
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    const existing = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A2:A` }), 'checkExisting') as any;
+    const existingAddresses = new Set(existing.data.values?.flat().map((a: any) => normalizeForComparison(String(a))) || []);
+    const unique = rowsToAppend.filter(row => row[0] && !existingAddresses.has(normalizeForComparison(String(row[0]))));
+    if (unique.length === 0) return;
+    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: unique } }), 'appendRows');
+}
+
+export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
+    if (updates.length === 0) return;
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:A` }), 'getAddrForUpdate') as any;
+    const addressIndexMap = new Map<string, number>();
+    (response.data.values?.flat() || []).forEach((addr: any, i: number) => { if(addr) addressIndexMap.set(normalizeForComparison(String(addr)), i + 1); });
+    const data = updates.map(update => {
+        const rowIndex = addressIndexMap.get(normalizeForComparison(update.address));
+        if (!rowIndex) return null;
+        return { range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`, values: [[update.lat, update.lon]] };
+    }).filter(Boolean) as any;
+    if (data.length > 0) await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data } }), 'batchUpdateCoords');
+}
+
+export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:E` }), 'getAddrForUpdate2') as any;
+    const rows = response.data.values || [];
+    const oldNorm = normalizeForComparison(oldAddress);
+    const newNorm = normalizeForComparison(newAddress);
+    let rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === oldNorm);
+    if (rowIndex === -1) rowIndex = rows.findIndex((r: any) => isAddressInHistory(String(r[3] || ''), oldNorm));
+    const timestamp = new Date().toLocaleString('ru-RU');
+    if (rowIndex === -1) {
+        await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[newAddress, '', '', `${oldAddress} [${timestamp}]`, comment || ""]] } }), 'appendNewUpdate');
+        return;
+    }
+    const row = rows[rowIndex]; const rowNumber = rowIndex + 1;
+    if (normalizeForComparison(String(row[0] || '')) === newNorm) {
+        if (comment !== undefined) await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!E${rowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[comment]] } }), 'updateComment');
+        return;
+    }
+    const historyEntry = `${String(row[0] || oldAddress)} [${timestamp}]`;
+    const newHistory = row[3] ? `${row[3]}\n${historyEntry}` : historyEntry;
+    await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[newAddress, "", "", newHistory, comment !== undefined ? comment : (row[4] || '')]] } }), 'updateFullRow');
+}
+
+export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
+    const sheets = await getGoogleSheetsClient();
+    const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:A` }), 'getAddrForDelete') as any;
+    const rowIndex = (response.data.values?.flat() || []).findIndex((a: any) => normalizeForComparison(String(a)) === normalizeForComparison(address));
+    if (rowIndex !== -1) {
+        await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!B${rowIndex + 1}:C${rowIndex + 1}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [['DELETED', 'DELETED']] } }), 'markDeleted');
+    }
+}
+
+export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
+    const sheets = await getGoogleSheetsClient();
+    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
+    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    if (!existingSheet) return null;
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:E` }), 'getAddrData') as any;
+    const values = response.data.values || [];
+    const addressNorm = normalizeForComparison(address);
+    let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);
+    if (!foundRow) foundRow = values.find((row: any) => isAddressInHistory(String(row[3] || ''), addressNorm));
+    if (foundRow) {
+        const latStr = String(foundRow[1] || '').trim(); const lonStr = String(foundRow[2] || '').trim();
+        if (latStr === 'DELETED' || lonStr === 'DELETED') return null;
+        const isInvalid = ['не найдено', 'некорректный адрес'].some(s => latStr.toLowerCase().includes(s));
+        return {
+            address: String(foundRow[0]),
+            lat: (!isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined,
+            lon: (!isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined,
+            history: foundRow[3], comment: foundRow[4], isInvalid
+        };
+    }
+    return null;
+}
+
+// --- COORDINATE CACHE FUNCTIONS ---
+function normalizeForComparison(str: string): string {
+    return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
+    if (!historyString) return false;
+    const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
+    return entries.some(entry => {
+        const addrPart = entry.split('[')[0];
+        return normalizeForComparison(addrPart) === targetAddressNorm;
+    });
+}
+
+export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
+    const auth = await getAuthClient();
+    const folderId = ROOT_FOLDERS['2025'];
+    if (!folderId) throw new Error("Folder ID for 2025 is missing");
+    
+    const drive = await getGoogleDriveClient();
+    const listRes = await drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    });
+    // FIX: Access .data from drive.files.list response
+    const existingFileId = (listRes as any).data.files?.[0]?.id;
+
+    const metadata = {
+        name: SNAPSHOT_FILENAME,
+        mimeType: 'application/json',
+        parents: existingFileId ? undefined : [folderId]
+    };
+
+    const token = await (await auth.getClient()).getAccessToken();
+    const method = existingFileId ? 'PATCH' : 'POST';
+    const url = existingFileId 
+        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
+        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
+
+    const res = await fetch(url, {
+        method: method,
+        headers: {
+            'Authorization': `Bearer ${token.token}`,
+            'Content-Type': 'application/json',
+            'X-Upload-Content-Type': 'application/json',
+        },
+        body: JSON.stringify(metadata)
+    });
+
+    if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Failed to init upload: ${res.status} ${txt}`);
+    }
+
+    const sessionUrl = res.headers.get('Location');
+    if (!sessionUrl) throw new Error("No session URL returned from Drive.");
+
+    return { sessionUrl };
+}
