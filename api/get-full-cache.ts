@@ -35,11 +35,11 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // FORCE NO CACHE GLOBALLY FOR THIS ENDPOINT
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store');
+    // FIX: Используем stale-while-revalidate.
+    // s-maxage=10: Vercel считает данные свежими 10 секунд.
+    // stale-while-revalidate=59: В течение 59 секунд Vercel может отдать старые данные, 
+    // но в фоне запустит обновление. Это спасает от лимитов Google API.
+    res.setHeader('Cache-Control', 'public, s-maxage=10, stale-while-revalidate=59');
 
     const action = req.query.action as string;
 
@@ -96,7 +96,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     versionHash: `${file.modifiedTime}_${file.size}`
                 });
             } catch (error) {
-                return res.status(500).json({ error: (error as Error).message });
+                console.error("Snapshot meta check failed:", error);
+                // Return 'none' instead of 500 to allow fallback logic in frontend
+                return res.status(200).json({ version: 'none', error: (error as Error).message });
             }
         }
     }
