@@ -12,6 +12,17 @@ const ROOT_FOLDERS: Record<string, string> = {
     '2026': '1S3O-kl_ct4dfh11uG8rLRDeNUVeF3o17'
 };
 
+const MONTH_MAP: Record<string, string> = {
+    'Январь': 'January', 'Февраль': 'February', 'Март': 'March', 'Апрель': 'April',
+    'Май': 'May', 'Июнь': 'June', 'Июль': 'July', 'Август': 'August',
+    'Сентябрь': 'September', 'Октябрь': 'October', 'Ноябрь': 'November', 'Декабрь': 'December'
+};
+
+const RUSSIAN_MONTHS_ORDER = [
+    'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+    'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+];
+
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) {
@@ -63,9 +74,14 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
         } catch (error: any) {
             attempt++;
             const status = error.response?.status || error.code;
-            console.error(`Error in ${context} (Attempt ${attempt}):`, error.message);
             
-            if (attempt > MAX_RETRIES) {
+            // Suppress benign logs for missing snapshot sheet
+            const isSnapshotMissing = context === 'readSnapshot' && (error.message?.includes('Unable to parse range') || status === 400);
+            if (!isSnapshotMissing) {
+                console.error(`Error in ${context} (Attempt ${attempt}):`, error.message);
+            }
+            
+            if (attempt > MAX_RETRIES || isSnapshotMissing) {
                 throw error;
             }
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -180,7 +196,7 @@ export async function getSnapshot(): Promise<any | null> {
             size: fullJson.length 
         };
     } catch (e) {
-        console.warn("Snapshot sheet read failed (likely empty)", e);
+        // Warning suppressed for initial load
         return null; 
     }
 }
@@ -198,15 +214,61 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } }), 'batchUpdateOKBStatus');
 }
 
+// --- FILE LISTING FUNCTIONS (RESTORED) ---
+
 export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
-    if (!rootFolderId) return [];
-    return [];
+    if (!rootFolderId) throw new Error(`Folder for year ${year} not configured.`);
+    
+    const mName = RUSSIAN_MONTHS_ORDER[month - 1];
+    const engMonthName = MONTH_MAP[mName];
+    if (!engMonthName) return [];
+
+    return callWithRetry(async () => {
+        const folderListRes = await drive.files.list({
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 50
+        }) as any;
+        
+        const monthFolder = folderListRes.data.files?.find((f: any) => f.name?.toLowerCase() === engMonthName.toLowerCase());
+        if (!monthFolder || !monthFolder.id) return [];
+        
+        const fileListRes = await drive.files.list({
+            q: `'${monthFolder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 100
+        }) as any;
+        
+        return (fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled' }));
+    }, `listFilesForMonth-${year}-${month}`);
 }
 
 export async function listFilesForYear(year: string): Promise<{ id: string, name: string }[]> {
-    return [];
+    const drive = await getGoogleDriveClient();
+    const rootFolderId = ROOT_FOLDERS[year];
+    if (!rootFolderId) throw new Error(`Папка для года ${year} не настроена.`);
+
+    return callWithRetry(async () => {
+        const folderListRes = await drive.files.list({
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'files(id, name)',
+            pageSize: 50
+        }) as any;
+
+        const allFiles: { id: string, name: string }[] = [];
+        for (const folder of (folderListRes.data.files || [])) {
+            if (!folder.id) continue;
+            const fileListRes = await drive.files.list({
+                q: `'${folder.id}' in parents and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+                fields: 'files(id, name)',
+                pageSize: 100
+            }) as any;
+            allFiles.push(...(fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled' })));
+        }
+        return allFiles;
+    }, `listFilesForYear-${year}`);
 }
 
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ'): Promise<any[][]> {
