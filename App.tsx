@@ -108,9 +108,10 @@ const App: React.FC = () => {
 
             const jsonString = JSON.stringify(payload);
             
-            // FIX: УВЕЛИЧИЛИ РАЗМЕР ЧАНКА ДО 3.5MB (Лимит Vercel 4.5MB)
-            // Это ускорит загрузку в 100 раз по сравнению с 40kb
-            const CHUNK_SIZE = 3_500_000; 
+            // FIX: 500KB is the safe spot.
+            // 3.5MB hits Vercel 413 Payload Too Large limits.
+            // 40KB is too slow.
+            const CHUNK_SIZE = 500_000; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
             let chunkIndex = 0;
@@ -127,8 +128,13 @@ const App: React.FC = () => {
                 });
                 
                 if (!res.ok) {
-                    const err = await res.json();
-                    throw new Error(err.details || `Upload chunk failed at offset ${offset}`);
+                    const text = await res.text();
+                    try {
+                        const err = JSON.parse(text);
+                        throw new Error(err.details || `Upload chunk failed at offset ${offset}`);
+                    } catch (e) {
+                        throw new Error(`Server error: ${res.status} ${res.statusText}`);
+                    }
                 }
                 offset += CHUNK_SIZE;
             }
