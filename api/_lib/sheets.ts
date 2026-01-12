@@ -137,11 +137,26 @@ export async function getSnapshot(): Promise<any | null> {
 export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
     const folderId = ROOT_FOLDERS['2025'];
-    const listRes = await drive.files.list({ q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents`, fields: 'files(id)' }) as any;
+    
+    const listRes = await callWithRetry(() => drive.files.list({
+        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+    }), 'checkSnapshot') as any;
+    
     const fileId = listRes.data.files?.[0]?.id;
-    const media = { mimeType: 'application/json', body: JSON.stringify(data) };
-    if (fileId) await drive.files.update({ fileId, media });
-    else await drive.files.create({ requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, media });
+    const media = {
+        mimeType: 'application/json',
+        body: JSON.stringify(data)
+    };
+
+    if (fileId) {
+        await callWithRetry(() => drive.files.update({ fileId, media }), 'updateSnapshot');
+    } else {
+        await callWithRetry(() => drive.files.create({ 
+            requestBody: { name: SNAPSHOT_FILENAME, parents: [folderId] }, 
+            media 
+        }), 'createSnapshot');
+    }
 }
 
 export async function getOKBAddresses(): Promise<string[]> {
@@ -310,50 +325,4 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
         const addrPart = entry.split('[')[0];
         return normalizeForComparison(addrPart) === targetAddressNorm;
     });
-}
-
-export async function initResumableSnapshotUpload(): Promise<{ sessionUrl: string }> {
-    const auth = await getAuthClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    if (!folderId) throw new Error("Folder ID for 2025 is missing");
-    
-    const drive = await getGoogleDriveClient();
-    const listRes = await drive.files.list({
-        q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
-        fields: 'files(id)',
-    });
-    // FIX: Access .data from drive.files.list response
-    const existingFileId = (listRes as any).data.files?.[0]?.id;
-
-    const metadata = {
-        name: SNAPSHOT_FILENAME,
-        mimeType: 'application/json',
-        parents: existingFileId ? undefined : [folderId]
-    };
-
-    const token = await (await auth.getClient()).getAccessToken();
-    const method = existingFileId ? 'PATCH' : 'POST';
-    const url = existingFileId 
-        ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable&supportsAllDrives=true`
-        : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true`;
-
-    const res = await fetch(url, {
-        method: method,
-        headers: {
-            'Authorization': `Bearer ${token.token}`,
-            'Content-Type': 'application/json',
-            'X-Upload-Content-Type': 'application/json',
-        },
-        body: JSON.stringify(metadata)
-    });
-
-    if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Failed to init upload: ${res.status} ${txt}`);
-    }
-
-    const sessionUrl = res.headers.get('Location');
-    if (!sessionUrl) throw new Error("No session URL returned from Drive.");
-
-    return { sessionUrl };
 }

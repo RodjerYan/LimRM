@@ -87,57 +87,24 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    async function* jsonStreamGenerator(payload: any) {
-        yield '{';
-        yield `"versionHash":"${payload.versionHash}",`;
-        yield `"totalRowsProcessed":${payload.totalRowsProcessed},`;
-        yield `"okbRegionCounts":${JSON.stringify(payload.okbRegionCounts)},`;
-        yield `"unidentifiedRows":[`;
-        for (let i = 0; i < payload.unidentifiedRows.length; i++) {
-            if (i > 0) yield ',';
-            yield JSON.stringify(payload.unidentifiedRows[i]);
-        }
-        yield '],';
-        yield `"aggregatedData":[`;
-        const data = payload.aggregatedData;
-        const CHUNK_SIZE = 50; 
-        for (let i = 0; i < data.length; i++) {
-            if (i > 0) yield ',';
-            yield JSON.stringify(data[i]);
-            if (i % CHUNK_SIZE === 0) {
-                await new Promise(resolve => setTimeout(resolve, 0));
-            }
-        }
-        yield ']';
-        yield '}';
-    }
-
-    const uploadToCloudDirectly = async (payload: any) => {
+    // Server-side upload handler (Avoids CORS issues by proxying through API)
+    const uploadToCloudServerSide = async (payload: any) => {
         if (isUploadingRef.current) return;
         isUploadingRef.current = true;
         try {
-            const initRes = await fetch('/api/get-full-cache?action=init-snapshot-upload', { method: 'POST' });
-            if (!initRes.ok) throw new Error("Failed to init upload session");
-            const { sessionUrl } = await initRes.json();
-            const encoder = new TextEncoder();
-            const iterator = jsonStreamGenerator(payload);
-            const underlyingSource = {
-                async pull(controller: ReadableStreamDefaultController) {
-                    const { value, done } = await iterator.next();
-                    if (done) controller.close();
-                    else controller.enqueue(encoder.encode(value as string));
-                }
-            };
-            const rawStream = new ReadableStream(underlyingSource);
-            await fetch(sessionUrl, {
-                method: 'PUT',
+            const res = await fetch('/api/snapshot', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: rawStream,
-                // @ts-ignore
-                duplex: 'half' 
+                body: JSON.stringify(payload)
             });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.details || 'Upload failed');
+            }
+            console.log('Snapshot saved successfully via server.');
         } catch (e) {
-            console.error("Direct upload failed:", e);
+            console.error("Server upload failed:", e);
+            // Don't show error notification to user to avoid spam, just log it.
         } finally {
             isUploadingRef.current = false;
         }
@@ -170,7 +137,8 @@ const App: React.FC = () => {
                 versionHash: currentVersion 
             });
             localStorage.setItem('last_sync_version', currentVersion);
-            uploadToCloudDirectly(stateToSave).catch(() => {});
+            // Use the new server-side upload method
+            uploadToCloudServerSide(stateToSave).catch(() => {});
         } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSyncVersion]);
 
@@ -322,7 +290,10 @@ const App: React.FC = () => {
                         return;
                     }
                 }
-            } catch (e) {}
+                // If 404 or invalid snapshot, proceed to Worker processing below (Fallthrough)
+            } catch (e) {
+                console.warn("Snapshot fetch failed or 404, proceeding to full process.");
+            }
         }
         let cacheData: CoordsCache = {};
         try {
@@ -355,7 +326,7 @@ const App: React.FC = () => {
                 setUnidentifiedRows(payload.unidentifiedRows);
                 const version = localStorage.getItem('pending_version_hash') || 'checkpoint_' + Date.now();
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
-                uploadToCloudDirectly(payload).catch(() => {});
+                uploadToCloudServerSide(payload).catch(() => {});
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -371,7 +342,7 @@ const App: React.FC = () => {
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, uniqueClients, payload.totalRowsProcessed, version);
                 setLastSyncVersion(version);
                 localStorage.setItem('last_sync_version', version);
-                uploadToCloudDirectly(payload).finally(() => {
+                uploadToCloudServerSide(payload).finally(() => {
                     setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизировано', totalRowsProcessed: payload.totalRowsProcessed }));
                 });
             }

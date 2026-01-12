@@ -8,8 +8,7 @@ import {
     updateAddressInCache, 
     updateCacheCoords,
     getSnapshot,
-    saveSnapshot,
-    initResumableSnapshotUpload
+    saveSnapshot
 } from './_lib/sheets.js';
 
 export const config = {
@@ -66,22 +65,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-        if (action === 'init-snapshot-upload') {
-            try {
-                const result = await initResumableSnapshotUpload();
-                return res.json(result);
-            } catch (error) {
-                console.error("Init upload error:", error);
-                return res.status(500).json({ error: (error as Error).message });
-            }
-        }
-
+        // Parse body manually since bodyParser is false
         let body: any;
         try {
             const raw = await getRawBody(req);
             if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
         } catch (e) {
             return res.status(400).json({ error: 'Invalid JSON body' });
+        }
+
+        if (action === 'save-snapshot') {
+            try {
+                await saveSnapshot(body);
+                return res.json({ success: true });
+            } catch (error) {
+                console.error("Snapshot save error:", error);
+                return res.status(500).json({ error: (error as Error).message });
+            }
         }
 
         if (action === 'add-to-cache') {
@@ -122,16 +122,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(200).json({ success: true });
             } catch (error) {
                 return res.status(500).json({ error: 'Delete failed' });
-            }
-        }
-
-        if (action === 'save-snapshot') {
-            try {
-                await saveSnapshot(body);
-                return res.json({ success: true });
-            } catch (error) {
-                console.error("Snapshot save error:", error);
-                return res.status(500).json({ error: (error as Error).message });
             }
         }
     }
