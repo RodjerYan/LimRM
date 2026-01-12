@@ -86,7 +86,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (mode === 'list') {
                     const monthStr = req.query.month as string;
                     const files = monthStr ? await listFilesForMonth(year, parseInt(monthStr, 10)) : await listFilesForYear(year);
-                    res.setHeader('Cache-Control', 'no-store');
+                    // Use stale-while-revalidate here too to avoid constant Drive API calls for file lists
+                    res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=59');
                     return res.status(200).json(files);
                 }
 

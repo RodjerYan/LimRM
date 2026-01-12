@@ -316,7 +316,17 @@ const App: React.FC = () => {
         restore();
     }, []);
 
-    const fetchWithRetry = async (url: string, retries = 3, backoff = 2000): Promise<Response> => {
+    // Clean up workers on unmount
+    useEffect(() => {
+        return () => {
+            if (workerRef.current) {
+                workerRef.current.terminate();
+            }
+            pollingIntervals.current.forEach(clearInterval);
+        };
+    }, []);
+
+    const fetchWithRetry = async (url: string, retries = 5, backoff = 2000): Promise<Response> => {
         try {
             const res = await fetch(url);
             if (res.status === 429 || res.status >= 500) {
@@ -355,7 +365,8 @@ const App: React.FC = () => {
 
         const currentLocalVersion = lastSnapshotVersion; 
         const isVersionMismatch = effectiveTargetVersion && effectiveTargetVersion !== currentLocalVersion;
-        const isBackgroundUpdate = !isVersionMismatch && !!effectiveTargetVersion && allDataRef.current.length > 0;
+        // Background update if we have data AND the versions match (meaning we are resuming) OR we just have data (simple resume check)
+        const isBackgroundUpdate = (allDataRef.current.length > 0);
         
         if (!isBackgroundUpdate) setActiveModule('amp');
         if (effectiveTargetVersion) {
@@ -522,7 +533,11 @@ const App: React.FC = () => {
                     setProcessingState(prev => ({ ...prev, message: `Обработка: ${file.name}` }));
                     
                     const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
-                    if (!res.ok) break;
+                    if (!res.ok) {
+                        console.error(`Failed to fetch chunk for ${file.name}, skipping file`);
+                        // CRITICAL FIX: Continue to next file instead of aborting everything
+                        break; 
+                    }
                     
                     const result = await res.json();
                     const chunkRows = result.rows || [];
@@ -542,10 +557,11 @@ const App: React.FC = () => {
                 }
                 // Mark file as processed after full success
                 processedFileIdsRef.current.add(file.id);
-                // Trigger an intermediate persist to save progress
+                // Trigger a lightweight save of the file ID list to prevent reprocessing on reload
                 if (workerRef.current) {
-                     // We rely on the checkpoint logic in worker or manual persist here could be added
-                     // But worker triggers checkpoint based on row count, which is safer.
+                     const currentVersion = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
+                     // Persist current state including new file ID to enable resume next time
+                     persistToDB(allDataRef.current, unidentifiedRowsRef.current, [], totalRowsProcessedRef.current, currentVersion);
                 }
             }
         } catch (error) {
@@ -578,6 +594,23 @@ const App: React.FC = () => {
         }
         return () => clearInterval(timer);
     }, [checkCloudChanges, isRestoring, dbStatus]);
+
+    // NEW: Auto-resume Effect
+    useEffect(() => {
+        if (isRestoring) return;
+
+        const autoResume = async () => {
+            console.log("Auto-resume: Initiating cloud sync check...");
+            // Always try to resume or start fresh. The function handles 'already processed' files internally.
+            // We pass lastSnapshotVersion so it knows we are continuing the current version, not wiping it.
+            await handleStartCloudProcessing({ year: '2025' }, lastSnapshotVersion || undefined);
+        };
+
+        // Delay slightly to ensure DB restore UI is settled
+        const t = setTimeout(autoResume, 500);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isRestoring]); // Run ONCE when restoration finishes
 
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
