@@ -348,8 +348,11 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
         
-        // 1. Предварительная проверка версии метаданных (без изменений)
         let effectiveTargetVersion = targetVersion;
+        // Переменная для хранения списка файлов из метаданных (резервная копия)
+        let fallbackProcessedFiles: string[] = [];
+
+        // 1. Получаем метаданные (версию и список файлов)
         if (!effectiveTargetVersion) {
              try {
                  const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
@@ -358,10 +361,9 @@ const App: React.FC = () => {
                      if (remoteMeta.versionHash) {
                          effectiveTargetVersion = remoteMeta.versionHash;
                      }
-                     // --- ВАЖНО: Сразу загружаем список обработанных файлов из метаданных ---
+                     // ВАЖНО: Сохраняем список обработанных файлов во временную переменную
                      if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
-                         processedFileIdsRef.current = new Set(remoteMeta.processedFileIds);
-                         console.log(`Loaded ${remoteMeta.processedFileIds.length} processed files from metadata.`);
+                         fallbackProcessedFiles = remoteMeta.processedFileIds;
                      }
                  }
              } catch(e) { console.error("Failed to check snapshot metadata", e); }
@@ -389,14 +391,13 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, progress: 0, message: 'Загрузка новой версии...', totalRowsProcessed: 0 }));
             
             totalRowsProcessedRef.current = 0;
-            processedFileIdsRef.current.clear(); 
+            processedFileIdsRef.current.clear(); // Мы очищаем реф
             allDataRef.current = [];
             unidentifiedRowsRef.current = [];
             await new Promise(resolve => setTimeout(resolve, 300));
         }
 
         let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
-        // Эти переменные нужны для воркера
         let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
         let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
 
@@ -408,13 +409,13 @@ const App: React.FC = () => {
         }));
         
         // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT)
+        let snapshotLoaded = false;
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
                 const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
                     
-                    // --- FIX #1: Учитываем разную структуру (есть .data или нет) ---
                     const data = snapshot.data || snapshot; 
 
                     if (data && data.aggregatedData && data.aggregatedData.length > 0) {
@@ -435,7 +436,7 @@ const App: React.FC = () => {
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
-                        // Загружаем список уже обработанных файлов, чтобы не качать их снова
+                        // Загружаем список уже обработанных файлов из СНИМКА
                         if (processedFileIds) {
                             processedFileIdsRef.current = new Set(processedFileIds);
                             console.log(`Loaded ${processedFileIds.length} processed files from snapshot.`);
@@ -443,12 +444,22 @@ const App: React.FC = () => {
                         
                         restoredDataForWorker = aggregatedData;
                         restoredUnidentifiedForWorker = unidentifiedRows;
+                        snapshotLoaded = true;
                     }
                 }
             } catch (e) {
                 console.warn("Snapshot fetch failed. Falling back to raw file processing.");
             }
         }
+
+        // --- ВАЖНОЕ ИСПРАВЛЕНИЕ: FALLBACK ДЛЯ СПИСКА ФАЙЛОВ ---
+        // Если снимок не загрузился (например, 404), но у нас есть список файлов из метаданных,
+        // восстанавливаем processedFileIdsRef, чтобы НЕ скачивать эти файлы заново.
+        if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
+            console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
+            processedFileIdsRef.current = new Set(fallbackProcessedFiles);
+        }
+        // ------------------------------------------------------
 
         // Подготовка кэша и воркера
         let cacheData: CoordsCache = {};
@@ -581,10 +592,6 @@ const App: React.FC = () => {
                     
                     // Помечаем файл как обработанный ЛОКАЛЬНО
                     processedFileIdsRef.current.add(file.id);
-                    
-                    // --- FIX #3: УБРАЛИ persistToDB ОТСЮДА ---
-                    // Больше не будет "вечного сохранения" после каждого файла.
-                    // Данные сохранятся в конце всех лет или через Checkpoint воркера.
                 }
             }
         } catch (error) {
@@ -665,6 +672,7 @@ const App: React.FC = () => {
                     const serverMeta = await metaRes.json();
                     
                     // --- ВАЖНО: Загружаем список "исключений" (уже обработанных файлов) прямо из метаданных ---
+                    // Это нужно для того, чтобы знать состояние сервера, даже если мы не будем качать полный снимок.
                     if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) {
                         processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
                     }
