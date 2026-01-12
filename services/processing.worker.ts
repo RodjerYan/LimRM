@@ -111,14 +111,16 @@ function performIncrementalAbc() {
     });
 }
 
-function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: CoordsCache }, postMessage: PostMessageFn) {
+function initStream({ okbData, cacheData, totalRowsProcessed }: { okbData: OkbDataRow[], cacheData: CoordsCache, totalRowsProcessed?: number }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
     state_unidentifiedRows = [];
     state_headers = [];
-    state_processedRowsCount = 0;
-    state_lastEmitCount = 0;
-    state_lastCheckpointCount = 0;
+    // Restore the counter if resuming, otherwise 0
+    state_processedRowsCount = totalRowsProcessed || 0;
+    state_lastEmitCount = state_processedRowsCount;
+    state_lastCheckpointCount = state_processedRowsCount;
+    
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
@@ -153,7 +155,7 @@ function initStream({ okbData, cacheData }: { okbData: OkbDataRow[], cacheData: 
         } 
     });
     
-    postMessage({ type: 'progress', payload: { percentage: 5, message: 'Связь установлена. Начало индексации...' } });
+    postMessage({ type: 'progress', payload: { percentage: 5, message: totalRowsProcessed ? `Восстановление сессии: ${totalRowsProcessed} строк...` : 'Связь установлена. Начало индексации...' } });
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {

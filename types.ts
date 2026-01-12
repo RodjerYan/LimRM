@@ -183,6 +183,7 @@ export type WorkerInputInit = {
     payload: {
         okbData: OkbDataRow[];
         cacheData: CoordsCache;
+        totalRowsProcessed?: number; // Added to support resuming
     };
 };
 

@@ -305,12 +305,16 @@ const App: React.FC = () => {
         
         console.log(`Starting processing for version: ${targetVersion || 'new'}`);
         
+        // This is key for resuming: tracked rows processed so far globally across all files
+        let rowsProcessedSoFar = 0;
+
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, progress: 0, message: isUpdate ? 'Обновление данных...' : 'Подключение к облаку...', 
             fileName: isUpdate ? 'Синхронизация' : 'Подключение к облаку', 
             startTime: Date.now(), totalRowsProcessed: isUpdate ? prev.totalRowsProcessed : 0
         }));
+
         if (!isUpdate || targetVersion) {
             try {
                 const snapshotRes = await fetch('/api/snapshot');
@@ -319,6 +323,8 @@ const App: React.FC = () => {
                     if (snapshot && snapshot.data && snapshot.data.aggregatedData && snapshot.data.aggregatedData.length > 0) {
                         const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed } = snapshot.data;
                         const snapshotHash = snapshot.versionHash;
+                        
+                        // Load data from snapshot
                         setOkbRegionCounts(okbRegionCounts);
                         setAllData(aggregatedData);
                         const clientsMap = new Map<string, MapPoint>();
@@ -327,24 +333,34 @@ const App: React.FC = () => {
                         setAllActiveClients(uniqueClients);
                         setUnidentifiedRows(unidentifiedRows);
                         setDbStatus('ready');
+                        
                         const newVersion = snapshotHash || targetVersion || 'snapshot_' + Date.now();
-                        await persistToDB(aggregatedData, unidentifiedRows, uniqueClients, totalRowsProcessed, newVersion);
                         setLastSyncVersion(newVersion);
-                        setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Загружено', totalRowsProcessed }));
-                        return;
+                        
+                        // Important: Set the offset for the fetcher logic
+                        rowsProcessedSoFar = totalRowsProcessed || 0;
+                        
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            message: `Загружен снимок (${rowsProcessedSoFar} строк). Синхронизация...`, 
+                            totalRowsProcessed: rowsProcessedSoFar 
+                        }));
                     }
                 }
             } catch (e) {
                 console.warn("Snapshot fetch failed or 404, proceeding to full process.");
             }
         }
+
         let cacheData: CoordsCache = {};
         try {
             const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
             if (response.ok) cacheData = await response.json();
         } catch (error) {}
+        
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
             if (msg.type === 'progress') setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message }));
@@ -395,7 +411,13 @@ const App: React.FC = () => {
                 }
             }
         };
-        workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData } });
+        
+        // Pass the already processed count to the worker so it knows where to resume counting
+        workerRef.current.postMessage({ 
+            type: 'INIT_STREAM', 
+            payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar } 
+        });
+        
         try {
             const listRes = await fetch(`/api/get-akb?year=${year}${month ? `&month=${month}` : ''}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
@@ -406,17 +428,55 @@ const App: React.FC = () => {
             }
 
             const CHUNK_SIZE = 1000; 
+            
+            // This local counter tracks how many rows we have encountered in the current stream from files.
+            let currentStreamRowCounter = 0;
+
             for (const file of allFiles) {
                 let offset = 0, hasMore = true, isFirstChunk = true;
+                
                 while (hasMore) {
                     const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
                     const res = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     if (!res.ok) break;
+                    
                     const result = await res.json();
-                    if (result.rows?.length > 0) {
-                        workerRef.current?.postMessage({ type: 'PROCESS_CHUNK', payload: { rawData: result.rows, isFirstChunk, fileName: file.name } });
+                    const chunkRows = result.rows || [];
+                    const chunkSize = chunkRows.length;
+
+                    if (chunkSize > 0) {
+                        // Fast Forward Logic:
+                        // If the rows in this chunk are already covered by rowsProcessedSoFar, skip them.
+                        // We check if the end of this chunk (currentStreamRowCounter + chunkSize) is <= rowsProcessedSoFar.
+                        
+                        if (currentStreamRowCounter + chunkSize <= rowsProcessedSoFar) {
+                            // Fully skipped
+                            setProcessingState(prev => ({ ...prev, message: `Пропуск обработанных данных... (${currentStreamRowCounter}/${rowsProcessedSoFar})` }));
+                        } else {
+                            // Either partially new or fully new
+                            let rowsToSend = chunkRows;
+                            
+                            if (currentStreamRowCounter < rowsProcessedSoFar) {
+                                // Partial overlap (Bridge chunk)
+                                const rowsToSkipInChunk = rowsProcessedSoFar - currentStreamRowCounter;
+                                rowsToSend = chunkRows.slice(rowsToSkipInChunk);
+                            }
+                            
+                            // Send to worker
+                            if (rowsToSend.length > 0) {
+                                workerRef.current?.postMessage({ 
+                                    type: 'PROCESS_CHUNK', 
+                                    payload: { rawData: rowsToSend, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } 
+                                });
+                            }
+                        }
+                        
+                        currentStreamRowCounter += chunkSize;
                         isFirstChunk = false;
-                    } else hasMore = false;
+                    } else {
+                        hasMore = false;
+                    }
+                    
                     hasMore = result.hasMore;
                     offset += CHUNK_SIZE;
                 }
