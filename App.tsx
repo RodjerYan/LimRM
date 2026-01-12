@@ -67,6 +67,9 @@ const App: React.FC = () => {
     
     // REF for reliable row counting across closures
     const totalRowsProcessedRef = useRef<number>(0);
+    // REF for data to avoid closure staleness during async operations
+    const allDataRef = useRef<AggregatedDataRow[]>([]);
+    const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     
     const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
@@ -86,6 +89,10 @@ const App: React.FC = () => {
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); 
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
+
+    // Keep Refs synced with state
+    useEffect(() => { allDataRef.current = allData; }, [allData]);
+    useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
@@ -334,7 +341,9 @@ const App: React.FC = () => {
         
         // IMPORTANT: Only treat as background update if it's an auto-trigger (targetVersion present)
         // If user manually clicks (no targetVersion) OR we are resuming, we want visual updates.
-        const isBackgroundUpdate = !!targetVersion && allData.length > 0;
+        // CHECK REF LENGTH, NOT STATE, TO AVOID CLOSURE STALENESS
+        const hasExistingData = allDataRef.current.length > 0;
+        const isBackgroundUpdate = !!targetVersion && hasExistingData;
         
         if (!isBackgroundUpdate) setActiveModule('amp');
         if (targetVersion) localStorage.setItem('pending_version_hash', targetVersion);
@@ -388,15 +397,15 @@ const App: React.FC = () => {
                             totalRowsProcessed: rowsProcessedSoFar 
                         }));
                     }
-                } else if (snapshotRes.status === 404 && allData.length > 0) {
+                } else if (snapshotRes.status === 404 && hasExistingData) {
                     // FALLBACK: Snapshot missing, but we have local data!
                     // Use local data to hydrate worker and resume processing.
                     console.log("Snapshot 404, attempting to resume from local data...");
                     
                     // Use Ref to ensure we get the latest count, not a stale state closure
                     rowsProcessedSoFar = totalRowsProcessedRef.current || 0;
-                    restoredDataForWorker = allData;
-                    restoredUnidentifiedForWorker = unidentifiedRows;
+                    restoredDataForWorker = allDataRef.current;
+                    restoredUnidentifiedForWorker = unidentifiedRowsRef.current;
                     
                     setProcessingState(prev => ({ 
                         ...prev, 
@@ -508,15 +517,11 @@ const App: React.FC = () => {
                 
                 while (hasMore) {
                     // DYNAMIC CHUNK SIZE LOGIC:
-                    // If we need to skip a lot of rows (fast-forward), request larger chunks (e.g. 2500)
-                    // This reduces the number of API calls, preventing Quota Exceeded errors.
-                    // If we are near the processing point, use smaller chunks (1000) for smoother UI updates.
                     const remainingToSkip = Math.max(0, rowsProcessedSoFar - currentStreamRowCounter);
                     const CHUNK_SIZE = remainingToSkip > 2000 ? 2500 : 1000;
 
                     const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
                     
-                    // Use fetchWithRetry here to handle 429/500 errors gracefully
                     const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                     if (!res.ok) break;
                     
@@ -527,11 +532,12 @@ const App: React.FC = () => {
                     if (fetchedChunkSize > 0) {
                         // Fast Forward Logic
                         if (currentStreamRowCounter + fetchedChunkSize <= rowsProcessedSoFar) {
-                            // UPDATE UI so the user sees progress!
+                            // UPDATE UI: Increment totalRowsProcessed VISUALLY so user sees progress
                             const visualCount = Math.min(rowsProcessedSoFar, currentStreamRowCounter + fetchedChunkSize);
                             setProcessingState(prev => ({ 
                                 ...prev, 
-                                message: `Сверка данных: ${visualCount} / ${rowsProcessedSoFar}...`,
+                                message: `Сверка данных...`,
+                                totalRowsProcessed: visualCount, // <--- IMPORTANT: Show counter climbing
                                 progress: (visualCount / (rowsProcessedSoFar || 1)) * 100 
                             }));
                         } else {
@@ -558,7 +564,6 @@ const App: React.FC = () => {
                         currentStreamRowCounter += fetchedChunkSize;
                         isFirstChunk = false;
                         
-                        // Add a small delay to prevent rapid-fire requests even on success
                         if (remainingToSkip > 0) {
                              await new Promise(r => setTimeout(r, 50)); 
                         }
@@ -576,7 +581,7 @@ const App: React.FC = () => {
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, allData, unidentifiedRows, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed]);
+    }, [okbData, persistToDB, processingState.isProcessing, processingState.totalRowsProcessed]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
