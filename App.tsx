@@ -102,20 +102,19 @@ const App: React.FC = () => {
 
     const performUpload = async (payload: any): Promise<string[]> => {
         try {
-            console.log("Starting upload sequence...");
+            console.log("Starting upload sequence to Sheets...");
+            // Инициализация (очистка листа)
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
             if (!initRes.ok) throw new Error('Failed to init snapshot');
 
             const jsonString = JSON.stringify(payload);
             
-            // Используем 1.5MB для безопасности и скорости
-            const CHUNK_SIZE = 1_500_000; 
+            // ВАЖНО: 45 000 символов. Это лимит одной ячейки Google Sheets (50k safe limit).
+            const CHUNK_SIZE = 45_000; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
             let chunkIndex = 0;
             
-            const uploadedFileIds: string[] = []; // Сюда копим ID
-
             while (offset < jsonString.length) {
                 setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 
@@ -124,10 +123,7 @@ const App: React.FC = () => {
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        chunk,
-                        partIndex: chunkIndex 
-                    }) 
+                    body: JSON.stringify({ chunk }) 
                 });
                 
                 if (!res.ok) {
@@ -135,18 +131,12 @@ const App: React.FC = () => {
                     throw new Error(`Upload failed: ${text.substring(0, 100)}`);
                 }
                 
-                // Получаем ID созданного файла от сервера
-                const data = await res.json();
-                if (data.fileId) {
-                    uploadedFileIds.push(data.fileId);
-                }
-
                 offset += CHUNK_SIZE;
                 chunkIndex++;
             }
-            console.log('Snapshot uploaded successfully.');
+            console.log('Snapshot uploaded successfully to Sheets.');
             setUploadProgress(0);
-            return uploadedFileIds;
+            return []; // Мы не используем ID файлов, так как пишем в таблицу
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -166,20 +156,17 @@ const App: React.FC = () => {
         setIsSavingToCloud(true); // START INDICATOR
 
         try {
-            // Загружаем и получаем список ID файлов
-            let fileIds = await performUpload(payload);
+            await performUpload(payload);
             
             // Если во время загрузки пришли новые данные, загружаем их
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
-                fileIds = await performUpload(nextPayload);
-                // Обновляем reference payload для сохранения метаданных последней версии
+                await performUpload(nextPayload);
                 payload = nextPayload;
             }
 
-            // --- SAVE META FILE (MANIFEST) ---
-            // После успешной загрузки данных сохраняем файл метаданных со списком чанков.
+            // --- SAVE META FILE (INTO SHEET CELL B1) ---
             console.log("Финализация: сохранение метаданных версии...");
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
@@ -187,14 +174,13 @@ const App: React.FC = () => {
                 body: JSON.stringify({
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
-                    processedFileIds: payload.processedFileIds, // <--- ДОБАВЛЕНО: Сохраняем список обработанных файлов
-                    chunkFileIds: fileIds // <--- ВАЖНО: Передаем список чанков
+                    processedFileIds: payload.processedFileIds, 
+                    chunkFileIds: [] // Not used in Sheet strategy
                 })
             });
 
         } catch (e) {
             console.error("Cloud sync error:", e);
-            // Optional: addNotification("Ошибка сохранения в облако", "warning");
         } finally {
             isUploadingRef.current = false;
             setIsSavingToCloud(false); // STOP INDICATOR
@@ -235,8 +221,6 @@ const App: React.FC = () => {
             localStorage.setItem('last_snapshot_version', currentVersion);
             setLastSnapshotVersion(currentVersion);
 
-            // This is now "safe" because uploadToCloudServerSide handles its own errors
-            // and we have visual feedback via isSavingToCloud
             uploadToCloudServerSide(stateToSave);
         } catch (e) {}
     }, [okbRegionCounts, dateRange, lastSnapshotVersion]);
@@ -361,7 +345,6 @@ const App: React.FC = () => {
                      if (remoteMeta.versionHash) {
                          effectiveTargetVersion = remoteMeta.versionHash;
                      }
-                     // ВАЖНО: Сохраняем список обработанных файлов во временную переменную
                      if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
                          fallbackProcessedFiles = remoteMeta.processedFileIds;
                      }
@@ -436,7 +419,6 @@ const App: React.FC = () => {
                         rowsProcessedSoFar = totalRowsProcessed || 0;
                         totalRowsProcessedRef.current = rowsProcessedSoFar;
                         
-                        // Загружаем список уже обработанных файлов из СНИМКА
                         if (processedFileIds) {
                             processedFileIdsRef.current = new Set(processedFileIds);
                             console.log(`Loaded ${processedFileIds.length} processed files from snapshot.`);
@@ -452,14 +434,11 @@ const App: React.FC = () => {
             }
         }
 
-        // --- ВАЖНОЕ ИСПРАВЛЕНИЕ: FALLBACK ДЛЯ СПИСКА ФАЙЛОВ ---
-        // Если снимок не загрузился (например, 404), но у нас есть список файлов из метаданных,
-        // восстанавливаем processedFileIdsRef, чтобы НЕ скачивать эти файлы заново.
+        // FALLBACK: Если снимок не загрузился, но у нас есть список файлов из метаданных
         if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
             console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
             processedFileIdsRef.current = new Set(fallbackProcessedFiles);
         }
-        // ------------------------------------------------------
 
         // Подготовка кэша и воркера
         let cacheData: CoordsCache = {};
@@ -491,7 +470,6 @@ const App: React.FC = () => {
                 totalRowsProcessedRef.current = totalProcessed;
             }
             else if (msg.type === 'CHECKPOINT') {
-                // Автоматическое сохранение каждые N строк (делает воркер)
                 const payload = msg.payload;
                 setAllData(payload.aggregatedData);
                 setAllActiveClients(prev => { const map = new Map(prev.map(c => [c.key, c])); payload.aggregatedData.forEach(r => r.clients.forEach(c => map.set(c.key, c))); return Array.from(map.values()); });
@@ -501,7 +479,6 @@ const App: React.FC = () => {
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, version);
             }
             else if (msg.type === 'result_finished') {
-                // Финальное сохранение после обработки ВСЕХ файлов
                 const payload = msg.payload as WorkerResultPayload;
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(payload.aggregatedData);
@@ -527,7 +504,6 @@ const App: React.FC = () => {
         
         // 3. СКАНИРОВАНИЕ ФАЙЛОВ (ПО ГОДАМ)
         try {
-            // --- FIX #2: Добавили 2026 год в массив ---
             const YEARS_TO_SCAN = ['2025', '2026'];
 
             for (const scanYear of YEARS_TO_SCAN) {
@@ -539,7 +515,6 @@ const App: React.FC = () => {
                 if (allFiles.length === 0) continue;
 
                 for (const file of allFiles) {
-                    // Проверка: обрабатывали ли мы этот файл ранее?
                     if (processedFileIdsRef.current.has(file.id)) {
                         console.log(`Skipping already processed file: ${file.name}`);
                         continue;
@@ -561,7 +536,6 @@ const App: React.FC = () => {
                         const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
                         
                         if (!res.ok) {
-                            // Если вышли за пределы файла - это нормально, завершаем файл
                             if (offset > 0 && (res.status === 400 || res.status === 500)) {
                                  console.log(`File ${file.name} finished (limit reached).`);
                                  hasMore = false; 
@@ -589,8 +563,6 @@ const App: React.FC = () => {
                             offset += CHUNK_SIZE;
                         }
                     }
-                    
-                    // Помечаем файл как обработанный ЛОКАЛЬНО
                     processedFileIdsRef.current.add(file.id);
                 }
             }
@@ -598,8 +570,6 @@ const App: React.FC = () => {
             console.error(error);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи или лимит квот' }));
         } finally {
-            // Сообщаем воркеру, что все файлы кончились. Он соберет итог и вызовет 'result_finished'
-            // В 'result_finished' произойдет финальное сохранение в облако.
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
     }, [okbData, persistToDB, processingState.isProcessing, lastSnapshotVersion]);
@@ -671,8 +641,6 @@ const App: React.FC = () => {
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    // --- ВАЖНО: Загружаем список "исключений" (уже обработанных файлов) прямо из метаданных ---
-                    // Это нужно для того, чтобы знать состояние сервера, даже если мы не будем качать полный снимок.
                     if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) {
                         processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
                     }
@@ -687,14 +655,10 @@ const App: React.FC = () => {
                 }
 
                 // ШАГ 3: Версии совпадают ИЛИ сервер недоступен.
-                // ВАЖНО: Мы все равно запускаем handleStartCloudProcessing, чтобы проверить, 
-                // не появились ли новые файлы, которые еще не попали в снимок.
                 if (localState && localState.allData?.length > 0) {
                     setDbStatus('ready');
                     console.log("Снимок актуален. Проверяем наличие необработанных файлов...");
                     
-                    // ПРИНУДИТЕЛЬНО запускаем докачку файлов
-                    // Функция сама пропустит старые файлы благодаря processedFileIdsRef
                     await handleStartCloudProcessing({ year: '2025' }, localVersion || undefined);
                 } else {
                     // Локально пусто -> начинаем с нуля

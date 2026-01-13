@@ -7,7 +7,7 @@ import {
     deleteAddressFromCache, 
     updateAddressInCache, 
     updateCacheCoords,
-    getGoogleDriveClient
+    getGoogleSheetsClient // Используем существующий клиент
 } from './_lib/sheets.js';
 
 export const config = {
@@ -15,10 +15,9 @@ export const config = {
     api: { bodyParser: false },
 };
 
-const META_FILENAME = 'system_metadata_v2.json'; // v2 чтобы не конфликтовать со старым
-const ROOT_FOLDERS: Record<string, string> = {
-    '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
-};
+// ID таблицы для кэша (из вашего лога/запроса)
+const SPREADSHEET_ID = '1jiC-jbWz6LYpOn1FTuDdlbC7hEevJ8gJkDFwra3shag';
+const SNAPSHOT_SHEET_TITLE = 'System_Snapshot';
 
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
@@ -26,76 +25,77 @@ async function getRawBody(req: VercelRequest): Promise<Buffer> {
     return Buffer.concat(buffers);
 }
 
+// Утилита для создания листа, если его нет
+async function ensureSnapshotSheetExists(sheets: any) {
+    try {
+        await sheets.spreadsheets.get({
+            spreadsheetId: SPREADSHEET_ID,
+            ranges: [SNAPSHOT_SHEET_TITLE]
+        });
+    } catch (e) {
+        try {
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId: SPREADSHEET_ID,
+                requestBody: {
+                    requests: [{ addSheet: { properties: { title: SNAPSHOT_SHEET_TITLE } } }]
+                }
+            });
+        } catch (createError) {
+            // Лист может уже существовать или другая ошибка, игнорируем, если не критично
+            console.error("Sheet creation warning:", createError);
+        }
+    }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
     const action = req.query.action as string;
 
     try {
-        const drive = await getGoogleDriveClient();
-        const rootId = ROOT_FOLDERS['2025'];
+        const sheets = await getGoogleSheetsClient();
 
         if (req.method === 'GET') {
-            // 1. Получить метаданные
+            // 1. Получить метаданные (читаем ячейку B1)
             if (action === 'get-snapshot-meta') {
                 try {
-                    const list = await drive.files.list({
-                        q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
-                        fields: 'files(id)', pageSize: 1
+                    const response = await sheets.spreadsheets.values.get({
+                        spreadsheetId: SPREADSHEET_ID,
+                        range: `'${SNAPSHOT_SHEET_TITLE}'!B1`
                     });
                     
-                    if (list.data.files && list.data.files.length > 0) {
-                        const fileId = list.data.files[0].id;
-                        if (fileId) {
-                            const content = await drive.files.get({ fileId, alt: 'media' });
-                            return res.json(content.data);
-                        }
+                    if (response.data.values && response.data.values.length > 0 && response.data.values[0][0]) {
+                        const meta = JSON.parse(response.data.values[0][0]);
+                        return res.json(meta);
                     }
                     return res.json({ versionHash: 'none' });
                 } catch (e) {
-                    return res.json({ versionHash: 'none', error: (e as Error).message });
+                    return res.json({ versionHash: 'none' });
                 }
             }
 
-            // 2. Скачать снимок (читает список файлов из метаданных и скачивает их)
+            // 2. Скачать данные (читаем всю колонку A)
             if (action === 'get-snapshot') {
-                // Сначала получаем метаданные, чтобы узнать ID файлов-чанков
-                const metaRes = await drive.files.list({
-                    q: `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`,
-                    fields: 'files(id)', pageSize: 1
-                });
-                
-                if (!metaRes.data.files || metaRes.data.files.length === 0) {
-                    return res.status(404).json({ error: 'Meta file not found' });
-                }
-
-                // Читаем сам файл метаданных
-                const fileId = metaRes.data.files[0].id;
-                if (!fileId) return res.status(404).json({ error: 'Meta file ID invalid' });
-
-                const metaContent = await drive.files.get({ fileId, alt: 'media' });
-                const meta = metaContent.data as any;
-
-                if (!meta.chunkFileIds || !Array.isArray(meta.chunkFileIds) || meta.chunkFileIds.length === 0) {
-                    return res.status(404).json({ error: 'No chunks listed in metadata' });
-                }
-
-                // Скачиваем все файлы по списку ID
-                const parts = await Promise.all(meta.chunkFileIds.map(async (fId: string) => {
-                    try {
-                        const resp = await drive.files.get({ fileId: fId, alt: 'media' });
-                        return typeof resp.data === 'object' ? JSON.stringify(resp.data) : String(resp.data);
-                    } catch (e) {
-                        console.error(`Failed to download chunk ${fId}`, e);
-                        return ''; // Skip failed chunk or handle error appropriately
-                    }
-                }));
-
-                const fullJson = parts.join('');
                 try {
-                    return res.json(JSON.parse(fullJson));
+                    const response = await sheets.spreadsheets.values.get({
+                        spreadsheetId: SPREADSHEET_ID,
+                        range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
+                    });
+
+                    if (!response.data.values || response.data.values.length === 0) {
+                        return res.status(404).json({ error: 'Snapshot empty' });
+                    }
+
+                    // Склеиваем строки из колонки A в один JSON
+                    const fullJson = response.data.values.map((row: any) => row[0]).join('');
+                    
+                    try {
+                        return res.json(JSON.parse(fullJson));
+                    } catch (e) {
+                        // Если JSON битый, отдаем как текст для отладки
+                        return res.send(fullJson);
+                    }
                 } catch (e) {
-                    // Fallback if parsing fails (e.g. valid partial data)
-                    return res.send(fullJson);
+                    return res.status(404).json({ error: 'Snapshot sheet not found or empty' });
                 }
             }
             
@@ -114,40 +114,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (raw.length > 0) body = JSON.parse(raw.toString('utf8'));
             } catch (e) { }
 
-            // 3. Инициализация (Ничего не удаляем, просто говорим ОК)
+            // 3. Инициализация: Очищаем лист перед записью новой версии
             if (action === 'init-snapshot') {
+                await ensureSnapshotSheetExists(sheets);
+                await sheets.spreadsheets.values.clear({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `'${SNAPSHOT_SHEET_TITLE}'!A:B` // Чистим данные (A) и метаданные (B)
+                });
                 return res.json({ success: true });
             }
 
-            // 4. Загрузка части (Возвращает ID созданного файла)
+            // 4. Добавление части: Дописываем чанк в новую строку колонки A
             if (action === 'append-snapshot') {
-                const { chunk, partIndex } = body; 
-                const fileName = `snap_chunk_${Date.now()}_${partIndex}.json`;
-                
-                const file = await drive.files.create({
-                    requestBody: { name: fileName, parents: [rootId] },
-                    media: { mimeType: 'application/json', body: chunk },
-                    fields: 'id'
+                const { chunk } = body; 
+                if (!chunk) return res.status(400).json({ error: 'No chunk provided' });
+
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`,
+                    valueInputOption: 'RAW',
+                    requestBody: { values: [[chunk]] }
                 });
-                
-                // Возвращаем ID файла, чтобы клиент его запомнил
-                return res.json({ success: true, fileId: file.data.id });
+                return res.json({ success: true });
             }
 
-            // 5. Финализация: Сохраняем список ID всех загруженных файлов
+            // 5. Финализация: Записываем метаданные в ячейку B1
             if (action === 'save-meta') {
-                const q = `name = '${META_FILENAME}' and '${rootId}' in parents and trashed = false`;
-                const list = await drive.files.list({ q, fields: 'files(id)' });
-                
-                const media = { mimeType: 'application/json', body: JSON.stringify(body) };
-                
-                if (list.data.files && list.data.files.length > 0 && list.data.files[0].id) {
-                    const fileId = list.data.files[0].id;
-                    await drive.files.update({ fileId, media });
-                } else {
-                    await drive.files.create({ requestBody: { name: META_FILENAME, parents: [rootId] }, media });
-                }
-                
+                await sheets.spreadsheets.values.update({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `'${SNAPSHOT_SHEET_TITLE}'!B1`,
+                    valueInputOption: 'RAW',
+                    requestBody: { values: [[JSON.stringify(body)]] }
+                });
                 return res.json({ success: true });
             }
 
