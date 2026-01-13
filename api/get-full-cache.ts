@@ -1,5 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { Buffer } from 'buffer';
 import { 
     getFullCoordsCache, 
     getAddressFromCache, 

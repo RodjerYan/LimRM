@@ -494,7 +494,20 @@ const App: React.FC = () => {
                         </div>
                     )}
                     {activeModule === 'dashboard' && (
-                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
+                        <RMDashboard 
+                            isOpen={true} 
+                            onClose={() => setActiveModule('amp')} 
+                            data={filteredData} 
+                            okbRegionCounts={okbRegionCounts} 
+                            okbData={okbData} 
+                            mode="page" 
+                            metrics={summaryMetrics} 
+                            okbStatus={okbStatus} 
+                            dateRange={dateRange} 
+                            onEditClient={setEditingClient}
+                            onActiveClientsClick={() => setActiveModule('amp')} // Allow navigation back to map
+                            allActiveClients={allActiveClients}
+                        />
                     )}
                     {activeModule === 'prophet' && <Prophet data={filteredData} />}
                     {activeModule === 'agile' && <AgileLearning data={filteredData} />}
