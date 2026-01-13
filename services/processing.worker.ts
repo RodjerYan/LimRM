@@ -73,6 +73,33 @@ const parseCleanFloat = (val: any): number => {
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
+// Helper to parse date into YYYY-MM format
+const parseDateKey = (val: any): string | null => {
+    if (!val) return null;
+    
+    // Excel Serial Date
+    if (typeof val === 'number') {
+        if (val > 20000 && val < 60000) { // Rough check for valid date range (1954 - 2064)
+             const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
+             const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+             return `${dateObj.getFullYear()}-${month}`;
+        }
+        return null;
+    }
+
+    const str = String(val).trim();
+    
+    // ISO-like YYYY-MM-DD or YYYY.MM.DD
+    let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
+    if (match) return `${match[1]}-${match[2]}`;
+
+    // DD.MM.YYYY
+    match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
+    if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
+    
+    return null;
+};
+
 const getCanonicalRegion = (row: any): string => {
     const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
@@ -285,7 +312,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 rm, 
                 city: parsed.city,
                 region: reg, 
-                fact: 0, 
+                fact: 0,
+                monthlyFact: {}, // Init monthly container
                 potential: 0, 
                 growthPotential: 0, 
                 growthPercentage: 0, 
@@ -296,7 +324,14 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const weight = parseCleanFloat(weightRaw);
         
+        // --- DATE PARSING ---
+        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
+        const dateKey = parseDateKey(dateRaw) || 'unknown';
+
         state_aggregatedData[groupKey].fact += weight;
+        
+        if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
+        state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weight;
 
         if (!state_uniquePlottableClients.has(normAddr)) {
             const okb = state_okbCoordIndex.get(normAddr);
@@ -315,6 +350,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 type: channel,
                 originalRow: row, 
                 fact: 0,
+                monthlyFact: {},
                 abcCategory: 'C'
             });
         }
@@ -322,6 +358,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const pt = state_uniquePlottableClients.get(normAddr);
         if (pt) {
             pt.fact = (pt.fact || 0) + weight;
+            if (!pt.monthlyFact) pt.monthlyFact = {};
+            pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weight;
+            
             state_aggregatedData[groupKey].clients.set(normAddr, pt);
         }
     }

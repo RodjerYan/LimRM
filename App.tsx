@@ -48,6 +48,11 @@ const App: React.FC = () => {
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [filteredData, setFilteredData] = useState<AggregatedDataRow[]>([]);
     const [dateRange, setDateRange] = useState<string | undefined>(undefined);
+    
+    // --- DATE FILTER STATE ---
+    const [filterStartDate, setFilterStartDate] = useState<string>('');
+    const [filterEndDate, setFilterEndDate] = useState<string>('');
+
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
     // Храним версию именно СНИМКА (Snapshot), а не исходного файла
@@ -842,19 +847,47 @@ const App: React.FC = () => {
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }, []);
 
+    // --- DATE FILTERING LOGIC ---
+    // Recalculates 'fact' for each row based on the selected date range
+    const dateFilteredData = useMemo(() => {
+        // If dates are not set, return all data as is
+        if (!filterStartDate || !filterEndDate) return allData;
+        
+        return allData.map(row => {
+            if (!row.monthlyFact) return row; // No monthly data? keep original fact or filter out? Keeping original for now to avoid losing non-dated data.
+            
+            let newFact = 0;
+            // Iterate through stored monthly breakdown
+            Object.entries(row.monthlyFact).forEach(([monthKey, val]) => {
+                // Check if monthKey (YYYY-MM) is within range
+                if (monthKey >= filterStartDate && monthKey <= filterEndDate) {
+                    newFact += (val as number);
+                }
+            });
+            
+            // Return row with updated fact.
+            // If newFact is 0, we can either keep it as 0 or filter the row out later.
+            // Here we just update the value. The subsequent filter step handles 0 facts if needed.
+            return { ...row, fact: newFact };
+        }).filter(row => row.fact > 0); // Hide rows with 0 sales in selected period
+    }, [allData, filterStartDate, filterEndDate]);
+
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
         okbData.forEach(row => { if (row.lat && row.lon) okbCoordSet.add(`${row.lat.toFixed(4)},${row.lon.toFixed(4)}`); });
-        return enrichDataWithSmartPlan(allData, okbRegionCounts, 15, okbCoordSet);
-    }, [allData, okbRegionCounts, okbData]);
+        // Apply Smart Plan to the DATE-FILTERED data
+        return enrichDataWithSmartPlan(dateFilteredData, okbRegionCounts, 15, okbCoordSet);
+    }, [dateFilteredData, okbRegionCounts, okbData]); // Depend on dateFilteredData
 
     useEffect(() => { setFilteredData(applyFilters(smartData, filters)); }, [smartData, filters]);
 
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => {
         const baseMetrics = calculateSummaryMetrics(filteredData);
-        return baseMetrics ? { ...baseMetrics, totalActiveClients: allActiveClients.length } : null;
-    }, [filteredData, allActiveClients.length]);
+        // Note: totalActiveClients here is approximation based on unique client keys in the filtered rows.
+        // It won't strictly filter clients who had 0 sales in the period unless their group was removed.
+        return baseMetrics; 
+    }, [filteredData]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
@@ -983,6 +1016,28 @@ const App: React.FC = () => {
                         >
                             <TrashIcon className="w-3 h-3" /> Сброс Кэша
                         </button>
+                        
+                        {/* DATE RANGE FILTER */}
+                        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10 ml-4">
+                            <input 
+                                type="month" 
+                                value={filterStartDate} 
+                                onChange={(e) => setFilterStartDate(e.target.value)} 
+                                className="bg-transparent text-white text-xs border-none focus:ring-0 w-24 p-1 cursor-pointer"
+                                title="Начало периода"
+                            />
+                            <span className="text-gray-500 text-xs font-bold">-</span>
+                            <input 
+                                type="month" 
+                                value={filterEndDate} 
+                                onChange={(e) => setFilterEndDate(e.target.value)} 
+                                className="bg-transparent text-white text-xs border-none focus:ring-0 w-24 p-1 cursor-pointer"
+                                title="Конец периода"
+                            />
+                            {(filterStartDate || filterEndDate) && (
+                                <button onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }} className="text-gray-500 hover:text-white px-2" title="Сбросить даты">×</button>
+                            )}
+                        </div>
                     </div>
                     <div className="flex items-center gap-6">
                          {allActiveClients.length > 0 && (

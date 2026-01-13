@@ -8,6 +8,7 @@ export interface AggregatedDataRow {
     city: string; 
     region: string;
     fact: number;
+    monthlyFact?: Record<string, number>; // Added: Sales volume broken down by month (YYYY-MM)
     potential: number;
     growthPotential: number;
     growthPercentage: number;
@@ -41,6 +42,7 @@ export interface MapPoint {
     geocodingError?: string; // New field: error message from external geocoder
     originalRow: any; // To hold the full original data row for detailed viewing
     fact?: number; // Sales volume for this specific point
+    monthlyFact?: Record<string, number>; // Added: Sales volume broken down by month for this point
     potential?: number; // Potential volume for this specific point
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
     lastUpdated?: number; // Timestamp of the last edit
