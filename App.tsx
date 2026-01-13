@@ -169,8 +169,9 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
+        // FIX: Use await fetch to ensure the request completes or we handle the error
         try {
-            fetch('/api/get-full-cache?action=update-address', {
+            const res = await fetch('/api/get-full-cache?action=update-address', {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
@@ -184,22 +185,49 @@ const App: React.FC = () => {
                     lat: newPoint.lat,
                     lon: newPoint.lon
                 })
-            }).then(res => {
-                if (res.ok) console.log(`Edit saved to cloud: ${newPoint.address}`);
-                else console.warn("Failed to save edit to cloud");
             });
-        } catch (e) { console.error("Network error saving edit:", e); }
+            
+            if (res.ok) {
+                console.log(`Edit saved to cloud: ${newPoint.address}`);
+            } else {
+                console.warn("Failed to save edit to cloud");
+                addNotification("Не удалось сохранить изменения в облаке", 'warning');
+            }
+        } catch (e) {
+            console.error("Network error saving edit:", e);
+            addNotification("Ошибка сети при сохранении", 'error');
+        }
 
         // Debounce persistToDB to prevent overloading the network/browser
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => {
             persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0);
         }, 2000);
-    }, [persistToDB]);
+    }, [persistToDB, addNotification]);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
         if (pollingIntervals.current.has(tempKey)) clearInterval(pollingIntervals.current.get(tempKey));
+        
+        let attempts = 0;
+        const MAX_ATTEMPTS = 30; // 30 attempts * 10 seconds = 5 minutes TTL
+
         const intervalId = setInterval(async () => {
+            attempts++;
+            if (attempts > MAX_ATTEMPTS) {
+                // TTL Exceeded
+                clearInterval(intervalId);
+                pollingIntervals.current.delete(tempKey);
+                addNotification(`Тайм-аут геокодирования: ${address}`, 'warning');
+                // Stop spinning state
+                handleDataUpdate(tempKey, { 
+                    ...basePoint, 
+                    isGeocoding: false, 
+                    geocodingError: 'Тайм-аут ожидания геокодера', 
+                    lastUpdated: Date.now() 
+                });
+                return;
+            }
+
             try {
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
                 if (res.ok) {
