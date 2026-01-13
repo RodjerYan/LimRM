@@ -60,45 +60,50 @@ export const useCloudSync = ({
     const pendingUploadRef = useRef<any>(null);
     const uploadStartTimeRef = useRef<number>(0);
 
-    // Возвращает массив ID файлов (пустой для Google Sheets стратегии),
-    // чтобы соответствовать сигнатуре, ожидаемой в uploadToCloudServerSide
     const performUpload = async (payload: any): Promise<string[]> => {
         try {
-            console.log("Starting upload sequence to Sheets...");
+            console.log("Starting upload sequence to Drive...");
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { 
                 method: 'POST',
                 headers: { 'x-api-key': import.meta.env.VITE_API_SECRET_KEY || '' }
             });
-            if (!initRes.ok) throw new Error('Failed to init snapshot');
+            if (!initRes.ok) throw new Error('Failed to init snapshot folder');
 
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 30_000; 
-            let offset = 0;
-            let chunkIndex = 0;
-            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             
-            while (offset < jsonString.length) {
-                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
-                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
+            // 1.5MB chunk size is safe for Vercel/Drive and much faster than 45KB
+            const CHUNK_SIZE = 1_500_000; 
+            
+            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+            const uploadedFileIds: string[] = [];
+            
+            for (let i = 0; i < totalChunks; i++) {
+                setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
+                const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
                 
-                if (chunkIndex > 0) await new Promise(r => setTimeout(r, 2000)); 
-
+                // NO DELAY NEEDED FOR DRIVE API
+                
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
                         'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
                     },
-                    body: JSON.stringify({ chunk }) 
+                    body: JSON.stringify({ chunk, partIndex: i }) 
                 });
                 
-                if (!res.ok) throw new Error(`Upload failed at chunk ${chunkIndex}`);
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
+                }
                 
-                offset += CHUNK_SIZE;
-                chunkIndex++;
+                const data = await res.json();
+                if (data.fileId) uploadedFileIds.push(data.fileId);
             }
+            
+            console.log('Snapshot uploaded successfully to Drive.');
             setUploadProgress(0);
-            return []; 
+            return uploadedFileIds; 
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -119,14 +124,12 @@ export const useCloudSync = ({
         uploadStartTimeRef.current = Date.now();
 
         try {
-            // FIX: Присваиваем результат переменной fileIds, чтобы она была определена
             let fileIds = await performUpload(payload);
             
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
                 uploadStartTimeRef.current = Date.now();
-                // FIX: Обновляем переменную
                 fileIds = await performUpload(nextPayload);
                 payload = nextPayload;
             }
@@ -142,7 +145,7 @@ export const useCloudSync = ({
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
                     processedFileIds: payload.processedFileIds, 
-                    chunkFileIds: fileIds // Теперь переменная fileIds существует
+                    chunkFileIds: fileIds 
                 })
             });
 
