@@ -94,13 +94,13 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
 // --- SHARED DRIVE SNAPSHOT LOGIC ---
 
 async function getSnapshotFolderId(drive: drive_v3.Drive): Promise<string> {
-    // 1. Check if folder exists in the Shared Drive
-    const q = `name = '${SNAPSHOT_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+    // 1. Check if folder exists INSIDE the provided parent folder (SHARED_DRIVE_ID)
+    // Removed `corpora: 'drive'` and `driveId` to allow standard Folder IDs to work.
+    // Added `'${SHARED_DRIVE_ID}' in parents` to the query.
+    const q = `name = '${SNAPSHOT_FOLDER_NAME}' and '${SHARED_DRIVE_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     
     const res = await callWithRetry(() => drive.files.list({
         q,
-        corpora: 'drive',
-        driveId: SHARED_DRIVE_ID,
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
         fields: 'files(id)'
@@ -110,7 +110,7 @@ async function getSnapshotFolderId(drive: drive_v3.Drive): Promise<string> {
         return res.data.files[0].id!;
     }
     
-    // 2. If not, create it
+    // 2. If not, create it inside the parent
     const newFolder = await callWithRetry(() => drive.files.create({
         requestBody: { 
             name: SNAPSHOT_FOLDER_NAME, 
@@ -131,12 +131,11 @@ export async function initSnapshotDrive(): Promise<void> {
     // Clean up existing files in the folder to start fresh
     let pageToken: string | undefined = undefined;
     do {
+        // Query strictly by parent ID, compatible with all drive types
         const res = await callWithRetry(() => drive.files.list({
             q: `'${folderId}' in parents and trashed = false`,
             fields: 'nextPageToken, files(id)',
             pageToken,
-            corpora: 'drive',
-            driveId: SHARED_DRIVE_ID,
             includeItemsFromAllDrives: true,
             supportsAllDrives: true,
         }), 'listOldSnapshots') as any;
@@ -203,8 +202,6 @@ export async function getSnapshotMetaDrive(): Promise<any> {
         const res = await callWithRetry(() => drive.files.list({
             q: `name = 'meta.json' and '${folderId}' in parents and trashed = false`,
             fields: 'files(id)',
-            corpora: 'drive',
-            driveId: SHARED_DRIVE_ID,
             includeItemsFromAllDrives: true,
             supportsAllDrives: true
         }), 'findMeta') as any;
@@ -243,8 +240,6 @@ export async function getSnapshotDrive(): Promise<any> {
                 q: `name contains 'chunk_' and '${folderId}' in parents and trashed = false`,
                 fields: 'nextPageToken, files(id, name)',
                 pageToken,
-                corpora: 'drive',
-                driveId: SHARED_DRIVE_ID,
                 includeItemsFromAllDrives: true,
                 supportsAllDrives: true,
                 orderBy: 'name'
