@@ -28,20 +28,6 @@ interface UseCloudSyncProps {
     setLastSnapshotVersion: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
-// Helper to slice data into 45k char chunks (safe for Google Sheets cells)
-const prepareUploadPayload = (payload: any) => {
-    const { aggregatedData, ...meta } = payload;
-    const jsonString = JSON.stringify({ aggregatedData });
-    const CHUNK_SIZE = 45000; 
-    const chunks: string[] = [];
-    let offset = 0;
-    while (offset < jsonString.length) {
-        chunks.push(jsonString.slice(offset, offset + CHUNK_SIZE));
-        offset += CHUNK_SIZE;
-    }
-    return { chunks, meta };
-};
-
 export const useCloudSync = ({
     allDataRef,
     unidentifiedRowsRef,
@@ -74,6 +60,77 @@ export const useCloudSync = ({
     const pendingUploadRef = useRef<any>(null);
     const uploadStartTimeRef = useRef<number>(0);
 
+    const performUpload = async (payload: any): Promise<void> => {
+        try {
+            console.log("Starting upload sequence to Drive...");
+            const { aggregatedData, ...meta } = payload;
+            const fullPayload = { aggregatedData, ...meta }; // Ensure full object is stringified
+            
+            // 1. Init (Delete old files)
+            const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { 
+                method: 'POST',
+                headers: { 'x-api-key': import.meta.env.VITE_API_SECRET_KEY || '' }
+            });
+            if (!initRes.ok) throw new Error('Failed to init snapshot folder');
+
+            const jsonString = JSON.stringify(fullPayload);
+            
+            // 2. IMPORTANT: Use 1.5MB chunks. Fast and safe for Drive API.
+            const CHUNK_SIZE = 1_500_000; 
+            
+            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+            let offset = 0;
+            let chunkIndex = 0;
+            
+            while (offset < jsonString.length) {
+                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+                
+                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
+                
+                // 3. NO DELAY. Fire and forget (await response, but no sleep).
+                const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
+                    },
+                    body: JSON.stringify({ chunk, partIndex: chunkIndex }) 
+                });
+                
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
+                }
+                
+                offset += CHUNK_SIZE;
+                chunkIndex++;
+            }
+
+            // 4. Save Metadata (Finalize)
+            await fetch('/api/get-full-cache?action=save-snapshot-meta', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
+                },
+                body: JSON.stringify({ meta: { versionHash: meta.versionHash, processedFileIds: meta.processedFileIds, totalRowsProcessed: meta.totalRowsProcessed } })
+            });
+            
+            console.log('Snapshot uploaded successfully to Drive.');
+            
+            if (meta.versionHash) {
+                setLastSnapshotVersion(meta.versionHash);
+                localStorage.setItem('last_snapshot_version', meta.versionHash);
+            }
+
+        } catch (e) {
+            console.error("Server upload failed:", e);
+            throw e;
+        } finally {
+            setUploadProgress(0);
+        }
+    };
+
     const uploadToCloudServerSide = async (payload: any) => {
         if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
 
@@ -87,45 +144,16 @@ export const useCloudSync = ({
         uploadStartTimeRef.current = Date.now();
 
         try {
-            // Process pending immediately if it exists (skip intermediate states)
             if (pendingUploadRef.current) {
                 payload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
             }
-
-            console.log("Preparing snapshot for Sheets...");
-            const { chunks, meta } = prepareUploadPayload(payload);
-            
-            setUploadProgress(10); // Indicate start
-
-            const res = await fetch('/api/get-full-cache?action=upload-full-snapshot', {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
-                },
-                body: JSON.stringify({ chunks, meta })
-            });
-
-            if (!res.ok) {
-                const errorText = await res.text();
-                throw new Error(`Upload failed: ${errorText}`);
-            }
-
-            setUploadProgress(100);
-            console.log("Snapshot saved successfully to Google Sheets!");
-
-            if (meta.versionHash) {
-                setLastSnapshotVersion(meta.versionHash);
-                localStorage.setItem('last_snapshot_version', meta.versionHash);
-            }
-
+            await performUpload(payload);
         } catch (e) {
             console.error("Cloud sync error:", e);
         } finally {
             isUploadingRef.current = false;
             setIsSavingToCloud(false);
-            setUploadProgress(0);
         }
     };
 
@@ -217,10 +245,10 @@ export const useCloudSync = ({
         let snapshotLoaded = false;
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                // Use new snapshot action
                 const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
+                    // Handle potential nested data structure from drive reading
                     const data = snapshot.data || snapshot; 
 
                     if (data && data.aggregatedData && data.aggregatedData.length > 0) {

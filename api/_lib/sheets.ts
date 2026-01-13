@@ -217,7 +217,7 @@ export async function getSnapshotMetaDrive(): Promise<any> {
         
         return contentRes.data;
     } catch (e) {
-        console.warn("Meta read error:", e);
+        // console.warn("Meta read error:", e);
         return { versionHash: 'none' };
     }
 }
