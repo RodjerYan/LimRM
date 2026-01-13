@@ -311,58 +311,46 @@ const App: React.FC = () => {
         addNotification(`База оптимизирована. Удалено ${mergeModalData.initialCount - mergeModalData.finalCount} дублей.`, 'success');
     }, [mergeModalData, unidentifiedRows, persistToDB, addNotification]);
 
-    useEffect(() => {
-        const timer = setInterval(() => { setIsLiveConnected(false); setTimeout(() => setIsLiveConnected(true), 300); checkCloudChanges(); }, 15000); 
-        if (!isRestoring && dbStatus === 'ready') checkCloudChanges();
-        return () => clearInterval(timer);
-    }, [checkCloudChanges, isRestoring, dbStatus, setIsLiveConnected]);
-
+    // --- ЗАПУСК СИНХРОНИЗАЦИИ ---
     useEffect(() => {
         const initializeApp = async () => {
-            setDbStatus('loading');
-            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с командой...' }));
-            try {
-                const localState = await loadAnalyticsState();
-                let localVersion = null;
-                if (localState && localState.allData?.length > 0) {
-                    setAllData(localState.allData);
-                    setUnidentifiedRows(localState.unidentifiedRows || []);
-                    setOkbRegionCounts(localState.okbRegionCounts || null);
-                    setOkbData(localState.okbData || []);
-                    setOkbStatus(localState.okbStatus || null);
-                    setDateRange(localState.dateRange);
-                    if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
-                    if (localState.versionHash) { localVersion = localState.versionHash; setLastSnapshotVersion(localVersion); localStorage.setItem('last_snapshot_version', localVersion); }
-                    const clientsMap = new Map<string, MapPoint>();
-                    localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                    totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
-                }
-                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-                if (metaRes.ok) {
-                    const serverMeta = await metaRes.json();
-                    if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
-                    if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
-                        console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
-                        await handleStartCloudProcessing({ year: '2025' }, serverMeta.versionHash);
-                        setIsRestoring(false); 
-                        return;
+            if (isRestoring) {
+                setDbStatus('loading');
+                try {
+                    const localState = await loadAnalyticsState();
+                    if (localState && localState.allData?.length > 0) {
+                        setAllData(localState.allData);
+                        setUnidentifiedRows(localState.unidentifiedRows || []);
+                        setOkbRegionCounts(localState.okbRegionCounts || null);
+                        setOkbData(localState.okbData || []);
+                        setOkbStatus(localState.okbStatus || null);
+                        setDateRange(localState.dateRange);
+                        if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
+                        if (localState.versionHash) { 
+                            setLastSnapshotVersion(localState.versionHash); 
+                            localStorage.setItem('last_snapshot_version', localState.versionHash); 
+                        }
+                        if (localState.totalRowsProcessed) totalRowsProcessedRef.current = localState.totalRowsProcessed;
+
+                        const clientsMap = new Map<string, MapPoint>();
+                        localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+                        setAllActiveClients(Array.from(clientsMap.values()));
+                        setDbStatus('ready');
+                    } else {
+                        setDbStatus('empty');
                     }
-                }
-                if (localState && localState.allData?.length > 0) {
-                    setDbStatus('ready');
-                    await handleStartCloudProcessing({ year: '2025' }, localVersion || undefined);
-                } else {
+                } catch (e) {
+                    console.error("Local restore error:", e);
                     setDbStatus('empty');
-                    handleStartCloudProcessing({ year: '2025' });
                 }
-            } catch (e) {
-                console.error("Ошибка инициализации:", e);
-                if (allDataRef.current.length > 0) setDbStatus('ready'); else setDbStatus('empty');
-            } finally { setIsRestoring(false); }
+                
+                setIsRestoring(false); 
+                await handleStartCloudProcessing({ year: '2025' });
+            }
         };
+
         initializeApp();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [isRestoring, handleStartCloudProcessing]);
 
     useEffect(() => { return () => pollingIntervals.current.forEach(clearInterval); }, []);
 
