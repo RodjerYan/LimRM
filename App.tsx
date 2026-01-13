@@ -341,6 +341,12 @@ const App: React.FC = () => {
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
+                    
+                    // FIX: Load totalRowsProcessed from server metadata to restore counter state
+                    if (serverMeta.totalRowsProcessed) {
+                        totalRowsProcessedRef.current = serverMeta.totalRowsProcessed;
+                    }
+
                     if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
                         console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
