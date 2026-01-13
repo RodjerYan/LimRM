@@ -60,6 +60,7 @@ const App: React.FC = () => {
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+    const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Debounce ref
     
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -139,13 +140,11 @@ const App: React.FC = () => {
         
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
-        let finalPoints: MapPoint[] = [];
         
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             const updated = index !== -1 ? [...prev] : [...prev, newPoint];
             if (index !== -1) updated[index] = newPoint;
-            finalPoints = updated;
             return updated;
         });
         
@@ -191,7 +190,11 @@ const App: React.FC = () => {
             });
         } catch (e) { console.error("Network error saving edit:", e); }
 
-        setTimeout(() => persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0), 50);
+        // Debounce persistToDB to prevent overloading the network/browser
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => {
+            persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0);
+        }, 2000);
     }, [persistToDB]);
 
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
@@ -219,13 +222,27 @@ const App: React.FC = () => {
     const handleDeleteClient = useCallback(async (key: string) => {
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
-        let finalPoints: MapPoint[] = [];
-        setAllActiveClients(prev => { finalPoints = prev.filter(c => c.key !== key); return finalPoints; });
-        setAllData(prev => { finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); return finalData; });
-        setUnidentifiedRows(prev => { finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); return finalUnidentified; });
+        
+        setAllActiveClients(prev => prev.filter(c => c.key !== key));
+        
+        setAllData(prev => { 
+            finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); 
+            return finalData; 
+        });
+        
+        setUnidentifiedRows(prev => { 
+            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); 
+            return finalUnidentified; 
+        });
+        
         if (pollingIntervals.current.has(key)) { clearInterval(pollingIntervals.current.get(key)); pollingIntervals.current.delete(key); }
         setEditingClient(null);
-        setTimeout(() => persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0), 50);
+        
+        // Also use debounce for delete to be safe
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => {
+            persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0);
+        }, 2000);
     }, [persistToDB]);
 
     const handleDeduplicate = useCallback(() => {
