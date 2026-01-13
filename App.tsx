@@ -461,16 +461,6 @@ const App: React.FC = () => {
         addNotification(`База оптимизирована. Удалено ${mergeModalData.initialCount - mergeModalData.finalCount} дублей.`, 'success');
     }, [mergeModalData, unidentifiedRows, persistToDB, addNotification]);
 
-
-    const handleHardReset = useCallback(async () => {
-        if (!window.confirm("Вы уверены? Это действие полностью удалит локальные данные и сбросит состояние приложения. Страница будет перезагружена.")) return;
-        await clearAnalyticsState();
-        localStorage.removeItem('last_snapshot_version');
-        localStorage.removeItem('last_sync_version');
-        processedFileIdsRef.current.clear();
-        window.location.reload();
-    }, []);
-
     const fetchWithRetry = async (url: string, retries = 5, backoff = 2000): Promise<Response> => {
         try {
             const res = await fetch(url);
@@ -1035,14 +1025,6 @@ const App: React.FC = () => {
                             ) : (
                                 <><CheckIcon className="w-3 h-3" /> Дублей нет</>
                             )}
-                        </button>
-                        {/* Manual Reset Button */}
-                        <button 
-                            onClick={handleHardReset} 
-                            className="flex items-center gap-2 bg-red-900/20 hover:bg-red-900/40 text-red-400 px-3 py-1.5 rounded-lg border border-red-500/20 transition-all text-xs font-bold ml-4"
-                            title="Сбросить все данные и перезагрузить (Factory Reset)"
-                        >
-                            <TrashIcon className="w-3 h-3" /> Сброс Кэша
                         </button>
                     </div>
                     <div className="flex items-center gap-6">
