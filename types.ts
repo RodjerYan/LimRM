@@ -41,6 +41,7 @@ export interface MapPoint {
     geocodingError?: string; // New field: error message from external geocoder
     originalRow: any; // To hold the full original data row for detailed viewing
     fact?: number; // Sales volume for this specific point
+    potential?: number; // Potential volume for this specific point
     abcCategory?: 'A' | 'B' | 'C'; // Classification based on sales volume
     lastUpdated?: number; // Timestamp of the last edit
     comment?: string; // User comments from Column E

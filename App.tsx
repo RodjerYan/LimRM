@@ -345,6 +345,98 @@ const App: React.FC = () => {
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
     }, [persistToDB]);
 
+    // ФУНКЦИЯ УДАЛЕНИЯ ДУБЛИКАТОВ И ОБЪЕДИНЕНИЯ ОБЪЕМОВ
+    const handleDeduplicate = useCallback(async () => {
+        const countBefore = allActiveClients.length;
+        const msg = `Сейчас ${countBefore} точек. \n\nЭто действие объединит точки с одинаковым Адресом и Каналом продаж, сложив их объемы (кг). \n\nПродолжить?`;
+        
+        if (!window.confirm(msg)) return;
+
+        setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Объединение дубликатов...' }));
+        
+        // Даем UI время отрисовать лоадер
+        await new Promise(r => setTimeout(r, 100));
+
+        const uniqueMap = new Map<string, MapPoint>();
+
+        // 1. Создаем уникальный реестр клиентов (Global Registry)
+        allActiveClients.forEach(client => {
+            // Ключ уникальности: Нормализованный адрес + Тип канала
+            const normAddr = normalizeAddress(client.address);
+            const key = `${normAddr}_${client.type || 'common'}`;
+
+            if (uniqueMap.has(key)) {
+                const existing = uniqueMap.get(key)!;
+                
+                // 1. Суммируем килограммы (fact)
+                existing.fact = (existing.fact || 0) + (client.fact || 0);
+                
+                // 2. Объединяем бренды, чтобы не потерять инфо
+                if (client.brand && existing.brand && !existing.brand.includes(client.brand)) {
+                    existing.brand += `, ${client.brand}`;
+                }
+                
+                // 3. Сохраняем максимальный потенциал
+                existing.potential = Math.max(existing.potential || 0, client.potential || 0);
+                
+                // Приоритет координат
+                if (!existing.lat && client.lat) {
+                    existing.lat = client.lat;
+                    existing.lon = client.lon;
+                }
+                
+            } else {
+                // Если точки еще нет - создаем копию
+                uniqueMap.set(key, { ...client });
+            }
+        });
+
+        const newClients = Array.from(uniqueMap.values());
+        
+        // 4. Обновляем ссылки в allData (чтобы каналы продаж тоже обновились)
+        const clientLookup = new Map<string, MapPoint>();
+        newClients.forEach(c => {
+             const normAddr = normalizeAddress(c.address);
+             const key = `${normAddr}_${c.type || 'common'}`;
+             clientLookup.set(key, c);
+        });
+
+        const newAllData = allData.map(row => {
+            const uniqueGroupClients = new Map<string, MapPoint>();
+            row.clients.forEach(c => {
+                const normAddr = normalizeAddress(c.address);
+                const key = `${normAddr}_${c.type || 'common'}`;
+                const mergedClient = clientLookup.get(key);
+                if (mergedClient) {
+                    uniqueGroupClients.set(key, mergedClient);
+                }
+            });
+            return { ...row, clients: Array.from(uniqueGroupClients.values()) };
+        });
+
+        const countAfter = newClients.length;
+        const removedCount = countBefore - countAfter;
+
+        console.log(`Deduplication: Merged ${removedCount} duplicates.`);
+
+        // Обновляем стейт
+        setAllActiveClients(newClients);
+        setAllData(newAllData);
+        
+        // Сохраняем в базу и облако ОБНОВЛЕННЫЕ данные
+        await persistToDB(newAllData, unidentifiedRows, newClients, totalRowsProcessedRef.current || 0);
+
+        setProcessingState(prev => ({ 
+            ...prev, 
+            isProcessing: false, 
+            message: `Готово! Объединено: ${removedCount} шт.` 
+        }));
+        
+        // Скрываем сообщение через 3 секунды
+        setTimeout(() => setProcessingState(prev => ({ ...prev, message: '' })), 3000);
+
+    }, [allActiveClients, allData, unidentifiedRows, persistToDB]);
+
     const handleHardReset = useCallback(async () => {
         if (!window.confirm("Вы уверены? Это действие полностью удалит локальные данные и сбросит состояние приложения. Страница будет перезагружена.")) return;
         await clearAnalyticsState();
@@ -874,6 +966,15 @@ const App: React.FC = () => {
                                 </span>
                             </div>
                         )}
+                        {/* Кнопка удаления дублей */}
+                        <button 
+                            onClick={handleDeduplicate} 
+                            disabled={allActiveClients.length === 0}
+                            className="flex items-center gap-2 bg-blue-900/20 hover:bg-blue-900/40 text-blue-400 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-all text-xs font-bold ml-2"
+                            title="Найти одинаковые адреса и сложить их показатели"
+                        >
+                            <CheckIcon className="w-3 h-3" /> Объединить ({allActiveClients.length})
+                        </button>
                         {/* Manual Reset Button */}
                         <button 
                             onClick={handleHardReset} 
