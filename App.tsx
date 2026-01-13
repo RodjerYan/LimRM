@@ -120,6 +120,14 @@ const App: React.FC = () => {
                 
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
+                // --- FIX: ЗАДЕРЖКА ДЛЯ GOOGLE SHEETS API (Rate Limiting) ---
+                // Google разрешает 60 записей в минуту. 
+                // Ставим паузу 1.5 секунды между чанками, чтобы не получить бан.
+                if (chunkIndex > 0) {
+                    await new Promise(r => setTimeout(r, 1500)); 
+                }
+                // ----------------------------------------------------------
+
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
