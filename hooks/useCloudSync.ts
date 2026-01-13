@@ -75,11 +75,13 @@ export const useCloudSync = ({
             const CHUNK_SIZE = 1_500_000; 
             
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+            let offset = 0;
+            let chunkIndex = 0;
             const uploadedFileIds: string[] = [];
             
-            for (let i = 0; i < totalChunks; i++) {
-                setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
-                const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+            while (offset < jsonString.length) {
+                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
                 // NO DELAY NEEDED FOR DRIVE API
                 
@@ -89,7 +91,7 @@ export const useCloudSync = ({
                         'Content-Type': 'application/json',
                         'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
                     },
-                    body: JSON.stringify({ chunk, partIndex: i }) 
+                    body: JSON.stringify({ chunk, partIndex: chunkIndex }) 
                 });
                 
                 if (!res.ok) {
@@ -99,6 +101,9 @@ export const useCloudSync = ({
                 
                 const data = await res.json();
                 if (data.fileId) uploadedFileIds.push(data.fileId);
+                
+                offset += CHUNK_SIZE;
+                chunkIndex++;
             }
             
             console.log('Snapshot uploaded successfully to Drive.');

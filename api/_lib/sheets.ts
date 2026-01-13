@@ -7,9 +7,16 @@ const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
 
-// ID Общего диска (Shared Drive). Критически важно для квот и прав доступа.
-const SHARED_DRIVE_ID = process.env.GOOGLE_SHARED_DRIVE_ID; 
-const SNAPSHOT_FOLDER_NAME = 'System_Snapshot_Data_V3';
+// ID of the Shared Drive provided by the user
+// Link: https://drive.google.com/drive/folders/1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ
+const RAW_DRIVE_VAR = process.env.GOOGLE_SHARED_DRIVE_ID || '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
+
+// Automatically extract ID if user provided a full URL
+const SHARED_DRIVE_ID = RAW_DRIVE_VAR.includes('folders/') 
+    ? RAW_DRIVE_VAR.split('folders/')[1].split(/[/?]/)[0] 
+    : RAW_DRIVE_VAR;
+
+const SNAPSHOT_FOLDER_NAME = 'System_Snapshot_Data';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -84,11 +91,10 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
-// --- SHARED DRIVE LOGIC ---
+// --- SHARED DRIVE SNAPSHOT LOGIC ---
 
 async function getSnapshotFolderId(drive: drive_v3.Drive): Promise<string> {
-    if (!SHARED_DRIVE_ID) throw new Error("GOOGLE_SHARED_DRIVE_ID is not configured");
-
+    // 1. Check if folder exists in the Shared Drive
     const q = `name = '${SNAPSHOT_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
     
     const res = await callWithRetry(() => drive.files.list({
@@ -104,11 +110,12 @@ async function getSnapshotFolderId(drive: drive_v3.Drive): Promise<string> {
         return res.data.files[0].id!;
     }
     
+    // 2. If not, create it
     const newFolder = await callWithRetry(() => drive.files.create({
         requestBody: { 
             name: SNAPSHOT_FOLDER_NAME, 
             mimeType: 'application/vnd.google-apps.folder', 
-            parents: [SHARED_DRIVE_ID!] 
+            parents: [SHARED_DRIVE_ID] 
         },
         fields: 'id',
         supportsAllDrives: true
@@ -132,7 +139,7 @@ export async function initSnapshotDrive(): Promise<void> {
             driveId: SHARED_DRIVE_ID,
             includeItemsFromAllDrives: true,
             supportsAllDrives: true,
-        }), 'listOldSnapshots') as any; // Cast to any to avoid TS quirks with drive types
+        }), 'listOldSnapshots') as any;
 
         const files = res.data.files;
         if (files && files.length > 0) {
@@ -152,6 +159,7 @@ export async function appendSnapshotDrive(chunk: string, partIndex: number): Pro
     const drive = await getGoogleDriveClient();
     const folderId = await getSnapshotFolderId(drive);
     
+    // Name files sequentially to ensure correct order during retrieval
     const fileName = `chunk_${String(partIndex).padStart(5, '0')}.json`;
     
     const res = await callWithRetry(() => drive.files.create({
@@ -189,8 +197,6 @@ export async function saveSnapshotMetaDrive(meta: any): Promise<void> {
 
 export async function getSnapshotMetaDrive(): Promise<any> {
     const drive = await getGoogleDriveClient();
-    if (!SHARED_DRIVE_ID) return { versionHash: 'none' };
-
     try {
         const folderId = await getSnapshotFolderId(drive);
         
@@ -221,8 +227,6 @@ export async function getSnapshotMetaDrive(): Promise<any> {
 
 export async function getSnapshotDrive(): Promise<any> {
     const drive = await getGoogleDriveClient();
-    if (!SHARED_DRIVE_ID) return null;
-
     try {
         const folderId = await getSnapshotFolderId(drive);
         
@@ -243,14 +247,14 @@ export async function getSnapshotDrive(): Promise<any> {
                 driveId: SHARED_DRIVE_ID,
                 includeItemsFromAllDrives: true,
                 supportsAllDrives: true,
-                orderBy: 'name' // Ensure correct order
+                orderBy: 'name'
             }), 'listChunks') as any;
             
             if (res.data.files) allFiles.push(...res.data.files);
             pageToken = res.data.nextPageToken;
         } while (pageToken);
         
-        // Sort by name just to be safe (chunk_00000, chunk_00001...)
+        // Sort by name (chunk_00000, chunk_00001...)
         allFiles.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
         // 3. Download and merge
@@ -262,32 +266,11 @@ export async function getSnapshotDrive(): Promise<any> {
             }), `downloadChunk-${f.name}`)
         ));
         
-        // Combine raw data strings. Each chunk is a JSON string of a part of the full object?
-        // Wait, app logic usually saves object chunks.
-        // If we saved { chunk: "..." } in Sheets, we now save raw JSON strings in files.
-        // We assume the frontend passes the FULL structure split into characters.
-        // So concatenating the bodies should reconstruct the full JSON string.
-        
         let fullString = '';
         for (const c of chunks) {
-            // response.data can be an object if axios parses it, or string.
-            // If we uploaded a string, we expect a string back or an object that we need to stringify?
-            // With alt=media on drive.get, if content-type is application/json, axios might auto-parse.
             const part = typeof (c as any).data === 'object' ? JSON.stringify((c as any).data) : (c as any).data;
-            
-            // In appendSnapshotDrive we saved `body: chunk`. `chunk` was a slice of the full JSON string.
-            // However, `drive.files.create` with `mimeType: application/json` might try to parse `chunk` if it looks like JSON, 
-            // but since `chunk` is just a substring (possibly cut in middle of a key), it's just text.
-            // To be safe, we treat it as text.
-            
-            // Correction: If the chunk was just a raw string slice, it might not be valid JSON individually.
-            // We should trust the data comes back as we sent it.
             fullString += String(part);
         }
-        
-        // Handle potential double-parsing if axios was smart
-        // If `chunk` was "{"key": "va" and next was "lue"}", axios can't parse it. It returns string.
-        // Good.
         
         return JSON.parse(fullString);
 
