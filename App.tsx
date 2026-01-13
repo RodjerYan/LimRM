@@ -78,6 +78,7 @@ const App: React.FC = () => {
     
     const isUploadingRef = useRef(false);
     const pendingUploadRef = useRef<any>(null);
+    const uploadStartTimeRef = useRef<number>(0); // Для расчета ETR сохранения
 
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -162,6 +163,7 @@ const App: React.FC = () => {
         
         isUploadingRef.current = true;
         setIsSavingToCloud(true); // START INDICATOR
+        uploadStartTimeRef.current = Date.now(); // Засекаем время старта
 
         try {
             await performUpload(payload);
@@ -170,6 +172,7 @@ const App: React.FC = () => {
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
+                uploadStartTimeRef.current = Date.now(); // Сброс таймера для нового пакета
                 await performUpload(nextPayload);
                 payload = nextPayload;
             }
@@ -726,6 +729,23 @@ const App: React.FC = () => {
         return okbData.filter(okb => !activeAddressesSet.has(normalizeAddress(findAddressInRow(okb))));
     }, [okbData, allActiveClients]);
 
+    // --- ETR CALCULATION (Estimated Time Remaining) ---
+    const uploadETR = useMemo(() => {
+        if (!isSavingToCloud || uploadProgress <= 0 || !uploadStartTimeRef.current) return '';
+        const elapsed = (Date.now() - uploadStartTimeRef.current) / 1000;
+        if (elapsed < 2) return ''; // Calibration...
+        const rate = uploadProgress / elapsed; // % per second
+        if (rate <= 0) return '';
+        const remainingPercent = 100 - uploadProgress;
+        const secondsLeft = remainingPercent / rate;
+        
+        if (!isFinite(secondsLeft) || secondsLeft < 0) return '';
+        
+        const m = Math.floor(secondsLeft / 60);
+        const s = Math.floor(secondsLeft % 60);
+        return ` (~${m}:${s.toString().padStart(2, '0')})`;
+    }, [isSavingToCloud, uploadProgress]); // Re-calculates on progress update
+
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
@@ -746,7 +766,7 @@ const App: React.FC = () => {
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Sync</span>
                             </div>
                             <span className="text-xs font-bold text-white">
-                                {isSavingToCloud ? `Saving ${uploadProgress}%` : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
+                                {isSavingToCloud ? `Saving ${uploadProgress}%${uploadETR}` : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
                             </span>
                         </div>
                         {processingState.isProcessing && (
