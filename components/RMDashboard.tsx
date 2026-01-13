@@ -245,6 +245,9 @@ type RegionBucket = {
     regionListings: number;
 };
 
+// Helper: aggressive normalization for region matching
+const normalizeRegForMatching = (r: string) => r.toLowerCase().replace(/область|край|республика|ао|г\.|город/g, '').replace(/[^а-яa-z]/g, '').trim();
+
 export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange, allActiveClients = [] }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
@@ -279,6 +282,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
+        const okbKeys = Object.keys(globalOkbRegionCounts);
         
         // 1. Calculate Global Benchmarks from ACTIVE (Filtered) Data
         let globalTotalListings = 0; 
@@ -381,10 +385,21 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             
             const originalName = rmData ? rmData.originalName : (rmOriginalNames.get(normRm) || normRm);
             
-            // Calculate Base Potential (Total OKB) from Territory Map
+            // Calculate Base Potential (Total OKB) from Territory Map with Fuzzy Matching
             let rmTotalOkbRaw = 0;
             territoryRegions.forEach(reg => {
-                rmTotalOkbRaw += (globalOkbRegionCounts[reg] || 0);
+                if (!reg || reg === 'Регион не определен') return;
+                // Try exact match first
+                if (globalOkbRegionCounts[reg]) {
+                    rmTotalOkbRaw += globalOkbRegionCounts[reg];
+                } else {
+                    // Try fuzzy match
+                    const nReg = normalizeRegForMatching(reg);
+                    const matchKey = okbKeys.find(k => normalizeRegForMatching(k) === nReg);
+                    if (matchKey) {
+                        rmTotalOkbRaw += globalOkbRegionCounts[matchKey];
+                    }
+                }
             });
 
             // Initialize accumulators
@@ -409,8 +424,15 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     rmTotalMatched += matchedCount; 
                     rmTotalActive += activeCount;
                     
-                    // NOTE: Use the region's OKB count for specific region calculation
-                    let totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
+                    // NOTE: Use the region's OKB count with fuzzy matching
+                    let totalRegionOkb = 0;
+                    if (globalOkbRegionCounts[regionKey]) {
+                        totalRegionOkb = globalOkbRegionCounts[regionKey];
+                    } else {
+                        const nReg = normalizeRegForMatching(regionKey);
+                        const matchKey = okbKeys.find(k => normalizeRegForMatching(k) === nReg);
+                        if (matchKey) totalRegionOkb = globalOkbRegionCounts[matchKey];
+                    }
                     
                     let regionCalculatedPlan = 0; 
                     const regionBrands: PlanMetric[] = [];
@@ -437,7 +459,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 // RM exists but has no active sales in this period.
                 // We still want to list their regions if possible, but data is empty.
                 territoryRegions.forEach(reg => {
-                     const totalRegionOkb = globalOkbRegionCounts[reg] || 0;
+                     let totalRegionOkb = 0;
+                     // Fuzzy match check
+                     if (globalOkbRegionCounts[reg]) totalRegionOkb = globalOkbRegionCounts[reg];
+                     else {
+                         const nReg = normalizeRegForMatching(reg);
+                         const matchKey = okbKeys.find(k => normalizeRegForMatching(k) === nReg);
+                         if (matchKey) totalRegionOkb = globalOkbRegionCounts[matchKey];
+                     }
                      regionMetrics.push({ name: reg, fact: 0, plan: 0, growthPct: 0, marketShare: 0, activeCount: 0, totalCount: totalRegionOkb, brands: [] });
                 });
             }
