@@ -237,14 +237,19 @@ const App: React.FC = () => {
     }, [okbRegionCounts, dateRange, lastSnapshotVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
+        // 1. Очистка старых интервалов (как было)
         if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
             clearInterval(pollingIntervals.current.get(oldKey));
             pollingIntervals.current.delete(oldKey);
         }
+
+        // 2. Обновляем локальный интерфейс мгновенно (Optimistic UI)
         setEditingClient(prev => (prev && 'key' in prev && (prev as MapPoint).key === oldKey ? newPoint : prev));
+        
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
         let finalPoints: MapPoint[] = [];
+        
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             const updated = index !== -1 ? [...prev] : [...prev, newPoint];
@@ -252,6 +257,7 @@ const App: React.FC = () => {
             finalPoints = updated;
             return updated;
         });
+        
         setAllData(prev => {
             finalData = prev.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -264,6 +270,7 @@ const App: React.FC = () => {
             });
             return finalData;
         });
+
         setUnidentifiedRows(prev => {
             finalUnidentified = prev.filter(row => {
                 const rowAddr = normalizeAddress(findAddressInRow(row.rowData));
@@ -271,6 +278,32 @@ const App: React.FC = () => {
             });
             return finalUnidentified;
         });
+
+        // 3. --- НОВОЕ: ОТПРАВЛЯЕМ ИЗМЕНЕНИЕ В ГУГЛ ТАБЛИЦУ (ЛИСТ КОРРЕКЦИЙ) ---
+        // Это происходит в фоне, не блокируя интерфейс
+        try {
+            // Отправляем запрос на сервер
+            fetch('/api/get-full-cache?action=update-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    rmName: newPoint.rm || 'Unknown',
+                    oldAddress: oldKey, // Ключ поиска
+                    newAddress: newPoint.address, // Новые данные
+                    comment: newPoint.comment, // Комментарий
+                    lat: newPoint.lat,
+                    lon: newPoint.lon
+                })
+            }).then(res => {
+                if (res.ok) console.log(`Edit saved to cloud: ${newPoint.address}`);
+                else console.warn("Failed to save edit to cloud");
+            });
+        } catch (e) {
+            console.error("Network error saving edit:", e);
+        }
+        // -------------------------------------------------------------------
+
+        // 4. Сохраняем локальный слепок (как было)
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
     }, [persistToDB]);
 
@@ -753,6 +786,62 @@ const App: React.FC = () => {
         const s = Math.floor(secondsLeft % 60);
         return ` (~${m}м ${s.toString().padStart(2, '0')}с)`;
     }, [isSavingToCloud, uploadProgress]); // Re-calculates on progress update
+
+    // --- АВТО-СИНХРОНИЗАЦИЯ ПРАВОК И КОММЕНТАРИЕВ ---
+    useEffect(() => {
+        const syncEdits = async () => {
+            if (!dbStatus || dbStatus === 'loading') return;
+            try {
+                // 1. Качаем свежий кэш правок с сервера
+                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                if (!res.ok) return;
+                
+                const rawCache: CoordsCache = await res.json();
+                
+                // Flatten the cache map (Record<Region, Entry[]>) into a single lookup Map
+                const flatCache = new Map<string, any>();
+                Object.values(rawCache).flat().forEach((entry: any) => {
+                    if (entry.address) {
+                        flatCache.set(normalizeAddress(entry.address), entry);
+                    }
+                });
+                
+                // 2. Пробегаемся по нашим данным и обновляем их, если в кэше что-то новее
+                setAllActiveClients(prev => {
+                    let hasChanges = false;
+                    const updated = prev.map(client => {
+                        const normAddr = normalizeAddress(client.address);
+                        const serverEntry = flatCache.get(normAddr); // Ищем правку для этого адреса
+                        
+                        // Если на сервере есть правка для этого клиента
+                        if (serverEntry && !serverEntry.isDeleted) {
+                            // Проверяем, отличается ли она от того, что у нас сейчас
+                            if (serverEntry.lat !== client.lat || 
+                                serverEntry.lon !== client.lon || 
+                                serverEntry.comment !== client.comment) {
+                                
+                                hasChanges = true;
+                                return { 
+                                    ...client, 
+                                    lat: serverEntry.lat ?? client.lat,
+                                    lon: serverEntry.lon ?? client.lon,
+                                    comment: serverEntry.comment ?? client.comment, // Подтягиваем коммент
+                                    isGeocoding: false
+                                };
+                            }
+                        }
+                        return client;
+                    });
+                    
+                    return hasChanges ? updated : prev;
+                });
+                
+            } catch (e) { console.error("Auto-sync edits error", e); }
+        };
+
+        const timer = setInterval(syncEdits, 30000); // Проверяем правки каждые 30 сек
+        return () => clearInterval(timer);
+    }, [dbStatus]);
 
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
