@@ -60,11 +60,10 @@ export const useCloudSync = ({
     const pendingUploadRef = useRef<any>(null);
     const uploadStartTimeRef = useRef<number>(0);
 
-    // Возвращает массив ID файлов (пустой для Google Sheets стратегии),
-    // чтобы соответствовать сигнатуре, ожидаемой в uploadToCloudServerSide
+    // Upload using Drive Files (Large Chunks supported)
     const performUpload = async (payload: any): Promise<string[]> => {
         try {
-            console.log("Starting upload sequence to Sheets...");
+            console.log("Starting upload sequence to Drive...");
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { 
                 method: 'POST',
                 headers: { 'x-api-key': import.meta.env.VITE_API_SECRET_KEY || '' }
@@ -72,33 +71,35 @@ export const useCloudSync = ({
             if (!initRes.ok) throw new Error('Failed to init snapshot');
 
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 30_000; 
+            const CHUNK_SIZE = 1_500_000; // 1.5MB chunks are safe for Drive and much faster
             let offset = 0;
             let chunkIndex = 0;
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+            const uploadedFileIds: string[] = [];
             
             while (offset < jsonString.length) {
                 setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
-                if (chunkIndex > 0) await new Promise(r => setTimeout(r, 2000)); 
-
+                // No artificial delay needed for File creation in Shared Drive
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
                         'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
                     },
-                    body: JSON.stringify({ chunk }) 
+                    body: JSON.stringify({ chunk, partIndex: chunkIndex }) 
                 });
                 
                 if (!res.ok) throw new Error(`Upload failed at chunk ${chunkIndex}`);
+                const data = await res.json();
+                if (data.fileId) uploadedFileIds.push(data.fileId);
                 
                 offset += CHUNK_SIZE;
                 chunkIndex++;
             }
             setUploadProgress(0);
-            return []; 
+            return uploadedFileIds; 
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -119,14 +120,12 @@ export const useCloudSync = ({
         uploadStartTimeRef.current = Date.now();
 
         try {
-            // FIX: Присваиваем результат переменной fileIds, чтобы она была определена
             let fileIds = await performUpload(payload);
             
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
                 uploadStartTimeRef.current = Date.now();
-                // FIX: Обновляем переменную
                 fileIds = await performUpload(nextPayload);
                 payload = nextPayload;
             }
@@ -142,7 +141,7 @@ export const useCloudSync = ({
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
                     processedFileIds: payload.processedFileIds, 
-                    chunkFileIds: fileIds // Теперь переменная fileIds существует
+                    chunkFileIds: fileIds // Store references to parts if needed
                 })
             });
 

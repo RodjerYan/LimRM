@@ -38,9 +38,41 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
-// ... (Rest of the file helper functions and MANUAL_BOUNDARIES remain unchanged, skipping to component for brevity)
-// Assuming standard helper functions (fixChukotkaGeoJSON, MANUAL_BOUNDARIES, MapLegend) are here as in original file.
-// Including MapLegend for context.
+// Функция для исправления геометрии Чукотки (сшивание карты на 180 меридиане)
+const fixRussiaGeoJSON = (fc: FeatureCollection): FeatureCollection => {
+    const fixedFeatures = fc.features.map((feature: any) => {
+        const props = feature.properties || {};
+        const name = props.name || props.name_ru || '';
+        
+        // Ищем Чукотку по названию (в разных источниках может быть по-разному)
+        const isChukotka = name.includes('Чукотск') || name.includes('Chukotka');
+
+        if (isChukotka && feature.geometry) {
+            const shiftCoords = (coords: any[]): any[] => {
+                // Если это пара координат [lon, lat]
+                if (typeof coords[0] === 'number') {
+                    let [lon, lat] = coords;
+                    // Если долгота отрицательная (Западное полушарие), сдвигаем ее вправо (+360)
+                    // Это "приклеивает" кусок Аляски обратно к России визуально
+                    if (lon < 0) lon += 360; 
+                    return [lon, lat];
+                }
+                // Рекурсивно проходим по массивам (для Polygon и MultiPolygon)
+                return coords.map(shiftCoords);
+            };
+
+            return {
+                ...feature,
+                geometry: {
+                    ...feature.geometry,
+                    coordinates: shiftCoords(feature.geometry.coordinates)
+                }
+            };
+        }
+        return feature;
+    });
+    return { ...fc, features: fixedFeatures };
+};
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     if (mode === 'pets') {
@@ -158,43 +190,49 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-    // ... (fetchGeoData useEffect omitted for brevity, assume same as original)
     useEffect(() => {
         const fetchGeoData = async () => {
             const CACHE_NAME = 'limkorm-geo-v2';
             const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+            // Используем страны для контекста, но основной фокус на РФ
             const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
 
             try {
                 setIsLoadingGeo(true);
-                let russiaData: any = null, worldData: any = null;
+                let russiaData: any = null;
+                
+                // Пробуем загрузить из кэша
                 if ('caches' in window) {
                     try {
                         const cache = await caches.open(CACHE_NAME);
-                        const [russiaRes, worldRes] = await Promise.all([cache.match(RUSSIA_URL), cache.match(WORLD_URL)]);
-                        if (russiaRes && worldRes) {
-                            russiaData = await russiaRes.json(); worldData = await worldRes.json();
+                        const russiaRes = await cache.match(RUSSIA_URL);
+                        if (russiaRes) {
+                            russiaData = await russiaRes.json();
                             setIsFromCache(true);
                         } else {
-                            const [rNetwork, wNetwork] = await Promise.all([fetch(RUSSIA_URL), fetch(WORLD_URL)]);
-                            if (rNetwork.ok && wNetwork.ok) {
-                                cache.put(RUSSIA_URL, rNetwork.clone()); cache.put(WORLD_URL, wNetwork.clone());
-                                russiaData = await rNetwork.json(); worldData = await wNetwork.json();
+                            const rNetwork = await fetch(RUSSIA_URL);
+                            if (rNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone());
+                                russiaData = await rNetwork.json();
                             }
                         }
                     } catch (e) { console.warn('Cache API error:', e); }
                 }
-                if (!russiaData || !worldData) {
-                    const [rRes, wRes] = await Promise.all([fetch(RUSSIA_URL), fetch(WORLD_URL)]);
-                    russiaData = await rRes.json(); worldData = await wRes.json();
+                
+                if (!russiaData) {
+                    const rRes = await fetch(RUSSIA_URL);
+                    russiaData = await rRes.json();
                 }
-                const finalFeatures = [];
-                // Need to import or define MANUAL_BOUNDARIES and fixChukotkaGeoJSON if not present. 
-                // Assuming they are available in scope from original file.
-                // For this implementation update I will just set valid data.
-                // ... (GeoJSON processing logic)
-                setGeoJsonData({ type: 'FeatureCollection', features: russiaData.features || [] }); // Simplified for snippet
-            } catch (error) { console.error("Error fetching map geometry:", error); } finally { setIsLoadingGeo(false); }
+
+                // ВАЖНО: Исправляем геометрию (Чукотку) перед установкой в стейт
+                const fixedRussiaData = fixRussiaGeoJSON(russiaData);
+                
+                setGeoJsonData(fixedRussiaData);
+            } catch (error) { 
+                console.error("Error fetching map geometry:", error); 
+            } finally { 
+                setIsLoadingGeo(false); 
+            }
         };
         fetchGeoData();
     }, []);
@@ -217,11 +255,38 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         } else { setSearchResults([]); }
     }, [searchTerm, searchableLocations]);
 
-    // ... (getStyleForRegion, resetHighlight, highlightRegion, handleLocationSelect omitted)
     const getStyleForRegion = (feature: any) => {
         const regionName = feature.properties?.name;
         const isSelected = selectedRegions.includes(regionName);
-        return { weight: isSelected ? 2 : 1, opacity: 1, color: isSelected ? '#818cf8' : '#6b7280', fillColor: isSelected ? '#818cf8' : '#111827', fillOpacity: isSelected ? 0.3 : 0.2 };
+        
+        // Dynamic styling based on Overlay Mode
+        let fillColor = isSelected ? '#818cf8' : '#111827';
+        let fillOpacity = isSelected ? 0.3 : 0.2;
+
+        if (overlayMode !== 'sales') {
+            const marketData = getMarketData(regionName);
+            if (overlayMode === 'pets') {
+                const val = marketData.petDensityIndex;
+                fillColor = val > 80 ? '#10b981' : val > 50 ? '#f59e0b' : '#6b7280';
+                fillOpacity = 0.4;
+            } else if (overlayMode === 'competitors') {
+                const val = marketData.competitorDensityIndex;
+                fillColor = val > 80 ? '#ef4444' : val > 50 ? '#f97316' : '#3b82f6';
+                fillOpacity = 0.4;
+            } else if (overlayMode === 'age') {
+                const val = marketData.avgOwnerAge;
+                fillColor = val < 35 ? '#10b981' : val < 45 ? '#f59e0b' : '#8b5cf6';
+                fillOpacity = 0.4;
+            }
+        }
+
+        return { 
+            weight: isSelected ? 2 : 1, 
+            opacity: 1, 
+            color: isSelected ? '#818cf8' : '#6b7280', 
+            fillColor: fillColor, 
+            fillOpacity: fillOpacity 
+        };
     };
     
     const resetHighlight = useCallback(() => {
@@ -254,13 +319,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     useEffect(() => {
         if (mapContainer.current && !mapInstance.current) {
-            // OPTIMIZATION: Enable preferCanvas to render paths and markers on Canvas instead of SVG/DOM
             const map = L.map(mapContainer.current, { 
-                center: [55, 60], 
+                center: [60, 95], // Центр смещен, чтобы видеть всю Россию
                 zoom: 3, 
                 minZoom: 2, 
                 scrollWheelZoom: true, 
-                preferCanvas: true, // <--- ENABLE CANVAS RENDERING
+                preferCanvas: true,
                 worldCopyJump: true, 
                 zoomControl: false, 
                 attributionControl: false 
@@ -320,7 +384,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    // ... (createPopupContent omitted)
     const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
         <div class="popup-inner-content">
             <b>${name}</b><br>${address}<br><small>${type || 'н/д'}</small>
@@ -341,8 +404,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
+                // Если координата отрицательная (на карте Leaflet это может быть слева), нормализуем для отображения справа
+                let lon = tt.lon;
+                if (lon < 0) lon += 360;
+
                 const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
-                const marker = L.circleMarker([tt.lat, tt.lon], {
+                const marker = L.circleMarker([tt.lat, lon], {
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8,
                     pane: 'markersPane'
                 }).bindPopup(popupContent);
@@ -352,8 +419,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         activeClients.forEach(tt => {
             if (tt.lat && tt.lon) {
+                let lon = tt.lon;
+                if (lon < 0) lon += 360;
+
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
-                const marker = L.circleMarker([tt.lat, tt.lon], {
+                const marker = L.circleMarker([tt.lat, lon], {
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9,
                     pane: 'markersPane'
                 }).bindPopup(popupContent);
@@ -367,15 +437,25 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(activeClientMarkersLayer.current, "Активные ТТ");
     }, [potentialClients, activeClients, data, overlayMode]);
     
-    // ... (geoJSON handling effect omitted, same as original)
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !geoJsonData) return;
         if (geoJsonLayer.current) map.removeLayer(geoJsonLayer.current);
+        
         geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
             style: getStyleForRegion,
             onEachFeature: (feature, layer) => {
-               // ... same event handlers as original
+               layer.on({
+                   mouseover: (e) => highlightRegion(e.target),
+                   mouseout: resetHighlight,
+                   click: (e) => {
+                       map.fitBounds(e.target.getBounds());
+                   }
+               });
+               const props = feature.properties;
+               if (props && props.name) {
+                   layer.bindTooltip(props.name, { sticky: true, direction: 'top' });
+               }
             }
         }).addTo(map);
     }, [geoJsonData, selectedRegions, overlayMode, localTheme]);

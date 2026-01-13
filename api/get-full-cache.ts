@@ -8,10 +8,11 @@ import {
     updateAddressInCache, 
     updateCacheCoords,
     getGoogleSheetsClient,
-    saveSnapshot,
-    getSnapshot,
-    initSnapshot,
-    appendSnapshot
+    getSnapshotMetaDrive,
+    getSnapshotDrive,
+    initSnapshotDrive,
+    appendSnapshotDrive,
+    saveSnapshotMetaDrive
 } from './_lib/sheets.js';
 
 export const config = {
@@ -19,30 +20,10 @@ export const config = {
     api: { bodyParser: false },
 };
 
-const SPREADSHEET_ID = '1jiC-jbWz6LYpOn1FTuDdlbC7hEevJ8gJkDFwra3shag';
-const SNAPSHOT_SHEET_TITLE = 'System_Snapshot';
-
 async function getRawBody(req: VercelRequest): Promise<Buffer> {
     const buffers = [];
     for await (const chunk of req) { buffers.push(chunk); }
     return Buffer.concat(buffers);
-}
-
-// Ensure snapshot sheet utility
-async function ensureSnapshotSheetExists(sheets: any) {
-    try {
-        await sheets.spreadsheets.get({
-            spreadsheetId: SPREADSHEET_ID,
-            ranges: [SNAPSHOT_SHEET_TITLE]
-        });
-    } catch (e) {
-        try {
-            await sheets.spreadsheets.batchUpdate({
-                spreadsheetId: SPREADSHEET_ID,
-                requestBody: { requests: [{ addSheet: { properties: { title: SNAPSHOT_SHEET_TITLE } } }] }
-            });
-        } catch (createError) { }
-    }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -50,8 +31,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const action = req.query.action as string;
 
     try {
-        const sheets = await getGoogleSheetsClient();
-
         // --- SECURITY CHECK FOR MUTATIONS ---
         if (req.method === 'POST') {
             const apiKey = req.headers['x-api-key'];
@@ -62,22 +41,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (req.method === 'GET') {
             if (action === 'get-snapshot-meta') {
-                try {
-                    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `'${SNAPSHOT_SHEET_TITLE}'!B1` });
-                    if (response.data.values && response.data.values.length > 0 && response.data.values[0][0]) {
-                        return res.json(JSON.parse(response.data.values[0][0]));
-                    }
-                    return res.json({ versionHash: 'none' });
-                } catch (e) { return res.json({ versionHash: 'none' }); }
+                const meta = await getSnapshotMetaDrive();
+                return res.json(meta);
             }
 
             if (action === 'get-snapshot') {
-                try {
-                    const response = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `'${SNAPSHOT_SHEET_TITLE}'!A:A` });
-                    if (!response.data.values || response.data.values.length === 0) return res.status(404).json({ error: 'Snapshot empty' });
-                    const fullJson = response.data.values.map((row: any) => row[0]).join('');
-                    try { return res.json(JSON.parse(fullJson)); } catch (e) { return res.send(fullJson); }
-                } catch (e) { return res.status(404).json({ error: 'Snapshot not found' }); }
+                const snapshot = await getSnapshotDrive();
+                if (!snapshot) return res.status(404).json({ error: 'Snapshot not found' });
+                return res.json({ data: snapshot });
             }
             
             if (action === 'get-full-cache' || !action) return res.json(await getFullCoordsCache());
@@ -96,20 +67,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             } catch (e) { }
 
             if (action === 'init-snapshot') {
-                await ensureSnapshotSheetExists(sheets);
-                await sheets.spreadsheets.values.clear({ spreadsheetId: SPREADSHEET_ID, range: `'${SNAPSHOT_SHEET_TITLE}'!A:B` });
+                await initSnapshotDrive();
                 return res.json({ success: true });
             }
 
             if (action === 'append-snapshot') {
-                const { chunk } = body; 
+                const { chunk, partIndex } = body; 
                 if (!chunk) return res.status(400).json({ error: 'No chunk' });
-                await sheets.spreadsheets.values.append({ spreadsheetId: SPREADSHEET_ID, range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`, valueInputOption: 'RAW', requestBody: { values: [[chunk]] } });
-                return res.json({ success: true });
+                // We default partIndex to 0 if missing, but it should be provided by client
+                const fileId = await appendSnapshotDrive(chunk, partIndex ?? 0);
+                return res.json({ success: true, fileId });
             }
 
             if (action === 'save-meta') {
-                await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: `'${SNAPSHOT_SHEET_TITLE}'!B1`, valueInputOption: 'RAW', requestBody: { values: [[JSON.stringify(body)]] } });
+                await saveSnapshotMetaDrive(body);
                 return res.json({ success: true });
             }
 
