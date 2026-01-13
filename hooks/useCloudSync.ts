@@ -62,21 +62,23 @@ export const useCloudSync = ({
 
     const performUpload = async (payload: any): Promise<void> => {
         try {
-            console.log("Starting upload sequence to Drive...");
+            console.log("Starting snapshot upload to Google Sheets...");
             const { aggregatedData, ...meta } = payload;
-            const fullPayload = { aggregatedData, ...meta }; // Ensure full object is stringified
             
-            // 1. Init (Delete old files)
+            // Exclude potentially large unnecessary data from snapshot if needed
+            const fullPayload = { aggregatedData, ...meta }; 
+            
+            // 1. Init (Ensure sheet exists and is clear)
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { 
                 method: 'POST',
                 headers: { 'x-api-key': import.meta.env.VITE_API_SECRET_KEY || '' }
             });
-            if (!initRes.ok) throw new Error('Failed to init snapshot folder');
+            if (!initRes.ok) throw new Error('Failed to init snapshot sheet');
 
             const jsonString = JSON.stringify(fullPayload);
             
-            // 2. IMPORTANT: Use 1.5MB chunks. Fast and safe for Drive API.
-            const CHUNK_SIZE = 1_500_000; 
+            // 2. USE SMALL CHUNKS for Sheets Cells (max cell size is 50k chars, use 30k for safety)
+            const CHUNK_SIZE = 30000; 
             
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
@@ -87,7 +89,6 @@ export const useCloudSync = ({
                 
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
-                // 3. NO DELAY. Fire and forget (await response, but no sleep).
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 
@@ -99,14 +100,17 @@ export const useCloudSync = ({
                 
                 if (!res.ok) {
                     const text = await res.text();
-                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
+                    throw new Error(`Upload failed at chunk ${chunkIndex}: ${text.substring(0, 100)}`);
                 }
                 
                 offset += CHUNK_SIZE;
                 chunkIndex++;
+                
+                // Small delay to be gentle with Sheets API rate limits
+                await new Promise(r => setTimeout(r, 300));
             }
 
-            // 4. Save Metadata (Finalize)
+            // 3. Save Metadata (Finalize in Cell B1)
             await fetch('/api/get-full-cache?action=save-snapshot-meta', {
                 method: 'POST',
                 headers: { 
@@ -116,7 +120,7 @@ export const useCloudSync = ({
                 body: JSON.stringify({ meta: { versionHash: meta.versionHash, processedFileIds: meta.processedFileIds, totalRowsProcessed: meta.totalRowsProcessed } })
             });
             
-            console.log('Snapshot uploaded successfully to Drive.');
+            console.log('Snapshot uploaded successfully to Sheets.');
             
             if (meta.versionHash) {
                 setLastSnapshotVersion(meta.versionHash);
@@ -198,13 +202,16 @@ export const useCloudSync = ({
         let effectiveTargetVersion = targetVersion;
         let fallbackProcessedFiles: string[] = [];
 
+        // 1. Get Metadata (Version & Processed Files Fallback)
         if (!effectiveTargetVersion) {
              try {
                  const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                  if(metaRes.ok) {
                      const remoteMeta = await metaRes.json();
                      if (remoteMeta.versionHash) effectiveTargetVersion = remoteMeta.versionHash;
-                     if (remoteMeta.processedFileIds) fallbackProcessedFiles = remoteMeta.processedFileIds;
+                     if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
+                         fallbackProcessedFiles = remoteMeta.processedFileIds;
+                     }
                  }
              } catch(e) { console.error("Failed to check snapshot metadata", e); }
         }
@@ -216,6 +223,7 @@ export const useCloudSync = ({
         if (effectiveTargetVersion) localStorage.setItem('pending_version_hash', effectiveTargetVersion);
         
         if (isVersionMismatch) {
+            console.log("!!! SNAPSHOT MISMATCH: WIPING LOCAL DB & STATE !!!");
             await clearAnalyticsState();
             setAllData([]);
             setUnidentifiedRows([]);
@@ -237,18 +245,18 @@ export const useCloudSync = ({
         setProcessingState(prev => ({ 
             ...prev,
             isProcessing: true, progress: 0, 
-            message: 'Синхронизация...', 
+            message: isBackgroundUpdate ? 'Фоновое обновление...' : (isVersionMismatch ? 'Загрузка новой версии...' : 'Подключение к облаку...'), 
+            fileName: isBackgroundUpdate ? 'Синхронизация' : 'Подключение к облаку', 
             startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
         
-        // Snapshot loading logic
+        // 2. Snapshot loading logic
         let snapshotLoaded = false;
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
                 const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
                 if (snapshotRes.ok) {
                     const snapshot = await snapshotRes.json();
-                    // Handle potential nested data structure from drive reading
                     const data = snapshot.data || snapshot; 
 
                     if (data && data.aggregatedData && data.aggregatedData.length > 0) {
@@ -279,7 +287,9 @@ export const useCloudSync = ({
             } catch (e) { console.warn("Snapshot fetch failed"); }
         }
 
+        // --- CRITICAL FIX: Restore processed files from metadata if snapshot failed ---
         if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
+            console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
             processedFileIdsRef.current = new Set(fallbackProcessedFiles);
         }
 
@@ -357,7 +367,10 @@ export const useCloudSync = ({
                 const allFiles = listRes.ok ? await listRes.json() : [];
                 
                 for (const file of allFiles) {
-                    if (processedFileIdsRef.current.has(file.id)) continue;
+                    if (processedFileIdsRef.current.has(file.id)) {
+                        console.log(`Skipping processed file: ${file.name}`);
+                        continue;
+                    }
                     
                     let offset = 0, hasMore = true, isFirstChunk = true;
                     while (hasMore) {
