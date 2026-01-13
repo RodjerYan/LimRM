@@ -341,12 +341,6 @@ const App: React.FC = () => {
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
-                    
-                    // FIX: Load totalRowsProcessed from server metadata to restore counter state
-                    if (serverMeta.totalRowsProcessed) {
-                        totalRowsProcessedRef.current = serverMeta.totalRowsProcessed;
-                    }
-
                     if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
                         console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
@@ -500,20 +494,7 @@ const App: React.FC = () => {
                         </div>
                     )}
                     {activeModule === 'dashboard' && (
-                        <RMDashboard 
-                            isOpen={true} 
-                            onClose={() => setActiveModule('amp')} 
-                            data={filteredData} 
-                            okbRegionCounts={okbRegionCounts} 
-                            okbData={okbData} 
-                            mode="page" 
-                            metrics={summaryMetrics} 
-                            okbStatus={okbStatus} 
-                            dateRange={dateRange} 
-                            onEditClient={setEditingClient}
-                            onActiveClientsClick={() => setActiveModule('amp')} // Allow navigation back to map
-                            allActiveClients={allActiveClients}
-                        />
+                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
                     )}
                     {activeModule === 'prophet' && <Prophet data={filteredData} />}
                     {activeModule === 'agile' && <AgileLearning data={filteredData} />}

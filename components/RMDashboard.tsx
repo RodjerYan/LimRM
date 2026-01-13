@@ -230,7 +230,6 @@ interface RMDashboardProps {
     onActiveClientsClick?: () => void;
     onEditClient?: (client: MapPoint) => void;
     dateRange?: string;
-    allActiveClients?: MapPoint[];
 }
 
 type RegionBucket = {
@@ -245,7 +244,7 @@ type RegionBucket = {
     regionListings: number;
 };
 
-export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange, allActiveClients = [] }) => {
+export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data, okbRegionCounts, okbData, mode = 'modal', metrics, okbStatus, onActiveClientsClick, onEditClient, dateRange }) => {
     const [baseRate, setBaseRate] = useState(15);
     const [selectedRMForAnalysis, setSelectedRMForAnalysis] = useState<RMMetrics | null>(null);
     const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
@@ -272,6 +271,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
     const [regionSearch, setRegionSearch] = useState('');
     
+    // Idea 10: Gamification State
     const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
 
     const currentYear = new Date().getFullYear();
@@ -279,23 +279,12 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const metricsData = useMemo<RMMetrics[]>(() => {
         const globalOkbRegionCounts = okbRegionCounts || {};
-        
-        // 1. Calculate Global Benchmarks from ACTIVE (Filtered) Data
-        let globalTotalListings = 0; 
-        let globalTotalVolume = 0; 
-        const allUniqueClientKeys = new Set<string>();
-        data.forEach(row => { 
-            globalTotalVolume += row.fact; 
-            globalTotalListings += row.clients.length; 
-            row.clients.forEach(c => allUniqueClientKeys.add(c.key)); 
-        });
+        let globalTotalListings = 0; let globalTotalVolume = 0; const allUniqueClientKeys = new Set<string>();
+        data.forEach(row => { globalTotalVolume += row.fact; globalTotalListings += row.clients.length; row.clients.forEach(c => allUniqueClientKeys.add(c.key)); });
         const globalTotalUniqueClients = allUniqueClientKeys.size;
         const globalAvgSkuPerClient = globalTotalUniqueClients > 0 ? globalTotalListings / globalTotalUniqueClients : 0;
         const globalAvgSalesPerSku = globalTotalListings > 0 ? globalTotalVolume / globalTotalListings : 0;
-        
-        // 2. Prepare Coordinate Sets for OKB Matching
-        const globalOkbCoordSet = new Set<string>(); 
-        const globalOkbAddressSet = new Set<string>();
+        const globalOkbCoordSet = new Set<string>(); const globalOkbAddressSet = new Set<string>();
         if (okbRegionCounts !== null && okbData.length > 0) {
             okbData.forEach(row => {
                 if (row.lat && row.lon && !isNaN(row.lat) && !isNaN(row.lon)) globalOkbCoordSet.add(`${row.lat.toFixed(4)},${row.lon.toFixed(4)}`);
@@ -303,180 +292,51 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 if (addr) globalOkbAddressSet.add(normalizeAddress(addr));
             });
         }
-
-        // 3. Define Territories from ALL HISTORY (allActiveClients)
-        // This ensures "Base Potential" is calculated correctly even if there are no active sales in the selected period.
-        const rmTerritoryMap = new Map<string, Set<string>>(); // NormRM -> Set of Regions
-        const rmOriginalNames = new Map<string, string>(); // NormRM -> Display Name
-
-        allActiveClients.forEach(client => {
-            const rmName = client.rm || 'Не указан';
-            const normRm = normalizeRmNameForMatching(rmName);
-            const region = client.region || 'Регион не определен';
-            
-            if (!rmTerritoryMap.has(normRm)) rmTerritoryMap.set(normRm, new Set());
-            rmTerritoryMap.get(normRm)!.add(region);
-            
-            if (!rmOriginalNames.has(normRm)) rmOriginalNames.set(normRm, rmName);
-        });
-
-        // 4. Aggregate Active Sales Data (Filtered)
         const rmBuckets = new Map<string, { originalName: string; regions: Map<string, RegionBucket>; totalFact: number; countA: number; countB: number; countC: number; factA: number; factB: number; factC: number; uniqueClientKeys: Set<string>; totalListings: number; }>();
-        
         data.forEach(row => {
-            const rmName = row.rm || 'Не указан'; 
-            const normRm = normalizeRmNameForMatching(rmName); 
-            const regionKey = row.region || 'Регион не определен';
-            
-            // Ensure bucket exists
+            const rmName = row.rm || 'Не указан'; const normRm = normalizeRmNameForMatching(rmName); const regionKey = row.region || 'Регион не определен';
             if (!rmBuckets.has(normRm)) rmBuckets.set(normRm, { originalName: rmName, regions: new Map(), totalFact: 0, countA: 0, countB: 0, countC: 0, factA: 0, factB: 0, factC: 0, uniqueClientKeys: new Set(), totalListings: 0 });
-            const rmBucket = rmBuckets.get(normRm)!; 
-            
-            rmBucket.totalFact += row.fact; 
-            rmBucket.totalListings += row.clients.length;
-            
-            if (row.clients) row.clients.forEach(c => { 
-                rmBucket.uniqueClientKeys.add(c.key); 
-                const clientFact = c.fact || 0; 
-                if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.factA += clientFact; } 
-                else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } 
-                else { rmBucket.countC++; rmBucket.factC += clientFact; } 
-            });
-            
+            const rmBucket = rmBuckets.get(normRm)!; rmBucket.totalFact += row.fact; rmBucket.totalListings += row.clients.length;
+            if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
             if (!rmBucket.regions.has(regionKey)) rmBucket.regions.set(regionKey, { fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map<string, number>(), brandClientCounts: new Map<string, number>(), brandRows: new Map<string, AggregatedDataRow[]>(), originalRegionName: row.region, regionListings: 0 });
-            const regBucket = rmBucket.regions.get(regionKey)!; 
-            
-            regBucket.fact += row.fact; 
-            regBucket.potential += row.potential || 0; 
-            regBucket.regionListings += row.clients.length;
-            
-            if (row.clients) row.clients.forEach(c => { 
-                regBucket.activeClients.add(c.key); 
-                let isMatch = false; 
-                if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) { 
-                    if (globalOkbCoordSet.has(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`)) isMatch = true; 
-                } 
-                if (!isMatch && globalOkbAddressSet.has(normalizeAddress(c.address))) isMatch = true; 
-                if (isMatch) regBucket.matchedOkbCoords.add(c.key); 
-            });
-            
-            const brandName = row.brand || 'No Brand'; 
-            regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact); 
-            regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
-            if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []); 
-            regBucket.brandRows.get(brandName)!.push(row);
+            const regBucket = rmBucket.regions.get(regionKey)!; regBucket.fact += row.fact; regBucket.potential += row.potential || 0; regBucket.regionListings += row.clients.length;
+            if (row.clients) row.clients.forEach(c => { regBucket.activeClients.add(c.key); let isMatch = false; if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) { if (globalOkbCoordSet.has(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`)) isMatch = true; } if (!isMatch && globalOkbAddressSet.has(normalizeAddress(c.address))) isMatch = true; if (isMatch) regBucket.matchedOkbCoords.add(c.key); });
+            const brandName = row.brand || 'No Brand'; regBucket.brandFacts.set(brandName, (regBucket.brandFacts.get(brandName) || 0) + row.fact); regBucket.brandClientCounts.set(brandName, (regBucket.brandClientCounts.get(brandName) || 0) + row.clients.length);
+            if (!regBucket.brandRows.has(brandName)) regBucket.brandRows.set(brandName, []); regBucket.brandRows.get(brandName)!.push(row);
         });
-
         const resultMetrics: RMMetrics[] = [];
-
-        // 5. Final Assembly: Iterate ALL KNOWN RMs (from allActiveClients)
-        // If an RM has no active sales in the period, they still appear if they have a territory.
-        // We prioritize the Active Data bucket if it exists, otherwise use empty stats.
-        
-        const allKnownRms = new Set([...rmTerritoryMap.keys(), ...rmBuckets.keys()]);
-
-        allKnownRms.forEach((normRm) => {
-            const territoryRegions = rmTerritoryMap.get(normRm) || new Set();
-            const rmData = rmBuckets.get(normRm); // Might be undefined if 0 sales
-            
-            const originalName = rmData ? rmData.originalName : (rmOriginalNames.get(normRm) || normRm);
-            
-            // Calculate Base Potential (Total OKB) from Territory Map
-            let rmTotalOkbRaw = 0;
-            territoryRegions.forEach(reg => {
-                rmTotalOkbRaw += (globalOkbRegionCounts[reg] || 0);
+        rmBuckets.forEach((rmData) => {
+            const regionMetrics: PlanMetric[] = []; const brandAggregates = new Map<string, { fact: number, plan: number }>();
+            let rmTotalOkbRaw = 0; let rmTotalMatched = 0; let rmTotalActive = 0; let rmTotalCalculatedPlan = 0;
+            const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
+            const rmGlobalAvgVelocity = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
+            const rmAvgSkuPerClient = rmUniqueClientsCount > 0 ? rmData.totalListings / rmUniqueClientsCount : 0;
+            rmData.regions.forEach((regData, regionKey) => {
+                const activeCount = regData.activeClients.size; const matchedCount = regData.matchedOkbCoords.size;
+                rmTotalMatched += matchedCount; rmTotalActive += activeCount;
+                let totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
+                rmTotalOkbRaw += totalRegionOkb;
+                let regionCalculatedPlan = 0; const regionBrands: PlanMetric[] = [];
+                regData.brandFacts.forEach((bFact: number, bName: string) => {
+                    const bClientCount = regData.brandClientCounts.get(bName) || 0; const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
+                    const calculationResult = PlanningEngine.calculateRMPlan({ totalFact: bFact, totalPotential: totalRegionOkb, matchedCount: matchedCount, activeCount: activeCount, totalRegionOkb: totalRegionOkb, avgSku: 1, avgVelocity: bVelocity, rmGlobalVelocity: rmGlobalAvgVelocity }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
+                    let bRate = bFact === 0 && calculationResult.plan > 0 ? 100 : calculationResult.growthPct;
+                    const bPlan = bFact * (1 + bRate / 100); regionCalculatedPlan += bPlan;
+                    regionBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bRate, factors: calculationResult.factors, details: calculationResult.details, packagingDetails: regData.brandRows.get(bName) || [] });
+                    if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 }); const agg = brandAggregates.get(bName)!; agg.fact += bFact; agg.plan += bPlan;
+                });
+                regionBrands.sort((a, b) => b.fact - a.fact); rmTotalCalculatedPlan += regionCalculatedPlan;
+                const regionGrowthPct = regData.fact > 0 ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100 : (regionCalculatedPlan > 0 ? 100 : 0);
+                const marketShare = (activeCount + Math.max(0, totalRegionOkb - matchedCount)) > 0 ? (activeCount / (activeCount + Math.max(0, totalRegionOkb - matchedCount))) * 100 : NaN;
+                regionMetrics.push({ name: regionKey, fact: regData.fact, plan: regionCalculatedPlan, growthPct: regionGrowthPct, marketShare, activeCount: activeCount, totalCount: totalRegionOkb, brands: regionBrands });
             });
-
-            // Initialize accumulators
-            const regionMetrics: PlanMetric[] = []; 
-            const brandAggregates = new Map<string, { fact: number, plan: number }>();
-            let rmTotalMatched = 0; 
-            let rmTotalActive = 0; 
-            let rmTotalCalculatedPlan = 0;
-            let rmTotalFact = 0;
-            
-            // If we have active sales data, process it
-            if (rmData) {
-                rmTotalFact = rmData.totalFact;
-                
-                const rmUniqueClientsCount = rmData.uniqueClientKeys.size;
-                const rmGlobalAvgVelocity = rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0;
-                
-                rmData.regions.forEach((regData, regionKey) => {
-                    const activeCount = regData.activeClients.size; 
-                    const matchedCount = regData.matchedOkbCoords.size;
-                    
-                    rmTotalMatched += matchedCount; 
-                    rmTotalActive += activeCount;
-                    
-                    // NOTE: Use the region's OKB count for specific region calculation
-                    let totalRegionOkb = globalOkbRegionCounts[regionKey] || 0;
-                    
-                    let regionCalculatedPlan = 0; 
-                    const regionBrands: PlanMetric[] = [];
-                    
-                    regData.brandFacts.forEach((bFact: number, bName: string) => {
-                        const bClientCount = regData.brandClientCounts.get(bName) || 0; 
-                        const bVelocity = bClientCount > 0 ? bFact / bClientCount : 0;
-                        const calculationResult = PlanningEngine.calculateRMPlan({ totalFact: bFact, totalPotential: totalRegionOkb, matchedCount: matchedCount, activeCount: activeCount, totalRegionOkb: totalRegionOkb, avgSku: 1, avgVelocity: bVelocity, rmGlobalVelocity: rmGlobalAvgVelocity }, { baseRate: baseRate, globalAvgSku: globalAvgSkuPerClient, globalAvgSales: globalAvgSalesPerSku, riskLevel: 'low' });
-                        let bRate = bFact === 0 && calculationResult.plan > 0 ? 100 : calculationResult.growthPct;
-                        const bPlan = bFact * (1 + bRate / 100); regionCalculatedPlan += bPlan;
-                        regionBrands.push({ name: bName, fact: bFact, plan: bPlan, growthPct: bRate, factors: calculationResult.factors, details: calculationResult.details, packagingDetails: regData.brandRows.get(bName) || [] });
-                        if (!brandAggregates.has(bName)) brandAggregates.set(bName, { fact: 0, plan: 0 }); const agg = brandAggregates.get(bName)!; agg.fact += bFact; agg.plan += bPlan;
-                    });
-                    
-                    regionBrands.sort((a, b) => b.fact - a.fact); 
-                    rmTotalCalculatedPlan += regionCalculatedPlan;
-                    
-                    const regionGrowthPct = regData.fact > 0 ? ((regionCalculatedPlan - regData.fact) / regData.fact) * 100 : (regionCalculatedPlan > 0 ? 100 : 0);
-                    const marketShare = (activeCount + Math.max(0, totalRegionOkb - matchedCount)) > 0 ? (activeCount / (activeCount + Math.max(0, totalRegionOkb - matchedCount))) * 100 : NaN;
-                    
-                    regionMetrics.push({ name: regionKey, fact: regData.fact, plan: regionCalculatedPlan, growthPct: regionGrowthPct, marketShare, activeCount: activeCount, totalCount: totalRegionOkb, brands: regionBrands });
-                });
-            } else {
-                // RM exists but has no active sales in this period.
-                // We still want to list their regions if possible, but data is empty.
-                territoryRegions.forEach(reg => {
-                     const totalRegionOkb = globalOkbRegionCounts[reg] || 0;
-                     regionMetrics.push({ name: reg, fact: 0, plan: 0, growthPct: 0, marketShare: 0, activeCount: 0, totalCount: totalRegionOkb, brands: [] });
-                });
-            }
-
             const brandMetrics: PlanMetric[] = Array.from(brandAggregates.entries()).map(([name, val]) => ({ name, fact: val.fact, plan: val.plan, growthPct: val.fact > 0 ? ((val.plan - val.fact) / val.fact) * 100 : 0 })).sort((a, b) => b.plan - a.plan);
-            
-            const effectiveGrowthPct = rmTotalFact > 0 ? ((rmTotalCalculatedPlan - rmTotalFact) / rmTotalFact) * 100 : baseRate;
-            
-            // Market Share calculation using FULL territory potential vs Active Matches
-            const rmTotalUniverse = rmTotalActive + Math.max(0, rmTotalOkbRaw - rmTotalMatched); 
-            const weightedShare = rmTotalUniverse > 0 ? (rmTotalActive / rmTotalUniverse) * 100 : 0;
-
-            const rmUniqueClientsCount = rmData ? rmData.uniqueClientKeys.size : 0;
-            
-            resultMetrics.push({ 
-                rmName: originalName, 
-                totalClients: rmUniqueClientsCount, // ACTIVE count (filtered)
-                totalOkbCount: rmTotalOkbRaw, // BASE count (from territory map)
-                totalFact: rmTotalFact, 
-                marketShare: weightedShare, 
-                countA: rmData ? rmData.countA : 0, 
-                countB: rmData ? rmData.countB : 0, 
-                countC: rmData ? rmData.countC : 0, 
-                factA: rmData ? rmData.factA : 0, 
-                factB: rmData ? rmData.factB : 0, 
-                factC: rmData ? rmData.factC : 0, 
-                recommendedGrowthPct: effectiveGrowthPct, 
-                nextYearPlan: rmTotalCalculatedPlan, 
-                regions: regionMetrics.sort((a, b) => b.fact - a.fact), 
-                brands: brandMetrics, 
-                avgSkuPerClient: rmData ? (rmData.uniqueClientKeys.size > 0 ? rmData.totalListings / rmData.uniqueClientKeys.size : 0) : 0, 
-                avgSalesPerSku: rmData ? (rmData.totalListings > 0 ? rmData.totalFact / rmData.totalListings : 0) : 0, 
-                globalAvgSku: globalAvgSkuPerClient, 
-                globalAvgSalesSku: globalAvgSalesPerSku 
-            } as unknown as RMMetrics);
+            const effectiveGrowthPct = rmData.totalFact > 0 ? ((rmTotalCalculatedPlan - rmData.totalFact) / rmData.totalFact) * 100 : baseRate;
+            const rmTotalUniverse = rmTotalActive + Math.max(0, rmTotalOkbRaw - rmTotalMatched); const weightedShare = rmTotalUniverse > 0 ? (rmTotalActive / rmTotalUniverse) * 100 : NaN;
+            resultMetrics.push({ rmName: rmData.originalName, totalClients: rmUniqueClientsCount, totalOkbCount: rmTotalOkbRaw, totalFact: rmData.totalFact, marketShare: weightedShare, countA: rmData.countA, countB: rmData.countB, countC: rmData.countC, factA: rmData.factA, factB: rmData.factB, factC: rmData.factC, recommendedGrowthPct: effectiveGrowthPct, nextYearPlan: rmTotalCalculatedPlan, regions: regionMetrics.sort((a, b) => b.fact - a.fact), brands: brandMetrics, avgSkuPerClient: rmAvgSkuPerClient, avgSalesPerSku: rmGlobalAvgVelocity, globalAvgSku: globalAvgSkuPerClient, globalAvgSalesSku: globalAvgSalesPerSku } as unknown as RMMetrics);
         });
-        
         return resultMetrics.sort((a, b) => b.totalFact - a.totalFact);
-    }, [data, okbRegionCounts, okbData, baseRate, allActiveClients]);
+    }, [data, okbRegionCounts, okbData, baseRate]);
 
     const handleAnalyzePackaging = (row: any) => {
         if (packagingAbortController.current) packagingAbortController.current.abort();
@@ -630,7 +490,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                             <td className="px-4 py-3 text-gray-500">{isExpanded ? '▲' : '▼'}</td>
                                             <td className="px-4 py-3 font-medium text-white truncate max-w-[200px]">{rm.rmName}</td>
                                             <td className="px-4 py-3 text-center font-mono text-white whitespace-nowrap">{formatNum(rm.totalFact)}</td>
-                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white" title="Активные ТТ за выбранный период">{rm.totalClients}</span><span className="mx-1">/</span><span title="Всего доступно в базе (ОКБ)">{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
+                                            <td className="px-4 py-3 text-center font-mono text-gray-400 whitespace-nowrap"><span className="text-white">{rm.totalClients}</span><span className="mx-1">/</span><span>{rm.totalOkbCount > 0 ? formatNum(rm.totalOkbCount) : '?'}</span></td>
                                             <td className="px-4 py-3 text-center align-middle"><div className="flex flex-col items-center justify-center w-full"><div className={`text-xs font-bold font-mono mb-1 ${shareValue === null ? 'text-yellow-300' : (shareValue >= 90 ? 'text-emerald-400' : (shareValue < 40 ? 'text-yellow-400' : 'text-indigo-300'))}`}>{shareValue === null ? '—' : `${covered.toFixed(0)}%`}</div>{shareValue !== null && (<div className="w-24 h-1.5 bg-gray-700/50 rounded-full overflow-hidden flex"><div className="h-full bg-emerald-500" style={{ width: `${covered}%` }}></div></div>)}</div></td>
                                             <td className={`px-4 py-3 text-center font-mono ${skuMetric < globalSku * 0.8 ? 'text-amber-400' : (skuMetric > globalSku * 1.2 ? 'text-emerald-400' : 'text-gray-300')}`}>{skuMetric.toFixed(2)}</td>
                                             <td className={`px-4 py-3 text-center font-mono ${salesMetric < globalSales * 0.8 ? 'text-amber-400' : (salesMetric > globalSales * 1.2 ? 'text-emerald-400' : 'text-gray-300')}`}>{formatNum(salesMetric)}</td>
