@@ -601,7 +601,15 @@ const App: React.FC = () => {
     }, [isRestoring, processingState.isProcessing, okbStatus, lastSnapshotVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
-        const timer = setInterval(checkCloudChanges, 60000); 
+        // Проверяем облако каждые 15 секунд (ускорено по запросу)
+        const timer = setInterval(() => {
+            // Легкий визуальный эффект, что "связь есть" - пульс
+            setIsLiveConnected(false);
+            setTimeout(() => setIsLiveConnected(true), 300);
+            
+            checkCloudChanges();
+        }, 15000); 
+
         if (!isRestoring && dbStatus === 'ready') {
             checkCloudChanges();
         }
@@ -743,7 +751,7 @@ const App: React.FC = () => {
         
         const m = Math.floor(secondsLeft / 60);
         const s = Math.floor(secondsLeft % 60);
-        return ` (~${m}:${s.toString().padStart(2, '0')})`;
+        return ` (~${m}м ${s.toString().padStart(2, '0')}с)`;
     }, [isSavingToCloud, uploadProgress]); // Re-calculates on progress update
 
     return (
@@ -766,7 +774,7 @@ const App: React.FC = () => {
                                 <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Cloud Sync</span>
                             </div>
                             <span className="text-xs font-bold text-white">
-                                {isSavingToCloud ? `Saving ${uploadProgress}%${uploadETR}` : (isLiveConnected ? 'Live: 60s Polling' : 'Disconnected')}
+                                {isSavingToCloud ? `Saving ${uploadProgress}%${uploadETR}` : (isLiveConnected ? 'Live: 15s Polling' : 'Disconnected')}
                             </span>
                         </div>
                         {processingState.isProcessing && (
