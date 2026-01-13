@@ -174,7 +174,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
     
-    const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
+    // Используем Ref для доступа к актуальной функции в замыканиях
     const onEditClientRef = useRef(onEditClient);
 
     const highlightedLayer = useRef<L.Layer | null>(null);
@@ -237,7 +237,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         fetchGeoData();
     }, []);
 
-    useEffect(() => { activeClientsDataRef.current = activeClients; }, [activeClients]);
     useEffect(() => { onEditClientRef.current = onEditClient; }, [onEditClient]);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
@@ -347,23 +346,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             
             legend.addTo(map);
             map.on('click', resetHighlight);
-
-            map.on('popupopen', (e) => {
-                const popupNode = e.popup.getElement();
-                if (popupNode) {
-                    const editBtn = popupNode.querySelector('.edit-location-btn');
-                    if (editBtn) {
-                        editBtn.addEventListener('click', (event) => {
-                            event.stopPropagation();
-                            const key = editBtn.getAttribute('data-key');
-                            if (key) {
-                                const client = activeClientsDataRef.current.find(c => c.key === key);
-                                if (client) { setIsFullscreen(false); onEditClientRef.current(client); }
-                            }
-                        });
-                    }
-                }
-            });
         }
         return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
     }, []); 
@@ -384,15 +366,45 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
-        <div class="popup-inner-content">
-            <b>${name}</b><br>${address}<br><small>${type || 'н/д'}</small>
-            ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-            <button class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2" data-key="${key}">
-                Редактировать
-            </button>
-        </div>
-    `;
+    // Creating popup content as a DOM element for event safety
+    const createPopupContent = (tt: MapPoint) => {
+        const container = document.createElement('div');
+        container.className = 'popup-inner-content';
+        
+        const title = document.createElement('b');
+        title.textContent = tt.name;
+        container.appendChild(title);
+        
+        container.appendChild(document.createElement('br'));
+        const addr = document.createTextNode(tt.address);
+        container.appendChild(addr);
+        
+        container.appendChild(document.createElement('br'));
+        const typeSmall = document.createElement('small');
+        typeSmall.textContent = tt.type || 'н/д';
+        container.appendChild(typeSmall);
+
+        if (tt.contacts) {
+            const hr = document.createElement('hr');
+            hr.style.margin = '5px 0';
+            container.appendChild(hr);
+            const contactSmall = document.createElement('small');
+            contactSmall.textContent = `Контакты: ${tt.contacts}`;
+            container.appendChild(contactSmall);
+        }
+
+        const btn = document.createElement('button');
+        btn.className = 'edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2';
+        btn.textContent = 'Редактировать';
+        btn.onclick = (e) => {
+            e.stopPropagation(); // Stop propagation to map click
+            setIsFullscreen(false);
+            onEditClientRef.current(tt);
+        };
+        
+        container.appendChild(btn);
+        return container;
+    };
     
     useEffect(() => {
         const map = mapInstance.current;
@@ -404,15 +416,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         potentialClients.forEach(tt => {
             if (tt.lat && tt.lon) {
-                // Если координата отрицательная (на карте Leaflet это может быть слева), нормализуем для отображения справа
                 let lon = tt.lon;
                 if (lon < 0) lon += 360;
 
-                const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
+                const popupHtml = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                 const marker = L.circleMarker([tt.lat, lon], {
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8,
                     pane: 'markersPane'
-                }).bindPopup(popupContent);
+                }).bindPopup(popupHtml);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
@@ -422,11 +433,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 let lon = tt.lon;
                 if (lon < 0) lon += 360;
 
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
+                // Create popup as DOM element with attached event listener
+                const popupNode = createPopupContent(tt);
+                
                 const marker = L.circleMarker([tt.lat, lon], {
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9,
                     pane: 'markersPane'
-                }).bindPopup(popupContent);
+                }).bindPopup(popupNode);
+                
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
             }
