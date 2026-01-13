@@ -17,6 +17,7 @@ import DetailsModal from './components/DetailsModal';
 import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import MergeOverlay from './components/MergeOverlay';
 
 import { 
     AggregatedDataRow, 
@@ -96,6 +97,14 @@ const App: React.FC = () => {
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); 
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
+
+    // --- MERGE ANIMATION STATE ---
+    const [mergeModalData, setMergeModalData] = useState<{
+        initialCount: number;
+        finalCount: number;
+        newClients: MapPoint[];
+        newAllData: AggregatedDataRow[];
+    } | null>(null);
 
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
@@ -350,55 +359,42 @@ const App: React.FC = () => {
         setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
     }, [persistToDB]);
 
-    // ФУНКЦИЯ УДАЛЕНИЯ ДУБЛИКАТОВ И ОБЪЕДИНЕНИЯ ОБЪЕМОВ
-    const handleDeduplicate = useCallback(async () => {
-        const countBefore = allActiveClients.length;
-        const msg = `Сейчас ${countBefore} точек. \n\nЭто действие объединит точки с одинаковым Адресом и Каналом продаж, сложив их объемы (кг). \n\nПродолжить?`;
-        
-        if (!window.confirm(msg)) return;
-
-        setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Объединение дубликатов...' }));
-        
-        // Даем UI время отрисовать лоадер
-        await new Promise(r => setTimeout(r, 100));
-
+    // ФУНКЦИЯ УДАЛЕНИЯ ДУБЛИКАТОВ И ОБЪЕДИНЕНИЯ ОБЪЕМОВ (С АНИМАЦИЕЙ)
+    const handleDeduplicate = useCallback(() => {
+        // 1. Prepare Data (Calculate what will happen)
         const uniqueMap = new Map<string, MapPoint>();
 
-        // 1. Создаем уникальный реестр клиентов (Global Registry)
         allActiveClients.forEach(client => {
-            // Ключ уникальности: Нормализованный адрес + Тип канала
             const normAddr = normalizeAddress(client.address);
             const key = `${normAddr}_${client.type || 'common'}`;
 
             if (uniqueMap.has(key)) {
                 const existing = uniqueMap.get(key)!;
-                
-                // 1. Суммируем килограммы (fact)
+                // Merge logic
                 existing.fact = (existing.fact || 0) + (client.fact || 0);
-                
-                // 2. Объединяем бренды, чтобы не потерять инфо
                 if (client.brand && existing.brand && !existing.brand.includes(client.brand)) {
                     existing.brand += `, ${client.brand}`;
                 }
-                
-                // 3. Сохраняем максимальный потенциал
                 existing.potential = Math.max(existing.potential || 0, client.potential || 0);
-                
-                // Приоритет координат
+                // Keep best coordinates
                 if (!existing.lat && client.lat) {
                     existing.lat = client.lat;
                     existing.lon = client.lon;
                 }
-                
             } else {
-                // Если точки еще нет - создаем копию
                 uniqueMap.set(key, { ...client });
             }
         });
 
         const newClients = Array.from(uniqueMap.values());
         
-        // 4. Обновляем ссылки в allData (чтобы каналы продаж тоже обновились)
+        // Skip if no duplicates
+        if (newClients.length === allActiveClients.length) {
+            addNotification('Дубликатов не найдено', 'info');
+            return;
+        }
+
+        // Prepare aggregated data
         const clientLookup = new Map<string, MapPoint>();
         newClients.forEach(c => {
              const normAddr = normalizeAddress(c.address);
@@ -419,28 +415,31 @@ const App: React.FC = () => {
             return { ...row, clients: Array.from(uniqueGroupClients.values()) };
         });
 
-        const countAfter = newClients.length;
-        const removedCount = countBefore - countAfter;
+        // 2. Open Animation Modal with Prepared Data
+        setMergeModalData({
+            initialCount: allActiveClients.length,
+            finalCount: newClients.length,
+            newClients: newClients,
+            newAllData: newAllData
+        });
 
-        console.log(`Deduplication: Merged ${removedCount} duplicates.`);
+    }, [allActiveClients, allData, addNotification]);
 
-        // Обновляем стейт
-        setAllActiveClients(newClients);
-        setAllData(newAllData);
+    // Callback for when animation finishes
+    const handleMergeComplete = useCallback(async () => {
+        if (!mergeModalData) return;
+
+        // 3. Commit Data
+        setAllActiveClients(mergeModalData.newClients);
+        setAllData(mergeModalData.newAllData);
         
-        // Сохраняем в базу и облако ОБНОВЛЕННЫЕ данные
-        await persistToDB(newAllData, unidentifiedRows, newClients, totalRowsProcessedRef.current || 0);
-
-        setProcessingState(prev => ({ 
-            ...prev, 
-            isProcessing: false, 
-            message: `Готово! Объединено: ${removedCount} шт.` 
-        }));
+        await persistToDB(mergeModalData.newAllData, unidentifiedRows, mergeModalData.newClients, totalRowsProcessedRef.current || 0);
         
-        // Скрываем сообщение через 3 секунды
-        setTimeout(() => setProcessingState(prev => ({ ...prev, message: '' })), 3000);
+        // Reset Modal
+        setMergeModalData(null);
+        addNotification(`База оптимизирована. Удалено ${mergeModalData.initialCount - mergeModalData.finalCount} дублей.`, 'success');
+    }, [mergeModalData, unidentifiedRows, persistToDB, addNotification]);
 
-    }, [allActiveClients, allData, unidentifiedRows, persistToDB]);
 
     const handleHardReset = useCallback(async () => {
         if (!window.confirm("Вы уверены? Это действие полностью удалит локальные данные и сбросит состояние приложения. Страница будет перезагружена.")) return;
@@ -1016,28 +1015,6 @@ const App: React.FC = () => {
                         >
                             <TrashIcon className="w-3 h-3" /> Сброс Кэша
                         </button>
-                        
-                        {/* DATE RANGE FILTER */}
-                        <div className="flex items-center gap-2 bg-white/5 p-1 rounded-lg border border-white/10 ml-4">
-                            <input 
-                                type="month" 
-                                value={filterStartDate} 
-                                onChange={(e) => setFilterStartDate(e.target.value)} 
-                                className="bg-transparent text-white text-xs border-none focus:ring-0 w-24 p-1 cursor-pointer"
-                                title="Начало периода"
-                            />
-                            <span className="text-gray-500 text-xs font-bold">-</span>
-                            <input 
-                                type="month" 
-                                value={filterEndDate} 
-                                onChange={(e) => setFilterEndDate(e.target.value)} 
-                                className="bg-transparent text-white text-xs border-none focus:ring-0 w-24 p-1 cursor-pointer"
-                                title="Конец периода"
-                            />
-                            {(filterStartDate || filterEndDate) && (
-                                <button onClick={() => { setFilterStartDate(''); setFilterEndDate(''); }} className="text-gray-500 hover:text-white px-2" title="Сбросить даты">×</button>
-                            )}
-                        </div>
                     </div>
                     <div className="flex items-center gap-6">
                          {allActiveClients.length > 0 && (
@@ -1072,6 +1049,10 @@ const App: React.FC = () => {
                             uploadedData={allData}
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
+                            startDate={filterStartDate} // PASSING START DATE
+                            endDate={filterEndDate}     // PASSING END DATE
+                            onStartDateChange={setFilterStartDate} // PASSING SETTER
+                            onEndDateChange={setFilterEndDate}     // PASSING SETTER
                         />
                     )}
                     {activeModule === 'amp' && (
@@ -1111,6 +1092,17 @@ const App: React.FC = () => {
                     onStartPolling={handleStartPolling} 
                     onDelete={handleDeleteClient}
                     globalTheme="dark"
+                />
+            )}
+            
+            {/* NEW: Merge Animation Overlay */}
+            {mergeModalData && (
+                <MergeOverlay 
+                    isOpen={!!mergeModalData}
+                    initialCount={mergeModalData.initialCount}
+                    finalCount={mergeModalData.finalCount}
+                    onComplete={handleMergeComplete}
+                    onCancel={() => setMergeModalData(null)}
                 />
             )}
         </div>

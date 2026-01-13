@@ -5,7 +5,7 @@ import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
 import Modal from '../Modal';
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams, MapPoint } from '../../types';
-import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon } from '../icons';
+import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon, TrendingUpIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
@@ -24,6 +24,12 @@ interface AdaptaProps {
     uploadedData?: AggregatedDataRow[]; 
     dbStatus?: 'empty' | 'ready' | 'loading';
     onStartEdit?: (client: MapPoint) => void;
+    
+    // NEW: Date Props
+    startDate: string;
+    endDate: string;
+    onStartDateChange: (date: string) => void;
+    onEndDateChange: (date: string) => void;
 }
 
 interface OutlierItem {
@@ -31,6 +37,99 @@ interface OutlierItem {
     zScore: number;
     reason: string;
 }
+
+// --- SUB-COMPONENT: DATE RANGE CONTROL ---
+const DateRangeControl: React.FC<{
+    startDate: string;
+    endDate: string;
+    onStartDateChange: (d: string) => void;
+    onEndDateChange: (d: string) => void;
+    disabled: boolean;
+}> = ({ startDate, endDate, onStartDateChange, onEndDateChange, disabled }) => {
+    
+    // Quick presets handler
+    const setPreset = (type: '2025' | '2026' | 'q1' | 'reset') => {
+        if (type === 'reset') {
+            onStartDateChange('');
+            onEndDateChange('');
+        } else if (type === '2025') {
+            onStartDateChange('2025-01');
+            onEndDateChange('2025-12');
+        } else if (type === '2026') {
+            onStartDateChange('2026-01');
+            onEndDateChange('2026-12');
+        } else if (type === 'q1') {
+            const y = new Date().getFullYear();
+            onStartDateChange(`${y}-01`);
+            onEndDateChange(`${y}-03`);
+        }
+    };
+
+    return (
+        <div className="relative group">
+            <div className="absolute -inset-0.5 bg-gradient-to-r from-orange-600 to-amber-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
+            <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
+                
+                {/* Header */}
+                <div className="flex items-center gap-4 mb-6">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 text-white font-bold shadow-lg shadow-orange-500/30 ring-2 ring-white/10">
+                        3
+                    </div>
+                    <div>
+                        <h2 className="text-lg font-bold text-white leading-tight">Настройка Периода</h2>
+                        <p className="text-xs text-gray-400">Фильтрация данных по времени</p>
+                    </div>
+                </div>
+
+                {/* Inputs Row */}
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="space-y-1">
+                        <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider ml-1">Начало</label>
+                        <div className="relative">
+                            <input 
+                                type="month" 
+                                value={startDate}
+                                onChange={(e) => onStartDateChange(e.target.value)}
+                                disabled={disabled}
+                                className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
+                            />
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider ml-1">Конец</label>
+                        <div className="relative">
+                            <input 
+                                type="month" 
+                                value={endDate}
+                                onChange={(e) => onEndDateChange(e.target.value)}
+                                disabled={disabled}
+                                className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="flex flex-wrap gap-2">
+                    <button onClick={() => setPreset('2025')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">2025</button>
+                    <button onClick={() => setPreset('2026')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">2026</button>
+                    <button onClick={() => setPreset('q1')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">Q1 Текущий</button>
+                    {(startDate || endDate) && (
+                        <button onClick={() => setPreset('reset')} disabled={disabled} className="ml-auto px-3 py-1.5 text-orange-400 hover:text-orange-300 text-xs font-bold transition-colors disabled:opacity-50">Сбросить</button>
+                    )}
+                </div>
+
+                {/* Visual Feedback */}
+                {startDate && endDate && startDate > endDate && (
+                    <div className="mt-3 text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/20 text-center">
+                        Ошибка: Дата начала позже даты конца
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
@@ -182,7 +281,17 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         </div>
 
                         <OKBManagement onStatusChange={props.onOkbStatusChange} onDataChange={props.onOkbDataChange} status={props.okbStatus} disabled={props.disabled} />
+                        
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
+                        
+                        {/* NEW DATE RANGE BLOCK */}
+                        <DateRangeControl 
+                            startDate={props.startDate} 
+                            endDate={props.endDate} 
+                            onStartDateChange={props.onStartDateChange} 
+                            onEndDateChange={props.onEndDateChange}
+                            disabled={props.disabled}
+                        />
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
