@@ -60,7 +60,9 @@ export const useCloudSync = ({
     const pendingUploadRef = useRef<any>(null);
     const uploadStartTimeRef = useRef<number>(0);
 
-    const performUpload = async (payload: any): Promise<void> => {
+    // Возвращает массив ID файлов (пустой для Google Sheets стратегии),
+    // чтобы соответствовать сигнатуре, ожидаемой в uploadToCloudServerSide
+    const performUpload = async (payload: any): Promise<string[]> => {
         try {
             console.log("Starting upload sequence to Sheets...");
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { 
@@ -70,7 +72,7 @@ export const useCloudSync = ({
             if (!initRes.ok) throw new Error('Failed to init snapshot');
 
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 45_000;
+            const CHUNK_SIZE = 30_000; 
             let offset = 0;
             let chunkIndex = 0;
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
@@ -79,7 +81,7 @@ export const useCloudSync = ({
                 setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
-                if (chunkIndex > 0) await new Promise(r => setTimeout(r, 1500)); 
+                if (chunkIndex > 0) await new Promise(r => setTimeout(r, 2000)); 
 
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
@@ -96,6 +98,7 @@ export const useCloudSync = ({
                 chunkIndex++;
             }
             setUploadProgress(0);
+            return []; 
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -116,15 +119,19 @@ export const useCloudSync = ({
         uploadStartTimeRef.current = Date.now();
 
         try {
-            await performUpload(payload);
+            // FIX: Присваиваем результат переменной fileIds, чтобы она была определена
+            let fileIds = await performUpload(payload);
+            
             while (pendingUploadRef.current) {
                 const nextPayload = pendingUploadRef.current;
                 pendingUploadRef.current = null;
                 uploadStartTimeRef.current = Date.now();
-                await performUpload(nextPayload);
+                // FIX: Обновляем переменную
+                fileIds = await performUpload(nextPayload);
                 payload = nextPayload;
             }
 
+            console.log("Финализация: сохранение метаданных версии...");
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 
@@ -135,7 +142,7 @@ export const useCloudSync = ({
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
                     processedFileIds: payload.processedFileIds, 
-                    chunkFileIds: [] 
+                    chunkFileIds: fileIds // Теперь переменная fileIds существует
                 })
             });
 

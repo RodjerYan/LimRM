@@ -362,37 +362,7 @@ const App: React.FC = () => {
         const m = Math.floor(secondsLeft / 60);
         const s = Math.floor(secondsLeft % 60);
         return ` (~${m}м ${s.toString().padStart(2, '0')}с)`;
-    }, [isSavingToCloud, uploadProgress, uploadStartTimeRef]); // Ensure uploadStartTimeRef is in deps if used, or assume stable
-
-    useEffect(() => {
-        const syncEdits = async () => {
-            if (!dbStatus || dbStatus === 'loading') return;
-            try {
-                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                if (!res.ok) return;
-                const rawCache = await res.json();
-                const flatCache = new Map<string, any>();
-                Object.values(rawCache).flat().forEach((entry: any) => { if (entry.address) flatCache.set(normalizeAddress(entry.address), entry); });
-                setAllActiveClients(prev => {
-                    let hasChanges = false;
-                    const updated = prev.map(client => {
-                        const normAddr = normalizeAddress(client.address);
-                        const serverEntry = flatCache.get(normAddr);
-                        if (serverEntry && !serverEntry.isDeleted) {
-                            if (serverEntry.lat !== client.lat || serverEntry.lon !== client.lon || serverEntry.comment !== client.comment) {
-                                hasChanges = true;
-                                return { ...client, lat: serverEntry.lat ?? client.lat, lon: serverEntry.lon ?? client.lon, comment: serverEntry.comment ?? client.comment, isGeocoding: false };
-                            }
-                        }
-                        return client;
-                    });
-                    return hasChanges ? updated : prev;
-                });
-            } catch (e) { console.error("Auto-sync edits error", e); }
-        };
-        const timer = setInterval(syncEdits, 30000);
-        return () => clearInterval(timer);
-    }, [dbStatus]);
+    }, [isSavingToCloud, uploadProgress, uploadStartTimeRef]);
 
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
