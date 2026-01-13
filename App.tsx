@@ -109,6 +109,28 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
+    // --- CALCULATE DUPLICATES COUNT ---
+    const duplicatesCount = useMemo(() => {
+        if (allActiveClients.length === 0) return 0;
+        
+        const uniqueKeys = new Set<string>();
+        let duplicates = 0;
+
+        allActiveClients.forEach(client => {
+            const normAddr = normalizeAddress(client.address);
+            // Unique Key: Normalized Address + Sales Channel
+            const key = `${normAddr}_${client.type || 'common'}`;
+            
+            if (uniqueKeys.has(key)) {
+                duplicates++;
+            } else {
+                uniqueKeys.add(key);
+            }
+        });
+        
+        return duplicates;
+    }, [allActiveClients]);
+
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
@@ -361,6 +383,11 @@ const App: React.FC = () => {
 
     // ФУНКЦИЯ УДАЛЕНИЯ ДУБЛИКАТОВ И ОБЪЕДИНЕНИЯ ОБЪЕМОВ (С АНИМАЦИЕЙ)
     const handleDeduplicate = useCallback(() => {
+        if (duplicatesCount === 0) {
+            addNotification('Дубликатов не найдено. База оптимизирована.', 'info');
+            return;
+        }
+
         // 1. Prepare Data (Calculate what will happen)
         const uniqueMap = new Map<string, MapPoint>();
 
@@ -388,12 +415,6 @@ const App: React.FC = () => {
 
         const newClients = Array.from(uniqueMap.values());
         
-        // Skip if no duplicates
-        if (newClients.length === allActiveClients.length) {
-            addNotification('Дубликатов не найдено', 'info');
-            return;
-        }
-
         // Prepare aggregated data
         const clientLookup = new Map<string, MapPoint>();
         newClients.forEach(c => {
@@ -423,7 +444,7 @@ const App: React.FC = () => {
             newAllData: newAllData
         });
 
-    }, [allActiveClients, allData, addNotification]);
+    }, [allActiveClients, allData, addNotification, duplicatesCount]);
 
     // Callback for when animation finishes
     const handleMergeComplete = useCallback(async () => {
@@ -998,14 +1019,22 @@ const App: React.FC = () => {
                                 </span>
                             </div>
                         )}
-                        {/* Кнопка удаления дублей */}
+                        {/* Кнопка удаления дублей с точным счетчиком */}
                         <button 
                             onClick={handleDeduplicate} 
-                            disabled={allActiveClients.length === 0}
-                            className="flex items-center gap-2 bg-blue-900/20 hover:bg-blue-900/40 text-blue-400 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-all text-xs font-bold ml-2"
-                            title="Найти одинаковые адреса и сложить их показатели"
+                            disabled={duplicatesCount === 0}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ml-2 ${
+                                duplicatesCount > 0 
+                                    ? 'bg-blue-900/20 hover:bg-blue-900/40 text-blue-400 border-blue-500/20 cursor-pointer' 
+                                    : 'bg-gray-800/20 text-gray-500 border-gray-700/20 cursor-not-allowed opacity-50'
+                            }`}
+                            title={duplicatesCount > 0 ? "Найти одинаковые адреса и сложить их показатели" : "Дубликатов не найдено"}
                         >
-                            <CheckIcon className="w-3 h-3" /> Объединить ({allActiveClients.length})
+                            {duplicatesCount > 0 ? (
+                                <><CheckIcon className="w-3 h-3" /> Объединить ({duplicatesCount})</>
+                            ) : (
+                                <><CheckIcon className="w-3 h-3" /> Дублей нет</>
+                            )}
                         </button>
                         {/* Manual Reset Button */}
                         <button 
