@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import L from 'leaflet';
+import * as XLSX from 'xlsx';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -16,7 +18,6 @@ import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import MergeOverlay from './components/MergeOverlay';
-import Presentation from './components/modules/Presentation';
 
 import { 
     AggregatedDataRow, 
@@ -24,16 +25,20 @@ import {
     FilterState, 
     NotificationMessage, 
     OkbStatus, 
+    SummaryMetrics,
     OkbDataRow,
     MapPoint,
     UnidentifiedRow,
-    CloudLoadParams
+    FileProcessingState,
+    WorkerMessage,
+    CoordsCache,
+    CloudLoadParams,
+    WorkerResultPayload
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { LoaderIcon, CheckIcon } from './components/icons';
+import { LoaderIcon, CheckIcon, ErrorIcon, TrashIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
-import { loadAnalyticsState } from './utils/db';
-import { useCloudSync } from './hooks/useCloudSync';
+import { saveAnalyticsState, loadAnalyticsState, clearAnalyticsState } from './utils/db';
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -51,17 +56,36 @@ const App: React.FC = () => {
 
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     
+    // Храним версию именно СНИМКА (Snapshot), а не исходного файла
     const [lastSnapshotVersion, setLastSnapshotVersion] = useState<string | null>(localStorage.getItem('last_snapshot_version'));
+    
+    const [isLiveConnected, setIsLiveConnected] = useState(false);
+    const [isSavingToCloud, setIsSavingToCloud] = useState(false); 
+    const [uploadProgress, setUploadProgress] = useState(0); // Progress for saving
     const [isRestoring, setIsRestoring] = useState(true);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
+
+    const [processingState, setProcessingState] = useState<FileProcessingState>({
+        isProcessing: false,
+        progress: 0,
+        message: 'Система готова',
+        fileName: null,
+        backgroundMessage: null,
+        startTime: null,
+        totalRowsProcessed: 0
+    });
     
     const totalRowsProcessedRef = useRef<number>(0);
-    const processedFileIdsRef = useRef<Set<string>>(new Set());
+    const processedFileIdsRef = useRef<Set<string>>(new Set()); // New Ref to track files in memory
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
+    const workerRef = useRef<Worker | null>(null);
     const pollingIntervals = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
-    const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // Debounce ref
     
+    const isUploadingRef = useRef(false);
+    const pendingUploadRef = useRef<any>(null);
+    const uploadStartTimeRef = useRef<number>(0); // Для расчета ETR сохранения
+
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     const [okbRegionCounts, setOkbRegionCounts] = useState<{ [key: string]: number } | null>(null);
@@ -74,6 +98,7 @@ const App: React.FC = () => {
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null); 
     const [flyToClientKey, setFlyToClientKey] = useState<string | null>(null);
 
+    // --- MERGE ANIMATION STATE ---
     const [mergeModalData, setMergeModalData] = useState<{
         initialCount: number;
         finalCount: number;
@@ -84,67 +109,188 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
+    // --- CALCULATE DUPLICATES COUNT ---
+    const duplicatesCount = useMemo(() => {
+        if (allActiveClients.length === 0) return 0;
+        
+        const uniqueKeys = new Set<string>();
+        let duplicates = 0;
+
+        allActiveClients.forEach(client => {
+            const normAddr = normalizeAddress(client.address);
+            // Unique Key: Normalized Address + Sales Channel
+            const key = `${normAddr}_${client.type || 'common'}`;
+            
+            if (uniqueKeys.has(key)) {
+                duplicates++;
+            } else {
+                uniqueKeys.add(key);
+            }
+        });
+        
+        return duplicates;
+    }, [allActiveClients]);
+
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- HOOK: CLOUD SYNC ---
-    const {
-        isLiveConnected,
-        setIsLiveConnected,
-        isSavingToCloud,
-        uploadProgress,
-        processingState,
-        setProcessingState,
-        handleStartCloudProcessing,
-        checkCloudChanges,
-        persistToDB,
-        uploadStartTimeRef
-    } = useCloudSync({
-        allDataRef,
-        unidentifiedRowsRef,
-        processedFileIdsRef,
-        totalRowsProcessedRef,
-        setAllData,
-        setUnidentifiedRows,
-        setOkbRegionCounts,
-        setAllActiveClients,
-        setDbStatus,
-        okbData,
-        lastSnapshotVersion,
-        setLastSnapshotVersion
-    });
+    const performUpload = async (payload: any): Promise<string[]> => {
+        try {
+            console.log("Starting upload sequence to Sheets...");
+            // Инициализация (очистка листа)
+            const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
+            if (!initRes.ok) throw new Error('Failed to init snapshot');
 
-    // --- CALCULATE DUPLICATES COUNT ---
-    const duplicatesCount = useMemo(() => {
-        if (allActiveClients.length === 0) return 0;
-        const uniqueKeys = new Set<string>();
-        let duplicates = 0;
-        allActiveClients.forEach(client => {
-            const normAddr = normalizeAddress(client.address);
-            const key = `${normAddr}_${client.type || 'common'}`;
-            if (uniqueKeys.has(key)) duplicates++;
-            else uniqueKeys.add(key);
-        });
-        return duplicates;
-    }, [allActiveClients]);
+            const jsonString = JSON.stringify(payload);
+            
+            // ВАЖНО: 45 000 символов. Это лимит одной ячейки Google Sheets (50k safe limit).
+            const CHUNK_SIZE = 45_000; 
+            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+            let offset = 0;
+            let chunkIndex = 0;
+            
+            while (offset < jsonString.length) {
+                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+                
+                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
+                
+                // --- FIX: ЗАДЕРЖКА ДЛЯ GOOGLE SHEETS API (Rate Limiting) ---
+                // Google разрешает 60 записей в минуту. 
+                // Ставим паузу 1.5 секунды между чанками, чтобы не получить бан.
+                if (chunkIndex > 0) {
+                    await new Promise(r => setTimeout(r, 1500)); 
+                }
+                // ----------------------------------------------------------
+
+                const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chunk }) 
+                });
+                
+                if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
+                }
+                
+                offset += CHUNK_SIZE;
+                chunkIndex++;
+            }
+            console.log('Snapshot uploaded successfully to Sheets.');
+            setUploadProgress(0);
+            return []; // Мы не используем ID файлов, так как пишем в таблицу
+        } catch (e) {
+            console.error("Server upload failed:", e);
+            setUploadProgress(0);
+            throw e;
+        }
+    };
+
+    const uploadToCloudServerSide = async (payload: any) => {
+        if (!payload || !payload.aggregatedData || payload.aggregatedData.length === 0) return;
+
+        if (isUploadingRef.current) {
+            pendingUploadRef.current = payload;
+            return;
+        }
+        
+        isUploadingRef.current = true;
+        setIsSavingToCloud(true); // START INDICATOR
+        uploadStartTimeRef.current = Date.now(); // Засекаем время старта
+
+        try {
+            await performUpload(payload);
+            
+            // Если во время загрузки пришли новые данные, загружаем их
+            while (pendingUploadRef.current) {
+                const nextPayload = pendingUploadRef.current;
+                pendingUploadRef.current = null;
+                uploadStartTimeRef.current = Date.now(); // Сброс таймера для нового пакета
+                await performUpload(nextPayload);
+                payload = nextPayload;
+            }
+
+            // --- SAVE META FILE (INTO SHEET CELL B1) ---
+            console.log("Финализация: сохранение метаданных версии...");
+            await fetch('/api/get-full-cache?action=save-meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    versionHash: payload.versionHash,
+                    totalRowsProcessed: payload.totalRowsProcessed,
+                    processedFileIds: payload.processedFileIds, 
+                    chunkFileIds: [] // Not used in Sheet strategy
+                })
+            });
+
+        } catch (e) {
+            console.error("Cloud sync error:", e);
+        } finally {
+            isUploadingRef.current = false;
+            setIsSavingToCloud(false); // STOP INDICATOR
+        }
+    };
+
+    const persistToDB = useCallback(async (
+        updatedData: AggregatedDataRow[], 
+        updatedUnidentified: UnidentifiedRow[],
+        updatedActivePoints: MapPoint[],
+        rawCount: number,
+        vHash?: string
+    ) => {
+        const currentVersion = vHash || lastSnapshotVersion || `local_${Date.now()}`;
+        totalRowsProcessedRef.current = rawCount;
+
+        const stateToSave = {
+            aggregatedData: updatedData, 
+            unidentifiedRows: updatedUnidentified,
+            okbRegionCounts,
+            totalRowsProcessed: rawCount,
+            processedFileIds: Array.from(processedFileIdsRef.current), // Persist processed files
+            versionHash: currentVersion,
+        };
+        try {
+            await saveAnalyticsState({ 
+                allData: updatedData, 
+                unidentifiedRows: updatedUnidentified, 
+                okbRegionCounts, 
+                okbData: [], 
+                okbStatus: null,
+                dateRange, 
+                totalRowsProcessed: rawCount, 
+                processedFileIds: Array.from(processedFileIdsRef.current),
+                versionHash: currentVersion 
+            });
+            
+            localStorage.setItem('last_snapshot_version', currentVersion);
+            setLastSnapshotVersion(currentVersion);
+
+            uploadToCloudServerSide(stateToSave);
+        } catch (e) {}
+    }, [okbRegionCounts, dateRange, lastSnapshotVersion]);
 
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
+        // 1. Очистка старых интервалов (как было)
         if (pollingIntervals.current.has(oldKey) && !newPoint.isGeocoding) {
             clearInterval(pollingIntervals.current.get(oldKey));
             pollingIntervals.current.delete(oldKey);
         }
+
+        // 2. Обновляем локальный интерфейс мгновенно (Optimistic UI)
         setEditingClient(prev => (prev && 'key' in prev && (prev as MapPoint).key === oldKey ? newPoint : prev));
         
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
+        let finalPoints: MapPoint[] = [];
         
         setAllActiveClients(prev => {
             const index = prev.findIndex(c => c.key === oldKey);
             const updated = index !== -1 ? [...prev] : [...prev, newPoint];
             if (index !== -1) updated[index] = newPoint;
+            finalPoints = updated;
             return updated;
         });
         
@@ -169,65 +315,38 @@ const App: React.FC = () => {
             return finalUnidentified;
         });
 
-        // FIX: Use await fetch to ensure the request completes or we handle the error
+        // 3. --- НОВОЕ: ОТПРАВЛЯЕМ ИЗМЕНЕНИЕ В ГУГЛ ТАБЛИЦУ (ЛИСТ КОРРЕКЦИЙ) ---
+        // Это происходит в фоне, не блокируя интерфейс
         try {
-            const res = await fetch('/api/get-full-cache?action=update-address', {
+            // Отправляем запрос на сервер
+            fetch('/api/get-full-cache?action=update-address', {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'x-api-key': import.meta.env.VITE_API_SECRET_KEY || ''
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     rmName: newPoint.rm || 'Unknown',
-                    oldAddress: oldKey,
-                    newAddress: newPoint.address,
-                    comment: newPoint.comment,
+                    oldAddress: oldKey, // Ключ поиска
+                    newAddress: newPoint.address, // Новые данные
+                    comment: newPoint.comment, // Комментарий
                     lat: newPoint.lat,
                     lon: newPoint.lon
                 })
+            }).then(res => {
+                if (res.ok) console.log(`Edit saved to cloud: ${newPoint.address}`);
+                else console.warn("Failed to save edit to cloud");
             });
-            
-            if (res.ok) {
-                console.log(`Edit saved to cloud: ${newPoint.address}`);
-            } else {
-                console.warn("Failed to save edit to cloud");
-                addNotification("Не удалось сохранить изменения в облаке", 'warning');
-            }
         } catch (e) {
             console.error("Network error saving edit:", e);
-            addNotification("Ошибка сети при сохранении", 'error');
         }
+        // -------------------------------------------------------------------
 
-        // Debounce persistToDB to prevent overloading the network/browser
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-            persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0);
-        }, 2000);
-    }, [persistToDB, addNotification]);
+        // 4. Сохраняем локальный слепок (как было)
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
+    }, [persistToDB]);
 
+    // ... (handleStartPolling, handleDeleteClient remain same, just update persist call if needed) ...
     const handleStartPolling = useCallback((rmName: string, address: string, tempKey: string, basePoint: MapPoint) => {
         if (pollingIntervals.current.has(tempKey)) clearInterval(pollingIntervals.current.get(tempKey));
-        
-        let attempts = 0;
-        const MAX_ATTEMPTS = 30; // 30 attempts * 10 seconds = 5 minutes TTL
-
         const intervalId = setInterval(async () => {
-            attempts++;
-            if (attempts > MAX_ATTEMPTS) {
-                // TTL Exceeded
-                clearInterval(intervalId);
-                pollingIntervals.current.delete(tempKey);
-                addNotification(`Тайм-аут геокодирования: ${address}`, 'warning');
-                // Stop spinning state
-                handleDataUpdate(tempKey, { 
-                    ...basePoint, 
-                    isGeocoding: false, 
-                    geocodingError: 'Тайм-аут ожидания геокодера', 
-                    lastUpdated: Date.now() 
-                });
-                return;
-            }
-
             try {
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
                 if (res.ok) {
@@ -250,80 +369,405 @@ const App: React.FC = () => {
     const handleDeleteClient = useCallback(async (key: string) => {
         let finalData: AggregatedDataRow[] = [];
         let finalUnidentified: UnidentifiedRow[] = [];
-        
-        setAllActiveClients(prev => prev.filter(c => c.key !== key));
-        
-        setAllData(prev => { 
-            finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); 
-            return finalData; 
-        });
-        
-        setUnidentifiedRows(prev => { 
-            finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); 
-            return finalUnidentified; 
-        });
-        
-        if (pollingIntervals.current.has(key)) { clearInterval(pollingIntervals.current.get(key)); pollingIntervals.current.delete(key); }
+        let finalPoints: MapPoint[] = [];
+        setAllActiveClients(prev => { finalPoints = prev.filter(c => c.key !== key); return finalPoints; });
+        setAllData(prev => { finalData = prev.map(group => ({ ...group, clients: group.clients.filter(c => c.key !== key) })); return finalData; });
+        setUnidentifiedRows(prev => { finalUnidentified = prev.filter(row => normalizeAddress(findAddressInRow(row.rowData)) !== key); return finalUnidentified; });
+        if (pollingIntervals.current.has(key)) {
+            clearInterval(pollingIntervals.current.get(key));
+            pollingIntervals.current.delete(key);
+        }
         setEditingClient(null);
-        
-        // Also use debounce for delete to be safe
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-            persistToDB(finalData, finalUnidentified, totalRowsProcessedRef.current || 0);
-        }, 2000);
+        setTimeout(() => persistToDB(finalData, finalUnidentified, finalPoints, totalRowsProcessedRef.current || 0), 50);
     }, [persistToDB]);
 
+    // ФУНКЦИЯ УДАЛЕНИЯ ДУБЛИКАТОВ И ОБЪЕДИНЕНИЯ ОБЪЕМОВ (С АНИМАЦИЕЙ)
     const handleDeduplicate = useCallback(() => {
-        if (duplicatesCount === 0) { addNotification('Дубликатов не найдено. База оптимизирована.', 'info'); return; }
+        if (duplicatesCount === 0) {
+            addNotification('Дубликатов не найдено. База оптимизирована.', 'info');
+            return;
+        }
+
+        // 1. Prepare Data (Calculate what will happen)
         const uniqueMap = new Map<string, MapPoint>();
+
         allActiveClients.forEach(client => {
             const normAddr = normalizeAddress(client.address);
             const key = `${normAddr}_${client.type || 'common'}`;
+
             if (uniqueMap.has(key)) {
                 const existing = uniqueMap.get(key)!;
+                // Merge logic
                 existing.fact = (existing.fact || 0) + (client.fact || 0);
-                if (client.brand && existing.brand && !existing.brand.includes(client.brand)) { existing.brand += `, ${client.brand}`; }
+                if (client.brand && existing.brand && !existing.brand.includes(client.brand)) {
+                    existing.brand += `, ${client.brand}`;
+                }
                 existing.potential = Math.max(existing.potential || 0, client.potential || 0);
-                if (!existing.lat && client.lat) { existing.lat = client.lat; existing.lon = client.lon; }
-            } else { uniqueMap.set(key, { ...client }); }
+                // Keep best coordinates
+                if (!existing.lat && client.lat) {
+                    existing.lat = client.lat;
+                    existing.lon = client.lon;
+                }
+            } else {
+                uniqueMap.set(key, { ...client });
+            }
         });
+
         const newClients = Array.from(uniqueMap.values());
+        
+        // Prepare aggregated data
         const clientLookup = new Map<string, MapPoint>();
-        newClients.forEach(c => { const normAddr = normalizeAddress(c.address); const key = `${normAddr}_${c.type || 'common'}`; clientLookup.set(key, c); });
+        newClients.forEach(c => {
+             const normAddr = normalizeAddress(c.address);
+             const key = `${normAddr}_${c.type || 'common'}`;
+             clientLookup.set(key, c);
+        });
+
         const newAllData = allData.map(row => {
             const uniqueGroupClients = new Map<string, MapPoint>();
             row.clients.forEach(c => {
-                const normAddr = normalizeAddress(c.address); const key = `${normAddr}_${c.type || 'common'}`;
+                const normAddr = normalizeAddress(c.address);
+                const key = `${normAddr}_${c.type || 'common'}`;
                 const mergedClient = clientLookup.get(key);
-                if (mergedClient) uniqueGroupClients.set(key, mergedClient);
+                if (mergedClient) {
+                    uniqueGroupClients.set(key, mergedClient);
+                }
             });
             return { ...row, clients: Array.from(uniqueGroupClients.values()) };
         });
-        setMergeModalData({ initialCount: allActiveClients.length, finalCount: newClients.length, newClients: newClients, newAllData: newAllData });
+
+        // 2. Open Animation Modal with Prepared Data
+        setMergeModalData({
+            initialCount: allActiveClients.length,
+            finalCount: newClients.length,
+            newClients: newClients,
+            newAllData: newAllData
+        });
+
     }, [allActiveClients, allData, addNotification, duplicatesCount]);
 
+    // Callback for when animation finishes
     const handleMergeComplete = useCallback(async () => {
         if (!mergeModalData) return;
+
+        // 3. Commit Data
         setAllActiveClients(mergeModalData.newClients);
         setAllData(mergeModalData.newAllData);
-        await persistToDB(mergeModalData.newAllData, unidentifiedRows, totalRowsProcessedRef.current || 0);
+        
+        await persistToDB(mergeModalData.newAllData, unidentifiedRows, mergeModalData.newClients, totalRowsProcessedRef.current || 0);
+        
+        // Reset Modal
         setMergeModalData(null);
         addNotification(`База оптимизирована. Удалено ${mergeModalData.initialCount - mergeModalData.finalCount} дублей.`, 'success');
     }, [mergeModalData, unidentifiedRows, persistToDB, addNotification]);
 
-    useEffect(() => {
-        const timer = setInterval(() => { setIsLiveConnected(false); setTimeout(() => setIsLiveConnected(true), 300); checkCloudChanges(); }, 15000); 
-        if (!isRestoring && dbStatus === 'ready') checkCloudChanges();
-        return () => clearInterval(timer);
-    }, [checkCloudChanges, isRestoring, dbStatus, setIsLiveConnected]);
+    const fetchWithRetry = async (url: string, retries = 5, backoff = 2000): Promise<Response> => {
+        try {
+            const res = await fetch(url);
+            if (res.status === 429 || res.status >= 500) {
+                if (retries > 0) {
+                    await new Promise(r => setTimeout(r, backoff));
+                    return fetchWithRetry(url, retries - 1, backoff * 2);
+                }
+            }
+            return res;
+        } catch (e) {
+            if (retries > 0) {
+                await new Promise(r => setTimeout(r, backoff));
+                return fetchWithRetry(url, retries - 1, backoff * 2);
+            }
+            throw e;
+        }
+    };
+
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
+        if (processingState.isProcessing) return;
+        
+        let effectiveTargetVersion = targetVersion;
+        // Переменная для хранения списка файлов из метаданных (резервная копия)
+        let fallbackProcessedFiles: string[] = [];
+
+        // 1. Получаем метаданные (версию и список файлов)
+        if (!effectiveTargetVersion) {
+             try {
+                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+                 if(metaRes.ok) {
+                     const remoteMeta = await metaRes.json();
+                     if (remoteMeta.versionHash) {
+                         effectiveTargetVersion = remoteMeta.versionHash;
+                     }
+                     if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
+                         fallbackProcessedFiles = remoteMeta.processedFileIds;
+                     }
+                 }
+             } catch(e) { console.error("Failed to check snapshot metadata", e); }
+        }
+
+        const currentLocalVersion = lastSnapshotVersion; 
+        const isVersionMismatch = effectiveTargetVersion && effectiveTargetVersion !== currentLocalVersion;
+        const isBackgroundUpdate = (allDataRef.current.length > 0);
+        
+        if (!isBackgroundUpdate) setActiveModule('amp');
+        if (effectiveTargetVersion) {
+            localStorage.setItem('pending_version_hash', effectiveTargetVersion);
+        }
+        
+        console.log(`Cloud Sync. Local: ${currentLocalVersion}, Remote: ${effectiveTargetVersion}, Mismatch: ${isVersionMismatch}`);
+        
+        // Сброс данных при несовпадении версий
+        if (isVersionMismatch) {
+            console.log("!!! SNAPSHOT MISMATCH: WIPING LOCAL DB & STATE !!!");
+            await clearAnalyticsState();
+            setAllData([]);
+            setUnidentifiedRows([]);
+            setOkbRegionCounts(null);
+            setAllActiveClients([]);
+            setProcessingState(prev => ({ ...prev, progress: 0, message: 'Загрузка новой версии...', totalRowsProcessed: 0 }));
+            
+            totalRowsProcessedRef.current = 0;
+            processedFileIdsRef.current.clear(); // Мы очищаем реф
+            allDataRef.current = [];
+            unidentifiedRowsRef.current = [];
+            await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
+        let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
+        let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
+
+        setProcessingState(prev => ({ 
+            ...prev,
+            isProcessing: true, progress: 0, 
+            message: 'Синхронизация...', 
+            startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
+        }));
+        
+        // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT)
+        let snapshotLoaded = false;
+        if (isVersionMismatch || allDataRef.current.length === 0) {
+            try {
+                const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
+                if (snapshotRes.ok) {
+                    const snapshot = await snapshotRes.json();
+                    
+                    const data = snapshot.data || snapshot; 
+
+                    if (data && data.aggregatedData && data.aggregatedData.length > 0) {
+                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed, processedFileIds } = data;
+                        const snapshotHash = data.versionHash || effectiveTargetVersion; 
+                        
+                        setOkbRegionCounts(okbRegionCounts);
+                        setAllData(aggregatedData);
+                        const clientsMap = new Map<string, MapPoint>();
+                        aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                        setAllActiveClients(Array.from(clientsMap.values()));
+                        setUnidentifiedRows(unidentifiedRows);
+                        setDbStatus('ready');
+                        
+                        setLastSnapshotVersion(snapshotHash);
+                        localStorage.setItem('last_snapshot_version', snapshotHash);
+                        
+                        rowsProcessedSoFar = totalRowsProcessed || 0;
+                        totalRowsProcessedRef.current = rowsProcessedSoFar;
+                        
+                        if (processedFileIds) {
+                            processedFileIdsRef.current = new Set(processedFileIds);
+                            console.log(`Loaded ${processedFileIds.length} processed files from snapshot.`);
+                        }
+                        
+                        restoredDataForWorker = aggregatedData;
+                        restoredUnidentifiedForWorker = unidentifiedRows;
+                        snapshotLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.warn("Snapshot fetch failed. Falling back to raw file processing.");
+            }
+        }
+
+        // FALLBACK: Если снимок не загрузился, но у нас есть список файлов из метаданных
+        if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
+            console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
+            processedFileIdsRef.current = new Set(fallbackProcessedFiles);
+        }
+
+        // Подготовка кэша и воркера
+        let cacheData: CoordsCache = {};
+        try {
+            const response = await fetchWithRetry(`/api/get-full-cache?t=${Date.now()}`);
+            if (response.ok) cacheData = await response.json();
+        } catch (error) {}
+        
+        if (workerRef.current) workerRef.current.terminate();
+        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        
+        // Обработчик сообщений от воркера (Checkpoint, Progress, Finish)
+        workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
+            const msg = e.data;
+            if (msg.type === 'progress') {
+                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed ?? prev.totalRowsProcessed }));
+                if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
+            }
+            else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
+            else if (msg.type === 'result_chunk_aggregated') {
+                const { data: chunkData, totalProcessed } = msg.payload;
+                if (!isBackgroundUpdate) {
+                    setAllData(chunkData);
+                    const clientsMap = new Map<string, MapPoint>();
+                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    setAllActiveClients(Array.from(clientsMap.values()));
+                }
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
+                totalRowsProcessedRef.current = totalProcessed;
+            }
+            else if (msg.type === 'CHECKPOINT') {
+                const payload = msg.payload;
+                setAllData(payload.aggregatedData);
+                setAllActiveClients(prev => { const map = new Map(prev.map(c => [c.key, c])); payload.aggregatedData.forEach(r => r.clients.forEach(c => map.set(c.key, c))); return Array.from(map.values()); });
+                setUnidentifiedRows(payload.unidentifiedRows);
+                
+                const version = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, version);
+            }
+            else if (msg.type === 'result_finished') {
+                const payload = msg.payload as WorkerResultPayload;
+                setOkbRegionCounts(payload.okbRegionCounts);
+                setAllData(payload.aggregatedData);
+                const clientsMap = new Map<string, MapPoint>();
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                setAllActiveClients(Array.from(clientsMap.values()));
+                setUnidentifiedRows(payload.unidentifiedRows);
+                setDbStatus('ready');
+                
+                const finalVersion = effectiveTargetVersion || `processed_${Date.now()}`;
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, finalVersion);
+                
+                setLastSnapshotVersion(finalVersion);
+                localStorage.setItem('last_snapshot_version', finalVersion);
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизация завершена', totalRowsProcessed: payload.totalRowsProcessed }));
+            }
+        };
+        
+        workerRef.current.postMessage({ 
+            type: 'INIT_STREAM', 
+            payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: restoredDataForWorker, restoredUnidentified: restoredUnidentifiedForWorker } 
+        });
+        
+        // 3. СКАНИРОВАНИЕ ФАЙЛОВ (ПО ГОДАМ)
+        try {
+            const YEARS_TO_SCAN = ['2025', '2026'];
+
+            for (const scanYear of YEARS_TO_SCAN) {
+                setProcessingState(prev => ({ ...prev, message: `Поиск файлов за ${scanYear}...` }));
+                
+                const listRes = await fetchWithRetry(`/api/get-akb?year=${scanYear}&mode=list`);
+                const allFiles = listRes.ok ? await listRes.json() : [];
+                
+                if (allFiles.length === 0) continue;
+
+                for (const file of allFiles) {
+                    if (processedFileIdsRef.current.has(file.id)) {
+                        console.log(`Skipping already processed file: ${file.name}`);
+                        continue;
+                    }
+                    
+                    let offset = 0, hasMore = true, isFirstChunk = true;
+                    
+                    while (hasMore) {
+                        const CHUNK_SIZE = 1000; 
+                        const mimeTypeParam = file.mimeType ? `&mimeType=${encodeURIComponent(file.mimeType)}` : '';
+                        
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            fileName: file.name,
+                            message: `Обработка: ${file.name} (строки ${offset}-${offset + CHUNK_SIZE})` 
+                        }));
+                        
+                        await new Promise(r => setTimeout(r, 200)); 
+                        const res = await fetchWithRetry(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}${mimeTypeParam}`);
+                        
+                        if (!res.ok) {
+                            if (offset > 0 && (res.status === 400 || res.status === 500)) {
+                                 console.log(`File ${file.name} finished (limit reached).`);
+                                 hasMore = false; 
+                                 break; 
+                            } else {
+                                 console.error(`Failed to fetch chunk for ${file.name}, skipping file`);
+                                 break;
+                            }
+                        } else {
+                            const result = await res.json();
+                            const chunkRows = result.rows || [];
+                            
+                            if (chunkRows.length > 0) {
+                                workerRef.current?.postMessage({ 
+                                    type: 'PROCESS_CHUNK', 
+                                    payload: { rawData: chunkRows, isFirstChunk: isFirstChunk && offset === 0, fileName: file.name } 
+                                });
+                                isFirstChunk = false;
+                            } else {
+                                hasMore = false;
+                            }
+                            
+                            if (chunkRows.length < CHUNK_SIZE) hasMore = false;
+                            hasMore = result.hasMore && hasMore; 
+                            offset += CHUNK_SIZE;
+                        }
+                    }
+                    processedFileIdsRef.current.add(file.id);
+                }
+            }
+        } catch (error) {
+            console.error(error);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка связи или лимит квот' }));
+        } finally {
+            workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
+        }
+    }, [okbData, persistToDB, processingState.isProcessing, lastSnapshotVersion]);
+
+    const checkCloudChanges = useCallback(async () => {
+        if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
+        try {
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.ok) {
+                const meta = await metaRes.json();
+                setIsLiveConnected(true);
+                if (meta.versionHash && meta.versionHash !== 'none' && meta.versionHash !== lastSnapshotVersion) {
+                    console.log('Detected snapshot change:', meta.versionHash, 'vs local', lastSnapshotVersion);
+                    handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
+                }
+            }
+        } catch (e) { setIsLiveConnected(false); }
+    }, [isRestoring, processingState.isProcessing, okbStatus, lastSnapshotVersion, handleStartCloudProcessing]);
 
     useEffect(() => {
+        // Проверяем облако каждые 15 секунд (ускорено по запросу)
+        const timer = setInterval(() => {
+            // Легкий визуальный эффект, что "связь есть" - пульс
+            setIsLiveConnected(false);
+            setTimeout(() => setIsLiveConnected(true), 300);
+            
+            checkCloudChanges();
+        }, 15000); 
+
+        if (!isRestoring && dbStatus === 'ready') {
+            checkCloudChanges();
+        }
+        return () => clearInterval(timer);
+    }, [checkCloudChanges, isRestoring, dbStatus]);
+
+    // 1. Инициализация: СТРОГАЯ синхронизация с сервером при входе
+    useEffect(() => {
         const initializeApp = async () => {
+            // Only runs once on mount
             setDbStatus('loading');
             setProcessingState(prev => ({ ...prev, message: 'Синхронизация с командой...' }));
+
             try {
+                // ШАГ 1: Сначала загружаем то, что есть локально
                 const localState = await loadAnalyticsState();
                 let localVersion = null;
+
                 if (localState && localState.allData?.length > 0) {
                     setAllData(localState.allData);
                     setUnidentifiedRows(localState.unidentifiedRows || []);
@@ -331,17 +775,36 @@ const App: React.FC = () => {
                     setOkbData(localState.okbData || []);
                     setOkbStatus(localState.okbStatus || null);
                     setDateRange(localState.dateRange);
-                    if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
-                    if (localState.versionHash) { localVersion = localState.versionHash; setLastSnapshotVersion(localVersion); localStorage.setItem('last_snapshot_version', localVersion); }
+                    
+                    if (localState.processedFileIds) {
+                        processedFileIdsRef.current = new Set(localState.processedFileIds);
+                    }
+
+                    if (localState.versionHash) {
+                        localVersion = localState.versionHash;
+                        setLastSnapshotVersion(localVersion);
+                        localStorage.setItem('last_snapshot_version', localVersion);
+                    }
+                    
                     const clientsMap = new Map<string, MapPoint>();
                     localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
                     setAllActiveClients(Array.from(clientsMap.values()));
-                    totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
+                    
+                    const restoredCount = localState.totalRowsProcessed || 0;
+                    totalRowsProcessedRef.current = restoredCount;
                 }
+
+                // ШАГ 2: Спрашиваем у сервера актуальную версию (через мета-файл)
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+                
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
-                    if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
+                    
+                    if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) {
+                        processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
+                    }
+                    
+                    // ВАРИАНТ А: На сервере версия НОВЕЕ -> Полная перезагрузка из снимка
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
                         console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
                         await handleStartCloudProcessing({ year: '2025' }, serverMeta.versionHash);
@@ -349,45 +812,92 @@ const App: React.FC = () => {
                         return;
                     }
                 }
+
+                // ШАГ 3: Версии совпадают ИЛИ сервер недоступен.
                 if (localState && localState.allData?.length > 0) {
                     setDbStatus('ready');
+                    console.log("Снимок актуален. Проверяем наличие необработанных файлов...");
+                    
                     await handleStartCloudProcessing({ year: '2025' }, localVersion || undefined);
                 } else {
+                    // Локально пусто -> начинаем с нуля
                     setDbStatus('empty');
                     handleStartCloudProcessing({ year: '2025' });
                 }
+
             } catch (e) {
                 console.error("Ошибка инициализации:", e);
-                if (allDataRef.current.length > 0) setDbStatus('ready'); else setDbStatus('empty');
-            } finally { setIsRestoring(false); }
+                if (allDataRef.current.length > 0) setDbStatus('ready');
+                else setDbStatus('empty');
+            } finally {
+                setIsRestoring(false);
+            }
         };
+
         initializeApp();
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    useEffect(() => { return () => pollingIntervals.current.forEach(clearInterval); }, []);
+    // Clean up workers on unmount
+    useEffect(() => {
+        return () => {
+            if (workerRef.current) {
+                workerRef.current.terminate();
+            }
+            pollingIntervals.current.forEach(clearInterval);
+        };
+    }, []);
 
+    // Add saving on close/refresh
+    useEffect(() => {
+        const handleBeforeUnload = () => {
+            // Attempt to trigger a final save if needed, though unreliable
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, []);
+
+    // --- DATE FILTERING LOGIC ---
+    // Recalculates 'fact' for each row based on the selected date range
     const dateFilteredData = useMemo(() => {
+        // If dates are not set, return all data as is
         if (!filterStartDate || !filterEndDate) return allData;
+        
         return allData.map(row => {
-            if (!row.monthlyFact) return row;
+            if (!row.monthlyFact) return row; // No monthly data? keep original fact or filter out? Keeping original for now to avoid losing non-dated data.
+            
             let newFact = 0;
+            // Iterate through stored monthly breakdown
             Object.entries(row.monthlyFact).forEach(([monthKey, val]) => {
-                if (monthKey >= filterStartDate && monthKey <= filterEndDate) { newFact += (val as number); }
+                // Check if monthKey (YYYY-MM) is within range
+                if (monthKey >= filterStartDate && monthKey <= filterEndDate) {
+                    newFact += (val as number);
+                }
             });
+            
+            // Return row with updated fact.
+            // If newFact is 0, we can either keep it as 0 or filter the row out later.
+            // Here we just update the value. The subsequent filter step handles 0 facts if needed.
             return { ...row, fact: newFact };
-        }).filter(row => row.fact > 0);
+        }).filter(row => row.fact > 0); // Hide rows with 0 sales in selected period
     }, [allData, filterStartDate, filterEndDate]);
 
     const smartData = useMemo(() => {
         const okbCoordSet = new Set<string>();
         okbData.forEach(row => { if (row.lat && row.lon) okbCoordSet.add(`${row.lat.toFixed(4)},${row.lon.toFixed(4)}`); });
+        // Apply Smart Plan to the DATE-FILTERED data
         return enrichDataWithSmartPlan(dateFilteredData, okbRegionCounts, 15, okbCoordSet);
-    }, [dateFilteredData, okbRegionCounts, okbData]);
+    }, [dateFilteredData, okbRegionCounts, okbData]); // Depend on dateFilteredData
 
     useEffect(() => { setFilteredData(applyFilters(smartData, filters)); }, [smartData, filters]);
 
     const filterOptions = useMemo<FilterOptions>(() => getFilterOptions(allData), [allData]);
-    const summaryMetrics = useMemo(() => calculateSummaryMetrics(filteredData), [filteredData]);
+    const summaryMetrics = useMemo(() => {
+        const baseMetrics = calculateSummaryMetrics(filteredData);
+        // Note: totalActiveClients here is approximation based on unique client keys in the filtered rows.
+        // It won't strictly filter clients who had 0 sales in the period unless their group was removed.
+        return baseMetrics; 
+    }, [filteredData]);
 
     const potentialClients = useMemo(() => {
         if (!okbData.length) return [];
@@ -395,19 +905,78 @@ const App: React.FC = () => {
         return okbData.filter(okb => !activeAddressesSet.has(normalizeAddress(findAddressInRow(okb))));
     }, [okbData, allActiveClients]);
 
+    // --- ETR CALCULATION (Estimated Time Remaining) ---
     const uploadETR = useMemo(() => {
         if (!isSavingToCloud || uploadProgress <= 0 || !uploadStartTimeRef.current) return '';
         const elapsed = (Date.now() - uploadStartTimeRef.current) / 1000;
-        if (elapsed < 2) return '';
-        const rate = uploadProgress / elapsed;
+        if (elapsed < 2) return ''; // Calibration...
+        const rate = uploadProgress / elapsed; // % per second
         if (rate <= 0) return '';
         const remainingPercent = 100 - uploadProgress;
         const secondsLeft = remainingPercent / rate;
+        
         if (!isFinite(secondsLeft) || secondsLeft < 0) return '';
+        
         const m = Math.floor(secondsLeft / 60);
         const s = Math.floor(secondsLeft % 60);
         return ` (~${m}м ${s.toString().padStart(2, '0')}с)`;
-    }, [isSavingToCloud, uploadProgress, uploadStartTimeRef]);
+    }, [isSavingToCloud, uploadProgress]); // Re-calculates on progress update
+
+    // --- АВТО-СИНХРОНИЗАЦИЯ ПРАВОК И КОММЕНТАРИЕВ ---
+    useEffect(() => {
+        const syncEdits = async () => {
+            if (!dbStatus || dbStatus === 'loading') return;
+            try {
+                // 1. Качаем свежий кэш правок с сервера
+                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                if (!res.ok) return;
+                
+                const rawCache: CoordsCache = await res.json();
+                
+                // Flatten the cache map (Record<Region, Entry[]>) into a single lookup Map
+                const flatCache = new Map<string, any>();
+                Object.values(rawCache).flat().forEach((entry: any) => {
+                    if (entry.address) {
+                        flatCache.set(normalizeAddress(entry.address), entry);
+                    }
+                });
+                
+                // 2. Пробегаемся по нашим данным и обновляем их, если в кэше что-то новее
+                setAllActiveClients(prev => {
+                    let hasChanges = false;
+                    const updated = prev.map(client => {
+                        const normAddr = normalizeAddress(client.address);
+                        const serverEntry = flatCache.get(normAddr); // Ищем правку для этого адреса
+                        
+                        // Если на сервере есть правка для этого клиента
+                        if (serverEntry && !serverEntry.isDeleted) {
+                            // Проверяем, отличается ли она от того, что у нас сейчас
+                            if (serverEntry.lat !== client.lat || 
+                                serverEntry.lon !== client.lon || 
+                                serverEntry.comment !== client.comment) {
+                                
+                                hasChanges = true;
+                                return { 
+                                    ...client, 
+                                    lat: serverEntry.lat ?? client.lat,
+                                    lon: serverEntry.lon ?? client.lon,
+                                    comment: serverEntry.comment ?? client.comment, // Подтягиваем коммент
+                                    isGeocoding: false
+                                };
+                            }
+                        }
+                        return client;
+                    });
+                    
+                    return hasChanges ? updated : prev;
+                });
+                
+            } catch (e) { console.error("Auto-sync edits error", e); }
+        };
+
+        const timer = setInterval(syncEdits, 30000); // Проверяем правки каждые 30 сек
+        return () => clearInterval(timer);
+    }, [dbStatus]);
 
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
@@ -440,8 +1009,22 @@ const App: React.FC = () => {
                                 </span>
                             </div>
                         )}
-                        <button onClick={handleDeduplicate} disabled={duplicatesCount === 0} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ml-2 ${duplicatesCount > 0 ? 'bg-blue-900/20 hover:bg-blue-900/40 text-blue-400 border-blue-500/20 cursor-pointer' : 'bg-gray-800/20 text-gray-500 border-gray-700/20 cursor-not-allowed opacity-50'}`} title={duplicatesCount > 0 ? "Найти одинаковые адреса и сложить их показатели" : "Дубликатов не найдено"}>
-                            {duplicatesCount > 0 ? (<><CheckIcon className="w-3 h-3" /> Объединить ({duplicatesCount})</>) : (<><CheckIcon className="w-3 h-3" /> Дублей нет</>)}
+                        {/* Кнопка удаления дублей с точным счетчиком */}
+                        <button 
+                            onClick={handleDeduplicate} 
+                            disabled={duplicatesCount === 0}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ml-2 ${
+                                duplicatesCount > 0 
+                                    ? 'bg-blue-900/20 hover:bg-blue-900/40 text-blue-400 border-blue-500/20 cursor-pointer' 
+                                    : 'bg-gray-800/20 text-gray-500 border-gray-700/20 cursor-not-allowed opacity-50'
+                            }`}
+                            title={duplicatesCount > 0 ? "Найти одинаковые адреса и сложить их показатели" : "Дубликатов не найдено"}
+                        >
+                            {duplicatesCount > 0 ? (
+                                <><CheckIcon className="w-3 h-3" /> Объединить ({duplicatesCount})</>
+                            ) : (
+                                <><CheckIcon className="w-3 h-3" /> Дублей нет</>
+                            )}
                         </button>
                     </div>
                     <div className="flex items-center gap-6">
@@ -477,10 +1060,10 @@ const App: React.FC = () => {
                             uploadedData={allData}
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
-                            startDate={filterStartDate}
-                            endDate={filterEndDate}
-                            onStartDateChange={setFilterStartDate}
-                            onEndDateChange={setFilterEndDate}
+                            startDate={filterStartDate} // PASSING START DATE
+                            endDate={filterEndDate}     // PASSING END DATE
+                            onStartDateChange={setFilterStartDate} // PASSING SETTER
+                            onEndDateChange={setFilterEndDate}     // PASSING SETTER
                         />
                     )}
                     {activeModule === 'amp' && (
@@ -496,17 +1079,43 @@ const App: React.FC = () => {
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filteredData} okbRegionCounts={okbRegionCounts} okbData={okbData} mode="page" metrics={summaryMetrics} okbStatus={okbStatus} dateRange={dateRange} onEditClient={setEditingClient} />
                     )}
-                    {activeModule === 'prophet' && <Prophet data={filteredData} />}
-                    {activeModule === 'agile' && <AgileLearning data={filteredData} />}
-                    {activeModule === 'roi-genome' && <RoiGenome data={filteredData} />}
-                    {activeModule === 'presentation' && <Presentation />}
+                    {activeModule === 'prophet' && (
+                        <Prophet data={filteredData} />
+                    )}
+                    {activeModule === 'agile' && (
+                        <AgileLearning data={filteredData} />
+                    )}
+                    {activeModule === 'roi-genome' && (
+                        <RoiGenome data={filteredData} />
+                    )}
                 </div>
             </main>
             <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">{notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}</div>
             {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
             {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
-            {editingClient && <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={handleStartPolling} onDelete={handleDeleteClient} globalTheme="dark" />}
-            {mergeModalData && <MergeOverlay isOpen={!!mergeModalData} initialCount={mergeModalData.initialCount} finalCount={mergeModalData.finalCount} onComplete={handleMergeComplete} onCancel={() => setMergeModalData(null)} />}
+            {editingClient && (
+                <AddressEditModal 
+                    isOpen={!!editingClient} 
+                    onClose={() => setEditingClient(null)} 
+                    onBack={() => setEditingClient(null)} 
+                    data={editingClient} 
+                    onDataUpdate={handleDataUpdate}
+                    onStartPolling={handleStartPolling} 
+                    onDelete={handleDeleteClient}
+                    globalTheme="dark"
+                />
+            )}
+            
+            {/* NEW: Merge Animation Overlay */}
+            {mergeModalData && (
+                <MergeOverlay 
+                    isOpen={!!mergeModalData}
+                    initialCount={mergeModalData.initialCount}
+                    finalCount={mergeModalData.finalCount}
+                    onComplete={handleMergeComplete}
+                    onCancel={() => setMergeModalData(null)}
+                />
+            )}
         </div>
     );
 };
