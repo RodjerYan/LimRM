@@ -203,6 +203,15 @@ export type WorkerInputChunk = {
     };
 };
 
+// NEW: Support for full file processing in worker
+export type WorkerInputFile = {
+    type: 'PROCESS_FILE';
+    payload: {
+        fileBuffer: ArrayBuffer;
+        fileName: string;
+    };
+};
+
 export type WorkerInputFinalize = {
     type: 'FINALIZE_STREAM';
 };
@@ -221,7 +230,8 @@ export type WorkerMessage =
     | WorkerStreamInit
     | WorkerStreamChunk
     | WorkerStreamCheckpoint
-    | WorkerStreamFinish;
+    | WorkerStreamFinish
+    | WorkerInputFile; // Added here
 
 export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;
 

@@ -1,9 +1,12 @@
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
+import * as ReactWindow from 'react-window';
+import AutoSizerPkg from 'react-virtualized-auto-sizer';
 import Modal from './Modal';
-import { findAddressInRow, normalizeAddress } from '../utils/dataUtils';
 import { UnidentifiedRow } from '../types';
-import { ArrowLeftIcon } from './icons';
+
+const AutoSizer = AutoSizerPkg as any;
+const FixedSizeList = (ReactWindow as any).FixedSizeList;
 
 interface UnidentifiedRowsModalProps {
     isOpen: boolean;
@@ -12,147 +15,116 @@ interface UnidentifiedRowsModalProps {
     onStartEdit: (row: UnidentifiedRow) => void;
 }
 
-const ITEMS_PER_PAGE = 50;
-
-const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, onClose, rows, onStartEdit }) => {
-    const [currentPage, setCurrentPage] = useState(1);
-
-    // Reset page when modal opens or rows change
-    useEffect(() => {
-        if (isOpen) setCurrentPage(1);
-    }, [isOpen, rows.length]);
-
-    // 1. Slice the data FIRST. This prevents processing 7000 rows for grouping/headers.
-    const visibleRows = useMemo(() => {
-        const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-        return rows.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-    }, [rows, currentPage]);
-
-    const totalPages = Math.ceil(rows.length / ITEMS_PER_PAGE);
-
-    // 2. Group only the visible slice. Fast and efficient.
-    const groupedRows = useMemo(() => {
-        return visibleRows.reduce((acc, row) => {
-            if (!row) return acc;
-            if (!acc[row.rm]) acc[row.rm] = [];
-            acc[row.rm].push(row);
-            return acc;
-        }, {} as Record<string, UnidentifiedRow[]>);
-    }, [visibleRows]);
-
-    const rmOrder = useMemo(() => Object.keys(groupedRows).sort((a,b) => a.localeCompare(b)), [groupedRows]);
-    
-    const modalTitle = `Неопределенные адреса (${rows.length})`;
-
-    const PaginationControls = () => (
-        <div className="flex justify-between items-center p-4 bg-gray-900/50 rounded-lg border border-gray-700 mt-4 flex-shrink-0">
-            <div className="text-sm text-gray-400">
-                Показано {visibleRows.length} из {rows.length} записей
-            </div>
-            <div className="flex items-center gap-2">
-                <button 
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
-                    disabled={currentPage === 1}
-                    className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg border border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-                >
-                    Назад
-                </button>
-                <span className="text-sm font-mono text-white bg-gray-800 px-3 py-1.5 rounded border border-gray-600">
-                    Стр. {currentPage} / {totalPages}
-                </span>
-                <button 
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg border border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-                >
-                    Вперед
-                </button>
-            </div>
-        </div>
-    );
+// Row component for virtualization
+const UnidentifiedRowItem: React.FC<{ 
+    data: { rows: UnidentifiedRow[], headers: string[], onEdit: (r: UnidentifiedRow) => void }; 
+    index: number; 
+    style: React.CSSProperties;
+}> = ({ data, index, style }) => {
+    const row = data.rows[index];
+    const { headers, onEdit } = data;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} maxWidth="max-w-[95vw]">
+        <div style={style} 
+             onClick={() => onEdit(row)}
+             className="flex items-center border-b border-gray-700/50 hover:bg-indigo-500/10 cursor-pointer transition-colors text-sm text-gray-300"
+             title="Нажмите для редактирования"
+        >
+            <div className="w-16 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 text-gray-500 text-xs">
+                {index + 1}
+            </div>
+            <div className="w-32 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 font-bold text-indigo-300 truncate">
+                {row.rm}
+            </div>
+            {headers.map(header => (
+                <div key={header} className="w-48 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate last:border-r-0">
+                    {row.rowData[header] !== undefined && row.rowData[header] !== null ? String(row.rowData[header]) : ''}
+                </div>
+            ))}
+        </div>
+    );
+};
+
+const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, onClose, rows, onStartEdit }) => {
+    
+    // Extract headers once from a sample of rows to keep the grid consistent
+    const headers = useMemo(() => {
+        if (rows.length === 0) return [];
+        // Take first 50 rows to find common headers
+        const sample = rows.slice(0, 50);
+        const allKeys = new Set(sample.flatMap(r => Object.keys(r.rowData)));
+        const ignore = new Set(['__rowNum__', 'originalRow']);
+        
+        // Prioritize specific headers for visibility
+        const priority = ['наименование', 'клиент', 'адрес', 'дистрибьютор', 'город', 'регион'];
+        
+        return Array.from(allKeys)
+            .filter(k => !ignore.has(k))
+            .sort((a, b) => {
+                const aIdx = priority.findIndex(p => a.toLowerCase().includes(p));
+                const bIdx = priority.findIndex(p => b.toLowerCase().includes(p));
+                if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+                if (aIdx !== -1) return -1;
+                if (bIdx !== -1) return 1;
+                return a.localeCompare(b);
+            });
+    }, [rows]);
+
+    const itemData = useMemo(() => ({
+        rows,
+        headers,
+        onEdit: onStartEdit
+    }), [rows, headers, onStartEdit]);
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title={`Неопределенные адреса (${rows.length})`} maxWidth="max-w-[95vw]">
             <div className="flex flex-col h-[80vh]">
-                <div className="flex-shrink-0 space-y-4 mb-4">
+                <div className="flex-shrink-0 space-y-2 mb-4">
                     <p className="text-gray-400 text-sm">
-                        Для этих строк не удалось автоматически определить город или регион. 
-                        Нажмите на строку, чтобы открыть окно редактирования, внести исправления и сохранить. 
-                        Ниже представлены полные данные из загруженного файла для облегчения поиска.
+                        Система не смогла автоматически определить город или регион для этих записей. 
+                        Нажмите на строку, чтобы вручную привязать её к карте.
                     </p>
-                    {/* Top Pagination for easy access */}
-                    {totalPages > 1 && <PaginationControls />}
                 </div>
 
-                <div className="flex-grow overflow-y-auto custom-scrollbar pr-2">
-                    {rows.length === 0 ? (
-                        <div className="text-center p-8 text-gray-500">Все адреса успешно распознаны!</div>
-                    ) : rmOrder.length === 0 ? (
-                        <div className="text-center p-8 text-gray-500">Нет данных для отображения на этой странице.</div>
-                    ) : (
-                        <div className="space-y-6">
-                            {rmOrder.map(rm => {
-                                const groupRows = groupedRows[rm];
-                                
-                                // Dynamically extract headers ONLY for the current visible rows
-                                const allHeaders = Array.from(new Set(
-                                    groupRows.flatMap(r => Object.keys(r.rowData))
-                                )).filter(key => key !== '__rowNum__'); 
-
-                                const priorityHeaders = ['наименование', 'клиент', 'адрес', 'дистрибьютор'];
-                                allHeaders.sort((a, b) => {
-                                    const aLow = a.toLowerCase();
-                                    const bLow = b.toLowerCase();
-                                    const aP = priorityHeaders.findIndex(p => aLow.includes(p));
-                                    const bP = priorityHeaders.findIndex(p => bLow.includes(p));
-                                    
-                                    if (aP !== -1 && bP !== -1) return aP - bP;
-                                    if (aP !== -1) return -1;
-                                    if (bP !== -1) return 1;
-                                    return a.localeCompare(b);
-                                });
-
-                                return (
-                                    <div key={rm} className="bg-card-bg/50 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-indigo-500/10">
-                                        <h3 className="text-lg font-bold text-accent mb-3 sticky left-0">РМ: {rm}</h3>
-                                        <div className="overflow-x-auto">
-                                            <table className="w-full text-left border-collapse">
-                                                <thead className="bg-card-bg/95 border-b border-gray-700">
-                                                    <tr>
-                                                        {allHeaders.map(header => (
-                                                            <th key={header} className="px-4 py-3 text-xs text-gray-400 uppercase font-semibold whitespace-nowrap bg-gray-800/90 min-w-[150px]">
-                                                                {header}
-                                                            </th>
-                                                        ))}
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="text-gray-300">
-                                                    {groupRows.map((row: UnidentifiedRow) => (
-                                                        <tr 
-                                                            key={row.originalIndex} 
-                                                            className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer transition-colors"
-                                                            onClick={() => onStartEdit(row)}
-                                                            title="Нажмите для редактирования"
-                                                        >
-                                                            {allHeaders.map(header => (
-                                                                <td key={`${row.originalIndex}-${header}`} className="px-4 py-2 text-sm whitespace-nowrap border-r border-gray-700/30 last:border-r-0 max-w-[300px] truncate">
-                                                                    {row.rowData[header] !== undefined && row.rowData[header] !== null ? String(row.rowData[header]) : ''}
-                                                                </td>
-                                                            ))}
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                {rows.length === 0 ? (
+                    <div className="flex-grow flex items-center justify-center text-gray-500">
+                        Все адреса успешно распознаны!
+                    </div>
+                ) : (
+                    <div className="flex-grow border border-gray-700 rounded-lg overflow-hidden flex flex-col bg-gray-900/30">
+                        {/* Header Row */}
+                        <div className="flex items-center bg-gray-800/90 border-b border-gray-700 text-xs font-bold text-gray-400 uppercase">
+                            <div className="w-16 px-4 py-3 flex-shrink-0 border-r border-gray-700">#</div>
+                            <div className="w-32 px-4 py-3 flex-shrink-0 border-r border-gray-700">РМ</div>
+                            {headers.map(h => (
+                                <div key={h} className="w-48 px-4 py-3 flex-shrink-0 border-r border-gray-700 truncate" title={h}>
+                                    {h}
+                                </div>
+                            ))}
                         </div>
-                    )}
-                </div>
+
+                        {/* Virtual List */}
+                        <div className="flex-grow">
+                            <AutoSizer>
+                                {({ height, width }: { height: number; width: number }) => (
+                                    <FixedSizeList
+                                        height={height}
+                                        itemCount={rows.length}
+                                        itemSize={40}
+                                        width={width}
+                                        itemData={itemData}
+                                    >
+                                        {UnidentifiedRowItem}
+                                    </FixedSizeList>
+                                )}
+                            </AutoSizer>
+                        </div>
+                    </div>
+                )}
                 
-                {/* Bottom Pagination */}
-                {totalPages > 1 && <div className="mt-4 flex-shrink-0"><PaginationControls /></div>}
+                <div className="mt-2 text-xs text-gray-500 text-right">
+                    Рендеринг оптимизирован: {rows.length.toLocaleString()} строк
+                </div>
             </div>
         </Modal>
     );

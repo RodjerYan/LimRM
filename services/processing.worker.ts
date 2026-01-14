@@ -31,11 +31,10 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Увеличили порог для чекпоинта (сохранения в облако) до 50 000, 
-// чтобы не спамить сеть и не тормозить процесс на 3.5 млн строк.
+// Увеличили порог для чекпоинта (сохранения в облако) до 50 000
 const CHECKPOINT_THRESHOLD = 50000; 
 
-// Увеличили порог обновления UI до 20 000, чтобы не перерисовывать React слишком часто.
+// Увеличили порог обновления UI до 20 000
 const UI_UPDATE_THRESHOLD = 20000;
 
 const normalizeHeaderKey = (key: string): string => {
@@ -79,7 +78,7 @@ const parseDateKey = (val: any): string | null => {
     
     // Excel Serial Date
     if (typeof val === 'number') {
-        if (val > 20000 && val < 60000) { // Rough check for valid date range (1954 - 2064)
+        if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
              const month = String(dateObj.getMonth() + 1).padStart(2, '0');
              return `${dateObj.getFullYear()}-${month}`;
@@ -128,7 +127,6 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
-    // Сортировка на миллионах строк - тяжелая операция. Делаем только в конце.
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
     
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
@@ -185,32 +183,25 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
         });
     }
 
-    // --- REHYDRATION LOGIC ---
     if (restoredData && restoredData.length > 0) {
         restoredData.forEach(row => {
             const { clients, ...rest } = row;
-            // Restore Aggregated Row structure
             if (!state_aggregatedData[row.key]) {
                 state_aggregatedData[row.key] = {
                     ...rest,
                     clients: new Map()
                 };
             }
-            
-            // Restore Clients and Unique Clients Map
             if (Array.isArray(clients)) {
                 clients.forEach(client => {
-                    // Restore to unique map
                     if (!state_uniquePlottableClients.has(client.key)) {
                         state_uniquePlottableClients.set(client.key, client);
                     }
-                    // Link to aggregation
                     state_aggregatedData[row.key].clients.set(client.key, client);
                 });
             }
         });
         
-        // Restore Unidentified
         if (restoredUnidentified) {
             state_unidentifiedRows = [...restoredUnidentified];
         }
@@ -245,10 +236,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             return obj;
         });
         
-        // --- IMPROVED CLIENT NAME DETECTION ---
         const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
         
-        // Priority 1: Explicit "Client Name" or "Counterparty"
         const clientHeader = normHeaders.find(h => 
             h.norm.includes('названиеклиента') || 
             h.norm.includes('наименованиеклиента') || 
@@ -260,7 +249,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (clientHeader) {
             state_clientNameHeader = clientHeader.original;
         } else {
-            // Priority 2: "Name" but exclude product-related terms
             const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
             state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
         }
@@ -313,7 +301,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 city: parsed.city,
                 region: reg, 
                 fact: 0,
-                monthlyFact: {}, // Init monthly container
+                monthlyFact: {},
                 potential: 0, 
                 growthPotential: 0, 
                 growthPercentage: 0, 
@@ -324,7 +312,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const weight = parseCleanFloat(weightRaw);
         
-        // --- DATE PARSING ---
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
@@ -346,7 +333,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 region: reg, 
                 rm, 
                 brand: brand, 
-                packaging: packaging,
+                packaging: packaging, 
                 type: channel,
                 originalRow: row, 
                 fact: 0,
@@ -365,13 +352,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
     }
     
-    // --- OPTIMIZED CHECKPOINT LOGIC ---
-    // Сохраняем в облако (Checkpoint)
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
-        
-        // ВНИМАНИЕ: НЕ запускаем ABC здесь для экономии ресурсов!
-        // performIncrementalAbc(); 
         
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
@@ -393,11 +375,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         state_lastEmitCount = state_processedRowsCount;
     }
-    // Обновляем UI (Progress)
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
         
-        // НЕ запускаем ABC, просто отдаем агрегаты для отображения на карте
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -415,13 +395,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
     }
 
-    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); // Adjusted scale for 3.5M
-    // Include totalProcessed in progress message to keep UI counter moving even between aggregations
+    const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
-    // ЗАПУСКАЕМ ABC ТОЛЬКО В САМОМ КОНЦЕ
     performIncrementalAbc();
 
     const finalData = Object.values(state_aggregatedData).map(item => ({
@@ -447,5 +425,25 @@ self.onmessage = async (e) => {
     const msg = e.data;
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
+    else if (msg.type === 'PROCESS_FILE') {
+        const { fileBuffer, fileName } = msg.payload;
+        try {
+            const workbook = xlsx.read(fileBuffer, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = xlsx.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
+            
+            const CHUNK_SIZE = 5000;
+            const total = rows.length;
+            
+            for (let i = 0; i < total; i += CHUNK_SIZE) {
+                const chunk = rows.slice(i, i + CHUNK_SIZE);
+                processChunk({ rawData: chunk, isFirstChunk: i === 0, fileName }, self.postMessage);
+                await new Promise(r => setTimeout(r, 0));
+            }
+            await finalizeStream(self.postMessage);
+        } catch (e) {
+            self.postMessage({ type: 'error', payload: `File parse error: ${(e as Error).message}` });
+        }
+    }
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
 };

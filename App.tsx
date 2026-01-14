@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import L from 'leaflet';
 import * as XLSX from 'xlsx';
 import Navigation from './components/Navigation';
@@ -13,8 +13,6 @@ import PotentialChart from './components/PotentialChart';
 import ResultsTable from './components/ResultsTable';
 import { RMDashboard } from './components/RMDashboard';
 import Notification from './components/Notification';
-import DetailsModal from './components/DetailsModal';
-import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import MergeOverlay from './components/MergeOverlay';
@@ -39,6 +37,10 @@ import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInR
 import { LoaderIcon, CheckIcon, ErrorIcon, TrashIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState, clearAnalyticsState } from './utils/db';
+
+// Lazy Load Heavy Modals
+const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
+const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
@@ -479,6 +481,96 @@ const App: React.FC = () => {
             throw e;
         }
     };
+
+    // --- LOCAL PROCESSING HANDLER ---
+    const handleStartLocalProcessing = useCallback(async (file: File) => {
+        if (processingState.isProcessing) return;
+        
+        setActiveModule('adapta');
+        setProcessingState(prev => ({ 
+            ...prev,
+            isProcessing: true,
+            progress: 0, 
+            message: 'Чтение файла...', 
+            fileName: file.name,
+            startTime: Date.now()
+        }));
+
+        // Reset data if starting fresh
+        setAllData([]);
+        setUnidentifiedRows([]);
+        setAllActiveClients([]);
+        totalRowsProcessedRef.current = 0;
+        
+        // Prepare cache and worker
+        let cacheData: CoordsCache = {};
+        try {
+            const response = await fetchWithRetry(`/api/get-full-cache?t=${Date.now()}`);
+            if (response.ok) cacheData = await response.json();
+        } catch (error) {}
+        
+        if (workerRef.current) workerRef.current.terminate();
+        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        
+        // Setup Worker Listeners (Duplicated from Cloud logic for consistency)
+        workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
+            const msg = e.data;
+            if (msg.type === 'progress') {
+                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed ?? prev.totalRowsProcessed }));
+                if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
+            }
+            else if (msg.type === 'result_init') setOkbRegionCounts(msg.payload.okbRegionCounts);
+            else if (msg.type === 'result_chunk_aggregated') {
+                const { data: chunkData, totalProcessed } = msg.payload;
+                setAllData(chunkData);
+                const clientsMap = new Map<string, MapPoint>();
+                chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                setAllActiveClients(Array.from(clientsMap.values()));
+                
+                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
+                totalRowsProcessedRef.current = totalProcessed;
+            }
+            else if (msg.type === 'result_finished') {
+                const payload = msg.payload as WorkerResultPayload;
+                setOkbRegionCounts(payload.okbRegionCounts);
+                setAllData(payload.aggregatedData);
+                const clientsMap = new Map<string, MapPoint>();
+                payload.aggregatedData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                setAllActiveClients(Array.from(clientsMap.values()));
+                setUnidentifiedRows(payload.unidentifiedRows);
+                setDbStatus('ready');
+                
+                const finalVersion = `local_file_${Date.now()}`;
+                await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, finalVersion);
+                
+                setLastSnapshotVersion(finalVersion);
+                localStorage.setItem('last_snapshot_version', finalVersion);
+                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Обработка завершена', totalRowsProcessed: payload.totalRowsProcessed }));
+                
+                // Switch to Analysis tab automatically
+                setActiveModule('amp');
+            }
+        };
+        
+        // Send INIT
+        workerRef.current.postMessage({ 
+            type: 'INIT_STREAM', 
+            payload: { okbData, cacheData, totalRowsProcessed: 0 } 
+        });
+        
+        // Read file buffer and send to worker
+        try {
+            const buffer = await file.arrayBuffer();
+            workerRef.current.postMessage({
+                type: 'PROCESS_FILE',
+                payload: { fileBuffer: buffer, fileName: file.name }
+            }, [buffer]); // Transfer buffer ownership to worker
+        } catch (e) {
+            console.error(e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка чтения файла' }));
+        }
+
+    }, [okbData, persistToDB, processingState.isProcessing]);
 
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
         if (processingState.isProcessing) return;
@@ -1046,7 +1138,7 @@ const App: React.FC = () => {
                     {activeModule === 'adapta' && (
                         <Adapta 
                             processingState={processingState}
-                            onStartProcessing={() => {}}
+                            onStartProcessing={handleStartLocalProcessing} // WIRED UP
                             onStartCloudProcessing={handleStartCloudProcessing}
                             onFileProcessed={() => {}}
                             onProcessingStateChange={() => {}}
@@ -1060,10 +1152,10 @@ const App: React.FC = () => {
                             uploadedData={allData}
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
-                            startDate={filterStartDate} // PASSING START DATE
-                            endDate={filterEndDate}     // PASSING END DATE
-                            onStartDateChange={setFilterStartDate} // PASSING SETTER
-                            onEndDateChange={setFilterEndDate}     // PASSING SETTER
+                            startDate={filterStartDate} 
+                            endDate={filterEndDate}     
+                            onStartDateChange={setFilterStartDate} 
+                            onEndDateChange={setFilterEndDate}     
                         />
                     )}
                     {activeModule === 'amp' && (
@@ -1091,8 +1183,12 @@ const App: React.FC = () => {
                 </div>
             </main>
             <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">{notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}</div>
-            {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
-            {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
+            <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-white">Загрузка окна...</div>}>
+                {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
+            </Suspense>
+            <Suspense fallback={<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-white">Загрузка окна...</div>}>
+                {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
+            </Suspense>
             {editingClient && (
                 <AddressEditModal 
                     isOpen={!!editingClient} 
