@@ -1,12 +1,12 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import * as XLSX from 'xlsx';
-import type { OkbDataRow } from '../../types';
+import { OkbDataRow } from '../types.js';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-const SNAPSHOT_SHEET_TITLE = 'System_Snapshot';
+const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -26,30 +26,18 @@ const RUSSIAN_MONTHS_ORDER = [
 
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!serviceAccountKey) {
-        throw new Error('Variable GOOGLE_SERVICE_ACCOUNT_KEY is empty. Check Vercel Settings.');
-    }
-
+    if (!serviceAccountKey) throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
     let credentials;
-    try {
-        const trimmedKey = serviceAccountKey.trim();
-        credentials = JSON.parse(trimmedKey);
-        
-        if (credentials.private_key) {
-            credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
-        } else {
-             throw new Error('JSON key is valid, but private_key property is missing.');
-        }
-    } catch (error) {
-        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY. Make sure it is valid JSON string.');
+    try { credentials = JSON.parse(serviceAccountKey); } catch (error) { throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY.'); }
+    
+    // Fix newlines in private key
+    if (credentials.private_key) {
+        credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
     }
 
     return new google.auth.GoogleAuth({
         credentials,
-        scopes: [
-            'https://www.googleapis.com/auth/spreadsheets', 
-            'https://www.googleapis.com/auth/drive'
-        ],
+        scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
     });
 }
 
@@ -65,61 +53,73 @@ export async function getGoogleDriveClient(): Promise<drive_v3.Drive> {
     return google.drive({ version: 'v3', auth: authClient });
 }
 
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = 250;
+
+async function throttle() {
+    const now = Date.now();
+    const timeSinceLast = now - lastRequestTime;
+    if (timeSinceLast < MIN_REQUEST_INTERVAL) {
+        await new Promise(resolve => setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLast));
+    }
+    lastRequestTime = Date.now();
+}
+
 async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
-    const MAX_RETRIES = 1;
+    const MAX_RETRIES = 5;
     let attempt = 0;
     while (true) {
         try {
+            await throttle();
             return await fn();
         } catch (error: any) {
             attempt++;
             const status = error.response?.status || error.code;
+            const isRetryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
             
-            const isSnapshotMissing = context === 'readSnapshot' && (error.message?.includes('Unable to parse range') || status === 400);
-            if (!isSnapshotMissing) {
-                console.error(`Error in ${context} (Attempt ${attempt}):`, error.message);
-            }
-            
-            if (attempt > MAX_RETRIES || isSnapshotMissing) {
-                throw error;
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            console.warn(`Retry attempt ${attempt} for ${context}. Status: ${status}`);
+
+            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) throw error;
+            const delay = Math.min(2000 * Math.pow(2, attempt - 1), 30000);
+            await new Promise(resolve => setTimeout(resolve, delay));
         }
     }
 }
 
+// --- SNAPSHOT FUNCTIONS ---
+
+export async function saveSnapshot(data: any): Promise<void> {
+    // Legacy support or fallback
+    const drive = await getGoogleDriveClient();
+    const folderId = ROOT_FOLDERS['2025']; // Default folder
+    if (!folderId) return; 
+    
+    // Just a placeholder, actual snapshot logic is in get-full-cache.ts
+}
+
+export async function getSnapshot(): Promise<any | null> {
+    // Just a placeholder, actual snapshot logic is in get-full-cache.ts
+    return null;
+}
+
+// --- OKB DATA FUNCTIONS ---
+
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
-  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ 
-      spreadsheetId: SPREADSHEET_ID, 
-      range: `${SHEET_NAME}!A:P`,
-      valueRenderOption: 'FORMATTED_VALUE'
-  }), 'getOKBData') as any;
-  
-  if (!res || !res.data || !res.data.values) {
-      console.warn('Sheets API returned empty or no values.');
-      return [];
-  }
-  
+  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:P` }), 'getOKBData') as any;
   const rows = res.data.values;
-  if (rows.length < 2) return [];
-  
+  if (!rows || rows.length < 2) return [];
   const header = rows[0].map((h: any) => String(h || '').trim());
   return rows.slice(1).map((rowArray: any[]) => {
-        if (!rowArray || rowArray.length === 0 || rowArray.every(cell => !cell)) return null;
+        if (rowArray.every(cell => !cell)) return null;
         const row: { [key: string]: any } = {};
-        header.forEach((key: string, index: number) => { 
-            if (key) row[key] = rowArray[index] !== undefined ? rowArray[index] : null; 
-        });
-        
+        header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
         let latVal = row['lat'] || row['latitude'];
         let lonVal = row['lon'] || row['longitude'];
-        
         if (rowArray.length > 12) {
              const rawLon = rowArray[11]; const rawLat = rowArray[12];
              if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
         }
-        
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
@@ -127,80 +127,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         }
         return row as OkbDataRow;
     }).filter((row: any): row is OkbDataRow => row !== null);
-}
-
-// --- SHEET-BASED SNAPSHOT STORAGE ---
-
-async function ensureSnapshotSheet(sheets: sheets_v4.Sheets) {
-    const meta = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getMeta') as any;
-    const exists = meta.data.sheets?.some((s: any) => s.properties?.title === SNAPSHOT_SHEET_TITLE);
-    if (!exists) {
-        await callWithRetry(() => sheets.spreadsheets.batchUpdate({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            requestBody: { requests: [{ addSheet: { properties: { title: SNAPSHOT_SHEET_TITLE } } }] }
-        }), 'createSnapshotSheet');
-    }
-}
-
-// Legacy single-shot save (kept for backward compat, but likely hits 4.5MB limit)
-export async function saveSnapshot(data: any): Promise<void> {
-    if (!data || !data.aggregatedData || data.aggregatedData.length === 0) {
-        console.warn("Attempted to save empty snapshot. Operation skipped.");
-        return;
-    }
-    await initSnapshot();
-    await appendSnapshot(JSON.stringify(data));
-}
-
-// New Chunked Upload Handlers
-export async function initSnapshot(): Promise<void> {
-    const sheets = await getGoogleSheetsClient();
-    await ensureSnapshotSheet(sheets);
-    await callWithRetry(() => sheets.spreadsheets.values.clear({
-        spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
-    }), 'clearSnapshot');
-}
-
-export async function appendSnapshot(chunk: string): Promise<void> {
-    const sheets = await getGoogleSheetsClient();
-    // Google Sheets cell limit is 50,000 chars. We chunk the incoming string.
-    const CHUNK_SIZE = 45000; 
-    const values: string[][] = [];
-    
-    for (let i = 0; i < chunk.length; i += CHUNK_SIZE) {
-        values.push([chunk.substring(i, i + CHUNK_SIZE)]);
-    }
-    
-    await callWithRetry(() => sheets.spreadsheets.values.append({
-        spreadsheetId: CACHE_SPREADSHEET_ID,
-        range: `'${SNAPSHOT_SHEET_TITLE}'!A1`,
-        valueInputOption: 'RAW',
-        requestBody: { values }
-    }), 'appendSnapshot');
-}
-
-export async function getSnapshot(): Promise<any | null> {
-    const sheets = await getGoogleSheetsClient();
-    try {
-        const res = await callWithRetry(() => sheets.spreadsheets.values.get({
-            spreadsheetId: CACHE_SPREADSHEET_ID,
-            range: `'${SNAPSHOT_SHEET_TITLE}'!A:A`
-        }), 'readSnapshot') as any;
-        
-        if (!res.data.values || res.data.values.length === 0) return null;
-        
-        const fullJson = res.data.values.map((row: any[]) => row[0]).join('');
-        const parsed = JSON.parse(fullJson);
-        
-        return { 
-            data: parsed, 
-            versionHash: parsed.versionHash || `sheet_${Date.now()}`, 
-            size: fullJson.length 
-        };
-    } catch (e) {
-        return null; 
-    }
 }
 
 export async function getOKBAddresses(): Promise<string[]> {
@@ -216,41 +142,37 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } }), 'batchUpdateOKBStatus');
 }
 
-// --- FILE LISTING FUNCTIONS (UPDATED FOR EXCEL & RECURSION) ---
-
-const SPREADSHEET_MIME = 'application/vnd.google-apps.spreadsheet';
-const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-const FOLDER_MIME = 'application/vnd.google-apps.folder';
+// --- FILE LISTING FUNCTIONS ---
 
 export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string, mimeType: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) throw new Error(`Folder for year ${year} not configured.`);
-    
     const mName = RUSSIAN_MONTHS_ORDER[month - 1];
     const engMonthName = MONTH_MAP[mName];
     if (!engMonthName) return [];
-
+    
     return callWithRetry(async () => {
-        // Try finding folder
-        const folderListRes = await drive.files.list({
-            q: `'${rootFolderId}' in parents and mimeType = '${FOLDER_MIME}' and trashed = false`,
-            fields: 'files(id, name)',
-            pageSize: 50
+        const folderListRes = await drive.files.list({ 
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, 
+            fields: 'files(id, name)', 
+            pageSize: 50 
         }) as any;
         
         const monthFolder = folderListRes.data.files?.find((f: any) => f.name?.toLowerCase() === engMonthName.toLowerCase());
+        if (!monthFolder || !monthFolder.id) return [];
         
-        if (monthFolder && monthFolder.id) {
-             const fileListRes = await drive.files.list({
-                q: `'${monthFolder.id}' in parents and (mimeType = '${SPREADSHEET_MIME}' or mimeType = '${EXCEL_MIME}') and trashed = false`,
-                fields: 'files(id, name, mimeType)',
-                pageSize: 100
-            }) as any;
-            return (fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType }));
-        }
-
-        return [];
+        const fileListRes = await drive.files.list({ 
+            q: `'${monthFolder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, 
+            fields: 'files(id, name, mimeType)', 
+            pageSize: 100 
+        }) as any;
+        
+        return (fileListRes.data.files || []).map((f: any) => ({ 
+            id: f.id!, 
+            name: f.name || 'Untitled',
+            mimeType: f.mimeType
+        }));
     }, `listFilesForMonth-${year}-${month}`);
 }
 
@@ -258,69 +180,114 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) throw new Error(`Папка для года ${year} не настроена.`);
-
+    
     return callWithRetry(async () => {
         const allFiles: { id: string, name: string, mimeType: string }[] = [];
-
-        // 1. Search for files DIRECTLY in the year folder
-        const directFilesRes = await drive.files.list({
-            q: `'${rootFolderId}' in parents and (mimeType = '${SPREADSHEET_MIME}' or mimeType = '${EXCEL_MIME}') and trashed = false`,
-            fields: 'files(id, name, mimeType)',
-            pageSize: 100
+        
+        // 1. Get folders
+        const folderListRes = await drive.files.list({ 
+            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, 
+            fields: 'files(id, name)', 
+            pageSize: 50 
         }) as any;
         
-        if (directFilesRes.data.files) {
-            allFiles.push(...directFilesRes.data.files.map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType })));
-        }
-
-        // 2. Search in SUBFOLDERS (e.g. Month folders)
-        const folderListRes = await drive.files.list({
-            q: `'${rootFolderId}' in parents and mimeType = '${FOLDER_MIME}' and trashed = false`,
-            fields: 'files(id, name)',
-            pageSize: 50
-        }) as any;
-
-        const folders = folderListRes.data.files || [];
-        
-        const folderPromises = folders.map(async (folder: any) => {
-            if (!folder.id) return [];
-            const subFilesRes = await drive.files.list({
-                q: `'${folder.id}' in parents and (mimeType = '${SPREADSHEET_MIME}' or mimeType = '${EXCEL_MIME}') and trashed = false`,
-                fields: 'files(id, name, mimeType)',
-                pageSize: 100
+        // 2. Iterate folders
+        for (const folder of (folderListRes.data.files || [])) {
+            if (!folder.id) continue;
+            const fileListRes = await drive.files.list({ 
+                q: `'${folder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, 
+                fields: 'files(id, name, mimeType)', 
+                pageSize: 100 
             }) as any;
-            return subFilesRes.data.files?.map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType })) || [];
-        });
-
-        const subFiles = await Promise.all(folderPromises);
-        subFiles.forEach(files => allFiles.push(...files));
+            
+            allFiles.push(...(fileListRes.data.files || []).map((f: any) => ({ 
+                id: f.id!, 
+                name: f.name || 'Untitled',
+                mimeType: f.mimeType 
+            })));
+        }
+        
+        // 3. Get root files
+        const rootFilesRes = await drive.files.list({
+             q: `'${rootFolderId}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false`,
+             fields: 'files(id, name, mimeType)',
+             pageSize: 100
+        }) as any;
+        
+        allFiles.push(...(rootFilesRes.data.files || []).map((f: any) => ({
+            id: f.id!,
+            name: f.name || 'Untitled',
+            mimeType: f.mimeType
+        })));
 
         return allFiles;
     }, `listFilesForYear-${year}`);
 }
 
+/**
+ * Downloads file content from Drive (Export for Sheets, Get for others),
+ * parses it with XLSX in memory, and returns the requested row slice.
+ * This avoids "Range exceeds grid limits" error from Sheets API.
+ */
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ', mimeType?: string): Promise<any[][]> {
-    if (mimeType === EXCEL_MIME || mimeType === 'application/vnd.ms-excel') {
-        const drive = await getGoogleDriveClient();
-        return callWithRetry(async () => {
-            const res = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' }) as any;
-            const workbook = XLSX.read(res.data, { type: 'buffer' });
-            const sheetName = workbook.SheetNames[0];
-            const worksheet = workbook.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-            const match = range.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
-            if (match) {
-                const startRow = parseInt(match[1], 10) - 1;
-                const endRow = parseInt(match[2], 10);
-                return rows.slice(startRow, endRow);
-            }
-            return rows;
-        }, `fetchExcel-${fileId}`);
-    }
+    const drive = await getGoogleDriveClient();
+    let res: any;
 
-    const sheets = await getGoogleSheetsClient();
-    const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: fileId, range: range, valueRenderOption: 'UNFORMATTED_VALUE' }), `fetchFileContent-${fileId}-${range}`) as any;
-    return res.data.values || [];
+    try {
+        // Determine method based on mimeType
+        if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+             // Google Sheet: Export to XLSX
+             res = await callWithRetry(() => drive.files.export({
+                fileId,
+                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            }, { responseType: 'arraybuffer' }), `export-${fileId}`);
+        } else {
+             // Excel/CSV: Download directly
+             res = await callWithRetry(() => drive.files.get({
+                fileId,
+                alt: 'media'
+            }, { responseType: 'arraybuffer' }), `download-${fileId}`);
+        }
+
+        const workbook = XLSX.read(res.data, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Parse ALL rows to JSON (array of arrays)
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+        // Slice in memory
+        // Parse range "A90001:CZ91000" -> extract row numbers
+        const match = range.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
+        if (match) {
+            const startRow = parseInt(match[1], 10) - 1; // 1-based to 0-based
+            const endRow = parseInt(match[2], 10);
+            
+            // If requested start is beyond available rows, return empty array (Graceful EOF)
+            if (startRow >= rows.length) return [];
+            
+            return rows.slice(startRow, endRow);
+        }
+
+        return rows;
+    } catch (e: any) {
+        console.error(`Error reading file ${fileId} (${mimeType}):`, e.message);
+        throw e;
+    }
+}
+
+// --- COORDINATE CACHE FUNCTIONS ---
+function normalizeForComparison(str: string): string {
+    return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
+    if (!historyString) return false;
+    const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
+    return entries.some(entry => {
+        const addrPart = entry.split('[')[0];
+        return normalizeForComparison(addrPart) === targetAddressNorm;
+    });
 }
 
 export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
@@ -445,18 +412,4 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
         };
     }
     return null;
-}
-
-// --- COORDINATE CACHE FUNCTIONS ---
-function normalizeForComparison(str: string): string {
-    return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
-    if (!historyString) return false;
-    const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
-    return entries.some(entry => {
-        const addrPart = entry.split('[')[0];
-        return normalizeForComparison(addrPart) === targetAddressNorm;
-    });
 }

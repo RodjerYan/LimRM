@@ -95,12 +95,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     const fileId = req.query.fileId as string;
                     const mimeType = req.query.mimeType as string; // Receive mimeType
                     const offset = parseInt(req.query.offset as string || '0', 10);
-                    const limit = parseInt(req.query.limit as string || '2000', 10);
-                    // Pass mimeType to fetch function
-                    const chunk = await fetchFileContent(fileId, `A${offset + 1}:CZ${offset + limit}`, mimeType);
-                    const hasMore = chunk.length > 0 && chunk.length >= limit;
+                    const limit = parseInt(req.query.limit as string || '1000', 10);
+                    
+                    // NEW LOGIC: Construct range for memory slicing
+                    // offset=0 -> startRow=1 (A1). offset=1000 -> startRow=1001 (A1001)
+                    const range = `A${offset + 1}:CZ${offset + limit}`;
+                    
+                    // Pass mimeType to fetch function so it knows whether to export (Google Sheet) or download (Excel)
+                    const rows = await fetchFileContent(fileId, range, mimeType);
+                    
+                    // If we got exactly the limit, assume there might be more. 
+                    // If we got less, we hit the end of the file in memory.
+                    const hasMore = rows.length === limit;
+                    
                     res.setHeader('Cache-Control', 'no-store');
-                    return res.status(200).json({ fileId, rows: chunk, offset, limit, hasMore });
+                    return res.status(200).json({ 
+                        fileId, 
+                        rows: rows, 
+                        offset, 
+                        limit, 
+                        hasMore 
+                    });
                 }
                 return res.status(400).json({ error: 'Invalid AKB params' });
             }

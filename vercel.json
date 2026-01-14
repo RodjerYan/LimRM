@@ -10,10 +10,6 @@
       "destination": "/api/get-okb?action=get-okb"
     },
     {
-      "source": "/api/get-akb",
-      "destination": "/api/get-okb?action=get-akb"
-    },
-    {
       "source": "/api/get-okb-status",
       "destination": "/api/get-okb?action=get-okb-status"
     },
