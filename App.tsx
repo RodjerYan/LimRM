@@ -141,32 +141,26 @@ const App: React.FC = () => {
 
     const performUpload = async (payload: any): Promise<string[]> => {
         try {
-            console.log("Starting upload sequence to Sheets...");
-            // Инициализация (очистка листа)
+            console.log("Starting upload sequence to Google Drive...");
+            
+            // 1. Инициализация (создание папки, удаление старого)
             const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
-            if (!initRes.ok) throw new Error('Failed to init snapshot');
+            if (!initRes.ok) throw new Error('Failed to init snapshot folder');
 
             const jsonString = JSON.stringify(payload);
             
-            // ВАЖНО: 45 000 символов. Это лимит одной ячейки Google Sheets (50k safe limit).
-            const CHUNK_SIZE = 45_000; 
+            // Чанки по 2MB (Vercel лимит 4.5MB, берем с запасом)
+            const CHUNK_SIZE = 2 * 1024 * 1024; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
             let offset = 0;
             let chunkIndex = 0;
-            
+
             while (offset < jsonString.length) {
                 setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
                 
                 const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
                 
-                // --- FIX: ЗАДЕРЖКА ДЛЯ GOOGLE SHEETS API (Rate Limiting) ---
-                // Google разрешает 60 записей в минуту. 
-                // Ставим паузу 1.5 секунды между чанками, чтобы не получить бан.
-                if (chunkIndex > 0) {
-                    await new Promise(r => setTimeout(r, 1500)); 
-                }
-                // ----------------------------------------------------------
-
+                // Отправляем чанк
                 const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -174,16 +168,19 @@ const App: React.FC = () => {
                 });
                 
                 if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(`Upload failed: ${text.substring(0, 100)}`);
+                    throw new Error(`Upload chunk failed`);
                 }
                 
                 offset += CHUNK_SIZE;
                 chunkIndex++;
+                
+                // Небольшая пауза, чтобы не душить сеть
+                await new Promise(r => setTimeout(r, 50)); 
             }
-            console.log('Snapshot uploaded successfully to Sheets.');
+
+            console.log('Snapshot uploaded successfully to Drive.');
             setUploadProgress(0);
-            return []; // Мы не используем ID файлов, так как пишем в таблицу
+            return [];
         } catch (e) {
             console.error("Server upload failed:", e);
             setUploadProgress(0);
@@ -215,7 +212,7 @@ const App: React.FC = () => {
                 payload = nextPayload;
             }
 
-            // --- SAVE META FILE (INTO SHEET CELL B1) ---
+            // --- SAVE META FILE (meta.json) ---
             console.log("Финализация: сохранение метаданных версии...");
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
@@ -224,7 +221,7 @@ const App: React.FC = () => {
                     versionHash: payload.versionHash,
                     totalRowsProcessed: payload.totalRowsProcessed,
                     processedFileIds: payload.processedFileIds, 
-                    chunkFileIds: [] // Not used in Sheet strategy
+                    chunkFileIds: [] // Not used in Drive strategy
                 })
             });
 
@@ -634,46 +631,80 @@ const App: React.FC = () => {
             startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
         
-        // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT)
+        // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT ИЗ DRIVE)
         let snapshotLoaded = false;
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                const snapshotRes = await fetch(`/api/get-full-cache?action=get-snapshot&t=${Date.now()}`); 
-                if (snapshotRes.ok) {
-                    const snapshot = await snapshotRes.json();
+                setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
+                
+                // 1. Получаем список чанков
+                const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+                
+                if (listRes.ok) {
+                    const fileList = await listRes.json();
                     
-                    const data = snapshot.data || snapshot; 
+                    if (Array.isArray(fileList) && fileList.length > 0) {
+                        let fullJson = '';
+                        
+                        // 2. Скачиваем каждый чанк последовательно
+                        for (let i = 0; i < fileList.length; i++) {
+                            const file = fileList[i];
+                            const pct = Math.round(((i + 1) / fileList.length) * 100);
+                            setProcessingState(prev => ({ 
+                                ...prev, 
+                                message: `Скачивание базы: ${pct}%`,
+                                progress: pct 
+                            }));
 
-                    if (data && data.aggregatedData && data.aggregatedData.length > 0) {
-                        const { aggregatedData, unidentifiedRows, okbRegionCounts, totalRowsProcessed, processedFileIds } = data;
-                        const snapshotHash = data.versionHash || effectiveTargetVersion; 
-                        
-                        setOkbRegionCounts(okbRegionCounts);
-                        setAllData(aggregatedData);
-                        const clientsMap = new Map<string, MapPoint>();
-                        aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                        setAllActiveClients(Array.from(clientsMap.values()));
-                        setUnidentifiedRows(unidentifiedRows);
-                        setDbStatus('ready');
-                        
-                        setLastSnapshotVersion(snapshotHash);
-                        localStorage.setItem('last_snapshot_version', snapshotHash);
-                        
-                        rowsProcessedSoFar = totalRowsProcessed || 0;
-                        totalRowsProcessedRef.current = rowsProcessedSoFar;
-                        
-                        if (processedFileIds) {
-                            processedFileIdsRef.current = new Set(processedFileIds);
-                            console.log(`Loaded ${processedFileIds.length} processed files from snapshot.`);
+                            const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
+                            if (chunkRes.ok) {
+                                const chunkText = await chunkRes.text();
+                                fullJson += chunkText;
+                            }
                         }
-                        
-                        restoredDataForWorker = aggregatedData;
-                        restoredUnidentifiedForWorker = unidentifiedRows;
-                        snapshotLoaded = true;
+
+                        // 3. Парсим собранный JSON
+                        if (fullJson.length > 0) {
+                            try {
+                                const data = JSON.parse(fullJson);
+                                const snapshot = data; // Это уже и есть весь объект
+                                
+                                if (snapshot && snapshot.aggregatedData) {
+                                    const { aggregatedData, unidentifiedRows: uRows, okbRegionCounts: okbC, totalRowsProcessed: totalP, processedFileIds: pIds } = snapshot;
+                                    
+                                    setOkbRegionCounts(okbC);
+                                    setAllData(aggregatedData);
+                                    
+                                    const clientsMap = new Map<string, MapPoint>();
+                                    aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                                    setAllActiveClients(Array.from(clientsMap.values()));
+                                    
+                                    setUnidentifiedRows(uRows);
+                                    setDbStatus('ready');
+                                    
+                                    const snapshotHash = snapshot.versionHash || effectiveTargetVersion;
+                                    setLastSnapshotVersion(snapshotHash);
+                                    localStorage.setItem('last_snapshot_version', snapshotHash);
+                                    
+                                    rowsProcessedSoFar = totalP || 0;
+                                    totalRowsProcessedRef.current = rowsProcessedSoFar;
+                                    
+                                    if (pIds) {
+                                        processedFileIdsRef.current = new Set(pIds);
+                                    }
+                                    
+                                    restoredDataForWorker = aggregatedData;
+                                    restoredUnidentifiedForWorker = uRows;
+                                    snapshotLoaded = true;
+                                }
+                            } catch (parseErr) {
+                                console.error("JSON Parse error:", parseErr);
+                            }
+                        }
                     }
                 }
             } catch (e) {
-                console.warn("Snapshot fetch failed. Falling back to raw file processing.");
+                console.warn("Snapshot fetch failed:", e);
             }
         }
 
