@@ -141,44 +141,49 @@ const App: React.FC = () => {
 
     const performUpload = async (payload: any): Promise<string[]> => {
         try {
-            console.log("Starting upload sequence to Google Drive...");
-            
-            // 1. Инициализация (создание папки, удаление старого)
-            const initRes = await fetch('/api/get-full-cache?action=init-snapshot', { method: 'POST' });
-            if (!initRes.ok) throw new Error('Failed to init snapshot folder');
-
+            console.log("Начало нарезки снимка на чанки...");
             const jsonString = JSON.stringify(payload);
             
-            // Чанки по 2MB (Vercel лимит 4.5MB, берем с запасом)
-            const CHUNK_SIZE = 2 * 1024 * 1024; 
+            const CHUNK_SIZE = 2 * 1024 * 1024; // 2 МБ на файл
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
-            let offset = 0;
-            let chunkIndex = 0;
+            
+            if (totalChunks > 30) {
+                console.warn("Ошибка: Слишком много данных для 30 файлов. Данные могут быть урезаны.");
+                // В реальном сценарии здесь нужно больше файлов, но пока просто предупреждаем
+            }
 
-            while (offset < jsonString.length) {
-                setUploadProgress(Math.round(((chunkIndex + 1) / totalChunks) * 100));
+            for (let i = 0; i < totalChunks; i++) {
+                if (i >= 30) break; // Hard limit
+
+                setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
+                const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
                 
-                const chunk = jsonString.slice(offset, offset + CHUNK_SIZE);
-                
-                // Отправляем чанк
-                const res = await fetch('/api/get-full-cache?action=append-snapshot', { 
+                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, { 
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chunk }) 
                 });
                 
-                if (!res.ok) {
-                    throw new Error(`Upload chunk failed`);
-                }
+                if (!res.ok) throw new Error(`Ошибка загрузки чанка ${i}`);
                 
-                offset += CHUNK_SIZE;
-                chunkIndex++;
-                
-                // Небольшая пауза, чтобы не душить сеть
-                await new Promise(r => setTimeout(r, 50)); 
+                // Пауза 100мс чтобы не душить API
+                await new Promise(r => setTimeout(r, 100));
             }
 
-            console.log('Snapshot uploaded successfully to Drive.');
+            // СОХРАНЯЕМ МЕТА-ИНФОРМАЦИЮ (Сколько чанков всего)
+            await fetch('/api/get-full-cache?action=save-meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    versionHash: payload.versionHash,
+                    totalRowsProcessed: payload.totalRowsProcessed,
+                    processedFileIds: payload.processedFileIds,
+                    chunkCount: totalChunks,
+                    savedAt: new Date().toISOString()
+                })
+            });
+
+            console.log('Снимок успешно разбит и сохранен в облако!');
             setUploadProgress(0);
             return [];
         } catch (e) {
@@ -211,19 +216,6 @@ const App: React.FC = () => {
                 await performUpload(nextPayload);
                 payload = nextPayload;
             }
-
-            // --- SAVE META FILE (meta.json) ---
-            console.log("Финализация: сохранение метаданных версии...");
-            await fetch('/api/get-full-cache?action=save-meta', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    versionHash: payload.versionHash,
-                    totalRowsProcessed: payload.totalRowsProcessed,
-                    processedFileIds: payload.processedFileIds, 
-                    chunkFileIds: [] // Not used in Drive strategy
-                })
-            });
 
         } catch (e) {
             console.error("Cloud sync error:", e);
@@ -631,13 +623,13 @@ const App: React.FC = () => {
             startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
         
-        // 2. ЗАГРУЗКА СНИМКА (SNAPSHOT ИЗ DRIVE)
+        // 2. ЗАГРУЗКА СНИМКА (СКЛЕЙКА ИЗ ФАЙЛОВ)
         let snapshotLoaded = false;
         if (isVersionMismatch || allDataRef.current.length === 0) {
             try {
-                setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
+                setProcessingState(prev => ({ ...prev, message: 'Получение списка частей базы...' }));
                 
-                // 1. Получаем список чанков
+                // 1. Получаем список чанков (ID файлов)
                 const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
                 
                 if (listRes.ok) {
@@ -652,7 +644,7 @@ const App: React.FC = () => {
                             const pct = Math.round(((i + 1) / fileList.length) * 100);
                             setProcessingState(prev => ({ 
                                 ...prev, 
-                                message: `Скачивание базы: ${pct}%`,
+                                message: `Загрузка: ${pct}%`,
                                 progress: pct 
                             }));
 

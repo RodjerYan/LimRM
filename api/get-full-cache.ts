@@ -16,8 +16,24 @@ export const config = {
     api: { bodyParser: false }, 
 };
 
-// ID расшаренной папки на Google Drive для хранения базы данных
-const FOLDER_ID = '1TTdZZC-BVcQtUGgmeJwlP8GvZt23SR_N';
+// МАССИВ PRE-CREATED ФАЙЛОВ (31 файл)
+// Индекс 0: Meta
+// Индекс 1-30: Data Chunks
+const SNAPSHOT_FILES = [
+    '1-MR1rOawgl--ORjVPu4qZqt_5kGOaHoq', '10cnDHR5IyBVKXhNlXcFlx-hW4IIbNoH_', '112onIGNBVw0x-FcYmbBHTEi6lPVpHwYn',
+    '136_cbRU4KSkOzus1trXO2CKViR5cyldV', '13D4tkMouV7AxAtHQxJkfKwRv_PEKWycn', '17I7F_e5apYtvBOKNaVBAppEpI6lZrTzH',
+    '1BGIcxm9y3JahVDSH-LiNbAntkSDxzcQl', '1Gzg2_oW3T6euZxXmzbyVTZAVahFN3Ac3', '1JpYVThJ0Q1bfFF5B6ZSiB0kBRtifNOaR',
+    '1L1PDLU-ddIOfYd_RIACbAxQJzoYfZTQe', '1NZSpW5qLDppJg0mlYX9dgICbhQyaFaBb', '1OBLQLiAh71HL95z8QTqDBW0fnN0TqE6y',
+    '1VO0trlHMP8c6Y6QTIVkdTRgeBI_f3XLc', '1VPcYuvUmhiWL583EISY0ed-BEfVFwzhf', '1WOyHafp5wF8p9ybUFtd7ChhuOvqENzM0',
+    '1YDwdBJRhnstlRRwp8SF_1VRoXnNOoTav', '1Zj_j5as83QJlCrRi9foUwdosVs3K7dw3', '1bwhS_QeOYs95SK-MtafLEVoaXX9R6StR',
+    '1c-ZgnberT5srrHoi3zXLvA51QYHPoKoD', '1dribJF8Bkt5KcW19EKdOzxz7eiVVliId', '1i8pa2h5Ej-BU-4le-SBlvgPWqS_6pNZ3',
+    '1j9wdkKraXI1-rQR1bOY8Nio-4LmWhK2w', '1oPheK3WxhwEQFOoUQaM-67QczcQIZVfI', '1pPof5L98jGHHIr4BDjLlq_TRhps3Yi9d',
+    '1qsR8WPPsFt_PeWads-eTiqhosn568CkH', '1stEiGMFioK5T6crIeREgTPH6kv_ndBvu', '1uJmwkNjxkwHjeoM6neaVv8zlDd8kUWhl',
+    '1vSWXvAYHnZqnwbjZgIoWAOOZJPezdhOl', '1wWnq8dcqiMryRTG-xnMRXV0_3C4c4lC7', '1xyt_cKyyYlS6X3_Ik2X0wSiOVouRDA2Z',
+    '1y-fEGcpqaB6rrK4EBpwe1sdvXMYQgPep'
+];
+
+const META_FILE_ID = SNAPSHOT_FILES[0];
 const SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
@@ -47,6 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
     
     const action = req.query.action as string;
+    const chunkIndex = req.query.chunkIndex ? parseInt(req.query.chunkIndex as string, 10) : -1;
     const { fileId } = req.query;
 
     try {
@@ -55,42 +72,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'POST') {
             const body = await getRawBody(req);
             
-            // 1. ИНИЦИАЛИЗАЦИЯ (Очистка старой версии)
-            if (action === 'init-snapshot') {
-                const q = `'${FOLDER_ID}' in parents and name contains 'chunk_' and trashed=false`;
-                // ВАЖНО: supportsAllDrives: true обязателен для сервисных аккаунтов в общих папках
-                const files = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true }); 
-                
-                if (files.data.files?.length) {
-                    Promise.all(files.data.files.map(f => drive.files.delete({ fileId: f.id!, supportsAllDrives: true }).catch(() => {})));
-                }
-                return res.status(200).json({ status: 'ready', folderId: FOLDER_ID });
-            }
-            
-            // 2. СОХРАНЕНИЕ ЧАНКА
-            if (action === 'append-snapshot') {
+            // 1. SAVE CHUNK (UPDATE EXISTING FILE)
+            if (action === 'save-chunk') {
                 const { chunk } = body; 
-                if (!chunk) return res.status(400).json({ error: 'No chunk data' });
-                const name = `chunk_${Date.now()}.json`; 
-                await drive.files.create({
-                    requestBody: { name, parents: [FOLDER_ID], mimeType: 'application/json' },
+                // Берем ID файла из списка (пропуская первый, он для меты)
+                const targetFileId = SNAPSHOT_FILES[chunkIndex + 1];
+
+                if (!targetFileId) return res.status(400).json({ error: 'Chunk index out of bounds (max 30 chunks)' });
+
+                await drive.files.update({
+                    fileId: targetFileId,
                     media: { mimeType: 'application/json', body: chunk },
-                    supportsAllDrives: true // ВАЖНО
+                    supportsAllDrives: true
                 });
-                return res.status(200).json({ status: 'saved', chunk: name });
+
+                return res.status(200).json({ status: 'saved', index: chunkIndex });
             }
 
-            // 3. СОХРАНЕНИЕ МЕТАДАННЫХ
+            // 2. SAVE META (UPDATE FIRST FILE)
             if (action === 'save-meta') {
-                const q = `'${FOLDER_ID}' in parents and name = 'meta.json' and trashed=false`;
-                const existing = await drive.files.list({ q, supportsAllDrives: true });
-                if (existing.data.files?.length) {
-                    await Promise.all(existing.data.files.map(f => drive.files.delete({ fileId: f.id!, supportsAllDrives: true })));
-                }
-                await drive.files.create({
-                    requestBody: { name: 'meta.json', parents: [FOLDER_ID], mimeType: 'application/json' },
+                await drive.files.update({
+                    fileId: META_FILE_ID,
                     media: { mimeType: 'application/json', body: JSON.stringify(body) },
-                    supportsAllDrives: true // ВАЖНО
+                    supportsAllDrives: true
                 });
                 return res.status(200).json({ status: 'meta_saved' });
             }
@@ -100,28 +104,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'update-address') { await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment); return res.json({success:true}); }
             if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
             if (action === 'delete-address') { await deleteAddressFromCache(body.rmName, body.address); return res.json({success:true}); }
+            
+            // Init snapshot (legacy call support, now essentially no-op)
+            if (action === 'init-snapshot') {
+                 return res.status(200).json({ status: 'ready', folderId: 'pre-created' });
+            }
         }
 
         if (req.method === 'GET') {
-            // 4. ПОЛУЧЕНИЕ МЕТАДАННЫХ
+            // 3. GET SNAPSHOT META
             if (action === 'get-snapshot-meta') {
-                const q = `'${FOLDER_ID}' in parents and name = 'meta.json' and trashed=false`;
-                const list = await drive.files.list({ q, fields: 'files(id)', supportsAllDrives: true });
-                if (!list.data.files || list.data.files.length === 0) {
-                    return res.status(200).json({ versionHash: 'none' });
-                }
-                const metaFile = await drive.files.get({ fileId: list.data.files[0].id!, alt: 'media', supportsAllDrives: true });
-                return res.status(200).json(metaFile.data);
+                const file = await drive.files.get({ fileId: META_FILE_ID, alt: 'media', supportsAllDrives: true });
+                return res.status(200).json(file.data);
             }
 
-            // 5. ПОЛУЧЕНИЕ СПИСКА ЧАНКОВ
+            // 4. GET SNAPSHOT LIST (Returns IDs of chunks based on meta count)
             if (action === 'get-snapshot-list') {
-                const q = `'${FOLDER_ID}' in parents and name contains 'chunk_' and trashed=false`;
-                const list = await drive.files.list({ q, orderBy: 'createdTime', fields: 'files(id, name, size)', supportsAllDrives: true });
-                return res.status(200).json(list.data.files || []);
+                // First fetch meta to know how many chunks
+                try {
+                    const metaRes = await drive.files.get({ fileId: META_FILE_ID, alt: 'media', supportsAllDrives: true });
+                    const meta = metaRes.data as any;
+                    
+                    if (meta && typeof meta.chunkCount === 'number') {
+                        const usedIds = SNAPSHOT_FILES.slice(1, meta.chunkCount + 1);
+                        return res.status(200).json(usedIds.map(id => ({ id })));
+                    } else {
+                        // Fallback if meta is empty
+                        return res.status(200).json([]);
+                    }
+                } catch (e) {
+                    console.warn("Failed to read meta for list", e);
+                    return res.status(200).json([]);
+                }
             }
 
-            // 6. СКАЧИВАНИЕ ФАЙЛА (PROXY)
+            // 5. GET FILE CONTENT (Proxy)
             if (action === 'get-file-content') {
                 if (!fileId) return res.status(400).json({ error: 'No fileId' });
                 const file = await drive.files.get({ fileId: String(fileId), alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
@@ -141,6 +158,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Invalid action or method' });
     } catch (error: any) {
         console.error("API Error:", error);
+        // Handle case where meta file might be empty initially
+        if (action === 'get-snapshot-meta' && (error.message.includes('Unexpected end of JSON input') || error.code === 404)) {
+             return res.status(200).json({ versionHash: 'none' });
+        }
         return res.status(500).json({ error: error.message });
     }
 }
