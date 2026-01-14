@@ -1,7 +1,7 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
 import * as XLSX from 'xlsx';
-import { OkbDataRow } from '../types.js';
+import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
