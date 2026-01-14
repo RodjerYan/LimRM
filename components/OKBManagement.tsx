@@ -18,8 +18,8 @@ const OKBManagement: React.FC<OKBManagementProps> = ({ onStatusChange, onDataCha
         onStatusChange({ status: 'loading', message: forceUpdate ? 'Обновление с сервера...' : 'Подключение к серверу...' });
         
         try {
-            // Timestamp нужен, чтобы обойти локальный кэш браузера, если заголовки Vercel не сработали
-            const url = `/api/get-okb?t=${Date.now()}`;
+            // Updated Endpoint: /api/get-akb?mode=okb_data
+            const url = `/api/get-akb?mode=okb_data&t=${Date.now()}`;
             
             const response = await fetch(url);
             if (!response.ok) {

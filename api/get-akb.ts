@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchFileContent, listFilesForYear } from './_lib/sheets.js';
+import { fetchFileContent, listFilesForYear, getOKBData } from './_lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // CORS Headers for local development
@@ -14,6 +14,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { year, mode, fileId, offset = '0', limit = '1000', mimeType } = req.query;
 
     try {
+        // --- РЕЖИМ: ПОЛУЧИТЬ БАЗУ КЛИЕНТОВ (OKB) ---
+        if (mode === 'okb_data') {
+            const data = await getOKBData();
+            res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, stale-while-revalidate=60');
+            return res.status(200).json(data);
+        }
+
         // --- РЕЖИМ: ПОЛУЧИТЬ СПИСОК ФАЙЛОВ ---
         if (mode === 'list') {
             if (!year || typeof year !== 'string') {
@@ -47,12 +54,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Если ни один из режимов не подошел
-        return res.status(400).json({ error: 'Invalid parameters. Use mode=list or provide a fileId.' });
+        return res.status(400).json({ error: 'Invalid parameters. Use mode=list, mode=okb_data or provide a fileId.' });
 
     } catch (error: any) {
         console.error(`Critical API Error in /api/get-akb (mode=${mode}, fileId=${fileId}):`, error);
         res.status(500).json({ 
-            error: 'Failed to process file from Google Drive.', 
+            error: 'Failed to process request.', 
             details: error.message 
         });
     }

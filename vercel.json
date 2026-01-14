@@ -6,22 +6,6 @@
       "destination": "/api/gemini-proxy"
     },
     {
-      "source": "/api/get-okb",
-      "destination": "/api/get-okb?action=get-okb"
-    },
-    {
-      "source": "/api/get-okb-status",
-      "destination": "/api/get-okb?action=get-okb-status"
-    },
-    {
-      "source": "/api/geocode",
-      "destination": "/api/get-okb?action=geocode"
-    },
-    {
-      "source": "/api/get-conflict-zones",
-      "destination": "/api/get-okb?action=get-conflict-zones"
-    },
-    {
       "source": "/api/get-full-cache",
       "destination": "/api/get-full-cache?action=get-full-cache"
     },
@@ -81,7 +65,7 @@
   ],
   "crons": [
     {
-      "path": "/api/get-okb",
+      "path": "/api/get-akb?mode=okb_data",
       "schedule": "0 5 * * *"
     }
   ]
