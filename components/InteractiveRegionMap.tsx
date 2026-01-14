@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useMemo, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -51,12 +50,25 @@ const createPopupContent = (name: string, address: string, type: string, contact
     </div>
 `;
 
+// Heatmap colors
+const getColor = (d: number, mode: OverlayMode) => {
+    if (mode === 'sales') {
+        return d > 10000 ? '#800026' :
+               d > 5000  ? '#BD0026' :
+               d > 2000  ? '#E31A1C' :
+               d > 1000  ? '#FC4E2A' :
+               d > 500   ? '#FD8D3C' :
+               d > 200   ? '#FEB24C' :
+               d > 100   ? '#FED976' : '#FFEDA0';
+    }
+    return d > 50 ? '#10b981' : '#3b82f6';
+};
+
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
     
-    // Fix: Use any for MarkerClusterGroup to bypass type missing error
     const potentialClientMarkersLayer = useRef<any | null>(null);
     const activeClientMarkersLayer = useRef<any | null>(null);
     const layerControl = useRef<L.Control.Layers | null>(null);
@@ -92,13 +104,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const handleLocationSelect = (loc: SearchableLocation) => {
         setSearchTerm(loc.name);
         setSearchResults([]);
-        console.log("Selected region:", loc.name);
+        if (geoJsonLayer.current && mapInstance.current) {
+            geoJsonLayer.current.eachLayer((layer: any) => {
+                if (layer.feature.properties.name === loc.name || layer.feature.properties.name_ru === loc.name) {
+                    mapInstance.current?.fitBounds(layer.getBounds());
+                    layer.setStyle({ weight: 5, color: '#F59E0B', fillOpacity: 0.7 });
+                    setTimeout(() => geoJsonLayer.current?.resetStyle(layer), 3000);
+                }
+            });
+        }
     };
 
     useEffect(() => { activeClientsDataRef.current = activeClients; }, [activeClients]);
     useEffect(() => { onEditClientRef.current = onEditClient; }, [onEditClient]);
 
-    // Map Initialization
+    // 1. Initialize Map
     useEffect(() => {
         if (!mapContainer.current || mapInstance.current) return;
         const map = L.map(mapContainer.current, {
@@ -125,7 +145,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         };
     }, []);
 
-    // Theme Update
+    // 2. Theme
     useEffect(() => {
         if (tileLayerRef.current) {
             tileLayerRef.current.setUrl(
@@ -136,33 +156,103 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
 
-    // --- OPTIMIZED ASYNC MARKER RENDERING (FIXED) ---
+    // 3. Load GeoJSON
+    useEffect(() => {
+        const loadGeo = async () => {
+            setIsLoadingGeo(true);
+            try {
+                const res = await fetch('/russia.geojson');
+                if (!res.ok) throw new Error("Failed to load geojson");
+                const data = await res.json();
+                setGeoJsonData(data);
+            } catch (e) {
+                console.error("GeoJSON load failed:", e);
+            } finally {
+                setIsLoadingGeo(false);
+            }
+        };
+        loadGeo();
+    }, []);
+
+    // 4. Render GeoJSON
+    useEffect(() => {
+        if (!geoJsonData || !mapInstance.current) return;
+        if (geoJsonLayer.current) {
+            mapInstance.current.removeLayer(geoJsonLayer.current);
+            layerControl.current?.removeLayer(geoJsonLayer.current);
+        }
+
+        const onEachFeature = (feature: any, layer: L.Layer) => {
+            layer.bindTooltip(`
+                <div class="text-xs font-bold">${feature.properties.name || feature.properties.name_ru}</div>
+            `, { sticky: true, direction: 'center' });
+
+            layer.on({
+                mouseover: (e) => {
+                    const l = e.target;
+                    l.setStyle({ weight: 3, color: '#fff', fillOpacity: 0.7 });
+                    l.bringToFront();
+                },
+                mouseout: (e) => {
+                    if (geoJsonLayer.current) geoJsonLayer.current.resetStyle(e.target);
+                },
+                click: (e) => {
+                    mapInstance.current?.fitBounds(e.target.getBounds());
+                }
+            });
+        };
+
+        const getStyle = (feature: any) => {
+            const regionName = feature.properties.name || feature.properties.name_ru;
+            let value = 0;
+            const regionData = data.filter(d => d.region.includes(regionName));
+            if (overlayMode === 'sales') {
+                value = regionData.reduce((acc, curr) => acc + (curr.fact || 0), 0);
+            } else {
+                value = Math.random() * 1000; 
+            }
+            return {
+                fillColor: getColor(value, overlayMode),
+                weight: 1,
+                opacity: 1,
+                color: localTheme === 'dark' ? '#374151' : 'white',
+                dashArray: '3',
+                fillOpacity: 0.4
+            };
+        };
+
+        geoJsonLayer.current = L.geoJSON(geoJsonData, {
+            style: getStyle,
+            onEachFeature: onEachFeature
+        }).addTo(mapInstance.current);
+
+        geoJsonLayer.current.bringToBack();
+        layerControl.current?.addOverlay(geoJsonLayer.current, "Границы регионов");
+
+    }, [geoJsonData, localTheme, overlayMode, data]);
+
+    // 5. Markers (Optimized)
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
 
-        // 1. Safe Cleanup Function
         const safeRemoveLayer = (layer: any) => {
             if (!layer || !map) return;
             try {
                 layer.clearLayers && layer.clearLayers(); 
                 map.removeLayer(layer);
                 layerControl.current?.removeLayer(layer);
-            } catch (e) {
-                console.warn("Layer cleanup warning:", e);
-            }
+            } catch (e) { console.warn(e); }
         };
 
         if (potentialClientMarkersLayer.current) safeRemoveLayer(potentialClientMarkersLayer.current);
         if (activeClientMarkersLayer.current) safeRemoveLayer(activeClientMarkersLayer.current);
         activeClientMarkersRef.current.clear();
 
-        // 2. Инициализация групп
         potentialClientMarkersLayer.current = (L as any).markerClusterGroup({
             chunkedLoading: true,
             chunkInterval: 100,
             maxClusterRadius: 80,
-            spiderfyOnMaxZoom: true,
             showCoverageOnHover: false,
             zoomToBoundsOnClick: true,
             removeOutsideVisibleBounds: true,
@@ -190,75 +280,56 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        // 3. Создаем ОДИН общий Canvas-рендерер для всех точек
         const sharedCanvasRenderer = L.canvas({ padding: 0.5 });
-
         let isCancelled = false;
 
         const processMarkers = async () => {
             const CHUNK_SIZE = 3000; 
+            
+            const activeMarkers: L.Layer[] = [];
+            activeClients.forEach(tt => {
+                if (tt.lat && tt.lon) {
+                    const marker = L.circleMarker([tt.lat, tt.lon], {
+                        fillColor: '#22c55e', color: '#16a34a', radius: 6, weight: 2, opacity: 1, fillOpacity: 0.9, renderer: sharedCanvasRenderer 
+                    });
+                    const name = tt.name || 'Клиент';
+                    const addr = tt.address || '';
+                    marker.bindPopup(`<b>${name}</b><br>${addr}`);
+                    activeMarkers.push(marker);
+                    activeClientMarkersRef.current.set(tt.key, marker);
+                }
+            });
+            if (activeClientMarkersLayer.current && !isCancelled) {
+                activeClientMarkersLayer.current.addLayers(activeMarkers);
+            }
 
-            // --- ПОТЕНЦИАЛЬНЫЕ КЛИЕНТЫ ---
             for (let i = 0; i < potentialClients.length; i += CHUNK_SIZE) {
                 if (isCancelled || !mapInstance.current) return;
-
                 const chunk = potentialClients.slice(i, i + CHUNK_SIZE);
                 const chunkMarkers: L.Layer[] = [];
-
                 chunk.forEach(tt => {
                     if (tt.lat && tt.lon) {
                         const marker = L.circleMarker([tt.lat, tt.lon], {
-                            fillColor: '#3b82f6', color: '#2563eb', 
-                            radius: 5, weight: 1, opacity: 1, fillOpacity: 0.8,
-                            renderer: sharedCanvasRenderer // shared renderer
+                            fillColor: '#3b82f6', color: '#2563eb', radius: 5, weight: 1, opacity: 1, fillOpacity: 0.8, renderer: sharedCanvasRenderer 
                         });
-                        
                         const name = findValueInRow(tt, ['наименование', 'клиент']) || 'ТТ';
                         marker.bindPopup(`<b>${name}</b>`);
                         chunkMarkers.push(marker);
                     }
                 });
-
                 if (potentialClientMarkersLayer.current && !isCancelled) {
                     potentialClientMarkersLayer.current.addLayers(chunkMarkers);
                 }
-
                 await new Promise(resolve => setTimeout(resolve, 0));
             }
 
-            // --- АКТИВНЫЕ КЛИЕНТЫ ---
-            if (isCancelled || !mapInstance.current) return;
-            
-            const activeMarkers: L.Layer[] = [];
-            activeClients.forEach(tt => {
-                if (tt.lat && tt.lon) {
-                    const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
-                    const marker = L.circleMarker([tt.lat, tt.lon], {
-                        fillColor: '#22c55e', color: '#16a34a', 
-                        radius: 6, weight: 2, opacity: 1, fillOpacity: 0.9,
-                        renderer: sharedCanvasRenderer // shared renderer
-                    }).bindPopup(popupContent);
-                    
-                    activeMarkers.push(marker);
-                    activeClientMarkersRef.current.set(tt.key, marker);
-                }
-            });
-            
-            if (activeClientMarkersLayer.current && !isCancelled) {
-                activeClientMarkersLayer.current.addLayers(activeMarkers);
-            }
-
-            // 4. Финальное добавление на карту
-            if (!isCancelled && mapInstance.current) {
-                if (overlayMode === 'sales') { 
-                    try {
-                        mapInstance.current.addLayer(potentialClientMarkersLayer.current); 
-                        mapInstance.current.addLayer(activeClientMarkersLayer.current); 
-                        
-                        layerControl.current?.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
-                        layerControl.current?.addOverlay(activeClientMarkersLayer.current, "Активные ТТ");
-                    } catch(e) { console.error("Error adding layers to map:", e); }
-                }
+            if (!isCancelled && mapInstance.current && overlayMode === 'sales') { 
+                try {
+                    mapInstance.current.addLayer(potentialClientMarkersLayer.current); 
+                    mapInstance.current.addLayer(activeClientMarkersLayer.current); 
+                    layerControl.current?.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
+                    layerControl.current?.addOverlay(activeClientMarkersLayer.current, "Активные ТТ");
+                } catch(e) {}
             }
         };
 
@@ -272,7 +343,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         };
 
-    }, [potentialClients, activeClients, data, overlayMode]);
+    }, [potentialClients, activeClients, overlayMode]);
 
     return (
         <div id="interactive-map-container" className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 transition-all duration-500 ease-in-out ${isFullscreen ? 'fixed inset-0 z-[100] rounded-none p-0 bg-gray-900' : 'p-6 relative'}`}>
