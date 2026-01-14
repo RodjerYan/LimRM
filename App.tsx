@@ -700,6 +700,13 @@ const App: React.FC = () => {
             }
         }
 
+        // NEW: Stop further processing if snapshot loaded
+        if (snapshotLoaded) {
+             console.log("Snapshot loaded successfully. Skipping legacy file scan.");
+             setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизация завершена' }));
+             return;
+        }
+
         // FALLBACK: Если снимок не загрузился, но у нас есть список файлов из метаданных
         if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
             console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
