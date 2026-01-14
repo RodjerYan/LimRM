@@ -1,6 +1,6 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchFileContent, listFilesForYear, getOKBData } from './_lib/sheets.js';
+import { getGoogleSheetsClient, listFilesForYear, getOKBData } from './_lib/sheets.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // CORS Headers for local development
@@ -11,7 +11,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).end();
     }
 
-    const { year, mode, fileId, offset = '0', limit = '1000', mimeType } = req.query;
+    const { year, mode, fileId, offset = '0', limit = '1000' } = req.query;
 
     try {
         // --- РЕЖИМ: ПОЛУЧИТЬ БАЗУ КЛИЕНТОВ (OKB) ---
@@ -31,26 +31,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json(files);
         }
 
-        // --- РЕЖИМ: ПОЛУЧИТЬ КОНТЕНТ ФАЙЛА (ЧАНК) ---
+        // --- РЕЖИМ: ПОЛУЧИТЬ КОНТЕНТ ФАЙЛА (ЧАНК ЧЕРЕЗ SHEETS API) ---
         if (fileId && typeof fileId === 'string') {
-            // Создаем range-строку для новой функции
-            const startRow = parseInt(offset as string, 10);
-            const endRow = startRow + parseInt(limit as string, 10);
-            const range = `A${startRow + 1}:CZ${endRow}`; 
+            const sheets = await getGoogleSheetsClient();
+            
+            // Sheets API использует 1-based индексацию
+            const startRow = parseInt(offset as string, 10) + 1; 
+            const endRow = startRow + parseInt(limit as string, 10) - 1;
+            
+            // Запрашиваем диапазон. Если имя листа не указано, берется первый.
+            const range = `A${startRow}:CZ${endRow}`;
 
-            // Передаем mimeType, чтобы функция знала, как обработать файл
-            const rows = await fetchFileContent(fileId, range, mimeType as string);
-            
-            const hasMore = rows.length === parseInt(limit as string, 10);
-            
-            res.setHeader('Cache-Control', 'no-store'); // Данные чанка не кэшируем
-            return res.status(200).json({
-                fileId,
-                rows,
-                offset,
-                limit,
-                hasMore
-            });
+            try {
+                const response = await sheets.spreadsheets.values.get({
+                    spreadsheetId: fileId,
+                    range: range,
+                    valueRenderOption: 'UNFORMATTED_VALUE',
+                });
+                
+                const rows = response.data.values || [];
+                
+                // Если вернулось меньше строк, чем лимит, значит файл кончился
+                const hasMore = rows.length === parseInt(limit as string, 10);
+
+                res.setHeader('Cache-Control', 'no-store');
+                return res.status(200).json({
+                    fileId,
+                    rows,
+                    offset,
+                    limit,
+                    hasMore
+                });
+
+            } catch (error: any) {
+                // ОБРАБОТКА КОНЦА ФАЙЛА
+                // Если мы запросили диапазон за пределами листа (например, строки 90001-91000, а всего 90000),
+                // Google вернет 400 Bad Request с сообщением "Range exceeds grid limits".
+                // Мы ловим это и возвращаем пустой результат, чтобы фронтенд перешел к следующему файлу.
+                if (error.code === 400 && (error.message.includes('exceeds grid limits') || error.message.includes('Unable to parse range'))) {
+                    console.log(`Graceful EOF for file ${fileId} at offset ${offset}.`);
+                    return res.status(200).json({
+                        fileId,
+                        rows: [],
+                        offset,
+                        limit,
+                        hasMore: false
+                    });
+                }
+                
+                // Если ошибка другая, пробрасываем её дальше
+                throw error;
+            }
         }
 
         // Если ни один из режимов не подошел
