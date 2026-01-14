@@ -16,8 +16,8 @@ export const config = {
     api: { bodyParser: false }, // Мы парсим body вручную для больших запросов
 };
 
-// Название папки на Google Drive для хранения базы данных
-const FOLDER_NAME = 'LimRM_Snapshot_Data';
+// ID расшаренной папки на Google Drive для хранения базы данных
+const FOLDER_ID = '1TTdZZC-BVcQtUGgmeJwlP8GvZt23SR_N';
 const SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
@@ -59,25 +59,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const drive = await getDriveClient();
 
-        // --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: НАЙТИ ИЛИ СОЗДАТЬ ПАПКУ ---
-        const getOrCreateFolder = async () => {
-            const q = `mimeType='application/vnd.google-apps.folder' and name='${FOLDER_NAME}' and trashed=false`;
-            const list = await drive.files.list({ q, fields: 'files(id)' });
-            
-            if (list.data.files && list.data.files.length > 0) {
-                return list.data.files[0].id!;
-            } else {
-                const folder = await drive.files.create({
-                    requestBody: {
-                        name: FOLDER_NAME,
-                        mimeType: 'application/vnd.google-apps.folder'
-                    },
-                    fields: 'id'
-                });
-                return folder.data.id!;
-            }
-        };
-
         // ==========================================
         // БЛОК SNAPSHOT (Google Drive)
         // ==========================================
@@ -87,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 1. ИНИЦИАЛИЗАЦИЯ (Очистка старой версии)
             if (action === 'init-snapshot') {
-                const folderId = await getOrCreateFolder();
+                const folderId = FOLDER_ID;
                 
                 // Удаляем старые чанки
                 const q = `'${folderId}' in parents and name contains 'chunk_' and trashed=false`;
@@ -103,7 +84,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 2. СОХРАНЕНИЕ ЧАНКА
             if (action === 'append-snapshot') {
-                const folderId = await getOrCreateFolder();
+                const folderId = FOLDER_ID;
                 const { chunk } = body; 
 
                 if (!chunk) return res.status(400).json({ error: 'No chunk data' });
@@ -127,7 +108,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 3. СОХРАНЕНИЕ МЕТАДАННЫХ
             if (action === 'save-meta') {
-                const folderId = await getOrCreateFolder();
+                const folderId = FOLDER_ID;
                 
                 // Удаляем старую мету
                 const q = `'${folderId}' in parents and name = 'meta.json' and trashed=false`;
@@ -163,7 +144,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'GET') {
             // 4. ПОЛУЧЕНИЕ МЕТАДАННЫХ
             if (action === 'get-snapshot-meta') {
-                const folderId = await getOrCreateFolder();
+                const folderId = FOLDER_ID;
                 const q = `'${folderId}' in parents and name = 'meta.json' and trashed=false`;
                 const list = await drive.files.list({ q, fields: 'files(id)' });
 
@@ -181,7 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // 5. ПОЛУЧЕНИЕ СПИСКА ЧАНКОВ
             if (action === 'get-snapshot-list') {
-                const folderId = await getOrCreateFolder();
+                const folderId = FOLDER_ID;
                 const q = `'${folderId}' in parents and name contains 'chunk_' and trashed=false`;
                 const list = await drive.files.list({ 
                     q, 
