@@ -565,73 +565,61 @@ const App: React.FC = () => {
     // NEW FUNCTION: STRICTLY DOWNLOAD SNAPSHOT ONLY
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string): Promise<boolean> => {
         try {
-            setProcessingState(prev => ({ 
-                ...prev, 
-                isProcessing: true, 
-                message: 'Загрузка базы...', 
-                progress: 0 
-            }));
-            
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка снимка базы...', progress: 0 }));
             let fullJson = '';
-            // 1. Получаем список ID чанков с сервера
+            
+            // 1. Получаем список ID чанков
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            const fileList = await listRes.json(); // Ожидаем [{id: '...'}, ...]
+            const fileList = await listRes.json();
 
-            if (!Array.isArray(fileList) || fileList.length === 0) {
-                console.warn("Snapshot list is empty despite count > 0");
-                return false;
-            }
+            if (!fileList || fileList.length === 0) return false;
 
-            // 2. Качаем каждый файл по очереди
+            // 2. Скачиваем каждый чанк
             for (let i = 0; i < fileList.length; i++) {
                 const pct = Math.round(((i + 1) / fileList.length) * 100);
-                setProcessingState(prev => ({ ...prev, progress: pct, message: `Загрузка части ${i+1} из ${fileList.length}...` }));
+                setProcessingState(prev => ({ ...prev, progress: pct, message: `Загрузка: часть ${i+1} из ${fileList.length}...` }));
                 
                 const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${fileList[i].id}`);
-                const text = await chunkRes.text();
-                fullJson += text;
+                fullJson += await chunkRes.text();
             }
 
-            // 3. Склеиваем и парсим
+            // 3. Собираем данные
             if (fullJson) {
-                const snapshot = JSON.parse(fullJson);
-                if (snapshot && snapshot.aggregatedData) {
-                    const { aggregatedData, unidentifiedRows: uRows, okbRegionCounts: okbC, totalRowsProcessed: totalP, processedFileIds: pIds } = snapshot;
-                                    
-                    setOkbRegionCounts(okbC);
-                    setAllData(aggregatedData);
+                const data = JSON.parse(fullJson);
+                if (data.aggregatedData) {
+                    setAllData(data.aggregatedData);
                     
                     const clientsMap = new Map<string, MapPoint>();
-                    aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    data.aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
                     setAllActiveClients(Array.from(clientsMap.values()));
                     
-                    setUnidentifiedRows(uRows);
-                    
-                    // Сохраняем локально, чтобы в следующий раз зашло мгновенно
-                    await persistToDB(aggregatedData, uRows, [], totalP, versionHash);
+                    setOkbRegionCounts(data.okbRegionCounts || null);
+                    totalRowsProcessedRef.current = data.totalRowsProcessed || 0;
+                    if (data.unidentifiedRows) setUnidentifiedRows(data.unidentifiedRows);
+
+                    // Сохраняем локально, чтобы при след. входе было мгновенно
+                    await saveAnalyticsState({
+                        allData: data.aggregatedData,
+                        unidentifiedRows: data.unidentifiedRows || [],
+                        okbRegionCounts: data.okbRegionCounts || null,
+                        totalRowsProcessed: data.totalRowsProcessed,
+                        versionHash: versionHash,
+                        okbData: [],
+                        okbStatus: null
+                    });
                     
                     setLastSnapshotVersion(versionHash);
                     localStorage.setItem('last_snapshot_version', versionHash);
                     
-                    totalRowsProcessedRef.current = totalP;
-                    if (pIds) processedFileIdsRef.current = new Set(pIds);
-
-                    setProcessingState(prev => ({ 
-                        ...prev, 
-                        isProcessing: false, 
-                        progress: 100, 
-                        message: 'Данные загружены' 
-                    }));
-                    
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
                     return true;
                 }
             }
         } catch (e) {
             console.error("Сбой загрузки снимка:", e);
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка загрузки снимка' }));
         }
         return false;
-    }, [persistToDB]);
+    }, []);
 
     // LEGACY: Used only if snapshot fails or is missing
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
@@ -828,73 +816,51 @@ const App: React.FC = () => {
     // 1. Инициализация: СТРОГАЯ синхронизация с сервером при входе
     useEffect(() => {
         const initializeApp = async () => {
-            // Only runs once on mount
             setDbStatus('loading');
-            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с облаком...' }));
-
+            setProcessingState(prev => ({ ...prev, message: 'Синхронизация...' }));
             try {
-                // ШАГ 1: Сначала загружаем то, что есть локально
                 const localState = await loadAnalyticsState();
                 const localVersion = localState?.versionHash || 'none';
-                
-                // Pre-load local data to show something while checking cloud
-                if (localState && localState.allData?.length > 0) {
+
+                // Сначала пробуем восстановить локально
+                if (localState?.allData?.length > 0) {
                     setAllData(localState.allData);
-                    setUnidentifiedRows(localState.unidentifiedRows || []);
-                    setOkbRegionCounts(localState.okbRegionCounts || null);
-                    setOkbData(localState.okbData || []);
-                    setOkbStatus(localState.okbStatus || null);
-                    setDateRange(localState.dateRange);
-                    if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
-                    setLastSnapshotVersion(localState.versionHash);
-                    
                     const clientsMap = new Map<string, MapPoint>();
-                    localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+                    localState.allData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
                     setAllActiveClients(Array.from(clientsMap.values()));
                     
-                    totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
+                    // Restore extra state
+                    setOkbRegionCounts(localState.okbRegionCounts || null);
+                    setUnidentifiedRows(localState.unidentifiedRows || []);
+                    if (localState.totalRowsProcessed) totalRowsProcessedRef.current = localState.totalRowsProcessed;
+                    if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
+                    setLastSnapshotVersion(localState.versionHash);
                 }
 
-                // ШАГ 2: Спрашиваем у сервера актуальную версию (через мета-файл)
+                // Проверяем облако
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-                
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    // ПРОВЕРКА: Если в облаке есть хоть что-то
+                    // Если в облаке новая версия — качаем чанки
                     if (serverMeta && serverMeta.chunkCount > 0 && serverMeta.versionHash !== localVersion) {
-                        console.log(`Найдена новая база! Чанков: ${serverMeta.chunkCount}. Загружаю...`);
-                        
                         const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
                         if (success) {
-                            setIsRestoring(false);
                             setDbStatus('ready');
-                            return; // ГАРАНТИРОВАННЫЙ ВЫХОД, ЧТОБЫ НЕ ГРУЗИТЬ 2025
+                            setIsRestoring(false);
+                            return; // ВЫХОДИМ, всё загружено!
                         }
-                    } else {
-                        console.log("Снимок в облаке не найден или актуален. Пропускаю загрузку.");
                     }
                 }
 
-                // ШАГ 3: Если снимка нет или он не загрузился, но есть локальные данные - ОК
-                if (localState && localState.allData?.length > 0) {
+                if (localState?.allData?.length > 0) {
                     setDbStatus('ready');
-                    console.log("Работаем с локальной копией (офлайн/нет снимка).");
                 } else {
-                    // Локально пусто и снимка нет -> начинаем с нуля (сканируем файлы)
-                    setDbStatus('empty');
                     handleStartCloudProcessing({ year: '2025' });
                 }
-
-            } catch (e) {
-                console.error("Ошибка инициализации:", e);
-                if (allDataRef.current.length > 0) setDbStatus('ready');
-                else setDbStatus('empty');
-            } finally {
-                setIsRestoring(false);
-            }
+            } catch (e) { console.error(e); }
+            finally { setIsRestoring(false); }
         };
-
         initializeApp();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

@@ -54,8 +54,8 @@ async function getSortedFiles(drive: any) {
         // Meta file is always first
         if (name === 'snapshot.json') return 0;
         // Extract number from snapshotX.json
-        const match = name.match(/snapshot(\d+)\.json/);
-        return match ? parseInt(match[1], 10) : 999;
+        const match = name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : 999;
     };
 
     return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
