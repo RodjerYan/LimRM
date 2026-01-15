@@ -13,9 +13,12 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-// FIXED: Extracted just the ID from the URL provided
+// FIXED: Correct Folder ID from the URL provided
 const FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
-const SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'];
+
+// CRITICAL FIX: Changed scope from 'drive.file' (only files created by this app) 
+// to 'drive' (full access) so it can see files created by the Python script or user manually.
+const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
     const buffers = [];
@@ -44,12 +47,17 @@ async function getSortedFiles(drive: any) {
     });
     
     const files = res.data.files || [];
+    
+    // DEBUG LOG: Check Vercel logs to see how many files are actually visible
+    console.log(`[getSortedFiles] Found ${files.length} files in folder ${FOLDER_ID}`);
+    
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
         // Meta file (snapshot.json) must be first (index 0)
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
         
         // Extract ANY number for sorting: snapshot1.json, snapshot_chunk_0.json...
+        // This regex finds the first sequence of digits
         const match = name.match(/\d+/);
         return match ? parseInt(match[0], 10) : 9999;
     };
@@ -113,17 +121,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
                 
-                const file = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true });
-                const content = typeof file.data === 'string' ? JSON.parse(file.data) : file.data;
+                // CRITICAL FIX: Request arraybuffer to correctly handle binary stream from Drive API
+                // 'media' alt returns a stream in Node.js environment, we must consume it properly.
+                const response = await drive.files.get(
+                    { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
+                    { responseType: 'arraybuffer' }
+                );
+
+                let content;
+                try {
+                    // Convert buffer to string manually
+                    const strData = Buffer.from(response.data as any).toString('utf-8');
+                    content = JSON.parse(strData);
+                } catch (e) {
+                    console.error("Snapshot JSON parse error:", e);
+                    return res.json({ versionHash: 'none', error: 'Parsing failed' });
+                }
                 
                 // Auto-correct chunkCount based on actual files found in folder
                 const actualChunksFound = Math.max(0, sortedIds.length - 1);
                 
-                // If metadata says 30 chunks but we found 100 files, trust the file system
-                if (actualChunksFound > (content.chunkCount || 0)) {
-                    content.chunkCount = actualChunksFound;
-                }
+                // Trust the filesystem count if it finds files
+                content.chunkCount = actualChunksFound;
                 
+                console.log(`[get-snapshot-meta] Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
                 return res.json(content);
             }
             if (action === 'get-snapshot-list') {
