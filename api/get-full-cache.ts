@@ -96,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const metaFile = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true });
                 const meta = typeof metaFile.data === 'string' ? JSON.parse(metaFile.data) : metaFile.data;
                 if (meta && meta.chunkCount) {
-                    return res.json(sortedIds.slice(1, meta.chunkCount + 1).map(id => ({ id })));
+                    return res.json(sortedIds.slice(1, meta.chunkCount + 1).map((id: string) => ({ id })));
                 }
                 return res.json([]);
             }
