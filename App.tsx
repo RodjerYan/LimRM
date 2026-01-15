@@ -134,23 +134,48 @@ const App: React.FC = () => {
     // --- ФУНКЦИЯ БЫСТРОЙ ЗАГРУЗКИ СНИМКА (ЧАНКОВ) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string): Promise<boolean> => {
         try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка снимка базы...', progress: 0 }));
-            let fullJson = '';
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка снимка базы (Параллельный поток)...', progress: 0 }));
             
             // 1. Получаем список ID чанков
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             const fileList = await listRes.json();
-            if (!Array.isArray(fileList) || fileList.length === 0) return false;
+            
+            console.log("Список чанков с сервера:", fileList);
 
-            // 2. Скачиваем каждый чанк по очереди
-            for (let i = 0; i < fileList.length; i++) {
-                const pct = Math.round(((i + 1) / fileList.length) * 100);
-                setProcessingState(prev => ({ ...prev, progress: pct, message: `Загрузка части ${i+1} из ${fileList.length}...` }));
-                const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${fileList[i].id}`);
-                fullJson += await chunkRes.text();
+            if (!Array.isArray(fileList) || fileList.length === 0) {
+                console.warn("Список чанков пуст или некорректен");
+                return false;
             }
 
-            // 3. Парсим и восстанавливаем всё состояние
+            // 2. Скачиваем параллельно (Promise.all)
+            let loadedCount = 0;
+            const total = fileList.length;
+
+            const chunkPromises = fileList.map(file => 
+                fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`)
+                    .then(res => {
+                        if (!res.ok) throw new Error(`Ошибка загрузки чанка ${file.id}`);
+                        return res.text();
+                    })
+                    .then(text => {
+                        loadedCount++;
+                        const pct = Math.round((loadedCount / total) * 100);
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            progress: pct, 
+                            message: `Загрузка: ${loadedCount} из ${total} частей...` 
+                        }));
+                        return text;
+                    })
+            );
+
+            // Ждем завершения всех запросов
+            const chunks = await Promise.all(chunkPromises);
+            
+            // 3. Объединяем строки эффективным способом
+            const fullJson = chunks.join('');
+
+            // 4. Парсим и восстанавливаем состояние
             if (fullJson) {
                 const data = JSON.parse(fullJson);
                 if (data.aggregatedData) {
@@ -181,7 +206,10 @@ const App: React.FC = () => {
                     return true;
                 }
             }
-        } catch (e) { console.error("Snapshot error:", e); }
+        } catch (e) { 
+            console.error("Snapshot error:", e); 
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка загрузки снимка' }));
+        }
         return false;
     }, []);
 
@@ -309,19 +337,21 @@ const App: React.FC = () => {
             const jsonString = JSON.stringify(payload);
             const CHUNK_SIZE = 2 * 1024 * 1024;
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
-            if (totalChunks > 30) console.warn("Ошибка: Слишком много данных для 30 файлов.");
+            if (totalChunks > 100) console.warn("Внимание: Слишком много данных (>100 файлов).");
 
             for (let i = 0; i < totalChunks; i++) {
-                if (i >= 30) break;
                 setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
                 const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                
+                // SEND RAW TEXT BODY, NOT JSON
                 const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, { 
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk }) 
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: chunk 
                 });
+                
                 if (!res.ok) throw new Error(`Ошибка загрузки чанка ${i}`);
-                await new Promise(r => setTimeout(r, 100));
+                await new Promise(r => setTimeout(r, 50)); // Small delay to prevent rate limits
             }
 
             await fetch('/api/get-full-cache?action=save-meta', {

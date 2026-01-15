@@ -38,15 +38,18 @@ async function getSortedFiles(drive: any) {
         q, 
         fields: "files(id, name)", 
         supportsAllDrives: true, 
-        includeItemsFromAllDrives: true 
+        includeItemsFromAllDrives: true,
+        pageSize: 1000 
     });
     
     const files = res.data.files || [];
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
-        if (name === 'snapshot.json') return 0;
-        const num = name.replace(/[^0-9]/g, '');
-        return num ? parseInt(num, 10) : 999;
+        // Explicitly check for meta-like filenames first to ensure they are index 0
+        if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
+        
+        const match = name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : 999;
     };
     return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
 }
@@ -65,11 +68,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'save-chunk') {
                 const sortedIds = await getSortedFiles(drive);
+                // Ensure we have a slot for this chunk
                 if (sortedIds[chunkIndex + 1]) {
-                    await drive.files.update({ fileId: sortedIds[chunkIndex + 1], media: { mimeType: 'application/json', body: body.chunk }, supportsAllDrives: true });
+                    // body.chunk will contain raw string if getRawBody failed to parse JSON (which happens for text/plain or raw fragments)
+                    // If content-type was text/plain, body.chunk is the raw string.
+                    const content = body.chunk || body; 
+                    
+                    await drive.files.update({ fileId: sortedIds[chunkIndex + 1], media: { mimeType: 'application/json', body: content }, supportsAllDrives: true });
                     return res.status(200).json({ status: 'saved' });
                 }
-                return res.status(404).json({ error: 'Chunk file not found' });
+                return res.status(404).json({ error: 'Chunk file not found. Ensure snapshot files exist in Drive.' });
             }
             if (action === 'save-meta') {
                 const sortedIds = await getSortedFiles(drive);
@@ -94,17 +102,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
                 const file = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true });
                 const content = typeof file.data === 'string' ? JSON.parse(file.data) : file.data;
+                
+                // Auto-correct chunkCount if actual files found are different from metadata
+                const actualChunksFound = Math.max(0, sortedIds.length - 1);
+                if (content.chunkCount && content.chunkCount !== actualChunksFound) {
+                    content.actualChunksFound = actualChunksFound;
+                    if (actualChunksFound > content.chunkCount) {
+                        content.chunkCount = actualChunksFound;
+                    }
+                }
+                
                 return res.json(content);
             }
             if (action === 'get-snapshot-list') {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds.length === 0) return res.json([]);
-                const metaFile = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true });
-                const meta = typeof metaFile.data === 'string' ? JSON.parse(metaFile.data) : metaFile.data;
-                if (meta && meta.chunkCount) {
-                    return res.json(sortedIds.slice(1, meta.chunkCount + 1).map((id: string) => ({ id })));
-                }
-                return res.json([]);
+                
+                // Return all found snapshot files (excluding meta at index 0)
+                const chunkFiles = sortedIds.slice(1);
+                return res.json(chunkFiles.map((id: string) => ({ id })));
             }
             if (action === 'get-file-content') {
                 const fileId = String(req.query.fileId);
