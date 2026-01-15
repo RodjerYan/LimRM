@@ -19,18 +19,19 @@ export const config = {
 // МАССИВ PRE-CREATED ФАЙЛОВ (31 файл)
 // Индекс 0: Meta
 // Индекс 1-30: Data Chunks
+// UPDATED: New IDs from local script configuration
 const SNAPSHOT_FILES = [
-    '1-MR1rOawgl--ORjVPu4qZqt_5kGOaHoq', '10cnDHR5IyBVKXhNlXcFlx-hW4IIbNoH_', '112onIGNBVw0x-FcYmbBHTEi6lPVpHwYn',
-    '136_cbRU4KSkOzus1trXO2CKViR5cyldV', '13D4tkMouV7AxAtHQxJkfKwRv_PEKWycn', '17I7F_e5apYtvBOKNaVBAppEpI6lZrTzH',
-    '1BGIcxm9y3JahVDSH-LiNbAntkSDxzcQl', '1Gzg2_oW3T6euZxXmzbyVTZAVahFN3Ac3', '1JpYVThJ0Q1bfFF5B6ZSiB0kBRtifNOaR',
-    '1L1PDLU-ddIOfYd_RIACbAxQJzoYfZTQe', '1NZSpW5qLDppJg0mlYX9dgICbhQyaFaBb', '1OBLQLiAh71HL95z8QTqDBW0fnN0TqE6y',
-    '1VO0trlHMP8c6Y6QTIVkdTRgeBI_f3XLc', '1VPcYuvUmhiWL583EISY0ed-BEfVFwzhf', '1WOyHafp5wF8p9ybUFtd7ChhuOvqENzM0',
-    '1YDwdBJRhnstlRRwp8SF_1VRoXnNOoTav', '1Zj_j5as83QJlCrRi9foUwdosVs3K7dw3', '1bwhS_QeOYs95SK-MtafLEVoaXX9R6StR',
-    '1c-ZgnberT5srrHoi3zXLvA51QYHPoKoD', '1dribJF8Bkt5KcW19EKdOzxz7eiVVliId', '1i8pa2h5Ej-BU-4le-SBlvgPWqS_6pNZ3',
-    '1j9wdkKraXI1-rQR1bOY8Nio-4LmWhK2w', '1oPheK3WxhwEQFOoUQaM-67QczcQIZVfI', '1pPof5L98jGHHIr4BDjLlq_TRhps3Yi9d',
-    '1qsR8WPPsFt_PeWads-eTiqhosn568CkH', '1stEiGMFioK5T6crIeREgTPH6kv_ndBvu', '1uJmwkNjxkwHjeoM6neaVv8zlDd8kUWhl',
-    '1vSWXvAYHnZqnwbjZgIoWAOOZJPezdhOl', '1wWnq8dcqiMryRTG-xnMRXV0_3C4c4lC7', '1xyt_cKyyYlS6X3_Ik2X0wSiOVouRDA2Z',
-    '1y-fEGcpqaB6rrK4EBpwe1sdvXMYQgPep'
+    '18m6S5WJQ4NYY1sFxtEQpp1Fx4kxbcHd0', '190N303psF7Vq-aWIc5a0xW_xxrNk4YYp', '192DT483FM8CC8XaxrhB09MwrCF7egdHO',
+    '1B22R1UtpXyuLDFb3AiN0l_Fs3lqRyVRX', '1CZDCHo1LWPQX61lDceeVKCVNZAXzInT5', '1DQ5uy6C2FfzggSjWBRofdbpaZHp5Q5I9',
+    '1E4Oye4hZEKik3AjGotGuELbMuyHuUjFn', '1ILFQxE0wa_D3QXtjQpOv1jeUGNrTo4kY', '1IVO6wchbYywzyYXvhLffh_PKDYs7zz04',
+    '1M9G6K79Q--VAhlaOSR-cl-F2KkQ7DHN8', '1MDpoqARX_FSpyH77pR5C4c1dJuVPSEwZ', '1RM6pYwHuxGeehJQlsYE0Kcr7q3HJvMs3',
+    '1SiCJUZoUolPua9VKDh8GYXIXiYB0fZ8s', '1Tv6H8wNy2RHuGGHs0gb920fXKtYXT3mo', '1U_I2o_NsLZX4aoj8UEMeEh45gW8epUYB',
+    '1V0DZy648pHSnsjaiy5SColxazif08kY7', '1XKaeJ8vUVPTAvOjIVptsr7kd1uVDWy1r', '1aISJEs16em6PWYcvtcJIMTym3zDOtZ6e',
+    '1aW9PtqshdK40Fo0BDNk78UFPlLuORdQx', '1ahXKWdb6XRygLQlKHgjO4_ZenafOAamP', '1dcj4d4nti_w_5R4COoCXrb8sORHFCKYX',
+    '1dyX2MW2SOzchcafrF8URAyWDc83aLNCL', '1gT8t-tw-Cf9t6HRzkLzVkErhYljSQ9Fy', '1hGflNGx8HzDKN9wmWgmoCDvQktwJkHsY',
+    '1hgY2Axg-Am0BIkPY89BhIeWtuf6GM9w5', '1iEwE82_s00TFx51o7gyXJjPcttVAD4Lx', '1i_M5OlMptkSC9ahxG4E684evsUQF_Yyx',
+    '1pYqaxU5CfE2dqHi_MLTQHGawsi_Vmd6e', '1qsJUCK4rTlnIua7ZLz4FXUz9iX4nZYIt', '1sUPxf_DYXXH0gO3LnJkCG4EIGFkoHU5M',
+    '1z33jzMZp5HlFl9jr53VmhfD77IONPQwC'
 ];
 
 const META_FILE_ID = SNAPSHOT_FILES[0];
