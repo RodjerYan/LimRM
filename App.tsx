@@ -7,6 +7,7 @@ import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
 import RoiGenome from './components/modules/RoiGenome'; 
+import Presentation from './components/modules/Presentation';
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import Filters from './components/Filters';
 import PotentialChart from './components/PotentialChart';
@@ -572,28 +573,26 @@ const App: React.FC = () => {
             }));
             
             let fullJson = '';
-            // Скачиваем ID чанков
+            // 1. Получаем список ID чанков с сервера
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error("Failed to get list");
-            const fileList = await listRes.json();
+            const fileList = await listRes.json(); // Ожидаем [{id: '...'}, ...]
 
-            // Safety check: if fileList length doesn't match chunkCount, we might rely on list length
-            const count = fileList.length;
+            if (!Array.isArray(fileList) || fileList.length === 0) {
+                console.warn("Snapshot list is empty despite count > 0");
+                return false;
+            }
 
-            for (let i = 0; i < count; i++) {
-                const pct = Math.round(((i + 1) / count) * 100);
-                setProcessingState(prev => ({ 
-                    ...prev, 
-                    progress: pct, 
-                    message: `Загрузка части ${i+1} из ${count}...` 
-                }));
+            // 2. Качаем каждый файл по очереди
+            for (let i = 0; i < fileList.length; i++) {
+                const pct = Math.round(((i + 1) / fileList.length) * 100);
+                setProcessingState(prev => ({ ...prev, progress: pct, message: `Загрузка части ${i+1} из ${fileList.length}...` }));
                 
                 const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${fileList[i].id}`);
-                if (!chunkRes.ok) throw new Error(`Chunk ${i} failed`);
                 const text = await chunkRes.text();
                 fullJson += text;
             }
 
+            // 3. Склеиваем и парсим
             if (fullJson) {
                 const snapshot = JSON.parse(fullJson);
                 if (snapshot && snapshot.aggregatedData) {
@@ -831,11 +830,12 @@ const App: React.FC = () => {
         const initializeApp = async () => {
             // Only runs once on mount
             setDbStatus('loading');
-            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с командой...' }));
+            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с облаком...' }));
 
             try {
                 // ШАГ 1: Сначала загружаем то, что есть локально
                 const localState = await loadAnalyticsState();
+                const localVersion = localState?.versionHash || 'none';
                 
                 // Pre-load local data to show something while checking cloud
                 if (localState && localState.allData?.length > 0) {
@@ -862,8 +862,8 @@ const App: React.FC = () => {
                     const serverMeta = await metaRes.json();
                     
                     // ПРОВЕРКА: Если в облаке есть хоть что-то
-                    if (serverMeta && serverMeta.chunkCount > 0) {
-                        console.log(`Обнаружено ${serverMeta.chunkCount} чанков в облаке. Начинаю прямую загрузку...`);
+                    if (serverMeta && serverMeta.chunkCount > 0 && serverMeta.versionHash !== localVersion) {
+                        console.log(`Найдена новая база! Чанков: ${serverMeta.chunkCount}. Загружаю...`);
                         
                         const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
                         if (success) {
@@ -872,7 +872,7 @@ const App: React.FC = () => {
                             return; // ГАРАНТИРОВАННЫЙ ВЫХОД, ЧТОБЫ НЕ ГРУЗИТЬ 2025
                         }
                     } else {
-                        console.log("Снимок в облаке не найден или пуст. Перехожу к сканированию файлов...");
+                        console.log("Снимок в облаке не найден или актуален. Пропускаю загрузку.");
                     }
                 }
 
@@ -882,7 +882,6 @@ const App: React.FC = () => {
                     console.log("Работаем с локальной копией (офлайн/нет снимка).");
                 } else {
                     // Локально пусто и снимка нет -> начинаем с нуля (сканируем файлы)
-                    // Это крайний случай
                     setDbStatus('empty');
                     handleStartCloudProcessing({ year: '2025' });
                 }
