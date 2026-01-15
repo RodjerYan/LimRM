@@ -37,10 +37,9 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any) {
-    // CRITICAL FIX: Explicitly exclude folders (mimeType != 'application/vnd.google-apps.folder')
-    // This prevents the API from returning the parent folder itself if its name contains 'snapshot',
-    // which causes the "Only files with binary content can be downloaded" error.
-    const q = `'${FOLDER_ID}' in parents and name contains 'snapshot' and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
+    // DIAGNOSTIC VERSION: Request ALL files in folder, filter locally
+    // This avoids Google Drive API indexing latency issues with 'name contains'
+    const q = `'${FOLDER_ID}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
         q, 
@@ -50,11 +49,23 @@ async function getSortedFiles(drive: any) {
         pageSize: 1000 
     });
     
-    const files = res.data.files || [];
+    const allFiles = res.data.files || [];
     
-    // DEBUG LOG: Check Vercel logs to see how many files are actually visible
-    console.log(`[getSortedFiles] Found ${files.length} valid files (excluding folders) in ${FOLDER_ID}`);
-    
+    // DEBUG LOG: What does the bot actually see?
+    console.log(`[DEBUG] Бот видит всего файлов в папке: ${allFiles.length}`);
+    allFiles.forEach((f: any) => console.log(` - Файл: ${f.name} (${f.mimeType})`));
+
+    // Filter locally in Node.js
+    const files = allFiles.filter((f: any) => 
+        f.name && f.name.toLowerCase().includes('snapshot') && 
+        f.mimeType !== 'application/vnd.google-apps.folder'
+    );
+
+    if (files.length === 0) {
+        console.error(`[ERROR] После фильтрации (snapshot + not folder) осталось 0 файлов. Всего было: ${allFiles.length}`);
+        return [];
+    }
+
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
         // Meta file (snapshot.json) must be first (index 0)
@@ -64,7 +75,9 @@ async function getSortedFiles(drive: any) {
         const match = name.match(/\d+/);
         return match ? parseInt(match[0], 10) : 9999;
     };
-    return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
+    
+    const sorted = files.sort((a: any, b: any) => sortKey(a) - sortKey(b));
+    return sorted.map((f: any) => f.id);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -120,7 +133,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedIds = await getSortedFiles(drive);
                 
                 if (sortedIds.length === 0) {
-                    console.log("Папка пуста или файлы не найдены (filtered by mimeType)");
+                    console.log("Папка пуста или файлы не найдены (filtered locally)");
                     return res.json({ versionHash: 'none' });
                 }
 
