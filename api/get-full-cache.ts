@@ -37,8 +37,16 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any) {
-    // DIAGNOSTIC VERSION: Request ALL files in folder, filter locally
-    // This avoids Google Drive API indexing latency issues with 'name contains'
+    // 1. УЗНАЕМ, КТО МЫ (под каким email зашел бот)
+    try {
+        const authInfo = await drive.about.get({ fields: 'user' });
+        console.log(`[AUTH] Бот работает под аккаунтом: ${authInfo.data.user.emailAddress}`);
+    } catch (e) {
+        console.log("[AUTH] Не удалось получить email бота");
+    }
+
+    // 2. ПРОСИМ ВСЕ ФАЙЛЫ В ПАПКЕ (без фильтра по имени)
+    // Убираем 'name contains snapshot', чтобы исключить ошибки индексации
     const q = `'${FOLDER_ID}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
@@ -51,33 +59,28 @@ async function getSortedFiles(drive: any) {
     
     const allFiles = res.data.files || [];
     
-    // DEBUG LOG: What does the bot actually see?
-    console.log(`[DEBUG] Бот видит всего файлов в папке: ${allFiles.length}`);
-    allFiles.forEach((f: any) => console.log(` - Файл: ${f.name} (${f.mimeType})`));
+    // 3. ПИШЕМ В ЛОГИ ВСЁ, ЧТО ВИДИТ БОТ
+    console.log(`[DEBUG] Всего объектов найдено в папке: ${allFiles.length}`);
+    allFiles.forEach((f: any) => {
+        console.log(` -> Объект: "${f.name}" | Тип: ${f.mimeType} | ID: ${f.id}`);
+    });
 
-    // Filter locally in Node.js
-    const files = allFiles.filter((f: any) => 
-        f.name && f.name.toLowerCase().includes('snapshot') && 
+    // 4. Фильтруем файлы уже в коде (так надежнее)
+    const filteredFiles = allFiles.filter((f: any) => 
+        f.name.toLowerCase().includes('snapshot') && 
         f.mimeType !== 'application/vnd.google-apps.folder'
     );
 
-    if (files.length === 0) {
-        console.error(`[ERROR] После фильтрации (snapshot + not folder) осталось 0 файлов. Всего было: ${allFiles.length}`);
-        return [];
-    }
+    console.log(`[FILTER] После фильтрации осталось: ${filteredFiles.length} файлов`);
 
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
-        // Meta file (snapshot.json) must be first (index 0)
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
-        
-        // Extract ANY number for sorting: snapshot1.json, snapshot_chunk_0.json...
         const match = name.match(/\d+/);
         return match ? parseInt(match[0], 10) : 9999;
     };
-    
-    const sorted = files.sort((a: any, b: any) => sortKey(a) - sortKey(b));
-    return sorted.map((f: any) => f.id);
+
+    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
