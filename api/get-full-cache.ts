@@ -19,7 +19,7 @@ export const config = {
 // МАССИВ PRE-CREATED ФАЙЛОВ (31 файл)
 // Индекс 0: Meta
 // Индекс 1-30: Data Chunks
-// UPDATED: New IDs from local script configuration (provided by user)
+// UPDATED: Correct IDs from aggregator script
 const SNAPSHOT_FILES = [
     '18m6S5WJQ4NYY1sFxtEQpp1Fx4kxbcHd0', '190N303psF7Vq-aWIc5a0xW_xxrNk4YYp', '192DT483FM8CC8XaxrhB09MwrCF7egdHO',
     '1B22R1UtpXyuLDFb3AiN0l_Fs3lqRyVRX', '1CZDCHo1LWPQX61lDceeVKCVNZAXzInT5', '1DQ5uy6C2FfzggSjWBRofdbpaZHp5Q5I9',
