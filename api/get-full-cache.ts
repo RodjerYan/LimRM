@@ -37,19 +37,23 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any) {
-    const q = `'${FOLDER_ID}' in parents and name contains 'snapshot' and trashed = false`;
+    // CRITICAL FIX: Explicitly exclude folders (mimeType != 'application/vnd.google-apps.folder')
+    // This prevents the API from returning the parent folder itself if its name contains 'snapshot',
+    // which causes the "Only files with binary content can be downloaded" error.
+    const q = `'${FOLDER_ID}' in parents and name contains 'snapshot' and mimeType != 'application/vnd.google-apps.folder' and trashed = false`;
+    
     const res = await drive.files.list({ 
         q, 
-        fields: "files(id, name)", 
+        fields: "files(id, name, mimeType)", 
         supportsAllDrives: true, 
         includeItemsFromAllDrives: true,
-        pageSize: 1000 // Increased to catch all snapshot parts (up to 1000 files)
+        pageSize: 1000 
     });
     
     const files = res.data.files || [];
     
     // DEBUG LOG: Check Vercel logs to see how many files are actually visible
-    console.log(`[getSortedFiles] Found ${files.length} files in folder ${FOLDER_ID}`);
+    console.log(`[getSortedFiles] Found ${files.length} valid files (excluding folders) in ${FOLDER_ID}`);
     
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
@@ -57,7 +61,6 @@ async function getSortedFiles(drive: any) {
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
         
         // Extract ANY number for sorting: snapshot1.json, snapshot_chunk_0.json...
-        // This regex finds the first sequence of digits
         const match = name.match(/\d+/);
         return match ? parseInt(match[0], 10) : 9999;
     };
@@ -80,10 +83,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedIds = await getSortedFiles(drive);
                 // Ensure we have a slot for this chunk
                 if (sortedIds[chunkIndex + 1]) {
-                    // Robust content extraction:
-                    // 1. If body is string, use it.
-                    // 2. If body is object from getRawBody catch block { chunk: "..." }, use chunk.
-                    // 3. If body is parsed JSON object, stringify it back.
                     const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
                     
                     await drive.files.update({ 
@@ -120,41 +119,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-snapshot-meta') {
                 const sortedIds = await getSortedFiles(drive);
                 
-                // Если файлов нет, или единственный найденный файл - это не snapshot.json
                 if (sortedIds.length === 0) {
-                    console.log("Папка пуста или файлы не найдены");
+                    console.log("Папка пуста или файлы не найдены (filtered by mimeType)");
                     return res.json({ versionHash: 'none' });
                 }
 
-                // Защита от системных ошибок, если ID папки как-то попал в список
+                // Защита от системных ошибок
                 if (sortedIds[0] === FOLDER_ID) {
-                    return res.json({ versionHash: 'none', error: 'System misconfiguration: Folder ID found instead of File ID' });
+                    return res.json({ versionHash: 'none', error: 'System misconfiguration: Folder ID matched as file.' });
                 }
                 
-                // CRITICAL FIX: Request arraybuffer to correctly handle binary stream from Drive API
-                // 'media' alt returns a stream in Node.js environment, we must consume it properly.
                 try {
+                    console.log(`[get-snapshot-meta] Attempting to download metadata file ID: ${sortedIds[0]}`);
+                    
                     const response = await drive.files.get(
                         { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
                         { responseType: 'arraybuffer' }
                     );
 
                     let content;
-                    // Convert buffer to string manually
                     const strData = Buffer.from(response.data as any).toString('utf-8');
                     content = JSON.parse(strData);
                     
                     // Auto-correct chunkCount based on actual files found in folder
                     const actualChunksFound = Math.max(0, sortedIds.length - 1);
-                    
-                    // Trust the filesystem count if it finds files
                     content.chunkCount = actualChunksFound;
                     
-                    console.log(`[get-snapshot-meta] Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
+                    console.log(`[get-snapshot-meta] Success. Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
                     return res.json(content);
                 } catch (e: any) {
-                    console.error("Snapshot JSON parse/download error:", e.message);
-                    return res.json({ versionHash: 'none', error: 'Parsing failed: ' + e.message });
+                    console.error("Snapshot JSON download/parse error:", e.message);
+                    return res.json({ 
+                        versionHash: 'none', 
+                        error: e.message,
+                        debug_id: sortedIds[0] 
+                    });
                 }
             }
             if (action === 'get-snapshot-list') {
