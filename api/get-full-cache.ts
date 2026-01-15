@@ -34,13 +34,19 @@ async function getDriveClient() {
 
 async function getSortedFiles(drive: any) {
     const q = `'${FOLDER_ID}' in parents and name contains 'snapshot' and trashed = false`;
-    const res = await drive.files.list({ q, fields: "files(id, name)", supportsAllDrives: true, includeItemsFromAllDrives: true });
+    const res = await drive.files.list({ 
+        q, 
+        fields: "files(id, name)", 
+        supportsAllDrives: true, 
+        includeItemsFromAllDrives: true 
+    });
+    
     const files = res.data.files || [];
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
         if (name === 'snapshot.json') return 0;
-        const match = name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 999;
+        const num = name.replace(/[^0-9]/g, '');
+        return num ? parseInt(num, 10) : 999;
     };
     return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
 }

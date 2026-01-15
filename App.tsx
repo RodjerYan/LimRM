@@ -134,16 +134,15 @@ const App: React.FC = () => {
     // --- ФУНКЦИЯ БЫСТРОЙ ЗАГРУЗКИ СНИМКА (ЧАНКОВ) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string): Promise<boolean> => {
         try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка базы из облака...', progress: 0 }));
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Загрузка снимка базы...', progress: 0 }));
             let fullJson = '';
             
             // 1. Получаем список ID чанков
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             const fileList = await listRes.json();
-
             if (!Array.isArray(fileList) || fileList.length === 0) return false;
 
-            // 2. Скачиваем каждый чанк последовательно
+            // 2. Скачиваем каждый чанк по очереди
             for (let i = 0; i < fileList.length; i++) {
                 const pct = Math.round(((i + 1) / fileList.length) * 100);
                 setProcessingState(prev => ({ ...prev, progress: pct, message: `Загрузка части ${i+1} из ${fileList.length}...` }));
@@ -151,25 +150,29 @@ const App: React.FC = () => {
                 fullJson += await chunkRes.text();
             }
 
-            // 3. Собираем и восстанавливаем
+            // 3. Парсим и восстанавливаем всё состояние
             if (fullJson) {
                 const data = JSON.parse(fullJson);
                 if (data.aggregatedData) {
                     setAllData(data.aggregatedData);
+                    // Update Ref immediately for consistency
+                    allDataRef.current = data.aggregatedData;
+
                     const clientsMap = new Map<string, MapPoint>();
-                    data.aggregatedData.forEach((row: any) => row.clients.forEach((c: any) => clientsMap.set(c.key, c)));
+                    data.aggregatedData.forEach((row: any) => row.clients?.forEach((c: any) => clientsMap.set(c.key, c)));
                     setAllActiveClients(Array.from(clientsMap.values()));
                     setOkbRegionCounts(data.okbRegionCounts || null);
                     totalRowsProcessedRef.current = data.totalRowsProcessed || 0;
 
+                    // Сохраняем в браузер (IndexedDB), чтобы потом заходило мгновенно
+                    // ВАЖНО: Не вызываем persistToDB (выгрузку в облако), чтобы разорвать петлю!
                     await saveAnalyticsState({
                         allData: data.aggregatedData,
                         unidentifiedRows: data.unidentifiedRows || [],
                         okbRegionCounts: data.okbRegionCounts || null,
-                        okbData: [],
-                        okbStatus: null,
                         totalRowsProcessed: data.totalRowsProcessed,
-                        versionHash: versionHash
+                        versionHash: versionHash,
+                        okbData: [], okbStatus: null
                     });
                     
                     setLastSnapshotVersion(versionHash);
@@ -178,7 +181,7 @@ const App: React.FC = () => {
                     return true;
                 }
             }
-        } catch (e) { console.error("Сбой загрузки снимка:", e); }
+        } catch (e) { console.error("Snapshot error:", e); }
         return false;
     }, []);
 
@@ -549,46 +552,54 @@ const App: React.FC = () => {
     useEffect(() => {
         const initializeApp = async () => {
             setDbStatus('loading');
-            setProcessingState(prev => ({ ...prev, message: 'Синхронизация с командой...' }));
+            setProcessingState(prev => ({ ...prev, message: 'Синхронизация...' }));
             
             try {
+                // 1. Сначала восстанавливаем то, что есть в браузере
                 const localState = await loadAnalyticsState();
                 const localVersion = localState?.versionHash || 'none';
+                let hasLocalData = false;
 
-                // 1. Сразу показываем то, что есть в браузере
                 if (localState?.allData?.length > 0) {
                     setAllData(localState.allData);
+                    allDataRef.current = localState.allData; // ОБЯЗАТЕЛЬНО ОБНОВЛЯЕМ РЕФ СРАЗУ
+                    
                     const clientsMap = new Map<string, MapPoint>();
                     localState.allData.forEach((row: any) => row.clients?.forEach((c: any) => clientsMap.set(c.key, c)));
                     setAllActiveClients(Array.from(clientsMap.values()));
                     setOkbRegionCounts(localState.okbRegionCounts || null);
                     totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
                     setDbStatus('ready');
+                    hasLocalData = true;
                 }
 
-                // 2. Проверяем облако (важнейший этап)
+                // 2. Проверяем облако (Приоритет №1)
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    if (serverMeta && serverMeta.chunkCount > 0 && serverMeta.versionHash !== localVersion) {
-                        console.log("Обнаружен новый снимок в облаке! Начинаю загрузку...");
+                    // Если версия в облаке НОВАЯ или у нас вообще ничего нет в браузере
+                    if (serverMeta && serverMeta.chunkCount > 0 && (serverMeta.versionHash !== localVersion || !hasLocalData)) {
+                        console.log("Найден новый снимок в облаке! Загружаю...");
                         const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
                         if (success) {
                             setDbStatus('ready');
                             setIsRestoring(false);
-                            return; // МГНОВЕННЫЙ ВЫХОД - победа!
+                            return; // ПОБЕДА: Полный выход, сканирование не начнется!
                         }
                     }
                 }
 
-                // 3. План Б - если в облаке ничего нет
-                if (!localState || localState.allData?.length === 0) {
+                // 3. План Б: Если в облаке пусто и в браузере пусто - только тогда сканируем 2025 год
+                if (!hasLocalData) {
                     setDbStatus('empty');
                     handleStartCloudProcessing({ year: '2025' });
                 }
-            } catch (e) { console.error(e); }
-            finally { setIsRestoring(false); }
+            } catch (e) { 
+                console.error("Init error:", e); 
+            } finally { 
+                setIsRestoring(false); 
+            }
         };
         initializeApp();
     }, [handleDownloadSnapshot, handleStartCloudProcessing]);
