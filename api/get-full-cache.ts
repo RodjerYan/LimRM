@@ -13,7 +13,7 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-// FIXED: Correct Folder ID from the URL provided
+// FIXED: Correct Folder ID from the URL provided by user
 const FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
 
 // CRITICAL FIX: Changed scope from 'drive.file' (only files created by this app) 
@@ -119,33 +119,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'get-snapshot-meta') {
                 const sortedIds = await getSortedFiles(drive);
-                if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
+                
+                // Если файлов нет, или единственный найденный файл - это не snapshot.json
+                if (sortedIds.length === 0) {
+                    console.log("Папка пуста или файлы не найдены");
+                    return res.json({ versionHash: 'none' });
+                }
+
+                // Защита от системных ошибок, если ID папки как-то попал в список
+                if (sortedIds[0] === FOLDER_ID) {
+                    return res.json({ versionHash: 'none', error: 'System misconfiguration: Folder ID found instead of File ID' });
+                }
                 
                 // CRITICAL FIX: Request arraybuffer to correctly handle binary stream from Drive API
                 // 'media' alt returns a stream in Node.js environment, we must consume it properly.
-                const response = await drive.files.get(
-                    { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
-                    { responseType: 'arraybuffer' }
-                );
-
-                let content;
                 try {
+                    const response = await drive.files.get(
+                        { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
+                        { responseType: 'arraybuffer' }
+                    );
+
+                    let content;
                     // Convert buffer to string manually
                     const strData = Buffer.from(response.data as any).toString('utf-8');
                     content = JSON.parse(strData);
-                } catch (e) {
-                    console.error("Snapshot JSON parse error:", e);
-                    return res.json({ versionHash: 'none', error: 'Parsing failed' });
+                    
+                    // Auto-correct chunkCount based on actual files found in folder
+                    const actualChunksFound = Math.max(0, sortedIds.length - 1);
+                    
+                    // Trust the filesystem count if it finds files
+                    content.chunkCount = actualChunksFound;
+                    
+                    console.log(`[get-snapshot-meta] Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
+                    return res.json(content);
+                } catch (e: any) {
+                    console.error("Snapshot JSON parse/download error:", e.message);
+                    return res.json({ versionHash: 'none', error: 'Parsing failed: ' + e.message });
                 }
-                
-                // Auto-correct chunkCount based on actual files found in folder
-                const actualChunksFound = Math.max(0, sortedIds.length - 1);
-                
-                // Trust the filesystem count if it finds files
-                content.chunkCount = actualChunksFound;
-                
-                console.log(`[get-snapshot-meta] Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
-                return res.json(content);
             }
             if (action === 'get-snapshot-list') {
                 const sortedIds = await getSortedFiles(drive);
