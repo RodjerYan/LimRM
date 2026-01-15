@@ -14,7 +14,7 @@ import {
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
 // FIXED: Correct Folder ID from the URL provided by user
-const FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
+const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
 
 // CRITICAL FIX: Changed scope from 'drive.file' (only files created by this app) 
 // to 'drive' (full access) so it can see files created by the Python script or user manually.
