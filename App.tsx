@@ -836,27 +836,23 @@ const App: React.FC = () => {
             try {
                 // ШАГ 1: Сначала загружаем то, что есть локально
                 const localState = await loadAnalyticsState();
-                let localVersion = null;
-
-                if (localState) {
-                    localVersion = localState.versionHash;
-                    // Pre-load local data to show something while checking cloud
-                    if (localState.allData?.length > 0) {
-                        setAllData(localState.allData);
-                        setUnidentifiedRows(localState.unidentifiedRows || []);
-                        setOkbRegionCounts(localState.okbRegionCounts || null);
-                        setOkbData(localState.okbData || []);
-                        setOkbStatus(localState.okbStatus || null);
-                        setDateRange(localState.dateRange);
-                        if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
-                        setLastSnapshotVersion(localVersion);
-                        
-                        const clientsMap = new Map<string, MapPoint>();
-                        localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
-                        setAllActiveClients(Array.from(clientsMap.values()));
-                        
-                        totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
-                    }
+                
+                // Pre-load local data to show something while checking cloud
+                if (localState && localState.allData?.length > 0) {
+                    setAllData(localState.allData);
+                    setUnidentifiedRows(localState.unidentifiedRows || []);
+                    setOkbRegionCounts(localState.okbRegionCounts || null);
+                    setOkbData(localState.okbData || []);
+                    setOkbStatus(localState.okbStatus || null);
+                    setDateRange(localState.dateRange);
+                    if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
+                    setLastSnapshotVersion(localState.versionHash);
+                    
+                    const clientsMap = new Map<string, MapPoint>();
+                    localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+                    setAllActiveClients(Array.from(clientsMap.values()));
+                    
+                    totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
                 }
 
                 // ШАГ 2: Спрашиваем у сервера актуальную версию (через мета-файл)
@@ -865,25 +861,25 @@ const App: React.FC = () => {
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    // ВАРИАНТ А: На сервере версия НОВЕЕ и это СНИМОК -> Грузим снимок
-                    if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
-                        console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
+                    // ПРОВЕРКА: Если в облаке есть хоть что-то
+                    if (serverMeta && serverMeta.chunkCount > 0) {
+                        console.log(`Обнаружено ${serverMeta.chunkCount} чанков в облаке. Начинаю прямую загрузку...`);
                         
-                        if (serverMeta.chunkCount > 0) {
-                            const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                            if (success) {
-                                setDbStatus('ready');
-                                setIsRestoring(false);
-                                return; // ВАЖНО: Останавливаем, данные загружены!
-                            }
+                        const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                        if (success) {
+                            setIsRestoring(false);
+                            setDbStatus('ready');
+                            return; // ГАРАНТИРОВАННЫЙ ВЫХОД, ЧТОБЫ НЕ ГРУЗИТЬ 2025
                         }
+                    } else {
+                        console.log("Снимок в облаке не найден или пуст. Перехожу к сканированию файлов...");
                     }
                 }
 
                 // ШАГ 3: Если снимка нет или он не загрузился, но есть локальные данные - ОК
                 if (localState && localState.allData?.length > 0) {
                     setDbStatus('ready');
-                    console.log("Снимок актуален (или офлайн).");
+                    console.log("Работаем с локальной копией (офлайн/нет снимка).");
                 } else {
                     // Локально пусто и снимка нет -> начинаем с нуля (сканируем файлы)
                     // Это крайний случай
