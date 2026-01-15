@@ -561,60 +561,93 @@ const App: React.FC = () => {
 
     }, [okbData, persistToDB, processingState.isProcessing]);
 
-    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams, targetVersion?: string) => {
+    // NEW FUNCTION: STRICTLY DOWNLOAD SNAPSHOT ONLY
+    const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string): Promise<boolean> => {
+        try {
+            setProcessingState(prev => ({ 
+                ...prev, 
+                isProcessing: true, 
+                message: 'Загрузка базы...', 
+                progress: 0 
+            }));
+            
+            let fullJson = '';
+            // Скачиваем ID чанков
+            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            if (!listRes.ok) throw new Error("Failed to get list");
+            const fileList = await listRes.json();
+
+            // Safety check: if fileList length doesn't match chunkCount, we might rely on list length
+            const count = fileList.length;
+
+            for (let i = 0; i < count; i++) {
+                const pct = Math.round(((i + 1) / count) * 100);
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    progress: pct, 
+                    message: `Загрузка части ${i+1} из ${count}...` 
+                }));
+                
+                const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${fileList[i].id}`);
+                if (!chunkRes.ok) throw new Error(`Chunk ${i} failed`);
+                const text = await chunkRes.text();
+                fullJson += text;
+            }
+
+            if (fullJson) {
+                const snapshot = JSON.parse(fullJson);
+                if (snapshot && snapshot.aggregatedData) {
+                    const { aggregatedData, unidentifiedRows: uRows, okbRegionCounts: okbC, totalRowsProcessed: totalP, processedFileIds: pIds } = snapshot;
+                                    
+                    setOkbRegionCounts(okbC);
+                    setAllData(aggregatedData);
+                    
+                    const clientsMap = new Map<string, MapPoint>();
+                    aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                    setAllActiveClients(Array.from(clientsMap.values()));
+                    
+                    setUnidentifiedRows(uRows);
+                    
+                    // Сохраняем локально, чтобы в следующий раз зашло мгновенно
+                    await persistToDB(aggregatedData, uRows, [], totalP, versionHash);
+                    
+                    setLastSnapshotVersion(versionHash);
+                    localStorage.setItem('last_snapshot_version', versionHash);
+                    
+                    totalRowsProcessedRef.current = totalP;
+                    if (pIds) processedFileIdsRef.current = new Set(pIds);
+
+                    setProcessingState(prev => ({ 
+                        ...prev, 
+                        isProcessing: false, 
+                        progress: 100, 
+                        message: 'Данные загружены' 
+                    }));
+                    
+                    return true;
+                }
+            }
+        } catch (e) {
+            console.error("Сбой загрузки снимка:", e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка загрузки снимка' }));
+        }
+        return false;
+    }, [persistToDB]);
+
+    // LEGACY: Used only if snapshot fails or is missing
+    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         if (processingState.isProcessing) return;
         
-        let effectiveTargetVersion = targetVersion;
-        // Переменная для хранения списка файлов из метаданных (резервная копия)
-        let fallbackProcessedFiles: string[] = [];
-
-        // 1. Получаем метаданные (версию и список файлов)
-        if (!effectiveTargetVersion) {
-             try {
-                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-                 if(metaRes.ok) {
-                     const remoteMeta = await metaRes.json();
-                     if (remoteMeta.versionHash) {
-                         effectiveTargetVersion = remoteMeta.versionHash;
-                     }
-                     if (remoteMeta.processedFileIds && Array.isArray(remoteMeta.processedFileIds)) {
-                         fallbackProcessedFiles = remoteMeta.processedFileIds;
-                     }
-                 }
-             } catch(e) { console.error("Failed to check snapshot metadata", e); }
-        }
-
-        const currentLocalVersion = lastSnapshotVersion; 
-        const isVersionMismatch = effectiveTargetVersion && effectiveTargetVersion !== currentLocalVersion;
-        const isBackgroundUpdate = (allDataRef.current.length > 0);
+        let rowsProcessedSoFar = totalRowsProcessedRef.current;
         
-        if (!isBackgroundUpdate) setActiveModule('amp');
-        if (effectiveTargetVersion) {
-            localStorage.setItem('pending_version_hash', effectiveTargetVersion);
+        // Сброс данных, так как мы начинаем сканирование
+        if (rowsProcessedSoFar === 0) {
+             setAllData([]);
+             setUnidentifiedRows([]);
+             setOkbRegionCounts(null);
+             setAllActiveClients([]);
+             processedFileIdsRef.current.clear();
         }
-        
-        console.log(`Cloud Sync. Local: ${currentLocalVersion}, Remote: ${effectiveTargetVersion}, Mismatch: ${isVersionMismatch}`);
-        
-        // Сброс данных при несовпадении версий
-        if (isVersionMismatch) {
-            console.log("!!! SNAPSHOT MISMATCH: WIPING LOCAL DB & STATE !!!");
-            await clearAnalyticsState();
-            setAllData([]);
-            setUnidentifiedRows([]);
-            setOkbRegionCounts(null);
-            setAllActiveClients([]);
-            setProcessingState(prev => ({ ...prev, progress: 0, message: 'Загрузка новой версии...', totalRowsProcessed: 0 }));
-            
-            totalRowsProcessedRef.current = 0;
-            processedFileIdsRef.current.clear(); // Мы очищаем реф
-            allDataRef.current = [];
-            unidentifiedRowsRef.current = [];
-            await new Promise(resolve => setTimeout(resolve, 300));
-        }
-
-        let rowsProcessedSoFar = isVersionMismatch ? 0 : totalRowsProcessedRef.current;
-        let restoredDataForWorker: AggregatedDataRow[] | undefined = isVersionMismatch ? undefined : allDataRef.current;
-        let restoredUnidentifiedForWorker: UnidentifiedRow[] | undefined = isVersionMismatch ? undefined : unidentifiedRowsRef.current;
 
         setProcessingState(prev => ({ 
             ...prev,
@@ -623,96 +656,6 @@ const App: React.FC = () => {
             startTime: Date.now(), totalRowsProcessed: rowsProcessedSoFar
         }));
         
-        // 2. ЗАГРУЗКА СНИМКА (СКЛЕЙКА ИЗ ФАЙЛОВ)
-        let snapshotLoaded = false;
-        if (isVersionMismatch || allDataRef.current.length === 0) {
-            try {
-                setProcessingState(prev => ({ ...prev, message: 'Получение списка частей базы...' }));
-                
-                // 1. Получаем список чанков (ID файлов)
-                const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-                
-                if (listRes.ok) {
-                    const fileList = await listRes.json();
-                    
-                    if (Array.isArray(fileList) && fileList.length > 0) {
-                        let fullJson = '';
-                        
-                        // 2. Скачиваем каждый чанк последовательно
-                        for (let i = 0; i < fileList.length; i++) {
-                            const file = fileList[i];
-                            const pct = Math.round(((i + 1) / fileList.length) * 100);
-                            setProcessingState(prev => ({ 
-                                ...prev, 
-                                message: `Загрузка: ${pct}%`,
-                                progress: pct 
-                            }));
-
-                            const chunkRes = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                            if (chunkRes.ok) {
-                                const chunkText = await chunkRes.text();
-                                fullJson += chunkText;
-                            }
-                        }
-
-                        // 3. Парсим собранный JSON
-                        if (fullJson.length > 0) {
-                            try {
-                                const data = JSON.parse(fullJson);
-                                const snapshot = data; // Это уже и есть весь объект
-                                
-                                if (snapshot && snapshot.aggregatedData) {
-                                    const { aggregatedData, unidentifiedRows: uRows, okbRegionCounts: okbC, totalRowsProcessed: totalP, processedFileIds: pIds } = snapshot;
-                                    
-                                    setOkbRegionCounts(okbC);
-                                    setAllData(aggregatedData);
-                                    
-                                    const clientsMap = new Map<string, MapPoint>();
-                                    aggregatedData.forEach((row: AggregatedDataRow) => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                                    setAllActiveClients(Array.from(clientsMap.values()));
-                                    
-                                    setUnidentifiedRows(uRows);
-                                    setDbStatus('ready');
-                                    
-                                    const snapshotHash = snapshot.versionHash || effectiveTargetVersion;
-                                    setLastSnapshotVersion(snapshotHash);
-                                    localStorage.setItem('last_snapshot_version', snapshotHash);
-                                    
-                                    rowsProcessedSoFar = totalP || 0;
-                                    totalRowsProcessedRef.current = rowsProcessedSoFar;
-                                    
-                                    if (pIds) {
-                                        processedFileIdsRef.current = new Set(pIds);
-                                    }
-                                    
-                                    restoredDataForWorker = aggregatedData;
-                                    restoredUnidentifiedForWorker = uRows;
-                                    snapshotLoaded = true;
-                                }
-                            } catch (parseErr) {
-                                console.error("JSON Parse error:", parseErr);
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn("Snapshot fetch failed:", e);
-            }
-        }
-
-        // NEW: Stop further processing if snapshot loaded
-        if (snapshotLoaded) {
-             console.log("Snapshot loaded successfully. Skipping legacy file scan.");
-             setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Синхронизация завершена' }));
-             return;
-        }
-
-        // FALLBACK: Если снимок не загрузился, но у нас есть список файлов из метаданных
-        if (!snapshotLoaded && fallbackProcessedFiles.length > 0) {
-            console.log(`Restoring ${fallbackProcessedFiles.length} processed files from metadata fallback.`);
-            processedFileIdsRef.current = new Set(fallbackProcessedFiles);
-        }
-
         // Подготовка кэша и воркера
         let cacheData: CoordsCache = {};
         try {
@@ -723,22 +666,20 @@ const App: React.FC = () => {
         if (workerRef.current) workerRef.current.terminate();
         workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
         
-        // Обработчик сообщений от воркера (Checkpoint, Progress, Finish)
+        // Обработчик сообщений от воркера
         workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             const msg = e.data;
             if (msg.type === 'progress') {
                 setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed ?? prev.totalRowsProcessed }));
                 if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
             }
-            else if (msg.type === 'result_init' && !isBackgroundUpdate) setOkbRegionCounts(msg.payload.okbRegionCounts);
+            else if (msg.type === 'result_init') setOkbRegionCounts(msg.payload.okbRegionCounts);
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
-                if (!isBackgroundUpdate) {
-                    setAllData(chunkData);
-                    const clientsMap = new Map<string, MapPoint>();
-                    chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                }
+                setAllData(chunkData);
+                const clientsMap = new Map<string, MapPoint>();
+                chunkData.forEach(row => row.clients.forEach(c => clientsMap.set(c.key, c)));
+                setAllActiveClients(Array.from(clientsMap.values()));
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
                 totalRowsProcessedRef.current = totalProcessed;
             }
@@ -748,7 +689,7 @@ const App: React.FC = () => {
                 setAllActiveClients(prev => { const map = new Map(prev.map(c => [c.key, c])); payload.aggregatedData.forEach(r => r.clients.forEach(c => map.set(c.key, c))); return Array.from(map.values()); });
                 setUnidentifiedRows(payload.unidentifiedRows);
                 
-                const version = localStorage.getItem('pending_version_hash') || `proc_${Date.now()}`;
+                const version = `proc_${Date.now()}`;
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, version);
             }
             else if (msg.type === 'result_finished') {
@@ -761,7 +702,7 @@ const App: React.FC = () => {
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 
-                const finalVersion = effectiveTargetVersion || `processed_${Date.now()}`;
+                const finalVersion = `processed_${Date.now()}`;
                 await persistToDB(payload.aggregatedData, payload.unidentifiedRows, [], payload.totalRowsProcessed, finalVersion);
                 
                 setLastSnapshotVersion(finalVersion);
@@ -772,10 +713,10 @@ const App: React.FC = () => {
         
         workerRef.current.postMessage({ 
             type: 'INIT_STREAM', 
-            payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: restoredDataForWorker, restoredUnidentified: restoredUnidentifiedForWorker } 
+            payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: allDataRef.current, restoredUnidentified: unidentifiedRowsRef.current } 
         });
         
-        // 3. СКАНИРОВАНИЕ ФАЙЛОВ (ПО ГОДАМ)
+        // 3. СКАНИРОВАНИЕ ФАЙЛОВ (ПО ГОДАМ) - Only if snapshot failed
         try {
             const YEARS_TO_SCAN = ['2025', '2026'];
 
@@ -845,7 +786,7 @@ const App: React.FC = () => {
         } finally {
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
         }
-    }, [okbData, persistToDB, processingState.isProcessing, lastSnapshotVersion]);
+    }, [okbData, persistToDB, processingState.isProcessing]);
 
     const checkCloudChanges = useCallback(async () => {
         if (isRestoring || processingState.isProcessing || !okbStatus || okbStatus.status !== 'ready') return;
@@ -854,16 +795,23 @@ const App: React.FC = () => {
             if (metaRes.ok) {
                 const meta = await metaRes.json();
                 setIsLiveConnected(true);
+                // Если нашлась новая версия и в ней есть чанки -> грузим снимок
                 if (meta.versionHash && meta.versionHash !== 'none' && meta.versionHash !== lastSnapshotVersion) {
                     console.log('Detected snapshot change:', meta.versionHash, 'vs local', lastSnapshotVersion);
-                    handleStartCloudProcessing({ year: '2025' }, meta.versionHash);
+                    
+                    if (meta.chunkCount > 0) {
+                        await handleDownloadSnapshot(meta.chunkCount, meta.versionHash);
+                    } else {
+                        // Fallback to legacy if no chunks
+                        handleStartCloudProcessing({ year: '2025' });
+                    }
                 }
             }
         } catch (e) { setIsLiveConnected(false); }
-    }, [isRestoring, processingState.isProcessing, okbStatus, lastSnapshotVersion, handleStartCloudProcessing]);
+    }, [isRestoring, processingState.isProcessing, okbStatus, lastSnapshotVersion, handleDownloadSnapshot, handleStartCloudProcessing]);
 
     useEffect(() => {
-        // Проверяем облако каждые 15 секунд (ускорено по запросу)
+        // Проверяем облако каждые 15 секунд
         const timer = setInterval(() => {
             // Легкий визуальный эффект, что "связь есть" - пульс
             setIsLiveConnected(false);
@@ -890,30 +838,25 @@ const App: React.FC = () => {
                 const localState = await loadAnalyticsState();
                 let localVersion = null;
 
-                if (localState && localState.allData?.length > 0) {
-                    setAllData(localState.allData);
-                    setUnidentifiedRows(localState.unidentifiedRows || []);
-                    setOkbRegionCounts(localState.okbRegionCounts || null);
-                    setOkbData(localState.okbData || []);
-                    setOkbStatus(localState.okbStatus || null);
-                    setDateRange(localState.dateRange);
-                    
-                    if (localState.processedFileIds) {
-                        processedFileIdsRef.current = new Set(localState.processedFileIds);
-                    }
-
-                    if (localState.versionHash) {
-                        localVersion = localState.versionHash;
+                if (localState) {
+                    localVersion = localState.versionHash;
+                    // Pre-load local data to show something while checking cloud
+                    if (localState.allData?.length > 0) {
+                        setAllData(localState.allData);
+                        setUnidentifiedRows(localState.unidentifiedRows || []);
+                        setOkbRegionCounts(localState.okbRegionCounts || null);
+                        setOkbData(localState.okbData || []);
+                        setOkbStatus(localState.okbStatus || null);
+                        setDateRange(localState.dateRange);
+                        if (localState.processedFileIds) processedFileIdsRef.current = new Set(localState.processedFileIds);
                         setLastSnapshotVersion(localVersion);
-                        localStorage.setItem('last_snapshot_version', localVersion);
+                        
+                        const clientsMap = new Map<string, MapPoint>();
+                        localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
+                        setAllActiveClients(Array.from(clientsMap.values()));
+                        
+                        totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
                     }
-                    
-                    const clientsMap = new Map<string, MapPoint>();
-                    localState.allData.forEach((row: AggregatedDataRow) => { row.clients.forEach(c => clientsMap.set(c.key, c)); });
-                    setAllActiveClients(Array.from(clientsMap.values()));
-                    
-                    const restoredCount = localState.totalRowsProcessed || 0;
-                    totalRowsProcessedRef.current = restoredCount;
                 }
 
                 // ШАГ 2: Спрашиваем у сервера актуальную версию (через мета-файл)
@@ -922,27 +865,28 @@ const App: React.FC = () => {
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    if (serverMeta.processedFileIds && Array.isArray(serverMeta.processedFileIds)) {
-                        processedFileIdsRef.current = new Set(serverMeta.processedFileIds);
-                    }
-                    
-                    // ВАРИАНТ А: На сервере версия НОВЕЕ -> Полная перезагрузка из снимка
+                    // ВАРИАНТ А: На сервере версия НОВЕЕ и это СНИМОК -> Грузим снимок
                     if (serverMeta.versionHash && serverMeta.versionHash !== 'none' && serverMeta.versionHash !== localVersion) {
                         console.log(`Найден новый прогресс на сервере (${serverMeta.versionHash}). Обновляем...`);
-                        await handleStartCloudProcessing({ year: '2025' }, serverMeta.versionHash);
-                        setIsRestoring(false); 
-                        return;
+                        
+                        if (serverMeta.chunkCount > 0) {
+                            const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                            if (success) {
+                                setDbStatus('ready');
+                                setIsRestoring(false);
+                                return; // ВАЖНО: Останавливаем, данные загружены!
+                            }
+                        }
                     }
                 }
 
-                // ШАГ 3: Версии совпадают ИЛИ сервер недоступен.
+                // ШАГ 3: Если снимка нет или он не загрузился, но есть локальные данные - ОК
                 if (localState && localState.allData?.length > 0) {
                     setDbStatus('ready');
-                    console.log("Снимок актуален. Проверяем наличие необработанных файлов...");
-                    
-                    await handleStartCloudProcessing({ year: '2025' }, localVersion || undefined);
+                    console.log("Снимок актуален (или офлайн).");
                 } else {
-                    // Локально пусто -> начинаем с нуля
+                    // Локально пусто и снимка нет -> начинаем с нуля (сканируем файлы)
+                    // Это крайний случай
                     setDbStatus('empty');
                     handleStartCloudProcessing({ year: '2025' });
                 }
