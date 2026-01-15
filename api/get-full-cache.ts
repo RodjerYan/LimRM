@@ -14,7 +14,7 @@ import {
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
 // FIXED: Extracted just the ID from the URL provided
-const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
+const FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
 const SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
@@ -49,9 +49,9 @@ async function getSortedFiles(drive: any) {
         // Meta file (snapshot.json) must be first (index 0)
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
         
-        // Extract number for sorting: snapshot1.json, snapshot2.json...
-        const match = name.match(/snapshot(\d+)/);
-        return match ? parseInt(match[1], 10) : 9999;
+        // Extract ANY number for sorting: snapshot1.json, snapshot_chunk_0.json...
+        const match = name.match(/\d+/);
+        return match ? parseInt(match[0], 10) : 9999;
     };
     return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
 }
@@ -72,8 +72,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedIds = await getSortedFiles(drive);
                 // Ensure we have a slot for this chunk
                 if (sortedIds[chunkIndex + 1]) {
-                    // body.chunk will contain raw string if getRawBody failed to parse JSON (text/plain)
-                    const content = body.chunk || body; 
+                    // Robust content extraction:
+                    // 1. If body is string, use it.
+                    // 2. If body is object from getRawBody catch block { chunk: "..." }, use chunk.
+                    // 3. If body is parsed JSON object, stringify it back.
+                    const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
                     
                     await drive.files.update({ 
                         fileId: sortedIds[chunkIndex + 1], 
