@@ -13,7 +13,8 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-const FOLDER_ID = '1TTdZZC-BVcQtUGgmeJwlP8GvZt23SR_N';
+// FIXED: Extracted just the ID from the URL provided
+const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
 const SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
@@ -39,17 +40,18 @@ async function getSortedFiles(drive: any) {
         fields: "files(id, name)", 
         supportsAllDrives: true, 
         includeItemsFromAllDrives: true,
-        pageSize: 1000 
+        pageSize: 1000 // Increased to catch all snapshot parts (up to 1000 files)
     });
     
     const files = res.data.files || [];
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
-        // Explicitly check for meta-like filenames first to ensure they are index 0
+        // Meta file (snapshot.json) must be first (index 0)
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
         
-        const match = name.match(/\d+/);
-        return match ? parseInt(match[0], 10) : 999;
+        // Extract number for sorting: snapshot1.json, snapshot2.json...
+        const match = name.match(/snapshot(\d+)/);
+        return match ? parseInt(match[1], 10) : 9999;
     };
     return files.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
 }
@@ -70,25 +72,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedIds = await getSortedFiles(drive);
                 // Ensure we have a slot for this chunk
                 if (sortedIds[chunkIndex + 1]) {
-                    // body.chunk will contain raw string if getRawBody failed to parse JSON (which happens for text/plain or raw fragments)
-                    // If content-type was text/plain, body.chunk is the raw string.
+                    // body.chunk will contain raw string if getRawBody failed to parse JSON (text/plain)
                     const content = body.chunk || body; 
                     
-                    await drive.files.update({ fileId: sortedIds[chunkIndex + 1], media: { mimeType: 'application/json', body: content }, supportsAllDrives: true });
+                    await drive.files.update({ 
+                        fileId: sortedIds[chunkIndex + 1], 
+                        media: { mimeType: 'application/json', body: content }, 
+                        supportsAllDrives: true 
+                    });
                     return res.status(200).json({ status: 'saved' });
                 }
-                return res.status(404).json({ error: 'Chunk file not found. Ensure snapshot files exist in Drive.' });
+                return res.status(404).json({ error: 'Chunk file not found. Ensure snapshot files exist in Drive folder.' });
             }
             if (action === 'save-meta') {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds[0]) {
-                    await drive.files.update({ fileId: sortedIds[0], media: { mimeType: 'application/json', body: JSON.stringify(body) }, supportsAllDrives: true });
+                    await drive.files.update({ 
+                        fileId: sortedIds[0], 
+                        media: { mimeType: 'application/json', body: JSON.stringify(body) }, 
+                        supportsAllDrives: true 
+                    });
                     return res.status(200).json({ status: 'meta_saved' });
                 }
-                return res.status(404).json({ error: 'Meta file not found' });
+                return res.status(404).json({ error: 'Meta file not found in Drive folder.' });
             }
 
-            // Legacy Cache Operations (Preserved for functionality)
+            // Legacy Cache Operations
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
             if (action === 'update-address') { await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment); return res.json({success:true}); }
             if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
@@ -100,16 +109,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-snapshot-meta') {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
+                
                 const file = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true });
                 const content = typeof file.data === 'string' ? JSON.parse(file.data) : file.data;
                 
-                // Auto-correct chunkCount if actual files found are different from metadata
+                // Auto-correct chunkCount based on actual files found in folder
                 const actualChunksFound = Math.max(0, sortedIds.length - 1);
-                if (content.chunkCount && content.chunkCount !== actualChunksFound) {
-                    content.actualChunksFound = actualChunksFound;
-                    if (actualChunksFound > content.chunkCount) {
-                        content.chunkCount = actualChunksFound;
-                    }
+                
+                // If metadata says 30 chunks but we found 100 files, trust the file system
+                if (actualChunksFound > (content.chunkCount || 0)) {
+                    content.chunkCount = actualChunksFound;
                 }
                 
                 return res.json(content);
