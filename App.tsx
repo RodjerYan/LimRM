@@ -16,6 +16,7 @@ import Notification from './components/Notification';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import MergeOverlay from './components/MergeOverlay';
+import Presentation from './components/modules/Presentation';
 
 import { 
     AggregatedDataRow, 
@@ -110,11 +111,12 @@ const App: React.FC = () => {
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
     const duplicatesCount = useMemo(() => {
+        // Добавьте проверку на существование и длину
         if (!allActiveClients || allActiveClients.length === 0) return 0;
         const uniqueKeys = new Set<string>();
         let duplicates = 0;
         allActiveClients.forEach(client => {
-            if (!client || !client.address) return; // Safety check
+            if (!client || !client.address) return; // Защита от пустых объектов
             const normAddr = normalizeAddress(client.address);
             const key = `${normAddr}_${client.type || 'common'}`;
             if (uniqueKeys.has(key)) {
@@ -181,17 +183,18 @@ const App: React.FC = () => {
                 const data = JSON.parse(fullJson);
                 if (data.aggregatedData) {
                     setAllData(data.aggregatedData);
+                    setUnidentifiedRows(data.unidentifiedRows || []); // Added: Ensure state update
                     // Update Ref immediately for consistency
                     allDataRef.current = data.aggregatedData;
 
                     const clientsMap = new Map<string, MapPoint>();
                     
-                    // SAFE DATA PARSING: Handle potential missing 'clients' arrays from Python scripts
                     data.aggregatedData.forEach((row: any) => {
+                        // Проверяем, есть ли массив clients, прежде чем делать forEach
                         if (row.clients && Array.isArray(row.clients)) {
                             row.clients.forEach((c: any) => clientsMap.set(c.key, c));
                         } else if (row.key) {
-                            // Fallback: If no clients array (optimization), treat the row itself as client
+                            // Если массив clients пуст (как в Python), считаем саму строку за клиента
                             clientsMap.set(row.key, row);
                         }
                     });
@@ -676,7 +679,7 @@ const App: React.FC = () => {
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filteredData), [filteredData]);
     const potentialClients = useMemo(() => { 
-        if (!okbData || !Array.isArray(okbData) || okbData.length === 0) return []; 
+        if (!okbData || !Array.isArray(okbData) || okbData.length === 0) return []; // Check
         const activeAddressesSet = new Set(
             allActiveClients
                 .filter(c => c && c.address)
