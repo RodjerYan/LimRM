@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
@@ -42,28 +42,18 @@ interface OutlierItem {
 const DateRangeControl: React.FC<{
     startDate: string;
     endDate: string;
-    onStartDateChange: (d: string) => void;
-    onEndDateChange: (d: string) => void;
+    onApply: (start: string, end: string) => void;
     disabled: boolean;
-}> = ({ startDate, endDate, onStartDateChange, onEndDateChange, disabled }) => {
+}> = ({ startDate, endDate, onApply, disabled }) => {
     
-    // Quick presets handler
-    const setPreset = (type: '2025' | '2026' | 'q1' | 'reset') => {
-        if (type === 'reset') {
-            onStartDateChange('');
-            onEndDateChange('');
-        } else if (type === '2025') {
-            onStartDateChange('2025-01');
-            onEndDateChange('2025-12');
-        } else if (type === '2026') {
-            onStartDateChange('2026-01');
-            onEndDateChange('2026-12');
-        } else if (type === 'q1') {
-            const y = new Date().getFullYear();
-            onStartDateChange(`${y}-01`);
-            onEndDateChange(`${y}-03`);
-        }
-    };
+    const [localStart, setLocalStart] = useState(startDate);
+    const [localEnd, setLocalEnd] = useState(endDate);
+
+    // Sync with props if they change externally
+    useEffect(() => {
+        setLocalStart(startDate);
+        setLocalEnd(endDate);
+    }, [startDate, endDate]);
 
     return (
         <div className="relative group">
@@ -82,14 +72,14 @@ const DateRangeControl: React.FC<{
                 </div>
 
                 {/* Inputs Row */}
-                <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-2 gap-4 mb-6">
                     <div className="space-y-1">
                         <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider ml-1">Начало</label>
                         <div className="relative">
                             <input 
                                 type="month" 
-                                value={startDate}
-                                onChange={(e) => onStartDateChange(e.target.value)}
+                                value={localStart}
+                                onChange={(e) => setLocalStart(e.target.value)}
                                 disabled={disabled}
                                 className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
                             />
@@ -100,8 +90,8 @@ const DateRangeControl: React.FC<{
                         <div className="relative">
                             <input 
                                 type="month" 
-                                value={endDate}
-                                onChange={(e) => onEndDateChange(e.target.value)}
+                                value={localEnd}
+                                onChange={(e) => setLocalEnd(e.target.value)}
                                 disabled={disabled}
                                 className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
                             />
@@ -109,18 +99,17 @@ const DateRangeControl: React.FC<{
                     </div>
                 </div>
 
-                {/* Quick Actions */}
-                <div className="flex flex-wrap gap-2">
-                    <button onClick={() => setPreset('2025')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">2025</button>
-                    <button onClick={() => setPreset('2026')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">2026</button>
-                    <button onClick={() => setPreset('q1')} disabled={disabled} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-gray-700 transition-colors disabled:opacity-50">Q1 Текущий</button>
-                    {(startDate || endDate) && (
-                        <button onClick={() => setPreset('reset')} disabled={disabled} className="ml-auto px-3 py-1.5 text-orange-400 hover:text-orange-300 text-xs font-bold transition-colors disabled:opacity-50">Сбросить</button>
-                    )}
-                </div>
+                {/* Apply Button */}
+                <button 
+                    onClick={() => onApply(localStart, localEnd)}
+                    disabled={disabled}
+                    className="w-full bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                    <span className="uppercase tracking-wide text-xs">Применить фильтр</span>
+                </button>
 
                 {/* Visual Feedback */}
-                {startDate && endDate && startDate > endDate && (
+                {localStart && localEnd && localStart > localEnd && (
                     <div className="mt-3 text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/20 text-center">
                         Ошибка: Дата начала позже даты конца
                     </div>
@@ -284,12 +273,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                         
-                        {/* NEW DATE RANGE BLOCK */}
+                        {/* MODIFIED DATE RANGE BLOCK WITH APPLY BUTTON */}
                         <DateRangeControl 
                             startDate={props.startDate} 
                             endDate={props.endDate} 
-                            onStartDateChange={props.onStartDateChange} 
-                            onEndDateChange={props.onEndDateChange}
+                            onApply={(start, end) => {
+                                props.onStartDateChange(start);
+                                props.onEndDateChange(end);
+                            }}
                             disabled={props.disabled}
                         />
                     </div>
