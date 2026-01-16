@@ -49,22 +49,23 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Sync local state with props when props change (e.g. external reset)
+    // FIX: Only sync with props if props are reset to empty. 
+    // We do NOT sync on every change because it causes race conditions where 
+    // partial parent updates overwrite the user's new input before the apply is complete.
     useEffect(() => {
-        setLocalStart(startDate);
-        setLocalEnd(endDate);
+        if (startDate === '' && endDate === '') {
+            setLocalStart('');
+            setLocalEnd('');
+        }
     }, [startDate, endDate]);
 
     const handleApply = () => {
-        // Force update parent with current local values
         onApply(localStart, localEnd);
     };
 
     const handleReset = () => {
-        // Clear local inputs
         setLocalStart('');
         setLocalEnd('');
-        // Immediately clear parent filter
         onApply('', '');
     };
 
