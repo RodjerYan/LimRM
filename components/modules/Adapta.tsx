@@ -49,19 +49,22 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Sync with props if they change externally (e.g. cleared by parent)
+    // Sync with props if they change externally (e.g. cleared by parent or initial load)
     useEffect(() => {
         setLocalStart(startDate);
         setLocalEnd(endDate);
     }, [startDate, endDate]);
 
     const handleApply = () => {
+        // Trigger parent update with current local values
         onApply(localStart, localEnd);
     };
 
     const handleReset = () => {
+        // Clear local state
         setLocalStart('');
         setLocalEnd('');
+        // Immediately clear parent state
         onApply('', '');
     };
 
@@ -122,8 +125,8 @@ const DateRangeControl: React.FC<{
                     <button 
                         onClick={handleReset}
                         disabled={disabled || (!localStart && !localEnd)}
-                        className="px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-xl transition-all border border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                        title="Сбросить фильтр дат"
+                        className="px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-xl transition-all border border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-lg hover:shadow-gray-900/20 active:scale-[0.98]"
+                        title="Сбросить фильтр (показать всё)"
                     >
                         <TrashIcon className="w-4 h-4" />
                     </button>
