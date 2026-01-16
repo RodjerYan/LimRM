@@ -14,7 +14,7 @@ import {
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
 // FIXED: Correct Folder ID from the URL provided by user
-const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
+const FOLDER_ID = '1pZebU-HglA8mTSFizHnp87vNMUQ-70iZ';
 
 // CRITICAL FIX: Changed scope from 'drive.file' (only files created by this app) 
 // to 'drive' (full access) so it can see files created by the Python script or user manually.
@@ -175,10 +175,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-snapshot-list') {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds.length === 0) return res.json([]);
-                
-                // Return all found snapshot files (excluding meta at index 0)
-                const chunkFiles = sortedIds.slice(1);
-                return res.json(chunkFiles.map((id: string) => ({ id })));
+
+                try {
+                    // 1. Сначала читаем мета-файл (он под индексом 0)
+                    const metaRes = await drive.files.get(
+                        { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
+                        { responseType: 'arraybuffer' }
+                    );
+                    const metaStr = Buffer.from(metaRes.data as any).toString('utf-8');
+                    const meta = JSON.parse(metaStr);
+                    
+                    // 2. Узнаем, сколько чанков реально принадлежит этой версии
+                    const activeChunkCount = meta.chunkCount || (sortedIds.length - 1);
+
+                    // 3. Берем ровно столько ID, сколько нужно, начиная с первого чанка
+                    // (slice(1, activeChunkCount + 1) пропустит мета-файл и возьмет только чанки)
+                    const chunkFiles = sortedIds.slice(1, activeChunkCount + 1);
+                    
+                    console.log(`[LIST] Версия ${meta.versionHash} требует ${activeChunkCount} чанков. Отдаем ${chunkFiles.length} ID.`);
+                    
+                    return res.json(chunkFiles.map((id: string) => ({ id })));
+                } catch (e) {
+                    // Если мета-файл не прочитался, отдаем все как раньше (fallback)
+                    const chunkFiles = sortedIds.slice(1);
+                    return res.json(chunkFiles.map((id: string) => ({ id })));
+                }
             }
             if (action === 'get-file-content') {
                 const fileId = String(req.query.fileId);
