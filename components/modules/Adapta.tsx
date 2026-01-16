@@ -177,14 +177,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Helper to get client fact for the selected period
+    // FIX: Always sum monthly facts if available, ignoring the pre-calculated 'fact' which might include totals/noise.
     const getClientFact = (client: MapPoint) => {
-        if ((!props.startDate && !props.endDate) || !client.monthlyFact) return client.fact || 0;
+        // Если нет данных по месяцам, тогда (и только тогда) верим общей цифре
+        if (!client.monthlyFact) return client.fact || 0;
         
         let sum = 0;
+        // Пробегаемся по всем месяцам
         Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return;
+            if (date === 'unknown') return; // Игнорируем мусор
+            
+            // Если задан фильтр, отсекаем лишнее. 
+            // Если фильтра нет (props пустые), эти условия false и мы суммируем ВСЁ.
             if (props.startDate && date < props.startDate) return;
             if (props.endDate && date > props.endDate) return;
+            
             sum += val;
         });
         return sum;
