@@ -37,16 +37,15 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any) {
-    // 1. УЗНАЕМ, КТО МЫ (под каким email зашел бот)
+    // 1. DIAGNOSTIC: Check Auth Identity
     try {
         const authInfo = await drive.about.get({ fields: 'user' });
-        console.log(`[AUTH] Бот работает под аккаунтом: ${authInfo.data.user.emailAddress}`);
+        console.log(`[AUTH] Bot email: ${authInfo.data.user.emailAddress}`);
     } catch (e) {
-        console.log("[AUTH] Не удалось получить email бота");
+        console.log("[AUTH] Failed to get bot email");
     }
 
-    // 2. ПРОСИМ ВСЕ ФАЙЛЫ В ПАПКЕ (без фильтра по имени)
-    // Убираем 'name contains snapshot', чтобы исключить ошибки индексации
+    // 2. FETCH ALL FILES (No 'name contains' filter to avoid indexing latency)
     const q = `'${FOLDER_ID}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
@@ -59,23 +58,25 @@ async function getSortedFiles(drive: any) {
     
     const allFiles = res.data.files || [];
     
-    // 3. ПИШЕМ В ЛОГИ ВСЁ, ЧТО ВИДИТ БОТ
-    console.log(`[DEBUG] Всего объектов найдено в папке: ${allFiles.length}`);
+    // 3. DEBUG LOG
+    console.log(`[DEBUG] Total objects in folder: ${allFiles.length}`);
     allFiles.forEach((f: any) => {
-        console.log(` -> Объект: "${f.name}" | Тип: ${f.mimeType} | ID: ${f.id}`);
+        console.log(` -> ${f.name} (${f.mimeType}) | ID: ${f.id}`);
     });
 
-    // 4. Фильтруем файлы уже в коде (так надежнее)
+    // 4. FILTER LOCALLY (Node.js)
     const filteredFiles = allFiles.filter((f: any) => 
-        f.name.toLowerCase().includes('snapshot') && 
+        f.name && f.name.toLowerCase().includes('snapshot') && 
         f.mimeType !== 'application/vnd.google-apps.folder'
     );
 
-    console.log(`[FILTER] После фильтрации осталось: ${filteredFiles.length} файлов`);
+    console.log(`[FILTER] Snapshot files found: ${filteredFiles.length}`);
 
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
+        // Meta file first
         if (name === 'snapshot.json' || name.includes('system_analytics_snapshot')) return -1;
+        // Chunks sorted by number
         const match = name.match(/\d+/);
         return match ? parseInt(match[0], 10) : 9999;
     };
@@ -177,7 +178,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (sortedIds.length === 0) return res.json([]);
 
                 try {
-                    // 1. Сначала читаем мета-файл (он под индексом 0)
+                    // 1. Read Meta First (Index 0)
                     const metaRes = await drive.files.get(
                         { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
                         { responseType: 'arraybuffer' }
@@ -185,18 +186,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     const metaStr = Buffer.from(metaRes.data as any).toString('utf-8');
                     const meta = JSON.parse(metaStr);
                     
-                    // 2. Узнаем, сколько чанков реально принадлежит этой версии
+                    // 2. Determine actual chunk count
                     const activeChunkCount = meta.chunkCount || (sortedIds.length - 1);
 
-                    // 3. Берем ровно столько ID, сколько нужно, начиная с первого чанка
-                    // (slice(1, activeChunkCount + 1) пропустит мета-файл и возьмет только чанки)
+                    // 3. Return ONLY needed IDs
                     const chunkFiles = sortedIds.slice(1, activeChunkCount + 1);
                     
-                    console.log(`[LIST] Версия ${meta.versionHash} требует ${activeChunkCount} чанков. Отдаем ${chunkFiles.length} ID.`);
+                    console.log(`[LIST] Version ${meta.versionHash} needs ${activeChunkCount} chunks. Returning ${chunkFiles.length} IDs.`);
                     
                     return res.json(chunkFiles.map((id: string) => ({ id })));
                 } catch (e) {
-                    // Если мета-файл не прочитался, отдаем все как раньше (fallback)
+                    console.warn("[LIST] Failed to read meta for list, returning all chunks as fallback.");
+                    // Fallback: return everything except first file
                     const chunkFiles = sortedIds.slice(1);
                     return res.json(chunkFiles.map((id: string) => ({ id })));
                 }

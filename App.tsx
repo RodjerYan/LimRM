@@ -110,10 +110,11 @@ const App: React.FC = () => {
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
     const duplicatesCount = useMemo(() => {
-        if (allActiveClients.length === 0) return 0;
+        if (!allActiveClients || allActiveClients.length === 0) return 0;
         const uniqueKeys = new Set<string>();
         let duplicates = 0;
         allActiveClients.forEach(client => {
+            if (!client || !client.address) return; // Safety check
             const normAddr = normalizeAddress(client.address);
             const key = `${normAddr}_${client.type || 'common'}`;
             if (uniqueKeys.has(key)) {
@@ -184,7 +185,17 @@ const App: React.FC = () => {
                     allDataRef.current = data.aggregatedData;
 
                     const clientsMap = new Map<string, MapPoint>();
-                    data.aggregatedData.forEach((row: any) => row.clients?.forEach((c: any) => clientsMap.set(c.key, c)));
+                    
+                    // SAFE DATA PARSING: Handle potential missing 'clients' arrays from Python scripts
+                    data.aggregatedData.forEach((row: any) => {
+                        if (row.clients && Array.isArray(row.clients)) {
+                            row.clients.forEach((c: any) => clientsMap.set(c.key, c));
+                        } else if (row.key) {
+                            // Fallback: If no clients array (optimization), treat the row itself as client
+                            clientsMap.set(row.key, row);
+                        }
+                    });
+                    
                     setAllActiveClients(Array.from(clientsMap.values()));
                     setOkbRegionCounts(data.okbRegionCounts || null);
                     totalRowsProcessedRef.current = data.totalRowsProcessed || 0;
@@ -595,7 +606,15 @@ const App: React.FC = () => {
                     allDataRef.current = localState.allData; // ОБЯЗАТЕЛЬНО ОБНОВЛЯЕМ РЕФ СРАЗУ
                     
                     const clientsMap = new Map<string, MapPoint>();
-                    localState.allData.forEach((row: any) => row.clients?.forEach((c: any) => clientsMap.set(c.key, c)));
+                    // Safe parsing for local data too
+                    localState.allData.forEach((row: any) => {
+                        if (row.clients && Array.isArray(row.clients)) {
+                            row.clients.forEach((c: any) => clientsMap.set(c.key, c));
+                        } else if (row.key) {
+                            clientsMap.set(row.key, row);
+                        }
+                    });
+                    
                     setAllActiveClients(Array.from(clientsMap.values()));
                     setOkbRegionCounts(localState.okbRegionCounts || null);
                     totalRowsProcessedRef.current = localState.totalRowsProcessed || 0;
@@ -656,7 +675,15 @@ const App: React.FC = () => {
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filteredData), [filteredData]);
-    const potentialClients = useMemo(() => { if (!okbData.length) return []; const activeAddressesSet = new Set(allActiveClients.map(c => normalizeAddress(c.address))); return okbData.filter(okb => !activeAddressesSet.has(normalizeAddress(findAddressInRow(okb)))); }, [okbData, allActiveClients]);
+    const potentialClients = useMemo(() => { 
+        if (!okbData || !Array.isArray(okbData) || okbData.length === 0) return []; 
+        const activeAddressesSet = new Set(
+            allActiveClients
+                .filter(c => c && c.address)
+                .map(c => normalizeAddress(c.address))
+        ); 
+        return okbData.filter(okb => okb && !activeAddressesSet.has(normalizeAddress(findAddressInRow(okb)))); 
+    }, [okbData, allActiveClients]);
 
     const uploadETR = useMemo(() => {
         if (!isSavingToCloud || uploadProgress <= 0 || !uploadStartTimeRef.current) return '';
