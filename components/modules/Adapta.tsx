@@ -38,7 +38,7 @@ interface OutlierItem {
     reason: string;
 }
 
-// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED ARCHITECTURE) ---
+// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED) ---
 const DateRangeControl: React.FC<{
     startDate: string;
     endDate: string;
@@ -49,18 +49,19 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Sync only if props change externally (e.g. reset from parent)
+    // Sync local state with props whenever they change.
+    // This ensures inputs reflect external updates (resets, etc.) correctly.
     useEffect(() => {
-        if (startDate === '' && endDate === '') {
-            setLocalStart('');
-            setLocalEnd('');
-        }
+        setLocalStart(startDate);
+        setLocalEnd(endDate);
     }, [startDate, endDate]);
 
     const handleApply = () => {
-        // Architecture Fix: Removed setTimeout and race-condition logic.
-        // Direct state update via parent callback.
-        if (localStart === startDate && localEnd === endDate) return;
+        // FIX: Removed all conditional checks (if local == start return).
+        // Removed all timeouts.
+        // We intentionally FORCE an update every time the button is clicked.
+        // React's reconciliation will handle the DOM updates, but we ensure the 
+        // parent state receives the signal reliably.
         onApply(localStart, localEnd);
     };
 
@@ -71,6 +72,7 @@ const DateRangeControl: React.FC<{
     };
 
     const hasActiveFilter = !!localStart || !!localEnd;
+    const isInvalidRange = !!localStart && !!localEnd && localStart > localEnd;
 
     return (
         <div className="relative group">
@@ -123,7 +125,7 @@ const DateRangeControl: React.FC<{
                 <div className="flex gap-3">
                     <button 
                         onClick={handleApply}
-                        disabled={disabled}
+                        disabled={disabled || isInvalidRange}
                         className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         <span className="uppercase tracking-wide text-xs">Применить</span>
@@ -140,7 +142,7 @@ const DateRangeControl: React.FC<{
                 </div>
 
                 {/* Visual Feedback */}
-                {localStart && localEnd && localStart > localEnd && (
+                {isInvalidRange && (
                     <div className="mt-3 text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/20 text-center">
                         Ошибка: Дата начала позже даты конца
                     </div>
@@ -186,18 +188,20 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }, [props.uploadedData]);
 
     // Helper to get client fact for the selected period
-    // FIX: Always sum monthly facts if available, ignoring the pre-calculated 'fact' which might include totals/noise.
+    // FIX: Single Source of Truth.
+    // If monthly data exists, ALWAYS sum it up, even if filters are empty.
+    // This ensures that "All Time" matches "Jan + ... + Dec".
+    // Only fall back to `client.fact` (Excel Total) if no monthly data exists at all.
     const getClientFact = (client: MapPoint) => {
-        // Если нет данных по месяцам, тогда (и только тогда) верим общей цифре
+        // If no breakdown available, rely on the provided total
         if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
         
         let sum = 0;
-        // Пробегаемся по всем месяцам
+        // Sum up monthly data.
         Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return; // Игнорируем мусор
+            if (date === 'unknown') return; 
             
-            // Если задан фильтр, отсекаем лишнее. 
-            // Если фильтра нет (props пустые), эти условия false и мы суммируем ВСЁ.
+            // Apply date filters if they exist
             if (props.startDate && date < props.startDate) return;
             if (props.endDate && date > props.endDate) return;
             
@@ -210,15 +214,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
-        // 1. Создаем "виртуальную" копию данных, где fact пересчитан под выбранные даты
+        // 1. Create a "Virtual" dataset where fact is recalculated based on date filters
         const relevantData = props.uploadedData.map(row => {
-            // Пересчитываем клиентов внутри строки
+            // Recalculate clients within the group
             const activeClients = row.clients.map(client => ({
                 ...client,
                 fact: getClientFact(client)
             })).filter(c => (c.fact || 0) > 0);
 
-            // Пересчитываем общий факт строки как сумму фактов активных клиентов
+            // Recalculate row total
             const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
             return {
@@ -226,7 +230,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 clients: activeClients,
                 fact: rowFact
             };
-        }).filter(row => row.fact > 0); // Убираем строки, где в выбранном периоде пусто
+        }).filter(row => row.fact > 0); // Hide rows with 0 sales in selected period
 
         return detectOutliers(relevantData);
     }, [props.uploadedData, props.startDate, props.endDate]);
@@ -277,9 +281,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 if (!baseClientKeys.has(c.key)) return;
 
                 const effectiveFact = getClientFact(c);
-                // For the detailed list, we MIGHT want to filter 0 sales to show only active,
-                // OR show all with 0 fact. Usually lists show active. 
-                // Let's hide 0 sales in the detailed view to reduce noise, unless filter is empty.
+                // For the detailed list, we ignore 0 volume clients to reduce noise
+                // UNLESS the filter is empty (all time), then we show everyone.
                 if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
 
                 if ((c.type || 'Не определен') === selectedChannel) {
@@ -306,11 +309,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return hierarchy;
     }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate, baseClientKeys]);
 
-    // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
         const workerCount = props.processingState.totalRowsProcessed || 0;
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
-        // Во время прогресса воркера берем максимум, чтобы избежать сброса в 0 в начале синхронизации
         const count = Math.max(workerCount, currentDataCount);
         return count.toLocaleString('ru-RU');
     }, [props.processingState.totalRowsProcessed, props.uploadedData]);
