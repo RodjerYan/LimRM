@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
@@ -38,7 +38,7 @@ interface OutlierItem {
     reason: string;
 }
 
-// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED) ---
+// --- SUB-COMPONENT: DATE RANGE CONTROL (DOUBLE ACTION FIX) ---
 const DateRangeControl: React.FC<{
     startDate: string;
     endDate: string;
@@ -49,39 +49,31 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Храним предыдущие значения пропсов, чтобы сравнивать с новыми
-    const prevStart = useRef(startDate);
-    const prevEnd = useRef(endDate);
-
+    // Синхронизация: если извне пришел полный сброс (пустые строки),
+    // то обновляем инпуты. В остальных случаях (стриминг) - игнорируем.
     useEffect(() => {
-        // Обновляем локальный стейт ТОЛЬКО если пропс реально изменился (например, нажали Сброс или загрузились настройки)
-        // Игнорируем перерисовки родителя, если дата та же самая
-        if (startDate !== prevStart.current) {
-            setLocalStart(startDate);
-            prevStart.current = startDate;
+        if (startDate === '' && endDate === '') {
+            setLocalStart('');
+            setLocalEnd('');
         }
-    }, [startDate]);
-
-    useEffect(() => {
-        if (endDate !== prevEnd.current) {
-            setLocalEnd(endDate);
-            prevEnd.current = endDate;
-        }
-    }, [endDate]);
+    }, [startDate, endDate]);
 
     const handleApply = () => {
-        // При применении обновляем и рефы, чтобы эффект не сработал лишний раз
-        prevStart.current = localStart;
-        prevEnd.current = localEnd;
-        onApply(localStart, localEnd);
+        // 1. Сначала принудительно отправляем пустые значения (СБРОС)
+        // Это заставит родительский компонент очистить фильтры
+        onApply('', '');
+
+        // 2. Делаем крошечную задержку, чтобы React успел "прожевать" сброс
+        // и запустить перерисовку "чистого" состояния.
+        setTimeout(() => {
+            // 3. Отправляем новые выбранные значения
+            onApply(localStart, localEnd);
+        }, 50); // 50 миллисекунд незаметны глазу, но достаточны для движка React
     };
 
     const handleReset = () => {
         setLocalStart('');
         setLocalEnd('');
-        // Сброс рефов
-        prevStart.current = '';
-        prevEnd.current = '';
         onApply('', '');
     };
 
