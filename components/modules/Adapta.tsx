@@ -5,7 +5,7 @@ import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
 import Modal from '../Modal';
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams, MapPoint } from '../../types';
-import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon, TrendingUpIcon } from '../icons';
+import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon, TrendingUpIcon, TrashIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
@@ -49,11 +49,21 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Sync with props if they change externally
+    // Sync with props if they change externally (e.g. cleared by parent)
     useEffect(() => {
         setLocalStart(startDate);
         setLocalEnd(endDate);
     }, [startDate, endDate]);
+
+    const handleApply = () => {
+        onApply(localStart, localEnd);
+    };
+
+    const handleReset = () => {
+        setLocalStart('');
+        setLocalEnd('');
+        onApply('', '');
+    };
 
     return (
         <div className="relative group">
@@ -99,14 +109,25 @@ const DateRangeControl: React.FC<{
                     </div>
                 </div>
 
-                {/* Apply Button */}
-                <button 
-                    onClick={() => onApply(localStart, localEnd)}
-                    disabled={disabled}
-                    className="w-full bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                    <span className="uppercase tracking-wide text-xs">Применить фильтр</span>
-                </button>
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                    <button 
+                        onClick={handleApply}
+                        disabled={disabled}
+                        className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                        <span className="uppercase tracking-wide text-xs">Применить</span>
+                    </button>
+                    
+                    <button 
+                        onClick={handleReset}
+                        disabled={disabled || (!localStart && !localEnd)}
+                        className="px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-xl transition-all border border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                        title="Сбросить фильтр дат"
+                    >
+                        <TrashIcon className="w-4 h-4" />
+                    </button>
+                </div>
 
                 {/* Visual Feedback */}
                 {localStart && localEnd && localStart > localEnd && (
@@ -273,7 +294,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                         
-                        {/* MODIFIED DATE RANGE BLOCK WITH APPLY BUTTON */}
+                        {/* MODIFIED DATE RANGE BLOCK WITH APPLY AND RESET BUTTONS */}
                         <DateRangeControl 
                             startDate={props.startDate} 
                             endDate={props.endDate} 
