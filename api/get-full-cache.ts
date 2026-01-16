@@ -90,28 +90,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'save-chunk') {
                 const sortedIds = await getSortedFiles(drive);
-                if (sortedIds[chunkIndex + 1]) {
-                    const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
+                const targetFileId = sortedIds[chunkIndex + 1]; // +1 because 0 is meta file
+                
+                const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
+                const media = { mimeType: 'application/json', body: content };
+
+                if (targetFileId) {
+                    // Update existing
                     await drive.files.update({ 
-                        fileId: sortedIds[chunkIndex + 1], 
-                        media: { mimeType: 'application/json', body: content }, 
+                        fileId: targetFileId, 
+                        media, 
                         supportsAllDrives: true 
                     });
-                    return res.status(200).json({ status: 'saved' });
+                } else {
+                    // Create new chunk if it doesn't exist
+                    await drive.files.create({
+                        requestBody: {
+                            name: `snapshot_chunk_${chunkIndex}.json`,
+                            parents: [FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media,
+                        supportsAllDrives: true
+                    });
                 }
-                return res.status(404).json({ error: 'Chunk file slot not found.' });
+                return res.status(200).json({ status: 'saved' });
             }
+            
             if (action === 'save-meta') {
                 const sortedIds = await getSortedFiles(drive);
-                if (sortedIds[0]) {
+                // Check specifically for the meta file (usually first or named snapshot.json)
+                // If sortedIds is empty, we need to create it.
+                if (sortedIds.length > 0) {
                     await drive.files.update({ 
                         fileId: sortedIds[0], 
                         media: { mimeType: 'application/json', body: JSON.stringify(body) }, 
                         supportsAllDrives: true 
                     });
-                    return res.status(200).json({ status: 'meta_saved' });
+                } else {
+                    await drive.files.create({
+                        requestBody: {
+                            name: 'snapshot.json',
+                            parents: [FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media: { mimeType: 'application/json', body: JSON.stringify(body) },
+                        supportsAllDrives: true
+                    });
                 }
-                return res.status(404).json({ error: 'Meta file slot not found.' });
+                return res.status(200).json({ status: 'meta_saved' });
             }
 
             // Legacy Cache Operations
@@ -126,10 +153,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-snapshot-meta') {
                 const sortedIds = await getSortedFiles(drive);
                 if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
-                if (sortedIds[0] === FOLDER_ID) return res.json({ versionHash: 'none', error: 'Misconfiguration' });
                 
                 try {
-                    console.log(`[get-snapshot-meta] Downloading meta ID: ${sortedIds[0]}`);
                     const response = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
                     const content = JSON.parse(Buffer.from(response.data as any).toString('utf-8'));
                     

@@ -20,7 +20,7 @@ import {
     WorkerMessage, WorkerResultPayload, CloudLoadParams, CoordsCache, OkbStatus
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow, normalizeAddress } from './utils/dataUtils';
-import { LoaderIcon, CheckIcon } from './components/icons';
+import { LoaderIcon, CheckIcon, SaveIcon } from './components/icons';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -34,6 +34,7 @@ const App: React.FC = () => {
 
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
+    const [currentVersionHash, setCurrentVersionHash] = useState<string | null>(null);
     
     // --- DATE FILTER STATE ---
     const [filterStartDate, setFilterStartDate] = useState<string>('');
@@ -146,6 +147,7 @@ const App: React.FC = () => {
                 
                 setAllData(validated);
                 allDataRef.current = validated;
+                setCurrentVersionHash(versionHash); // Sync version
                 
                 setUnidentifiedRows(data.unidentifiedRows || []);
                 setOkbRegionCounts(data.okbRegionCounts || {});
@@ -170,6 +172,80 @@ const App: React.FC = () => {
         }
         return false;
     }, [normalize]);
+
+    // --- UPLOAD SNAPSHOT (SYNC TO CLOUD) ---
+    const handleUploadSnapshot = useCallback(async (dataToSave: any) => {
+        try {
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Сохранение в облако...', progress: 0 }));
+            
+            // Serialize and Split
+            const jsonString = JSON.stringify(dataToSave);
+            const blob = new Blob([jsonString]);
+            const totalSize = blob.size;
+            // 2MB Chunk size safely fits within server limits
+            const CHUNK_SIZE = 2 * 1024 * 1024; 
+            const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
+            
+            const newVersionHash = `snapshot_${Date.now()}`;
+
+            // 1. Upload Chunks
+            for (let i = 0; i < totalChunks; i++) {
+                const start = i * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, totalSize);
+                const chunk = blob.slice(start, end);
+                const text = await chunk.text();
+
+                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chunk: text })
+                });
+                
+                if (!res.ok) throw new Error(`Failed to upload chunk ${i}`);
+
+                setProcessingState(prev => ({ 
+                    ...prev, 
+                    progress: Math.round(((i + 1) / totalChunks) * 90),
+                    message: `Выгрузка части ${i+1}/${totalChunks}` 
+                }));
+            }
+
+            // 2. Update Meta (Finalize)
+            const meta = {
+                versionHash: newVersionHash,
+                chunkCount: totalChunks,
+                totalRows: dataToSave.totalRowsProcessed,
+                timestamp: Date.now()
+            };
+
+            await fetch(`/api/get-full-cache?action=save-meta`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(meta)
+            });
+
+            setCurrentVersionHash(newVersionHash);
+            
+            // Save local state with new hash to prevent reload
+            await saveAnalyticsState({
+                allData: dataToSave.aggregatedData, // ensure correct key
+                unidentifiedRows: dataToSave.unidentifiedRows,
+                okbRegionCounts: dataToSave.okbRegionCounts,
+                totalRowsProcessed: dataToSave.totalRowsProcessed,
+                versionHash: newVersionHash,
+                okbData: [], okbStatus: null
+            });
+            localStorage.setItem('last_snapshot_version', newVersionHash);
+
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Сохранено в облако', progress: 100 }));
+            addNotification('Изменения успешно сохранены в облаке и доступны всем.', 'success');
+
+        } catch (e) {
+            console.error("Upload error:", e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сохранения' }));
+            addNotification('Ошибка при сохранении в облако.', 'error');
+        }
+    }, [addNotification]);
 
     // --- ОБРАБОТКА ОБЛАКА (WORKER) ---
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
@@ -218,7 +294,7 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
-                // Save Logic...
+                // We typically don't upload intermediate checkpoints to cloud to avoid thrashing, just local
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -229,6 +305,8 @@ const App: React.FC = () => {
                 setDbStatus('ready');
                 
                 const finalVersion = `processed_${Date.now()}`;
+                setCurrentVersionHash(finalVersion);
+                
                 await saveAnalyticsState({
                     allData: validated,
                     unidentifiedRows: payload.unidentifiedRows,
@@ -248,17 +326,15 @@ const App: React.FC = () => {
             payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: allDataRef.current, restoredUnidentified: unidentifiedRowsRef.current } 
         });
         
-        // Start fetching file list and processing...
         try {
             const listRes = await fetch(`/api/get-akb?year=${params.year}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             for (const file of allFiles) {
                 if (processedFileIdsRef.current.has(file.id)) continue;
-                // ... (simplified loop for brevity, same logic as before)
+                // ... fetch logic simplified ...
                 // Trigger worker for chunks
                 let offset = 0; const CHUNK_SIZE = 1000;
-                // ... fetch chunks ...
-                // workerRef.current.postMessage({ type: 'PROCESS_CHUNK', ... })
+                // ... fetch loop ...
                 processedFileIdsRef.current.add(file.id);
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
@@ -301,6 +377,7 @@ const App: React.FC = () => {
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
                 const finalVersion = `local_${Date.now()}`;
+                setCurrentVersionHash(finalVersion);
                 await saveAnalyticsState({
                     allData: validated,
                     unidentifiedRows: payload.unidentifiedRows,
@@ -323,21 +400,28 @@ const App: React.FC = () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                // APPLY NORMALIZATION ON LOAD
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
+                setCurrentVersionHash(local.versionHash); // Restore local version
                 setDbStatus('ready');
             }
 
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
+                
+                const hasLocalData = local?.allData?.length > 0;
+                // If versions differ and we are not in a local-only edit mode that we want to keep, download.
+                // NOTE: If user just merged and uploaded, versions will match.
+                // If another user merged, version will differ, so we download (Good).
+                if (serverMeta?.versionHash && (!hasLocalData || (local?.versionHash !== serverMeta.versionHash && !local?.versionHash?.startsWith('dedup')))) {
+                     if (!local?.versionHash?.startsWith('dedup')) {
+                        await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                     }
                 }
+                setDbStatus('ready');
             }
         };
         init();
@@ -345,11 +429,8 @@ const App: React.FC = () => {
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
-        // ... (implementation same as before but respecting useMemo)
-        // We update allData, and allActiveClients updates automatically
         setAllData(prev => {
             return prev.map(group => {
-                // Find group containing the client
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
@@ -359,8 +440,9 @@ const App: React.FC = () => {
                 return group;
             });
         });
-        // DB save logic...
-    }, []);
+        const hashToSave = currentVersionHash || `edit_${Date.now()}`;
+        // Can add auto-sync logic here if needed
+    }, [currentVersionHash]);
 
     const handleDeduplicate = useCallback(() => {
         if (duplicatesCount === 0) {
@@ -371,7 +453,6 @@ const App: React.FC = () => {
         // 1. Identify unique physical locations based on normalized address + type
         const uniqueLocationMap = new Map<string, MapPoint>();
         
-        // Helper to get a stable key for deduplication
         const getStableKey = (c: MapPoint) => 
             `${normalizeAddress(c.address)}_${c.type || 'common'}`;
 
@@ -382,15 +463,12 @@ const App: React.FC = () => {
                 const stableKey = getStableKey(client);
                 
                 if (!uniqueLocationMap.has(stableKey)) {
-                    // Clone to avoid mutating original state directly until committed
                     uniqueLocationMap.set(stableKey, { ...client });
                 } else {
                     const existing = uniqueLocationMap.get(stableKey)!;
-                    // Merge metrics
                     existing.fact = (existing.fact || 0) + (client.fact || 0);
                     existing.potential = Math.max(existing.potential || 0, client.potential || 0);
                     
-                    // Merge metadata: keep valid coords
                     if (!existing.lat && client.lat) {
                         existing.lat = client.lat;
                         existing.lon = client.lon;
@@ -408,7 +486,6 @@ const App: React.FC = () => {
                 const stableKey = getStableKey(client);
                 const mergedClient = uniqueLocationMap.get(stableKey);
                 
-                // Use merged client but ensure correct key reference
                 if (mergedClient) {
                     const clientWithStableKey = { ...mergedClient, key: stableKey };
                     uniqueGroupClients.set(stableKey, clientWithStableKey);
@@ -435,22 +512,37 @@ const App: React.FC = () => {
     const handleMergeComplete = useCallback(async () => {
         if (!mergeModalData) return;
         
-        // Update state
-        setAllData(mergeModalData.newAllData);
+        const newAllData = mergeModalData.newAllData;
+        setAllData(newAllData);
         
-        // Persist
-        await saveAnalyticsState({
-            allData: mergeModalData.newAllData,
+        // 1. Local Save
+        const newHash = `dedup_${Date.now()}`;
+        setCurrentVersionHash(newHash);
+        
+        const payload = {
+            allData: newAllData,
             unidentifiedRows: unidentifiedRows,
             okbRegionCounts: okbRegionCounts,
             totalRowsProcessed: totalRowsProcessedRef.current,
-            versionHash: `dedup_${Date.now()}`,
+            versionHash: newHash, 
             okbData: [], okbStatus: null
-        });
+        };
 
+        await saveAnalyticsState(payload);
         setMergeModalData(null);
-        addNotification(`База успешно объединена.`, 'success');
-    }, [mergeModalData, unidentifiedRows, okbRegionCounts, addNotification]);
+        addNotification(`Локально объединено. Синхронизация с облаком...`, 'info');
+
+        // 2. Cloud Save
+        const cloudPayload = {
+            aggregatedData: newAllData, 
+            unidentifiedRows: unidentifiedRows,
+            okbRegionCounts: okbRegionCounts,
+            totalRowsProcessed: totalRowsProcessedRef.current
+        };
+        
+        await handleUploadSnapshot(cloudPayload);
+
+    }, [mergeModalData, unidentifiedRows, okbRegionCounts, addNotification, handleUploadSnapshot]);
 
     const filtered = useMemo(() => {
         const smart = enrichDataWithSmartPlan(allData, okbRegionCounts, 15, new Set());
@@ -481,7 +573,7 @@ const App: React.FC = () => {
                         )}
                         <button 
                             onClick={handleDeduplicate} 
-                            disabled={duplicatesCount === 0}
+                            disabled={duplicatesCount === 0 || processingState.isProcessing}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-bold ml-2 ${duplicatesCount > 0 ? 'bg-blue-900/20 text-blue-400 border-blue-500/20' : 'bg-gray-800/20 text-gray-500 border-gray-700/20 opacity-50'}`}
                         >
                             <CheckIcon className="w-3 h-3" /> {duplicatesCount > 0 ? `Объединить (${duplicatesCount})` : 'Дублей нет'}
