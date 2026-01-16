@@ -344,9 +344,40 @@ const App: React.FC = () => {
     }, []);
 
     const filtered = useMemo(() => {
-        const smart = enrichDataWithSmartPlan(allData, okbRegionCounts, 15, new Set());
+        // 1. DATE FILTERING (Recalculate Fact based on monthly breakdown)
+        let processedData = allData;
+
+        if (filterStartDate || filterEndDate) {
+            processedData = allData.map(row => {
+                // If monthlyFact is missing, we cannot filter, so we keep the original row
+                // or you could choose to filter it out. Assuming legacy rows might miss this.
+                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
+                    return row; 
+                }
+
+                let newFact = 0;
+                // Sum up volumes for months within the range
+                Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
+                    if (dateKey === 'unknown') return; // Skip unknown dates
+                    
+                    // Simple string comparison works for YYYY-MM
+                    if (filterStartDate && dateKey < filterStartDate) return;
+                    if (filterEndDate && dateKey > filterEndDate) return;
+                    
+                    newFact += val;
+                });
+
+                // Return a new row with updated 'fact'
+                return { ...row, fact: newFact };
+            }).filter(r => r.fact > 0); // Hide rows with 0 sales in selected period
+        }
+
+        // 2. ENRICHMENT (Calculates Plans based on the possibly modified Fact)
+        const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
+        
+        // 3. APPLY CATEGORY FILTERS
         return applyFilters(smart, filters);
-    }, [allData, filters, okbRegionCounts]);
+    }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
