@@ -81,17 +81,6 @@ const App: React.FC = () => {
         }).filter(Boolean) as AggregatedDataRow[];
     }, []);
 
-    // --- АВТОМАТИЧЕСКИЕ КЛИЕНТЫ (Синхронно через useMemo) ---
-    const allActiveClients = useMemo(() => {
-        const clientsMap = new Map<string, MapPoint>();
-        allData.forEach(row => {
-            if (row && Array.isArray(row.clients)) {
-                row.clients.forEach(c => { if (c && c.key) clientsMap.set(c.key, c); });
-            }
-        });
-        return Array.from(clientsMap.values());
-    }, [allData]);
-
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
@@ -343,6 +332,8 @@ const App: React.FC = () => {
         // DB save logic...
     }, []);
 
+    // --- 1. FILTERED DATA CALCULATION ---
+    // Moved up so it can be used for 'allActiveClients' and 'Adapta' props
     const filtered = useMemo(() => {
         // 1. DATE FILTERING (Recalculate Fact based on monthly breakdown)
         let processedData = allData;
@@ -378,6 +369,18 @@ const App: React.FC = () => {
         // 3. APPLY CATEGORY FILTERS
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
+
+    // --- 2. ACTIVE CLIENTS (DERIVED FROM FILTERED DATA) ---
+    // This ensures the header counter and maps reflect the chosen dates
+    const allActiveClients = useMemo(() => {
+        const clientsMap = new Map<string, MapPoint>();
+        filtered.forEach(row => {
+            if (row && Array.isArray(row.clients)) {
+                row.clients.forEach(c => { if (c && c.key) clientsMap.set(c.key, c); });
+            }
+        });
+        return Array.from(clientsMap.values());
+    }, [filtered]);
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
@@ -426,7 +429,7 @@ const App: React.FC = () => {
                             disabled={processingState.isProcessing}
                             unidentifiedCount={unidentifiedRows.length}
                             activeClientsCount={allActiveClients.length}
-                            uploadedData={allData}
+                            uploadedData={filtered} // USE FILTERED DATA HERE
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
                             startDate={filterStartDate} 
