@@ -49,14 +49,11 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // FIX: Only sync with props if props are reset to empty. 
-    // We do NOT sync on every change because it causes race conditions where 
-    // partial parent updates overwrite the user's new input before the apply is complete.
+    // FIX: Unconditionally sync with props when they change. 
+    // This ensures that if the parent updates (e.g. clear filters), inputs reflect it.
     useEffect(() => {
-        if (startDate === '' && endDate === '') {
-            setLocalStart('');
-            setLocalEnd('');
-        }
+        setLocalStart(startDate);
+        setLocalEnd(endDate);
     }, [startDate, endDate]);
 
     const handleApply = () => {
@@ -166,24 +163,66 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthColor = healthScore > 80 ? 'text-emerald-400' : healthScore > 50 ? 'text-amber-400' : 'text-red-400';
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
+    // Helper to get client fact for the selected period
+    const getClientFact = (client: MapPoint) => {
+        if ((!props.startDate && !props.endDate) || !client.monthlyFact) return client.fact || 0;
+        
+        let sum = 0;
+        Object.entries(client.monthlyFact).forEach(([date, val]) => {
+            if (date === 'unknown') return;
+            if (props.startDate && date < props.startDate) return;
+            if (props.endDate && date > props.endDate) return;
+            sum += val;
+        });
+        return sum;
+    };
+
     const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
-        return detectOutliers(props.uploadedData);
-    }, [props.uploadedData]);
+
+        // 1. Создаем "виртуальную" копию данных, где fact пересчитан под выбранные даты
+        // Это нужно, чтобы поиск аномалий (Z-Score) шел именно по выбранному месяцу/периоду
+        const relevantData = props.uploadedData.map(row => {
+            // Пересчитываем клиентов внутри строки
+            const activeClients = row.clients.map(client => ({
+                ...client,
+                fact: getClientFact(client)
+            })).filter(c => (c.fact || 0) > 0);
+
+            // Пересчитываем общий факт строки как сумму фактов активных клиентов
+            const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+
+            return {
+                ...row,
+                clients: activeClients,
+                fact: rowFact
+            };
+        }).filter(row => row.fact > 0); // Убираем строки, где в выбранном периоде пусто
+
+        return detectOutliers(relevantData);
+    }, [props.uploadedData, props.startDate, props.endDate]);
 
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
         const acc: Record<string, { uniqueKeys: Set<string>; volume: number }> = {};
         const globalUniqueKeys = new Set<string>();
+        
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
+                const effectiveFact = getClientFact(client);
+                
+                // If filtering is active, ignore clients with 0 volume in the period
+                if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
+
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
+                
                 acc[type].uniqueKeys.add(client.key);
-                acc[type].volume += (client.fact || 0);
+                acc[type].volume += effectiveFact;
                 globalUniqueKeys.add(client.key);
             });
         });
+        
         const totalUniqueCount = globalUniqueKeys.size;
         return Object.entries(acc)
             .map(([name, data]) => ({
@@ -193,13 +232,17 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
-    }, [props.uploadedData]);
+    }, [props.uploadedData, props.startDate, props.endDate]);
 
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
         const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
+        
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
+                const effectiveFact = getClientFact(c);
+                if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
+
                 if ((c.type || 'Не определен') === selectedChannel) {
                     const search = channelSearchTerm.toLowerCase();
                     if (!search || c.name.toLowerCase().includes(search) || c.address.toLowerCase().includes(search) || c.rm.toLowerCase().includes(search)) {
@@ -207,11 +250,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             uniqueClientsInChannel.set(c.key, { ...c, totalFact: 0 });
                         }
                         const existing = uniqueClientsInChannel.get(c.key)!;
-                        existing.totalFact += (c.fact || 0);
+                        existing.totalFact += effectiveFact;
                     }
                 }
             });
         });
+        
         const hierarchy: Record<string, Record<string, (MapPoint & { totalFact: number })[]>> = {};
         uniqueClientsInChannel.forEach(c => {
             const rm = c.rm || 'Не указан';
@@ -221,7 +265,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             hierarchy[rm][city].push(c);
         });
         return hierarchy;
-    }, [selectedChannel, props.uploadedData, channelSearchTerm]);
+    }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate]);
 
     // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
