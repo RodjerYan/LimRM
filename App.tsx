@@ -341,25 +341,41 @@ const App: React.FC = () => {
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
                 // If monthlyFact is missing, we cannot filter, so we keep the original row
-                // or you could choose to filter it out. Assuming legacy rows might miss this.
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
                     return row; 
                 }
 
-                let newFact = 0;
-                // Sum up volumes for months within the range
+                let newRowFact = 0;
+                // Sum up volumes for months within the range for the ROW
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
-                    if (dateKey === 'unknown') return; // Skip unknown dates
-                    
-                    // Simple string comparison works for YYYY-MM
+                    if (dateKey === 'unknown') return; 
                     if (filterStartDate && dateKey < filterStartDate) return;
                     if (filterEndDate && dateKey > filterEndDate) return;
-                    
-                    newFact += val;
+                    newRowFact += val;
                 });
 
-                // Return a new row with updated 'fact'
-                return { ...row, fact: newFact };
+                // RECALCULATE CLIENTS
+                // Only keep clients that have > 0 volume in the selected period
+                const activeClients = row.clients.map(client => {
+                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
+                        return client; // Fallback to keep if no granular data
+                    }
+                    
+                    let clientSum = 0;
+                    Object.entries(client.monthlyFact).forEach(([d, v]) => {
+                        if (d === 'unknown') return;
+                        if (filterStartDate && d < filterStartDate) return;
+                        if (filterEndDate && d > filterEndDate) return;
+                        clientSum += v;
+                    });
+                    
+                    // Return updated client with new fact. 
+                    // Filter happens in the next step.
+                    return { ...client, fact: clientSum };
+                }).filter(c => (c.fact || 0) > 0);
+
+                // Return a new row with updated 'fact' and filtered 'clients'
+                return { ...row, fact: newRowFact, clients: activeClients };
             }).filter(r => r.fact > 0); // Hide rows with 0 sales in selected period
         }
 

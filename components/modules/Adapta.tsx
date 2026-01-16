@@ -50,18 +50,12 @@ const DateRangeControl: React.FC<{
     const [localEnd, setLocalEnd] = useState(endDate);
 
     // Sync local state with props whenever they change.
-    // This ensures inputs reflect external updates (resets, etc.) correctly.
     useEffect(() => {
         setLocalStart(startDate);
         setLocalEnd(endDate);
     }, [startDate, endDate]);
 
     const handleApply = () => {
-        // FIX: Removed all conditional checks (if local == start return).
-        // Removed all timeouts.
-        // We intentionally FORCE an update every time the button is clicked.
-        // React's reconciliation will handle the DOM updates, but we ensure the 
-        // parent state receives the signal reliably.
         onApply(localStart, localEnd);
     };
 
@@ -71,7 +65,7 @@ const DateRangeControl: React.FC<{
         onApply('', '');
     };
 
-    const hasActiveFilter = !!localStart || !!localEnd;
+    const hasActiveFilter = !!startDate || !!endDate;
     const isInvalidRange = !!localStart && !!localEnd && localStart > localEnd;
 
     return (
@@ -170,8 +164,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // 1. FIX: Establish a Fixed Universe of Clients (Base Clients)
-    // This ensures that when filtering by date, the denominator (Total Clients) doesn't shrink,
-    // preventing stats jumping and maintaining a consistent "Universe".
     const baseClientKeys = useMemo(() => {
         const set = new Set<string>();
         if (props.uploadedData) {
@@ -188,41 +180,28 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }, [props.uploadedData]);
 
     // Helper to get client fact for the selected period
-    // FIX: Single Source of Truth.
-    // If monthly data exists, ALWAYS sum it up, even if filters are empty.
-    // This ensures that "All Time" matches "Jan + ... + Dec".
-    // Only fall back to `client.fact` (Excel Total) if no monthly data exists at all.
     const getClientFact = (client: MapPoint) => {
-        // If no breakdown available, rely on the provided total
         if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
         
         let sum = 0;
-        // Sum up monthly data.
         Object.entries(client.monthlyFact).forEach(([date, val]) => {
             if (date === 'unknown') return; 
-            
-            // Apply date filters if they exist
             if (props.startDate && date < props.startDate) return;
             if (props.endDate && date > props.endDate) return;
-            
             sum += val;
         });
-        
         return sum;
     };
 
     const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
-        // 1. Create a "Virtual" dataset where fact is recalculated based on date filters
         const relevantData = props.uploadedData.map(row => {
-            // Recalculate clients within the group
             const activeClients = row.clients.map(client => ({
                 ...client,
                 fact: getClientFact(client)
             })).filter(c => (c.fact || 0) > 0);
 
-            // Recalculate row total
             const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
             return {
@@ -230,7 +209,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 clients: activeClients,
                 fact: rowFact
             };
-        }).filter(row => row.fact > 0); // Hide rows with 0 sales in selected period
+        }).filter(row => row.fact > 0); 
 
         return detectOutliers(relevantData);
     }, [props.uploadedData, props.startDate, props.endDate]);
@@ -242,14 +221,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
-                // FIX: Check against the FIXED Base Universe.
+                // If App.tsx filters clients, uploadedData contains only active ones.
+                // So checking baseClientKeys might be redundant if we want visual consistency, but safe.
                 if (!baseClientKeys.has(client.key)) return;
 
                 const effectiveFact = getClientFact(client);
-                
-                // Note: We do NOT return if effectiveFact <= 0 here.
-                // We want to count the client in the "Universe" (denominator) even if they bought nothing in Jan.
-                // However, their volume contribution will naturally be 0.
                 
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
@@ -277,12 +253,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
-                // Use Base Keys check for consistency
                 if (!baseClientKeys.has(c.key)) return;
 
                 const effectiveFact = getClientFact(c);
-                // For the detailed list, we ignore 0 volume clients to reduce noise
-                // UNLESS the filter is empty (all time), then we show everyone.
                 if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
 
                 if ((c.type || 'Не определен') === selectedChannel) {
@@ -310,11 +283,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate, baseClientKeys]);
 
     const rowsToDisplay = useMemo(() => {
-        const workerCount = props.processingState.totalRowsProcessed || 0;
+        // If processing, show progress (total loaded rows).
+        if (props.processingState.isProcessing) {
+            return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
+        }
+        // If ready, show the count of ACTIVE clients in the current filtered view
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
-        const count = Math.max(workerCount, currentDataCount);
-        return count.toLocaleString('ru-RU');
-    }, [props.processingState.totalRowsProcessed, props.uploadedData]);
+        return currentDataCount.toLocaleString('ru-RU');
+    }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, props.uploadedData]);
 
     const coverageOkb = useMemo(() => {
         if (!props.okbStatus?.rowCount || props.okbStatus.rowCount === 0) return 0;
@@ -416,7 +392,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">СТРОК В EXCEL</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
-                                        {props.processingState.isProcessing ? 'Синхронизация файлов...' : 'Всего записей'}
+                                        {props.processingState.isProcessing ? 'Синхронизация файлов...' : (props.startDate || props.endDate ? 'Отфильтровано' : 'Всего записей')}
                                     </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
