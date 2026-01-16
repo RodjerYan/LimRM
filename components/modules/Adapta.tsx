@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import FileUpload from '../FileUpload';
 import OKBManagement from '../OKBManagement';
@@ -48,13 +49,13 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // ИСПОЛЬЗУЕМ REF ДЛЯ ЗАЩИТЫ ОТ ЛИШНИХ ОБНОВЛЕНИЙ
-    // Это предотвращает сброс введенной вами даты, когда обновляется прогресс-бар (processingState)
+    // Храним предыдущие значения пропсов, чтобы сравнивать с новыми
     const prevStart = useRef(startDate);
     const prevEnd = useRef(endDate);
 
     useEffect(() => {
-        // Обновляем локальное поле ТОЛЬКО если пропс реально изменился (например, нажали Сброс)
+        // Обновляем локальный стейт ТОЛЬКО если пропс реально изменился (например, нажали Сброс или загрузились настройки)
+        // Игнорируем перерисовки родителя, если дата та же самая
         if (startDate !== prevStart.current) {
             setLocalStart(startDate);
             prevStart.current = startDate;
@@ -69,7 +70,7 @@ const DateRangeControl: React.FC<{
     }, [endDate]);
 
     const handleApply = () => {
-        // При применении обновляем рефы, чтобы компонент "запомнил" текущее состояние
+        // При применении обновляем и рефы, чтобы эффект не сработал лишний раз
         prevStart.current = localStart;
         prevEnd.current = localEnd;
         onApply(localStart, localEnd);
@@ -78,6 +79,7 @@ const DateRangeControl: React.FC<{
     const handleReset = () => {
         setLocalStart('');
         setLocalEnd('');
+        // Сброс рефов
         prevStart.current = '';
         prevEnd.current = '';
         onApply('', '');
@@ -163,6 +165,7 @@ const DateRangeControl: React.FC<{
     );
 };
 
+
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
     const [selectedOutlier, setSelectedOutlier] = useState<OutlierItem | null>(null);
@@ -180,7 +183,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Helper to get client fact for the selected period
-    // Если данные обновятся (стриминг), эта функция автоматически подхватит новые значения
     const getClientFact = (client: MapPoint) => {
         if ((!props.startDate && !props.endDate) || !client.monthlyFact) return client.fact || 0;
         
@@ -194,17 +196,19 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return sum;
     };
 
-    // Пересчет Аномалий
     const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
-        // Создаем копию данных, актуальную для выбранного периода
+        // 1. Создаем "виртуальную" копию данных, где fact пересчитан под выбранные даты
+        // Это нужно, чтобы поиск аномалий (Z-Score) шел именно по выбранному месяцу/периоду
         const relevantData = props.uploadedData.map(row => {
+            // Пересчитываем клиентов внутри строки
             const activeClients = row.clients.map(client => ({
                 ...client,
-                fact: getClientFact(client) // Динамический пересчет
+                fact: getClientFact(client)
             })).filter(c => (c.fact || 0) > 0);
 
+            // Пересчитываем общий факт строки как сумму фактов активных клиентов
             const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
             return {
@@ -212,12 +216,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 clients: activeClients,
                 fact: rowFact
             };
-        }).filter(row => row.fact > 0);
+        }).filter(row => row.fact > 0); // Убираем строки, где в выбранном периоде пусто
 
         return detectOutliers(relevantData);
-    }, [props.uploadedData, props.startDate, props.endDate]); // <-- Реагирует на новые данные (uploadedData)
+    }, [props.uploadedData, props.startDate, props.endDate]);
 
-    // Пересчет Каналов
     const channelStats = useMemo(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
         const acc: Record<string, { uniqueKeys: Set<string>; volume: number }> = {};
@@ -225,10 +228,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
-                const effectiveFact = getClientFact(client); // Динамический пересчет
+                const effectiveFact = getClientFact(client);
                 
+                // If filtering is active, ignore clients with 0 volume in the period
                 if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
-                
+
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
                 
@@ -247,9 +251,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
-    }, [props.uploadedData, props.startDate, props.endDate]); // <-- Реагирует на новые данные
+    }, [props.uploadedData, props.startDate, props.endDate]);
 
-    // Пересчет Детализации
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
         const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
@@ -258,6 +261,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             row.clients.forEach(c => {
                 const effectiveFact = getClientFact(c);
                 if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
+
                 if ((c.type || 'Не определен') === selectedChannel) {
                     const search = channelSearchTerm.toLowerCase();
                     if (!search || c.name.toLowerCase().includes(search) || c.address.toLowerCase().includes(search) || c.rm.toLowerCase().includes(search)) {
@@ -282,10 +286,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return hierarchy;
     }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate]);
 
-    // Умный счетчик строк
+    // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
         const workerCount = props.processingState.totalRowsProcessed || 0;
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
+        // Во время прогресса воркера берем максимум, чтобы избежать сброса в 0 в начале синхронизации
         const count = Math.max(workerCount, currentDataCount);
         return count.toLocaleString('ru-RU');
     }, [props.processingState.totalRowsProcessed, props.uploadedData]);
@@ -361,7 +366,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                         
-                        {/* FIX APPLIED HERE */}
+                        {/* MODIFIED DATE RANGE BLOCK WITH APPLY AND RESET BUTTONS */}
                         <DateRangeControl 
                             startDate={props.startDate} 
                             endDate={props.endDate} 
@@ -384,6 +389,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             <div className="w-full bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
                                 <div className={`h-full transition-all duration-1000 ease-out ${healthScore > 80 ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : healthScore > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${healthScore}%` }}></div>
                             </div>
+
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">СТРОК В EXCEL</div>
@@ -448,6 +454,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 </div>
                             )}
                         </div>
+
                         <div className="p-5 bg-indigo-900/10 border border-indigo-500/10 rounded-xl text-sm text-indigo-200">
                             <strong className="block mb-1 text-indigo-300 flex items-center gap-2"><InfoIcon small /> Технология Online Preview:</strong>
                             Вы можете использовать аналитику, пока данные синхронизируются в фоне. Система обновляет расчеты в реальном времени при получении новых блоков строк.
@@ -518,6 +525,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     </div>
                 </Modal>
             )}
+
             {selectedOutlier && <OutlierDetailsModal isOpen={!!selectedOutlier} onClose={() => setSelectedOutlier(null)} item={selectedOutlier} />}
         </div>
     );
