@@ -49,24 +49,26 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Sync with props if they change externally (e.g. cleared by parent or initial load)
+    // Sync local state with props when props change (e.g. external reset)
     useEffect(() => {
         setLocalStart(startDate);
         setLocalEnd(endDate);
     }, [startDate, endDate]);
 
     const handleApply = () => {
-        // Trigger parent update with current local values
+        // Force update parent with current local values
         onApply(localStart, localEnd);
     };
 
     const handleReset = () => {
-        // Clear local state
+        // Clear local inputs
         setLocalStart('');
         setLocalEnd('');
-        // Immediately clear parent state
+        // Immediately clear parent filter
         onApply('', '');
     };
+
+    const hasActiveFilter = !!localStart || !!localEnd;
 
     return (
         <div className="relative group">
@@ -79,7 +81,10 @@ const DateRangeControl: React.FC<{
                         3
                     </div>
                     <div>
-                        <h2 className="text-lg font-bold text-white leading-tight">Настройка Периода</h2>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-lg font-bold text-white leading-tight">Настройка Периода</h2>
+                            {hasActiveFilter && <span className="px-2 py-0.5 rounded-md bg-orange-500/20 text-orange-300 text-[10px] font-bold uppercase border border-orange-500/30">Активен</span>}
+                        </div>
                         <p className="text-xs text-gray-400">Фильтрация данных по времени</p>
                     </div>
                 </div>
