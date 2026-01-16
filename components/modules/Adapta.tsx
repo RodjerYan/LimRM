@@ -38,7 +38,7 @@ interface OutlierItem {
     reason: string;
 }
 
-// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED) ---
+// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED ARCHITECTURE) ---
 const DateRangeControl: React.FC<{
     startDate: string;
     endDate: string;
@@ -49,7 +49,7 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Синхронизация: Сбрасываем инпуты ТОЛЬКО если родитель прислал пустоту (полный сброс извне)
+    // Sync only if props change externally (e.g. reset from parent)
     useEffect(() => {
         if (startDate === '' && endDate === '') {
             setLocalStart('');
@@ -58,18 +58,10 @@ const DateRangeControl: React.FC<{
     }, [startDate, endDate]);
 
     const handleApply = () => {
-        // 1. ВАЖНО: Делаем "снимок" текущих значений в переменные.
-        // Даже если стейт очистится через миллисекунду из-за ре-рендера, эти переменные сохранят выбор пользователя.
-        const valueToApplyStart = localStart;
-        const valueToApplyEnd = localEnd;
-
-        // 2. Отправляем сигнал сброса для перерисовки графиков
-        onApply('', '');
-
-        // 3. Через 100мс отправляем СОХРАНЕННЫЕ значения, игнорируя текущий стейт
-        setTimeout(() => {
-            onApply(valueToApplyStart, valueToApplyEnd);
-        }, 100); 
+        // Architecture Fix: Removed setTimeout and race-condition logic.
+        // Direct state update via parent callback.
+        if (localStart === startDate && localEnd === endDate) return;
+        onApply(localStart, localEnd);
     };
 
     const handleReset = () => {
@@ -175,27 +167,43 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthColor = healthScore > 80 ? 'text-emerald-400' : healthScore > 50 ? 'text-amber-400' : 'text-red-400';
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
-    // Helper to get client fact for the selected period
-    // FIX: Completely rewritten to ensure consistency.
-    // 1. If monthlyFact exists, we ALWAYS sum it up. We NEVER trust client.fact if we have monthly data.
-    // 2. This prevents the "8500 vs 8550" issue where total!=sum(months).
-    const getClientFact = (client: MapPoint) => {
-        // Only fallback to client.fact if we literally have NO monthly data at all.
-        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
-            return client.fact || 0;
+    // 1. FIX: Establish a Fixed Universe of Clients (Base Clients)
+    // This ensures that when filtering by date, the denominator (Total Clients) doesn't shrink,
+    // preventing stats jumping and maintaining a consistent "Universe".
+    const baseClientKeys = useMemo(() => {
+        const set = new Set<string>();
+        if (props.uploadedData) {
+            props.uploadedData.forEach(row => {
+                row.clients.forEach(c => {
+                    // Include client if it has ANY data in monthlyFact OR a total fact > 0
+                    if ((c.monthlyFact && Object.keys(c.monthlyFact).length > 0) || (c.fact || 0) > 0) {
+                        set.add(c.key);
+                    }
+                });
+            });
         }
+        return set;
+    }, [props.uploadedData]);
+
+    // Helper to get client fact for the selected period
+    // FIX: Always sum monthly facts if available, ignoring the pre-calculated 'fact' which might include totals/noise.
+    const getClientFact = (client: MapPoint) => {
+        // Если нет данных по месяцам, тогда (и только тогда) верим общей цифре
+        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
         
         let sum = 0;
+        // Пробегаемся по всем месяцам
         Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return; // Skip garbage
+            if (date === 'unknown') return; // Игнорируем мусор
             
-            // Filter Logic
-            // If filters are empty strings, these conditions are false, so we sum everything.
+            // Если задан фильтр, отсекаем лишнее. 
+            // Если фильтра нет (props пустые), эти условия false и мы суммируем ВСЁ.
             if (props.startDate && date < props.startDate) return;
             if (props.endDate && date > props.endDate) return;
             
             sum += val;
         });
+        
         return sum;
     };
 
@@ -204,11 +212,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
         // 1. Создаем "виртуальную" копию данных, где fact пересчитан под выбранные даты
         const relevantData = props.uploadedData.map(row => {
+            // Пересчитываем клиентов внутри строки
             const activeClients = row.clients.map(client => ({
                 ...client,
-                fact: getClientFact(client) // Use the fixed calculator
+                fact: getClientFact(client)
             })).filter(c => (c.fact || 0) > 0);
 
+            // Пересчитываем общий факт строки как сумму фактов активных клиентов
             const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
             return {
@@ -216,7 +226,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 clients: activeClients,
                 fact: rowFact
             };
-        }).filter(row => row.fact > 0);
+        }).filter(row => row.fact > 0); // Убираем строки, где в выбранном периоде пусто
 
         return detectOutliers(relevantData);
     }, [props.uploadedData, props.startDate, props.endDate]);
@@ -228,11 +238,15 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
+                // FIX: Check against the FIXED Base Universe.
+                if (!baseClientKeys.has(client.key)) return;
+
                 const effectiveFact = getClientFact(client);
                 
-                // If filtering is active, ignore clients with 0 volume in the period
-                if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
-
+                // Note: We do NOT return if effectiveFact <= 0 here.
+                // We want to count the client in the "Universe" (denominator) even if they bought nothing in Jan.
+                // However, their volume contribution will naturally be 0.
+                
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
                 
@@ -251,7 +265,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 percentage: totalUniqueCount > 0 ? (data.uniqueKeys.size / totalUniqueCount) * 100 : 0
             }))
             .sort((a, b) => b.count - a.count);
-    }, [props.uploadedData, props.startDate, props.endDate]);
+    }, [props.uploadedData, props.startDate, props.endDate, baseClientKeys]);
 
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
@@ -259,7 +273,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
+                // Use Base Keys check for consistency
+                if (!baseClientKeys.has(c.key)) return;
+
                 const effectiveFact = getClientFact(c);
+                // For the detailed list, we MIGHT want to filter 0 sales to show only active,
+                // OR show all with 0 fact. Usually lists show active. 
+                // Let's hide 0 sales in the detailed view to reduce noise, unless filter is empty.
                 if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
 
                 if ((c.type || 'Не определен') === selectedChannel) {
@@ -284,11 +304,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             hierarchy[rm][city].push(c);
         });
         return hierarchy;
-    }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate]);
+    }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate, baseClientKeys]);
 
+    // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
         const workerCount = props.processingState.totalRowsProcessed || 0;
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
+        // Во время прогресса воркера берем максимум, чтобы избежать сброса в 0 в начале синхронизации
         const count = Math.max(workerCount, currentDataCount);
         return count.toLocaleString('ru-RU');
     }, [props.processingState.totalRowsProcessed, props.uploadedData]);
@@ -364,7 +386,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                         
-                        {/* REDESIGNED & FIXED DATE RANGE CONTROL */}
+                        {/* REDESIGNED DATE RANGE CONTROL */}
                         <DateRangeControl 
                             startDate={props.startDate} 
                             endDate={props.endDate} 
