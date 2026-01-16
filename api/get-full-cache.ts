@@ -16,8 +16,7 @@ export const config = { maxDuration: 60, api: { bodyParser: false } };
 // FIXED: Correct Folder ID from the URL provided by user
 const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
 
-// CRITICAL FIX: Changed scope from 'drive.file' (only files created by this app) 
-// to 'drive' (full access) so it can see files created by the Python script or user manually.
+// CRITICAL FIX: Changed scope from 'drive.file' to 'drive' (full access)
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getRawBody(req: VercelRequest): Promise<any> {
@@ -37,16 +36,15 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any) {
-    // 1. УЗНАЕМ, КТО МЫ (под каким email зашел бот)
+    // 1. Log Auth Info
     try {
         const authInfo = await drive.about.get({ fields: 'user' });
-        console.log(`[AUTH] Бот работает под аккаунтом: ${authInfo.data.user.emailAddress}`);
+        console.log(`[AUTH] Bot email: ${authInfo.data.user.emailAddress}`);
     } catch (e) {
-        console.log("[AUTH] Не удалось получить email бота");
+        console.log("[AUTH] Failed to get bot email");
     }
 
-    // 2. ПРОСИМ ВСЕ ФАЙЛЫ В ПАПКЕ (без фильтра по имени)
-    // Убираем 'name contains snapshot', чтобы исключить ошибки индексации
+    // 2. List ALL files in folder (avoiding 'name contains' filter to bypass index lag)
     const q = `'${FOLDER_ID}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
@@ -58,20 +56,15 @@ async function getSortedFiles(drive: any) {
     });
     
     const allFiles = res.data.files || [];
-    
-    // 3. ПИШЕМ В ЛОГИ ВСЁ, ЧТО ВИДИТ БОТ
-    console.log(`[DEBUG] Всего объектов найдено в папке: ${allFiles.length}`);
-    allFiles.forEach((f: any) => {
-        console.log(` -> Объект: "${f.name}" | Тип: ${f.mimeType} | ID: ${f.id}`);
-    });
+    console.log(`[DEBUG] Total objects in folder: ${allFiles.length}`);
 
-    // 4. Фильтруем файлы уже в коде (так надежнее)
+    // 3. Filter in memory
     const filteredFiles = allFiles.filter((f: any) => 
         f.name && f.name.toLowerCase().includes('snapshot') && 
         f.mimeType !== 'application/vnd.google-apps.folder'
     );
 
-    console.log(`[FILTER] После фильтрации осталось: ${filteredFiles.length} файлов`);
+    console.log(`[FILTER] Snapshot files found: ${filteredFiles.length}`);
 
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
@@ -97,10 +90,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'save-chunk') {
                 const sortedIds = await getSortedFiles(drive);
-                // Ensure we have a slot for this chunk
                 if (sortedIds[chunkIndex + 1]) {
                     const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
-                    
                     await drive.files.update({ 
                         fileId: sortedIds[chunkIndex + 1], 
                         media: { mimeType: 'application/json', body: content }, 
@@ -108,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     });
                     return res.status(200).json({ status: 'saved' });
                 }
-                return res.status(404).json({ error: 'Chunk file not found. Ensure snapshot files exist in Drive folder.' });
+                return res.status(404).json({ error: 'Chunk file slot not found.' });
             }
             if (action === 'save-meta') {
                 const sortedIds = await getSortedFiles(drive);
@@ -120,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     });
                     return res.status(200).json({ status: 'meta_saved' });
                 }
-                return res.status(404).json({ error: 'Meta file not found in Drive folder.' });
+                return res.status(404).json({ error: 'Meta file slot not found.' });
             }
 
             // Legacy Cache Operations
@@ -134,42 +125,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'get-snapshot-meta') {
                 const sortedIds = await getSortedFiles(drive);
-                
-                if (sortedIds.length === 0) {
-                    console.log("Папка пуста или файлы не найдены (filtered locally)");
-                    return res.json({ versionHash: 'none' });
-                }
-
-                // Защита от системных ошибок
-                if (sortedIds[0] === FOLDER_ID) {
-                    return res.json({ versionHash: 'none', error: 'System misconfiguration: Folder ID matched as file.' });
-                }
+                if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
+                if (sortedIds[0] === FOLDER_ID) return res.json({ versionHash: 'none', error: 'Misconfiguration' });
                 
                 try {
-                    console.log(`[get-snapshot-meta] Attempting to download metadata file ID: ${sortedIds[0]}`);
+                    console.log(`[get-snapshot-meta] Downloading meta ID: ${sortedIds[0]}`);
+                    const response = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                    const content = JSON.parse(Buffer.from(response.data as any).toString('utf-8'));
                     
-                    const response = await drive.files.get(
-                        { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
-                        { responseType: 'arraybuffer' }
-                    );
-
-                    let content;
-                    const strData = Buffer.from(response.data as any).toString('utf-8');
-                    content = JSON.parse(strData);
-                    
-                    // Auto-correct chunkCount based on actual files found in folder
+                    // Auto-correct chunkCount
                     const actualChunksFound = Math.max(0, sortedIds.length - 1);
                     content.chunkCount = actualChunksFound;
                     
-                    console.log(`[get-snapshot-meta] Success. Version: ${content.versionHash}, Chunks: ${actualChunksFound}`);
                     return res.json(content);
                 } catch (e: any) {
-                    console.error("Snapshot JSON download/parse error:", e.message);
-                    return res.json({ 
-                        versionHash: 'none', 
-                        error: e.message,
-                        debug_id: sortedIds[0] 
-                    });
+                    console.error("Meta download error:", e.message);
+                    return res.json({ versionHash: 'none', error: e.message });
                 }
             }
             if (action === 'get-snapshot-list') {
@@ -177,27 +148,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (sortedIds.length === 0) return res.json([]);
 
                 try {
-                    // 1. Сначала читаем мета-файл (он под индексом 0)
-                    const metaRes = await drive.files.get(
-                        { fileId: sortedIds[0], alt: 'media', supportsAllDrives: true },
-                        { responseType: 'arraybuffer' }
-                    );
-                    const metaStr = Buffer.from(metaRes.data as any).toString('utf-8');
-                    const meta = JSON.parse(metaStr);
-                    
-                    // 2. Узнаем, сколько чанков реально принадлежит этой версии
+                    const metaRes = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                    const meta = JSON.parse(Buffer.from(metaRes.data as any).toString('utf-8'));
                     const activeChunkCount = meta.chunkCount || (sortedIds.length - 1);
-
-                    // 3. Берем ровно столько ID, сколько нужно, начиная с первого чанка
-                    // (slice(1, activeChunkCount + 1) пропустит мета-файл и возьмет только чанки)
+                    
+                    // Get specifically required chunks
                     const chunkFiles = sortedIds.slice(1, activeChunkCount + 1);
-                    
-                    console.log(`[LIST] Версия ${meta.versionHash} требует ${activeChunkCount} чанков. Отдаем ${chunkFiles.length} ID.`);
-                    
                     return res.json(chunkFiles.map((id: string) => ({ id })));
                 } catch (e) {
-                    console.warn("Failed to parse metadata for chunk listing, falling back to all found files.");
-                    // Если мета-файл не прочитался, отдаем все как раньше (fallback)
+                    // Fallback
                     const chunkFiles = sortedIds.slice(1);
                     return res.json(chunkFiles.map((id: string) => ({ id })));
                 }
