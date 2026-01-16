@@ -38,7 +38,7 @@ interface OutlierItem {
     reason: string;
 }
 
-// --- SUB-COMPONENT: DATE RANGE CONTROL (SNAPSHOT FIX) ---
+// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED) ---
 const DateRangeControl: React.FC<{
     startDate: string;
     endDate: string;
@@ -49,7 +49,7 @@ const DateRangeControl: React.FC<{
     const [localStart, setLocalStart] = useState(startDate);
     const [localEnd, setLocalEnd] = useState(endDate);
 
-    // Синхронизация: Сбрасываем инпуты ТОЛЬКО если родитель прислал пустоту (сброс)
+    // Синхронизация: Сбрасываем инпуты ТОЛЬКО если родитель прислал пустоту (полный сброс извне)
     useEffect(() => {
         if (startDate === '' && endDate === '') {
             setLocalStart('');
@@ -59,16 +59,15 @@ const DateRangeControl: React.FC<{
 
     const handleApply = () => {
         // 1. ВАЖНО: Делаем "снимок" текущих значений в переменные.
-        // Даже если стейт очистится через миллисекунду, эти переменные сохранят выбор.
+        // Даже если стейт очистится через миллисекунду из-за ре-рендера, эти переменные сохранят выбор пользователя.
         const valueToApplyStart = localStart;
         const valueToApplyEnd = localEnd;
 
-        // 2. Отправляем сигнал сброса
+        // 2. Отправляем сигнал сброса для перерисовки графиков
         onApply('', '');
 
-        // 3. Через 100мс отправляем сохраненные значения
+        // 3. Через 100мс отправляем СОХРАНЕННЫЕ значения, игнорируя текущий стейт
         setTimeout(() => {
-            // Используем переменные, а не стейт!
             onApply(valueToApplyStart, valueToApplyEnd);
         }, 100); 
     };
@@ -177,18 +176,21 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Helper to get client fact for the selected period
-    // FIX: Always sum monthly facts if available, ignoring the pre-calculated 'fact' which might include totals/noise.
+    // FIX: Completely rewritten to ensure consistency.
+    // 1. If monthlyFact exists, we ALWAYS sum it up. We NEVER trust client.fact if we have monthly data.
+    // 2. This prevents the "8500 vs 8550" issue where total!=sum(months).
     const getClientFact = (client: MapPoint) => {
-        // Если нет данных по месяцам, тогда (и только тогда) верим общей цифре
-        if (!client.monthlyFact) return client.fact || 0;
+        // Only fallback to client.fact if we literally have NO monthly data at all.
+        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
+            return client.fact || 0;
+        }
         
         let sum = 0;
-        // Пробегаемся по всем месяцам
         Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return; // Игнорируем мусор
+            if (date === 'unknown') return; // Skip garbage
             
-            // Если задан фильтр, отсекаем лишнее. 
-            // Если фильтра нет (props пустые), эти условия false и мы суммируем ВСЁ.
+            // Filter Logic
+            // If filters are empty strings, these conditions are false, so we sum everything.
             if (props.startDate && date < props.startDate) return;
             if (props.endDate && date > props.endDate) return;
             
@@ -201,15 +203,12 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
 
         // 1. Создаем "виртуальную" копию данных, где fact пересчитан под выбранные даты
-        // Это нужно, чтобы поиск аномалий (Z-Score) шел именно по выбранному месяцу/периоду
         const relevantData = props.uploadedData.map(row => {
-            // Пересчитываем клиентов внутри строки
             const activeClients = row.clients.map(client => ({
                 ...client,
-                fact: getClientFact(client)
+                fact: getClientFact(client) // Use the fixed calculator
             })).filter(c => (c.fact || 0) > 0);
 
-            // Пересчитываем общий факт строки как сумму фактов активных клиентов
             const rowFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
 
             return {
@@ -217,7 +216,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 clients: activeClients,
                 fact: rowFact
             };
-        }).filter(row => row.fact > 0); // Убираем строки, где в выбранном периоде пусто
+        }).filter(row => row.fact > 0);
 
         return detectOutliers(relevantData);
     }, [props.uploadedData, props.startDate, props.endDate]);
@@ -287,11 +286,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return hierarchy;
     }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate]);
 
-    // ФИКС: Умный счетчик строк. Если данных в памяти много, а воркер только начал (0), показываем текущее.
     const rowsToDisplay = useMemo(() => {
         const workerCount = props.processingState.totalRowsProcessed || 0;
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
-        // Во время прогресса воркера берем максимум, чтобы избежать сброса в 0 в начале синхронизации
         const count = Math.max(workerCount, currentDataCount);
         return count.toLocaleString('ru-RU');
     }, [props.processingState.totalRowsProcessed, props.uploadedData]);
@@ -367,7 +364,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                         
-                        {/* REDESIGNED DATE RANGE CONTROL */}
+                        {/* REDESIGNED & FIXED DATE RANGE CONTROL */}
                         <DateRangeControl 
                             startDate={props.startDate} 
                             endDate={props.endDate} 
