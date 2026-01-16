@@ -363,17 +363,94 @@ const App: React.FC = () => {
     }, []);
 
     const handleDeduplicate = useCallback(() => {
-        if (duplicatesCount === 0) { addNotification('Дубликатов не найдено.', 'info'); return; }
-        // ... merge logic ...
-        // Finally update allData, do NOT call setAllActiveClients
-        // setAllData(newAllData);
-        setMergeModalData({ initialCount: allActiveClients.length, finalCount: 0, newClients: [], newAllData: [] }); // Simplified for brevity
-    }, [allActiveClients, duplicatesCount, addNotification]);
+        if (duplicatesCount === 0) {
+            addNotification('Дубликатов не найдено.', 'info');
+            return;
+        }
 
-    const handleMergeComplete = useCallback(() => {
-       // setAllData(mergeModalData.newAllData);
-       setMergeModalData(null);
-    }, [mergeModalData]);
+        // 1. Identify unique physical locations based on normalized address + type
+        const uniqueLocationMap = new Map<string, MapPoint>();
+        
+        // Helper to get a stable key for deduplication
+        const getStableKey = (c: MapPoint) => 
+            `${normalizeAddress(c.address)}_${c.type || 'common'}`;
+
+        // First pass: Aggregate totals for identical locations
+        allData.forEach(group => {
+            group.clients.forEach(client => {
+                if (!client.address) return;
+                const stableKey = getStableKey(client);
+                
+                if (!uniqueLocationMap.has(stableKey)) {
+                    // Clone to avoid mutating original state directly until committed
+                    uniqueLocationMap.set(stableKey, { ...client });
+                } else {
+                    const existing = uniqueLocationMap.get(stableKey)!;
+                    // Merge metrics
+                    existing.fact = (existing.fact || 0) + (client.fact || 0);
+                    existing.potential = Math.max(existing.potential || 0, client.potential || 0);
+                    
+                    // Merge metadata: keep valid coords
+                    if (!existing.lat && client.lat) {
+                        existing.lat = client.lat;
+                        existing.lon = client.lon;
+                    }
+                }
+            });
+        });
+
+        // Second pass: Reconstruct allData with matched unique clients
+        const newAllData = allData.map(group => {
+            const uniqueGroupClients = new Map<string, MapPoint>();
+            
+            group.clients.forEach(client => {
+                if (!client.address) return;
+                const stableKey = getStableKey(client);
+                const mergedClient = uniqueLocationMap.get(stableKey);
+                
+                // Use merged client but ensure correct key reference
+                if (mergedClient) {
+                    const clientWithStableKey = { ...mergedClient, key: stableKey };
+                    uniqueGroupClients.set(stableKey, clientWithStableKey);
+                }
+            });
+
+            return {
+                ...group,
+                clients: Array.from(uniqueGroupClients.values())
+            };
+        });
+
+        const initialCount = allActiveClients.length;
+        const finalCount = uniqueLocationMap.size;
+
+        setMergeModalData({
+            initialCount,
+            finalCount,
+            newAllData
+        });
+
+    }, [allData, allActiveClients, duplicatesCount, addNotification]);
+
+    const handleMergeComplete = useCallback(async () => {
+        if (!mergeModalData) return;
+        
+        // Update state
+        setAllData(mergeModalData.newAllData);
+        
+        // Persist
+        await saveAnalyticsState({
+            allData: mergeModalData.newAllData,
+            unidentifiedRows: unidentifiedRows,
+            okbRegionCounts: okbRegionCounts,
+            totalRowsProcessed: totalRowsProcessedRef.current,
+            versionHash: `dedup_${Date.now()}`,
+            okbData: [], okbStatus: null
+        });
+
+        setMergeModalData(null);
+        addNotification(`База успешно объединена.`, 'success');
+    }, [mergeModalData, unidentifiedRows, okbRegionCounts, addNotification]);
 
     const filtered = useMemo(() => {
         const smart = enrichDataWithSmartPlan(allData, okbRegionCounts, 15, new Set());
