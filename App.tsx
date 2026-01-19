@@ -67,7 +67,6 @@ const App: React.FC = () => {
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
     // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ (Защита от TypeError) ---
-    // Гарантирует, что у каждой строки есть массив clients
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         return rows.map(row => {
@@ -87,7 +86,7 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- АВТОМАТИЧЕСКАЯ ЗАГРУЗКА OKB (Фикс для синих точек) ---
+    // --- АВТОМАТИЧЕСКАЯ ЗАГРУЗКА OKB ---
     useEffect(() => {
         const fetchOkb = async () => {
             if (okbData.length > 0 || okbStatus?.status === 'loading') return;
@@ -100,7 +99,6 @@ const App: React.FC = () => {
                 const data: OkbDataRow[] = await response.json();
                 setOkbData(data);
                 
-                // Calculate region counts for analytics
                 const counts: {[key: string]: number} = {};
                 data.forEach(row => {
                     const reg = row['Регион'] || row['region'] || 'Не определен';
@@ -121,7 +119,7 @@ const App: React.FC = () => {
             }
         };
         fetchOkb();
-    }, []); // Run once on mount
+    }, []); 
 
     // --- ЗАГРУЗКА СНИМКА (SNAPSHOT) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
@@ -328,13 +326,7 @@ const App: React.FC = () => {
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
-            } else {
-                // If local empty, verify if specific snapshot is needed
-                // ...
             }
-            
-            // Auto-check snapshot meta (optional)
-            // ...
         };
         init();
     }, [handleDownloadSnapshot, normalize]);
@@ -360,10 +352,7 @@ const App: React.FC = () => {
 
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
-                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
-                    return row; 
-                }
-
+                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row;
                 let newRowFact = 0;
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
@@ -371,7 +360,6 @@ const App: React.FC = () => {
                     if (filterEndDate && dateKey > filterEndDate) return;
                     newRowFact += val;
                 });
-
                 const activeClients = row.clients.map(client => {
                     if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client;
                     let clientSum = 0;
@@ -383,7 +371,6 @@ const App: React.FC = () => {
                     });
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
-
                 return { ...row, fact: newRowFact, clients: activeClients };
             }).filter(r => r.fact > 0);
         }
@@ -392,19 +379,19 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS (Matching Logic Fix) ---
-    // Restore Multi-Strategy Matching to recover green dots even if exact key match fails.
-    // This handles cases where data loaded from cache/files differs slightly from OKB normalization.
+    // --- 2. ACTIVE CLIENTS (Matching Logic Fix for v5 Base) ---
+    // Используем мульти-стратегию поиска, чтобы найти совпадения в базе ОКБ.
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         
-        // Create an optimized lookup map for OKB data by normalized address
+        // Индексируем базу ОКБ с использованием НОВОЙ нормализации (Bag of Words)
         const okbAddressMap = new Map<string, {lat: number, lon: number}>();
         if (okbData.length > 0) {
             okbData.forEach(okb => {
                 if (okb.lat && okb.lon) {
                     const rawAddr = findAddressInRow(okb);
                     if (rawAddr) {
+                        // Ключ - это нормализованный адрес (отсортированные слова)
                         okbAddressMap.set(normalizeAddress(rawAddr), { lat: okb.lat, lon: okb.lon });
                     }
                 }
@@ -417,28 +404,23 @@ const App: React.FC = () => {
                     if (c && c.key) {
                         const existing = clientsMap.get(c.key);
                         if (!existing) {
-                            // If coords missing, try to find in OKB
                             if ((!c.lat || !c.lon) && okbAddressMap.size > 0) {
                                 let recovered = undefined;
                                 
-                                // Strategy 1: Direct Key Match (If key was generated by compatible normalizer)
+                                // Стратегия 1: Прямой поиск по ключу (который уже нормализован worker-ом)
                                 recovered = okbAddressMap.get(c.key);
 
-                                // Strategy 2: Re-normalize raw address (If key is old/incompatible)
+                                // Стратегия 2: Ренормализация "сырого" адреса
+                                // Это помогает, если Worker использовал старую нормализацию
                                 if (!recovered && c.address) {
                                     recovered = okbAddressMap.get(normalizeAddress(c.address));
                                 }
 
-                                // Strategy 3: Prepend City (e.g. "Moscow" + "Lenina 1")
+                                // Стратегия 3: Добавляем город + адрес (для случаев "Ленина 1" -> "Москва Ленина 1")
+                                // normalizeAddress сама удалит дубликаты слов, поэтому "Москва Москва Ленина" станет "Ленина Москва"
                                 if (!recovered && c.city && c.city !== 'Город не определен' && c.address) {
-                                    const lookupKey = normalizeAddress(`${c.city} ${c.address}`);
-                                    recovered = okbAddressMap.get(lookupKey);
-                                }
-
-                                // Strategy 4: Prepend Region
-                                if (!recovered && c.region && c.region !== 'Регион не определен' && c.address) {
-                                    const lookupKey = normalizeAddress(`${c.region} ${c.address}`);
-                                    recovered = okbAddressMap.get(lookupKey);
+                                    const comboKey = normalizeAddress(`${c.city} ${c.address}`);
+                                    recovered = okbAddressMap.get(comboKey);
                                 }
 
                                 if (recovered) {
@@ -456,17 +438,12 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered, okbData]);
 
-    // --- 3. UNCOVERED POTENTIAL (OKB minus ACTIVE) ---
     const uncoveredPotential = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
-        
         const activeCoordHashes = new Set<string>();
         allActiveClients.forEach(c => {
-            if (c.lat && c.lon) {
-                activeCoordHashes.add(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`);
-            }
+            if (c.lat && c.lon) activeCoordHashes.add(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`);
         });
-
         return okbData.filter(row => {
             if (!row.lat || !row.lon) return false;
             const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
@@ -480,7 +457,6 @@ const App: React.FC = () => {
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
-            
             <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
                 <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
                     <div className="flex items-center gap-6">
