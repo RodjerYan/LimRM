@@ -9,9 +9,7 @@ import {
     UnidentifiedRow,
     WorkerResultPayload
 } from '../types';
-import { parseRussianAddress } from './addressParser';
-import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
@@ -24,15 +22,19 @@ let state_unidentifiedRows: UnidentifiedRow[] = [];
 let state_headers: string[] = [];
 let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
-let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
-let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
 let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
+
+// STRICT NORMALIZATION: Only lower case and trim. No smart parsing.
+const strictClean = (str: string | null | undefined): string => {
+    if (!str) return '';
+    return String(str).toLowerCase().trim();
+};
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -87,28 +89,14 @@ const parseDateKey = (val: any): string | null => {
     return null;
 };
 
-const getCanonicalRegion = (row: any): string => {
-    const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
-    if (subjectValue && subjectValue.trim()) {
-        const cleanVal = subjectValue.trim();
-        let lowerVal = cleanVal.toLowerCase().replace(/ё/g, 'е').replace(/[.,]/g, ' ').replace(/\s+/g, ' ');
-        if (["орел", "орёл", "orel"].includes(lowerVal.trim())) return "Орловская область";
-        for (const [key, standardName] of Object.entries(REGION_KEYWORD_MAP)) {
-            if (lowerVal.includes(key)) return standardName;
-        }
-        return standardizeRegion(cleanVal);
-    }
-    return 'Регион не определен';
-};
-
 const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     const coordIndex: OkbCoordIndex = new Map();
     if (!okbData) return coordIndex;
     for (const row of okbData) {
         const address = findAddressInRow(row);
         if (address && row.lat && row.lon) {
-            // Используем новую нормализацию (с сортировкой слов) для надежного матчинга
-            coordIndex.set(normalizeAddress(address), { lat: row.lat, lon: row.lon });
+            // STRICT: Use the exact string provided in OKB (cleaned)
+            coordIndex.set(strictClean(address), { lat: row.lat, lon: row.lon });
         }
     }
     return coordIndex;
@@ -146,35 +134,15 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_lastEmitCount = state_processedRowsCount;
     state_lastCheckpointCount = state_processedRowsCount;
     
+    // 1. Build Strict Index from OKB
     state_okbCoordIndex = createOkbCoordIndex(okbData);
-    state_okbByRegion = {};
     state_okbRegionCounts = {};
     
     if (okbData) {
         okbData.forEach(row => {
-            const reg = getCanonicalRegion(row);
-            if (reg !== 'Регион не определен') {
+            const reg = findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не определен';
+            if (reg) {
                 state_okbRegionCounts[reg] = (state_okbRegionCounts[reg] || 0) + 1;
-                if (!state_okbByRegion[reg]) state_okbByRegion[reg] = [];
-                state_okbByRegion[reg].push(row);
-            }
-        });
-    }
-
-    state_cacheAddressMap = new Map();
-    if (cacheData) {
-        // Загружаем кэш (Вашу таблицу).
-        // Ключом делаем нормализованный адрес, чтобы сопоставлять его с файлом.
-        Object.values(cacheData).flat().forEach(item => {
-            if (item.address && !item.isDeleted) {
-                // ВАЖНО: Используем ту же нормализацию, что и для строк файла
-                state_cacheAddressMap.set(normalizeAddress(item.address), { 
-                    lat: item.lat, 
-                    lon: item.lon, 
-                    originalAddress: item.address, 
-                    isInvalid: item.isInvalid, 
-                    comment: item.comment 
-                });
             }
         });
     }
@@ -212,8 +180,8 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     });
     
     const statusMsg = totalRowsProcessed 
-        ? `Восстановление сессии (Локальная база): ${totalRowsProcessed} строк...` 
-        : 'Связь установлена. Начало индексации...';
+        ? `Восстановление сессии: ${totalRowsProcessed} строк...` 
+        : 'Синхронизация с базой ОКБ (Строгое соответствие)...';
         
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
@@ -273,36 +241,22 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
-        // --- ЛОГИКА ПОИСКА КООРДИНАТ ---
+        // --- DIRECT LOOKUP: NO PARSING ---
+        // Just look up the exact string in the pre-built index
+        const cleanKey = strictClean(rawAddr);
+        const okbMatch = state_okbCoordIndex.get(cleanKey);
         
-        // 1. Поиск в КЭШЕ (Ваша таблица) - ПРИОРИТЕТ №1
-        // Ищем по "сырому" адресу (нормализованному, но без умного парсинга города).
-        // Это восстанавливает поведение для старых записей, которые есть в таблице "как есть".
-        const rawNormAddr = normalizeAddress(rawAddr);
-        let cacheEntry = state_cacheAddressMap.get(rawNormAddr);
+        const finalLat = okbMatch?.lat;
+        const finalLon = okbMatch?.lon;
 
-        // 2. Умный парсинг (определение города/региона)
-        const distributor = findValueInRow(row, ['дистрибьютор', 'партнер']);
-        const parsed = parseRussianAddress(rawAddr, distributor);
-        
-        // 3. Повторный поиск в КЭШЕ по обогащенному адресу
-        // Если "сырой" адрес не найден (например, в файле "Ленина 1", а в кэше "Москва, Ленина 1"),
-        // пробуем найти по полному адресу.
-        const enrichedNormAddr = normalizeAddress(parsed.finalAddress || rawAddr);
-        
-        if (!cacheEntry && rawNormAddr !== enrichedNormAddr) {
-            cacheEntry = state_cacheAddressMap.get(enrichedNormAddr);
-        }
-
-        const isCityFound = parsed.city !== 'Город не определен';
-        const reg = getCanonicalRegion(row) || parsed.region;
-        const isRegionFound = reg !== 'Регион не определен';
-
-        // Если не нашли в кэше и не смогли определить регион -> в "Неопознанные"
-        if (!isCityFound && !isRegionFound && !cacheEntry) {
+        // If no direct coordinate match, it's unidentified.
+        if (!finalLat || !finalLon) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
-            continue;
         }
+
+        // Just use raw values for region/city grouping
+        let reg = findValueInRow(row, ['субъект', 'регион', 'область']) || 'Регион не определен';
+        let city = findValueInRow(row, ['город', 'city', 'населенный пункт']) || 'Город не определен';
 
         const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
         if (!state_aggregatedData[groupKey]) {
@@ -312,7 +266,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 brand: brand, 
                 packaging: packaging, 
                 rm, 
-                city: parsed.city,
+                city: city,
                 region: reg, 
                 fact: 0,
                 monthlyFact: {},
@@ -334,21 +288,17 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
         state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weight;
 
-        // Ключ клиента для карты - используем обогащенный адрес для группировки дублей
-        const clientKey = enrichedNormAddr;
+        const clientKey = cleanKey; 
 
         if (!state_uniquePlottableClients.has(clientKey)) {
-            // Если в кэше нет, ищем в ОКБ (вторичный источник)
-            const okb = state_okbCoordIndex.get(clientKey);
-            
             state_uniquePlottableClients.set(clientKey, {
                 key: clientKey,
-                lat: cacheEntry?.lat || okb?.lat, // Сначала берем из таблицы (cache), если нет - из ОКБ
-                lon: cacheEntry?.lon || okb?.lon,
-                status: 'match',
+                lat: finalLat, 
+                lon: finalLon,
+                status: (finalLat && finalLon) ? 'match' : 'potential',
                 name: String(row[state_clientNameHeader || ''] || 'ТТ'),
                 address: rawAddr, 
-                city: parsed.city, 
+                city: city, 
                 region: reg, 
                 rm, 
                 brand: brand, 
@@ -415,7 +365,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     }
 
     const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); 
-    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Обработка: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {

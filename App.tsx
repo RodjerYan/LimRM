@@ -18,7 +18,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerMessage, WorkerResultPayload, CloudLoadParams, CoordsCache, OkbStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress, findAddressInRow } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findAddressInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -379,56 +379,19 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS (Matching Logic Fix for v5 Base) ---
-    // Используем мульти-стратегию поиска, чтобы найти совпадения в базе ОКБ.
+    // --- 2. ACTIVE CLIENTS ---
+    // Упрощенная логика: просто собираем всех клиентов из отфильтрованных данных.
+    // Worker уже сделал свою работу по сопоставлению. Если координаты есть - они будут на карте.
+    // Если нет - они будут в списке, но без маркера.
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         
-        // Индексируем базу ОКБ с использованием НОВОЙ нормализации (Bag of Words)
-        const okbAddressMap = new Map<string, {lat: number, lon: number}>();
-        if (okbData.length > 0) {
-            okbData.forEach(okb => {
-                if (okb.lat && okb.lon) {
-                    const rawAddr = findAddressInRow(okb);
-                    if (rawAddr) {
-                        // Ключ - это нормализованный адрес (отсортированные слова)
-                        okbAddressMap.set(normalizeAddress(rawAddr), { lat: okb.lat, lon: okb.lon });
-                    }
-                }
-            });
-        }
-
         filtered.forEach(row => {
             if (row && Array.isArray(row.clients)) {
                 row.clients.forEach(c => { 
                     if (c && c.key) {
                         const existing = clientsMap.get(c.key);
                         if (!existing) {
-                            if ((!c.lat || !c.lon) && okbAddressMap.size > 0) {
-                                let recovered = undefined;
-                                
-                                // Стратегия 1: Прямой поиск по ключу (который уже нормализован worker-ом)
-                                recovered = okbAddressMap.get(c.key);
-
-                                // Стратегия 2: Ренормализация "сырого" адреса
-                                // Это помогает, если Worker использовал старую нормализацию
-                                if (!recovered && c.address) {
-                                    recovered = okbAddressMap.get(normalizeAddress(c.address));
-                                }
-
-                                // Стратегия 3: Добавляем город + адрес (для случаев "Ленина 1" -> "Москва Ленина 1")
-                                // normalizeAddress сама удалит дубликаты слов, поэтому "Москва Москва Ленина" станет "Ленина Москва"
-                                if (!recovered && c.city && c.city !== 'Город не определен' && c.address) {
-                                    const comboKey = normalizeAddress(`${c.city} ${c.address}`);
-                                    recovered = okbAddressMap.get(comboKey);
-                                }
-
-                                if (recovered) {
-                                    c.lat = recovered.lat;
-                                    c.lon = recovered.lon;
-                                    c.status = 'match'; 
-                                }
-                            }
                             clientsMap.set(c.key, c);
                         }
                     }
@@ -436,7 +399,7 @@ const App: React.FC = () => {
             }
         });
         return Array.from(clientsMap.values());
-    }, [filtered, okbData]);
+    }, [filtered]);
 
     const uncoveredPotential = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];

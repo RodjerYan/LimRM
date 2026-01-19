@@ -172,49 +172,58 @@ export const recoverRegion = (dirtyString: string, cityHint: string): string => 
 };
 
 const createStopwords = (): Set<string> => {
+    // MASSIVE STOPWORD LIST to strip absolutely everything except the core name
     const genericStopwords = [
-        'улица', 'ул', 'проспект', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер', 'шоссе', 'ш', 
-        'бульвар', 'б-р', 'площадь', 'пл', 'набережная', 'наб', 'тупик', 'аллея', 'линия',
-        'город', 'г', 'поселок', 'пос', 'пгт', 'деревня', 'дер', 'село', 'с', 'хутор', 'х', 
-        'станица', 'ст-ца', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское',
-        'область', 'обл', 'край', 'республика', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р', 'н',
+        'улица', 'ул.', 'ул', 'проспект', 'пр.', 'пр', 'пр-т', 'пр-кт', 'проезд', 'пр-д', 'переулок', 'пер.', 'пер', 'шоссе', 'ш.', 'ш', 
+        'бульвар', 'б-р', 'площадь', 'пл.', 'пл', 'набережная', 'наб.', 'наб', 'тупик', 'аллея', 'линия', 'тракт', 'километр', 'км',
+        'город', 'г.', 'г', 'поселок', 'пос.', 'пос', 'пгт', 'деревня', 'дер.', 'дер', 'д.', 'село', 'с.', 'с', 'хутор', 'х.', 'х', 
+        'станица', 'ст-ца', 'ст.', 'ст', 'аул', 'рп', 'рабочий', 'поселение', 'сельское', 'городское', 'мкр', 'микрорайон', 'квартал',
+        'область', 'обл.', 'обл', 'край', 'республика', 'респ.', 'респ', 'автономный', 'округ', 'ао', 'район', 'р-н', 'р.', 'н.',
         'кыргызстан', 'киргизия', 'кыргызская', 'казахстан', 'россия', 'рф', 'беларусь', 'белоруссия',
         'таджикистан', 'узбекистан', 'туркменистан', 'армения', 'азербайджан', 'молдова', 'грузия',
-        'дом', 'корпус', 'корп', 'строение', 'стр', 'литер', 'лит',
-        'квартира', 'кв', 'офис', 'оф', 'помещение', 'пом', 'комната', 'комн', 'мкр', 'микрорайон', 'автодорога'
+        'дом', 'д.', 'корпус', 'корп.', 'корп', 'строение', 'стр.', 'стр', 'литер', 'лит.', 'лит', 'владение', 'вл.', 'вл',
+        'квартира', 'кв.', 'кв', 'офис', 'оф.', 'оф', 'помещение', 'пом.', 'пом', 'комната', 'комн.', 'комн', 'кабинет', 'этаж',
+        'магазин', 'тц', 'трц', 'тк', 'рынок', 'базар', 'павильон', 'киоск', 'склад', 'база', 'территория', 'снт', 'днп', 'снп'
     ];
     return new Set([...genericStopwords]);
 };
 
 const STOPWORDS = createStopwords();
-const ALL_CITIES = new Set(Object.keys(REGION_BY_CITY_WITH_INDEXES));
+
+// Prepare region keywords for removal (sort by length desc to remove longest matches first)
+const REGION_REMOVAL_REGEX = new RegExp(
+    Object.keys(REGION_KEYWORD_MAP)
+        .sort((a, b) => b.length - a.length)
+        .map(key => key.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')) // Escape special chars
+        .join('|'),
+    'gi'
+);
 
 /**
- * НОВАЯ ВЕРСИЯ НОРМАЛИЗАЦИИ ДЛЯ БАЗЫ v5
- * Использует "Мешок слов" (Bag of Words) + Сортировку.
- * Это позволяет матчить "Москва Ленина" и "Ленина Москва" как идентичные.
+ * AGGRESSIVE NORMALIZATION FOR V5 BASE
+ * Goal: Strip addresses down to their bare essentials (Numbers + Core Names) to maximize matching potential.
+ * "302002, Орловская область, г. Орел, ул. Пушкина, д. 44" -> "44 орел пушкина"
+ * "г. Орел, ул. Пушкина, 44" -> "44 орел пушкина"
  */
 export function normalizeAddress(address: string | null | undefined, options: { simplify?: boolean } = {}): string {
     if (!address) return "";
     let cleaned = address.toLowerCase().replace(/ё/g, 'е');
     
-    // 1. Стандартизация сокращений
-    cleaned = cleaned
-        .replace(/(\d+)\s*\/\s*(\d+[а-я]?)/g, '$1к$2') // 10/2 -> 10к2
-        .replace(/\b(д|дом)\.?\s*(\d+)/g, '$2') // д.5 -> 5
-        .replace(/\b(кв|оф)\.?\s*\d+/g, ''); // убираем квартиры и офисы, т.к. в ОКБ их часто нет
+    // 0. REMOVE INDEXES (Critical: 6 digits) - This is what breaks matches with the user's table
+    cleaned = cleaned.replace(/\b\d{6}\b/g, ''); 
 
-    // 2. Очистка от спецсимволов
-    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, ' '); 
+    // 1. REMOVE REGION NAMES (Critical for fuzzy matching across different sources)
+    // This allows "Orel, Pushkina" to match "Orlovskaya obl, Orel, Pushkina"
+    cleaned = cleaned.replace(REGION_REMOVAL_REGEX, '');
+
+    // 2. Standardize numbers and remove prefix separators
+    cleaned = cleaned
+        .replace(/(\d+)\s*[\/\-]\s*(\d+[а-я]?)/g, '$1 $2') // 10/2 -> 10 2
+        .replace(/\b(д|дом|кв|оф|стр|корп|лит|вл)\.?\s*(\d+)/g, ' $2 ') // д.5 -> 5
+        .replace(/\b(д|дом|кв|оф|стр|корп|лит|вл)\s+/g, ' '); // remove standalone prefixes
+
+    // 3. Remove all non-alphanumeric chars (punctuation)
+    cleaned = cleaned.replace(/[^а-яa-z0-9\s]/g, ' '); 
     
-    // 3. Разбиение на токены
-    let parts = cleaned.split(/\s+/)
-        .filter(part => part && part.length > 1 && !STOPWORDS.has(part)); // Убираем стопслова и однобуквенный мусор
-    
-    // 4. СОРТИРОВКА и УДАЛЕНИЕ ДУБЛИКАТОВ
-    // Это критически важно для новой базы, где порядок слов может отличаться
-    const uniqueParts = Array.from(new Set(parts));
-    uniqueParts.sort((a, b) => a.localeCompare(b, 'ru'));
-    
-    return uniqueParts.join(' ').trim();
-}
+    // 4. Tokenize and Filter
+    let parts = cleaned.
