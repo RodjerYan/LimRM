@@ -1,6 +1,6 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../types.js';
+import { OkbDataRow } from '../../types';
 import { Readable } from 'stream';
 import * as XLSX from 'xlsx';
 
