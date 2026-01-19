@@ -7,7 +7,6 @@ import {
   OkbDataRow,
 } from '../types';
 import { REGION_KEYWORD_MAP, REGION_BY_CITY_MAP } from './addressMappings';
-import { REGION_BY_CITY_WITH_INDEXES } from './regionMap';
 
 /**
  * Normalizes an RM name for consistent matching.
@@ -226,4 +225,17 @@ export function normalizeAddress(address: string | null | undefined, options: { 
     cleaned = cleaned.replace(/[^а-яa-z0-9\s]/g, ' '); 
     
     // 4. Tokenize and Filter
-    let parts = cleaned.
+    let parts = cleaned.split(/\s+/);
+
+    if (options.simplify) {
+        return cleaned.trim();
+    }
+
+    // 5. Remove Stopwords
+    const filteredParts = parts.filter(p => !STOPWORDS.has(p) && p.length > 1);
+
+    // 6. Deduplicate parts (e.g. "Orel Orel") and join
+    const uniqueParts = Array.from(new Set(filteredParts));
+
+    return uniqueParts.join(' ').trim();
+}
