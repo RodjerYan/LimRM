@@ -317,6 +317,9 @@ export function normalizeAddress(address: string | null | undefined, options: { 
     // IMPORTANT: Deduplicate tokens to handle repeated cities/streets when merging strings (e.g. "Moscow Moscow Lenin")
     const uniqueParts = Array.from(new Set(parts));
     
-    uniqueParts.sort((a, b) => a.localeCompare(b, 'ru'));
+    // REMOVED SORTING: This reverts the aggressive normalization to preserve word order (e.g. Street Name vs Name Street),
+    // ensuring consistency with previously generated keys.
+    // uniqueParts.sort((a, b) => a.localeCompare(b, 'ru'));
+    
     return uniqueParts.join(' ').trim();
 }

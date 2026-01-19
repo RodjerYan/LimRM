@@ -41,17 +41,6 @@ interface AddressEditModalProps {
     globalTheme: Theme;
 }
 
-interface AddressEditModalProps {
-    isOpen: boolean;
-    onClose: () => void;
-    onBack: () => void;
-    data: EditableData | null;
-    onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
-    onStartPolling: (rmName: string, address: string, tempKey: string, basePoint: MapPoint, originalIndex?: number) => void;
-    onDelete: (key: string) => void;
-    globalTheme: Theme;
-}
-
 const SinglePointMap: React.FC<{ 
     lat?: number; 
     lon?: number; 
@@ -254,9 +243,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
             
-            // КРИТИЧЕСКИЙ ФИКС: Сначала проверяем на наличие ошибки
             if (pt.geocodingError) {
-                setStatus('idle'); // Останавливаем анимацию
+                setStatus('idle');
                 setError(pt.geocodingError);
                 setSaveSuccess(false);
             } else if (pt.isGeocoding) {
@@ -273,7 +261,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
                 }
             } else {
-                // Если не грузится и нет ошибки — значит просто idle
                 setStatus('idle');
             }
         }
@@ -307,7 +294,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     useEffect(() => {
         if (isOpen && data) {
-            const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+            // FIX: Guard against missing originalRow
+            const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData || {};
+            
             let currentAddress = '';
             if (isUnidentified(data)) {
                 const rawAddress = findAddressInRow(originalRow) || '';
@@ -352,7 +341,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const handleSave = async () => {
         if (!data) return;
-        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData || {};
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
@@ -430,7 +419,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const handleDelete = async () => {
         if (!data) return;
-        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+        const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData || {};
         const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const rm = findValueInRow(originalRow, ['рм']);
         setStatus('deleting'); setError(null);
@@ -448,13 +437,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     
     if (!data) return null;
 
-    const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+    const originalRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData || {};
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
     const currentComment = (data as MapPoint).comment || '';
+    
+    // FIX: Safe object entries mapping
     const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
+    
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
@@ -485,12 +477,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-400">Исходные данные строки</h4>
                         <table className="w-full text-sm">
                             <tbody className="divide-y divide-gray-800">
-                                {detailsToShow.map(({ key, value }, index) => (
+                                {detailsToShow.length > 0 ? detailsToShow.map(({ key, value }, index) => (
                                     <tr key={index} className="group">
                                         <td className="py-2.5 pr-4 text-gray-500 font-medium align-top w-1/3 group-hover:text-gray-400 transition-colors">{key}</td>
                                         <td className="py-2.5 text-gray-300 break-words leading-relaxed">{value}</td>
                                     </tr>
-                                ))}
+                                )) : (
+                                    <tr><td colSpan={2} className="py-4 text-center text-gray-500 italic">Нет данных для отображения</td></tr>
+                                )}
                             </tbody>
                         </table>
                     </div>
