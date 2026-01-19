@@ -31,10 +31,7 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Увеличили порог для чекпоинта (сохранения в облако) до 50 000
 const CHECKPOINT_THRESHOLD = 50000; 
-
-// Увеличили порог обновления UI до 20 000
 const UI_UPDATE_THRESHOLD = 20000;
 
 const normalizeHeaderKey = (key: string): string => {
@@ -72,11 +69,8 @@ const parseCleanFloat = (val: any): number => {
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
-// Helper to parse date into YYYY-MM format
 const parseDateKey = (val: any): string | null => {
     if (!val) return null;
-    
-    // Excel Serial Date
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
@@ -85,17 +79,11 @@ const parseDateKey = (val: any): string | null => {
         }
         return null;
     }
-
     const str = String(val).trim();
-    
-    // ISO-like YYYY-MM-DD or YYYY.MM.DD
     let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
-
-    // DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
-    
     return null;
 };
 
@@ -119,6 +107,7 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
     for (const row of okbData) {
         const address = findAddressInRow(row);
         if (address && row.lat && row.lon) {
+            // Используем новую нормализацию (с сортировкой слов) для надежного матчинга
             coordIndex.set(normalizeAddress(address), { lat: row.lat, lon: row.lon });
         }
     }
@@ -174,10 +163,17 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 
     state_cacheAddressMap = new Map();
     if (cacheData) {
+        // Загружаем кэш (Вашу таблицу).
+        // Ключом делаем нормализованный адрес, чтобы сопоставлять его с файлом.
         Object.values(cacheData).flat().forEach(item => {
             if (item.address && !item.isDeleted) {
+                // ВАЖНО: Используем ту же нормализацию, что и для строк файла
                 state_cacheAddressMap.set(normalizeAddress(item.address), { 
-                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment 
+                    lat: item.lat, 
+                    lon: item.lon, 
+                    originalAddress: item.address, 
+                    isInvalid: item.isInvalid, 
+                    comment: item.comment 
                 });
             }
         });
@@ -277,14 +273,32 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
-        const parsed = parseRussianAddress(rawAddr);
-        const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
-        const cacheEntry = state_cacheAddressMap.get(normAddr);
+        // --- ЛОГИКА ПОИСКА КООРДИНАТ ---
         
+        // 1. Поиск в КЭШЕ (Ваша таблица) - ПРИОРИТЕТ №1
+        // Ищем по "сырому" адресу (нормализованному, но без умного парсинга города).
+        // Это восстанавливает поведение для старых записей, которые есть в таблице "как есть".
+        const rawNormAddr = normalizeAddress(rawAddr);
+        let cacheEntry = state_cacheAddressMap.get(rawNormAddr);
+
+        // 2. Умный парсинг (определение города/региона)
+        const distributor = findValueInRow(row, ['дистрибьютор', 'партнер']);
+        const parsed = parseRussianAddress(rawAddr, distributor);
+        
+        // 3. Повторный поиск в КЭШЕ по обогащенному адресу
+        // Если "сырой" адрес не найден (например, в файле "Ленина 1", а в кэше "Москва, Ленина 1"),
+        // пробуем найти по полному адресу.
+        const enrichedNormAddr = normalizeAddress(parsed.finalAddress || rawAddr);
+        
+        if (!cacheEntry && rawNormAddr !== enrichedNormAddr) {
+            cacheEntry = state_cacheAddressMap.get(enrichedNormAddr);
+        }
+
         const isCityFound = parsed.city !== 'Город не определен';
         const reg = getCanonicalRegion(row) || parsed.region;
         const isRegionFound = reg !== 'Регион не определен';
 
+        // Если не нашли в кэше и не смогли определить регион -> в "Неопознанные"
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
             continue;
@@ -320,11 +334,16 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
         state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weight;
 
-        if (!state_uniquePlottableClients.has(normAddr)) {
-            const okb = state_okbCoordIndex.get(normAddr);
-            state_uniquePlottableClients.set(normAddr, {
-                key: normAddr,
-                lat: cacheEntry?.lat || okb?.lat,
+        // Ключ клиента для карты - используем обогащенный адрес для группировки дублей
+        const clientKey = enrichedNormAddr;
+
+        if (!state_uniquePlottableClients.has(clientKey)) {
+            // Если в кэше нет, ищем в ОКБ (вторичный источник)
+            const okb = state_okbCoordIndex.get(clientKey);
+            
+            state_uniquePlottableClients.set(clientKey, {
+                key: clientKey,
+                lat: cacheEntry?.lat || okb?.lat, // Сначала берем из таблицы (cache), если нет - из ОКБ
                 lon: cacheEntry?.lon || okb?.lon,
                 status: 'match',
                 name: String(row[state_clientNameHeader || ''] || 'ТТ'),
@@ -342,13 +361,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             });
         }
         
-        const pt = state_uniquePlottableClients.get(normAddr);
+        const pt = state_uniquePlottableClients.get(clientKey);
         if (pt) {
             pt.fact = (pt.fact || 0) + weight;
             if (!pt.monthlyFact) pt.monthlyFact = {};
             pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weight;
             
-            state_aggregatedData[groupKey].clients.set(normAddr, pt);
+            state_aggregatedData[groupKey].clients.set(clientKey, pt);
         }
     }
     
