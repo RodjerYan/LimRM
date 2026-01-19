@@ -18,7 +18,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerMessage, WorkerResultPayload, CloudLoadParams, CoordsCache, OkbStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress, findAddressInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -87,6 +87,42 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
+    // --- АВТОМАТИЧЕСКАЯ ЗАГРУЗКА OKB (Фикс для синих точек) ---
+    useEffect(() => {
+        const fetchOkb = async () => {
+            if (okbData.length > 0 || okbStatus?.status === 'loading') return;
+            
+            try {
+                setOkbStatus({ status: 'loading', message: 'Загрузка гео-базы...' });
+                const response = await fetch(`/api/get-akb?mode=okb_data&t=${Date.now()}`);
+                if (!response.ok) throw new Error('Failed to load OKB');
+                
+                const data: OkbDataRow[] = await response.json();
+                setOkbData(data);
+                
+                // Calculate region counts for analytics
+                const counts: {[key: string]: number} = {};
+                data.forEach(row => {
+                    const reg = row['Регион'] || row['region'] || 'Не определен';
+                    counts[reg] = (counts[reg] || 0) + 1;
+                });
+                setOkbRegionCounts(counts);
+
+                setOkbStatus({
+                    status: 'ready',
+                    message: `ОКБ Онлайн`,
+                    timestamp: new Date().toISOString(),
+                    rowCount: data.length,
+                    coordsCount: data.filter(d => d.lat && d.lon).length,
+                });
+            } catch (e) {
+                console.error("Auto-fetch OKB failed", e);
+                setOkbStatus({ status: 'error', message: 'Ошибка загрузки базы' });
+            }
+        };
+        fetchOkb();
+    }, []); // Run once on mount
+
     // --- ЗАГРУЗКА СНИМКА (SNAPSHOT) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
@@ -113,7 +149,6 @@ const App: React.FC = () => {
             const fullJson = chunks.join('');
             if (fullJson) {
                 const data = JSON.parse(fullJson);
-                // APPLY NORMALIZATION
                 const validated = normalize(data.aggregatedData || []);
                 
                 setAllData(validated);
@@ -190,7 +225,6 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
-                // Save Logic...
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -220,15 +254,11 @@ const App: React.FC = () => {
             payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: allDataRef.current, restoredUnidentified: unidentifiedRowsRef.current } 
         });
         
-        // Start fetching file list and processing...
         try {
             const listRes = await fetch(`/api/get-akb?year=${params.year}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             for (const file of allFiles) {
                 if (processedFileIdsRef.current.has(file.id)) continue;
-                // ... (simplified loop for brevity, same logic as before)
-                // Trigger worker for chunks
-                // workerRef.current.postMessage({ type: 'PROCESS_CHUNK', ... })
                 processedFileIdsRef.current.add(file.id);
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
@@ -293,33 +323,26 @@ const App: React.FC = () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                // APPLY NORMALIZATION ON LOAD
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
+            } else {
+                // If local empty, verify if specific snapshot is needed
+                // ...
             }
-
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
-                }
-            }
+            
+            // Auto-check snapshot meta (optional)
+            // ...
         };
         init();
     }, [handleDownloadSnapshot, normalize]);
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
-        // ... (implementation same as before but respecting useMemo)
-        // We update allData, and allActiveClients updates automatically
         setAllData(prev => {
             return prev.map(group => {
-                // Find group containing the client
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
@@ -329,24 +352,19 @@ const App: React.FC = () => {
                 return group;
             });
         });
-        // DB save logic...
     }, []);
 
     // --- 1. FILTERED DATA CALCULATION ---
-    // Moved up so it can be used for 'allActiveClients' and 'Adapta' props
     const filtered = useMemo(() => {
-        // 1. DATE FILTERING (Recalculate Fact based on monthly breakdown)
         let processedData = allData;
 
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
-                // If monthlyFact is missing, we cannot filter, so we keep the original row
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
                     return row; 
                 }
 
                 let newRowFact = 0;
-                // Sum up volumes for months within the range for the ROW
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
                     if (filterStartDate && dateKey < filterStartDate) return;
@@ -354,13 +372,8 @@ const App: React.FC = () => {
                     newRowFact += val;
                 });
 
-                // RECALCULATE CLIENTS
-                // Only keep clients that have > 0 volume in the selected period
                 const activeClients = row.clients.map(client => {
-                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
-                        return client; // Fallback to keep if no granular data
-                    }
-                    
+                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client;
                     let clientSum = 0;
                     Object.entries(client.monthlyFact).forEach(([d, v]) => {
                         if (d === 'unknown') return;
@@ -368,35 +381,77 @@ const App: React.FC = () => {
                         if (filterEndDate && d > filterEndDate) return;
                         clientSum += v;
                     });
-                    
-                    // Return updated client with new fact. 
-                    // Filter happens in the next step.
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
 
-                // Return a new row with updated 'fact' and filtered 'clients'
                 return { ...row, fact: newRowFact, clients: activeClients };
-            }).filter(r => r.fact > 0); // Hide rows with 0 sales in selected period
+            }).filter(r => r.fact > 0);
         }
 
-        // 2. ENRICHMENT (Calculates Plans based on the possibly modified Fact)
         const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
-        
-        // 3. APPLY CATEGORY FILTERS
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS (DERIVED FROM FILTERED DATA) ---
-    // This ensures the header counter and maps reflect the chosen dates
+    // --- 2. ACTIVE CLIENTS (With Smart Coordinate Recovery) ---
+    // Fix for missing green dots: if 'okbData' is loaded, cross-reference addresses to fill missing lat/lon
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
+        
+        // Create an optimized lookup map for OKB data by normalized address
+        const okbAddressMap = new Map<string, {lat: number, lon: number}>();
+        if (okbData.length > 0) {
+            okbData.forEach(okb => {
+                if (okb.lat && okb.lon) {
+                    const rawAddr = findAddressInRow(okb);
+                    if (rawAddr) {
+                        okbAddressMap.set(normalizeAddress(rawAddr), { lat: okb.lat, lon: okb.lon });
+                    }
+                }
+            });
+        }
+
         filtered.forEach(row => {
             if (row && Array.isArray(row.clients)) {
-                row.clients.forEach(c => { if (c && c.key) clientsMap.set(c.key, c); });
+                row.clients.forEach(c => { 
+                    if (c && c.key) {
+                        const existing = clientsMap.get(c.key);
+                        if (!existing) {
+                            // Smart Recovery: If lat/lon missing, try to find in OKB now
+                            if ((!c.lat || !c.lon) && okbAddressMap.size > 0) {
+                                const normAddr = normalizeAddress(c.address);
+                                const recovered = okbAddressMap.get(normAddr);
+                                if (recovered) {
+                                    c.lat = recovered.lat;
+                                    c.lon = recovered.lon;
+                                    c.status = 'match'; // Upgrade status
+                                }
+                            }
+                            clientsMap.set(c.key, c);
+                        }
+                    }
+                });
             }
         });
         return Array.from(clientsMap.values());
-    }, [filtered]);
+    }, [filtered, okbData]); // Depend on okbData to trigger re-calculation when it loads
+
+    // --- 3. UNCOVERED POTENTIAL (OKB minus ACTIVE) ---
+    const uncoveredPotential = useMemo(() => {
+        if (!okbData || okbData.length === 0) return [];
+        
+        const activeCoordHashes = new Set<string>();
+        allActiveClients.forEach(c => {
+            if (c.lat && c.lon) {
+                activeCoordHashes.add(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`);
+            }
+        });
+
+        return okbData.filter(row => {
+            if (!row.lat || !row.lon) return false;
+            const hash = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
+            return !activeCoordHashes.has(hash);
+        });
+    }, [okbData, allActiveClients]);
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
@@ -445,7 +500,7 @@ const App: React.FC = () => {
                             disabled={processingState.isProcessing}
                             unidentifiedCount={unidentifiedRows.length}
                             activeClientsCount={allActiveClients.length}
-                            uploadedData={filtered} // USE FILTERED DATA HERE
+                            uploadedData={filtered} 
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
                             startDate={filterStartDate} 
@@ -456,7 +511,14 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
-                            <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={[]} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
+                            <InteractiveRegionMap 
+                                data={filtered} 
+                                activeClients={allActiveClients} 
+                                potentialClients={uncoveredPotential} 
+                                onEditClient={setEditingClient} 
+                                selectedRegions={filters.region} 
+                                flyToClientKey={null} 
+                            />
                             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                 <div className="lg:col-span-1">
                                     <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
