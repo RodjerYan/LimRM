@@ -394,6 +394,7 @@ const App: React.FC = () => {
 
     // --- 2. ACTIVE CLIENTS (With Smart Coordinate Recovery) ---
     // Fix for missing green dots: if 'okbData' is loaded, cross-reference addresses to fill missing lat/lon
+    // IMPROVED: Now uses fuzzy matching logic (address + city/region prefixes)
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         
@@ -418,8 +419,38 @@ const App: React.FC = () => {
                         if (!existing) {
                             // Smart Recovery: If lat/lon missing, try to find in OKB now
                             if ((!c.lat || !c.lon) && okbAddressMap.size > 0) {
-                                const normAddr = normalizeAddress(c.address);
-                                const recovered = okbAddressMap.get(normAddr);
+                                let recovered = undefined;
+                                
+                                // Strategy 0: Direct Raw Address (The most robust for pre-cleaned data)
+                                // Only if 'address' field exists.
+                                if (c.address) {
+                                    recovered = okbAddressMap.get(normalizeAddress(c.address));
+                                }
+
+                                // Strategy 1: Direct match (via findAddress in row if c.address failed)
+                                if (!recovered && c.originalRow) {
+                                    const raw = findAddressInRow(c.originalRow);
+                                    if (raw) recovered = okbAddressMap.get(normalizeAddress(raw));
+                                }
+
+                                // Strategy 2: Prepend City (e.g. "Moscow" + "Lenina 1")
+                                if (!recovered && c.city && c.city !== 'Город не определен') {
+                                    const lookupKey = normalizeAddress(`${c.city} ${c.address}`);
+                                    recovered = okbAddressMap.get(lookupKey);
+                                }
+
+                                // Strategy 3: Prepend Region (e.g. "Crimea" + "Lenina 1")
+                                if (!recovered && c.region && c.region !== 'Регион не определен') {
+                                    const lookupKey = normalizeAddress(`${c.region} ${c.address}`);
+                                    recovered = okbAddressMap.get(lookupKey);
+                                }
+                                
+                                // Strategy 4: Full Combo
+                                if (!recovered && c.region && c.city) {
+                                     const lookupKey = normalizeAddress(`${c.region} ${c.city} ${c.address}`);
+                                     recovered = okbAddressMap.get(lookupKey);
+                                }
+
                                 if (recovered) {
                                     c.lat = recovered.lat;
                                     c.lon = recovered.lon;
@@ -433,7 +464,7 @@ const App: React.FC = () => {
             }
         });
         return Array.from(clientsMap.values());
-    }, [filtered, okbData]); // Depend on okbData to trigger re-calculation when it loads
+    }, [filtered, okbData]);
 
     // --- 3. UNCOVERED POTENTIAL (OKB minus ACTIVE) ---
     const uncoveredPotential = useMemo(() => {

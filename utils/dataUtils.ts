@@ -180,7 +180,7 @@ export const findValueInRow = (row: { [key: string]: any }, keywords: string[]):
 export const findAddressInRow = (row: { [key: string]: any }): string | null => {
     if (!row) return null;
     const rowKeys = Object.keys(row);
-    const prioritizedKeys = ['адрес тт limkorm', 'фактический адрес', 'юридический адрес', 'адрес'];
+    const prioritizedKeys = ['адрес тт limkorm', 'фактический адрес', 'юридический адрес', 'адрес', 'пункт разгрузки', 'адрес доставки'];
 
     for (const pKey of prioritizedKeys) {
         const foundKey = rowKeys.find(rKey => rKey.toLowerCase().trim() === pKey);
@@ -313,6 +313,10 @@ export function normalizeAddress(address: string | null | undefined, options: { 
             return true;
         });
     }
-    parts.sort((a, b) => a.localeCompare(b, 'ru'));
-    return parts.join(' ').trim();
+    
+    // IMPORTANT: Deduplicate tokens to handle repeated cities/streets when merging strings (e.g. "Moscow Moscow Lenin")
+    const uniqueParts = Array.from(new Set(parts));
+    
+    uniqueParts.sort((a, b) => a.localeCompare(b, 'ru'));
+    return uniqueParts.join(' ').trim();
 }
