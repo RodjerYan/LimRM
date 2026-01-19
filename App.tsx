@@ -392,19 +392,20 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS (With Smart Coordinate Recovery) ---
-    // Fix for missing green dots: if 'okbData' is loaded, cross-reference addresses to fill missing lat/lon
-    // IMPROVED: Now uses fuzzy matching logic (address + city/region prefixes)
+    // --- 2. ACTIVE CLIENTS (Matching Logic Fix) ---
+    // ВОЗВРАТ ЛОГИКИ: Используем уже готовый 'c.key', который Worker создал и нормализовал.
+    // Если OKB загружается ПОСЛЕ обработки файла, мы просто ищем в базе по этому ключу.
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         
-        // Create an optimized lookup map for OKB data by normalized address
+        // Создаем индекс OKB для быстрого поиска: Key (normAddr) -> Coords
         const okbAddressMap = new Map<string, {lat: number, lon: number}>();
         if (okbData.length > 0) {
             okbData.forEach(okb => {
                 if (okb.lat && okb.lon) {
                     const rawAddr = findAddressInRow(okb);
                     if (rawAddr) {
+                        // Используем ту же нормализацию, что и Worker при создании ключа
                         okbAddressMap.set(normalizeAddress(rawAddr), { lat: okb.lat, lon: okb.lon });
                     }
                 }
@@ -417,44 +418,20 @@ const App: React.FC = () => {
                     if (c && c.key) {
                         const existing = clientsMap.get(c.key);
                         if (!existing) {
-                            // Smart Recovery: If lat/lon missing, try to find in OKB now
+                            // Если координат нет, пробуем подтянуть из OKB по ключу
                             if ((!c.lat || !c.lon) && okbAddressMap.size > 0) {
-                                let recovered = undefined;
-                                
-                                // Strategy 0: Direct Raw Address (The most robust for pre-cleaned data)
-                                // Only if 'address' field exists.
-                                if (c.address) {
+                                // 1. Основной метод: Поиск по ключу (который уже нормализован worker-ом)
+                                let recovered = okbAddressMap.get(c.key);
+
+                                // 2. Запасной метод: Если ключ не сработал, пробуем нормализовать сырой адрес (на случай рассинхрона)
+                                if (!recovered && c.address) {
                                     recovered = okbAddressMap.get(normalizeAddress(c.address));
-                                }
-
-                                // Strategy 1: Direct match (via findAddress in row if c.address failed)
-                                if (!recovered && c.originalRow) {
-                                    const raw = findAddressInRow(c.originalRow);
-                                    if (raw) recovered = okbAddressMap.get(normalizeAddress(raw));
-                                }
-
-                                // Strategy 2: Prepend City (e.g. "Moscow" + "Lenina 1")
-                                if (!recovered && c.city && c.city !== 'Город не определен') {
-                                    const lookupKey = normalizeAddress(`${c.city} ${c.address}`);
-                                    recovered = okbAddressMap.get(lookupKey);
-                                }
-
-                                // Strategy 3: Prepend Region (e.g. "Crimea" + "Lenina 1")
-                                if (!recovered && c.region && c.region !== 'Регион не определен') {
-                                    const lookupKey = normalizeAddress(`${c.region} ${c.address}`);
-                                    recovered = okbAddressMap.get(lookupKey);
-                                }
-                                
-                                // Strategy 4: Full Combo
-                                if (!recovered && c.region && c.city) {
-                                     const lookupKey = normalizeAddress(`${c.region} ${c.city} ${c.address}`);
-                                     recovered = okbAddressMap.get(lookupKey);
                                 }
 
                                 if (recovered) {
                                     c.lat = recovered.lat;
                                     c.lon = recovered.lon;
-                                    c.status = 'match'; // Upgrade status
+                                    c.status = 'match'; 
                                 }
                             }
                             clientsMap.set(c.key, c);
