@@ -112,7 +112,11 @@ export function processBatch(
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = 'Не определен';
 
-        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        // 1. Get raw brand value
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        // 2. Split by comma or semicolon
+        const brands = rawBrand.split(/[,;]/).map(b => b.trim()).filter(b => b.length > 0);
+
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
         const parsed = parseRussianAddress(rawAddr);
@@ -128,57 +132,58 @@ export function processBatch(
             continue;
         }
 
-        const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
-        if (!aggregatedData[groupKey]) {
-            aggregatedData[groupKey] = {
-                key: groupKey, 
-                clientName: `${reg}: ${brand}`, 
-                brand: brand, 
-                packaging: packaging, 
-                rm, 
-                city: parsed.city,
-                region: reg, 
-                fact: 0, 
-                potential: 0, 
-                growthPotential: 0, 
-                growthPercentage: 0,
-                clients: new Map(),
-            };
-        }
-
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
-        const weight = parseCleanFloat(weightRaw);
-        
-        aggregatedData[groupKey].fact += weight;
+        const totalWeight = parseCleanFloat(weightRaw);
+        // 3. Divide weight
+        const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
-        // Ensure we track unique clients for map plotting
-        // We use a Map to update facts if duplicate addresses appear in the batch
-        if (!uniquePlottableClients.has(normAddr)) {
-            const okb = okbCoordIndex.get(normAddr);
-            uniquePlottableClients.set(normAddr, {
-                key: normAddr,
-                lat: cacheEntry?.lat || okb?.lat,
-                lon: cacheEntry?.lon || okb?.lon,
-                status: 'match',
-                name: String(row[clientNameHeader || ''] || 'ТТ'),
-                address: rawAddr, 
-                city: parsed.city, 
-                region: reg, 
-                rm, 
-                brand: brand, 
-                packaging: packaging,
-                type: channel,
-                originalRow: row, 
-                fact: 0,
-                abcCategory: 'C'
-            });
-        }
-        
-        const pt = uniquePlottableClients.get(normAddr);
-        if (pt) {
-            pt.fact = (pt.fact || 0) + weight;
-            // Link this client point to the aggregated group
-            aggregatedData[groupKey].clients.set(normAddr, pt);
+        for (const brand of brands) {
+            const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
+            if (!aggregatedData[groupKey]) {
+                aggregatedData[groupKey] = {
+                    key: groupKey, 
+                    clientName: `${reg}: ${brand}`, 
+                    brand: brand, 
+                    packaging: packaging, 
+                    rm, 
+                    city: parsed.city,
+                    region: reg, 
+                    fact: 0, 
+                    potential: 0, 
+                    growthPotential: 0, 
+                    growthPercentage: 0,
+                    clients: new Map(),
+                };
+            }
+
+            aggregatedData[groupKey].fact += weightPerBrand;
+
+            if (!uniquePlottableClients.has(normAddr)) {
+                const okb = okbCoordIndex.get(normAddr);
+                uniquePlottableClients.set(normAddr, {
+                    key: normAddr,
+                    lat: cacheEntry?.lat || okb?.lat,
+                    lon: cacheEntry?.lon || okb?.lon,
+                    status: 'match',
+                    name: String(row[clientNameHeader || ''] || 'ТТ'),
+                    address: rawAddr, 
+                    city: parsed.city, 
+                    region: reg, 
+                    rm, 
+                    brand: brand, 
+                    packaging: packaging,
+                    type: channel,
+                    originalRow: row, 
+                    fact: 0,
+                    abcCategory: 'C'
+                });
+            }
+            
+            const pt = uniquePlottableClients.get(normAddr);
+            if (pt) {
+                pt.fact = (pt.fact || 0) + weightPerBrand;
+                aggregatedData[groupKey].clients.set(normAddr, pt);
+            }
         }
     }
 

@@ -274,7 +274,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = 'Не определен';
 
-        const brand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        // 1. Get raw brand value
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        // 2. Split by comma or semicolon to handle multiple brands in one row
+        const brands = rawBrand.split(/[,;]/).map(b => b.trim()).filter(b => b.length > 0);
+        
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
         const parsed = parseRussianAddress(rawAddr);
@@ -290,77 +294,83 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
-        const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
-        if (!state_aggregatedData[groupKey]) {
-            state_aggregatedData[groupKey] = {
-                key: groupKey, 
-                clientName: `${reg}: ${brand}`, 
-                brand: brand, 
-                packaging: packaging, 
-                rm, 
-                city: parsed.city,
-                region: reg, 
-                fact: 0,
-                monthlyFact: {},
-                potential: 0, 
-                growthPotential: 0, 
-                growthPercentage: 0, 
-                clients: new Map(),
-            };
-        }
-
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
-        const weight = parseCleanFloat(weightRaw);
-        
+        const totalWeight = parseCleanFloat(weightRaw);
+        // 3. Divide weight evenly among detected brands
+        const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
+
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
-        state_aggregatedData[groupKey].fact += weight;
-        
-        if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
-        state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weight;
+        // 4. Iterate over each brand and create separate records
+        for (const brand of brands) {
+            const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
+            
+            if (!state_aggregatedData[groupKey]) {
+                state_aggregatedData[groupKey] = {
+                    key: groupKey, 
+                    clientName: `${reg}: ${brand}`, 
+                    brand: brand, 
+                    packaging: packaging, 
+                    rm, 
+                    city: parsed.city,
+                    region: reg, 
+                    fact: 0,
+                    monthlyFact: {},
+                    potential: 0, 
+                    growthPotential: 0, 
+                    growthPercentage: 0, 
+                    clients: new Map(),
+                };
+            }
 
-        if (!state_uniquePlottableClients.has(normAddr)) {
-            const okb = state_okbCoordIndex.get(normAddr);
+            state_aggregatedData[groupKey].fact += weightPerBrand;
             
-            // --- CRITICAL FIX START: Extract coordinates directly from row ---
-            const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)']);
-            const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)']);
-            const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
-            const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
-            
-            // Prioritize explicit row coordinates, then cache, then OKB index
-            const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
-            const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
-            // --- CRITICAL FIX END ---
+            if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
+            state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
 
-            state_uniquePlottableClients.set(normAddr, {
-                key: normAddr,
-                lat: effectiveLat,
-                lon: effectiveLon,
-                status: 'match',
-                name: String(row[state_clientNameHeader || ''] || 'ТТ'),
-                address: rawAddr, 
-                city: parsed.city, 
-                region: reg, 
-                rm, 
-                brand: brand, 
-                packaging: packaging, 
-                type: channel,
-                originalRow: row, 
-                fact: 0,
-                monthlyFact: {},
-                abcCategory: 'C'
-            });
-        }
-        
-        const pt = state_uniquePlottableClients.get(normAddr);
-        if (pt) {
-            pt.fact = (pt.fact || 0) + weight;
-            if (!pt.monthlyFact) pt.monthlyFact = {};
-            pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weight;
+            if (!state_uniquePlottableClients.has(normAddr)) {
+                const okb = state_okbCoordIndex.get(normAddr);
+                
+                const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)']);
+                const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)']);
+                const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
+                const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
+                
+                const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
+                const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
+
+                state_uniquePlottableClients.set(normAddr, {
+                    key: normAddr,
+                    lat: effectiveLat,
+                    lon: effectiveLon,
+                    status: 'match',
+                    name: String(row[state_clientNameHeader || ''] || 'ТТ'),
+                    address: rawAddr, 
+                    city: parsed.city, 
+                    region: reg, 
+                    rm, 
+                    brand: brand, // Note: For the map point, we just keep the last processed brand or can be mixed. Map points are unique by address.
+                    packaging: packaging, 
+                    type: channel,
+                    originalRow: row, 
+                    fact: 0,
+                    monthlyFact: {},
+                    abcCategory: 'C'
+                });
+            }
             
-            state_aggregatedData[groupKey].clients.set(normAddr, pt);
+            const pt = state_uniquePlottableClients.get(normAddr);
+            if (pt) {
+                pt.fact = (pt.fact || 0) + weightPerBrand;
+                if (!pt.monthlyFact) pt.monthlyFact = {};
+                pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weightPerBrand;
+                
+                // Overwrite brand on point to generic if multiple brands exist at this address? 
+                // Or just link it. The AggregatedDataRow tracks the specific brand breakdown.
+                
+                state_aggregatedData[groupKey].clients.set(normAddr, pt);
+            }
         }
     }
     
