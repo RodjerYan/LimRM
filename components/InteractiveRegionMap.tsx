@@ -41,11 +41,26 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
 // Robust coordinate parser helper
 const parseCoord = (val: any): number | null => {
     if (val === null || val === undefined) return null;
-    if (typeof val === 'number') return val === 0 ? null : val; // Assume 0,0 is invalid for this dataset
+    if (typeof val === 'number') return val === 0 ? null : val;
     const str = String(val).trim().replace(',', '.');
     if (str === '') return null;
     const num = parseFloat(str);
     return isNaN(num) || num === 0 ? null : num;
+};
+
+// Robust key finder for coordinates
+const getCoordinate = (item: any, keys: string[]) => {
+    if (!item) return null;
+    for (const key of keys) {
+        // Direct check
+        if (item[key] !== undefined && item[key] !== null && item[key] !== '') return item[key];
+        
+        // Case-insensitive check
+        const lowerKey = key.toLowerCase();
+        const foundKey = Object.keys(item).find(k => k.toLowerCase() === lowerKey);
+        if (foundKey && item[foundKey] !== undefined && item[foundKey] !== null && item[foundKey] !== '') return item[foundKey];
+    }
+    return null;
 };
 
 const fixChukotkaGeoJSON = (feature: any) => {
@@ -188,6 +203,17 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
+
+    // Debug logging for data analysis
+    useEffect(() => {
+        if (potentialClients.length > 0) {
+            console.log('--- MAP DEBUG: Potential Client Sample ---', potentialClients[0]);
+            console.log('--- MAP DEBUG: Keys ---', Object.keys(potentialClients[0]));
+        }
+        if (activeClients.length > 0) {
+            console.log('--- MAP DEBUG: Active Client Sample ---', activeClients[0]);
+        }
+    }, [potentialClients, activeClients]);
 
     useEffect(() => {
         const fetchGeoData = async () => {
@@ -393,8 +419,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const pointsForBounds: L.LatLngExpression[] = [];
 
         potentialClients.forEach(tt => {
-            const lat = parseCoord(tt.lat);
-            const lon = parseCoord(tt.lon);
+            // Robust check for coordinates in various keys
+            const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
+            const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+
+            const lat = parseCoord(rawLat);
+            const lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
                 const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
@@ -404,15 +434,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     renderer: markersRenderer
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
+                pointsForBounds.push([lat, lon]);
             }
         });
     
         activeClients.forEach(tt => {
-            const lat = parseCoord(tt.lat);
-            const lon = parseCoord(tt.lon);
+            const rawLat = getCoordinate(tt, ['lat', 'latitude', 'coords']);
+            const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'coords']);
+
+            const lat = parseCoord(rawLat);
+            const lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
-                console.log('Рисую маркер:', lat, lon, tt.name);
+                // console.log('Рисую маркер:', lat, lon, tt.name);
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([lat, lon], {
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9,
