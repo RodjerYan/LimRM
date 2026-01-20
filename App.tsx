@@ -66,19 +66,59 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
-    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ (Защита от TypeError) ---
-    // Гарантирует, что у каждой строки есть массив clients
+    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ И "ЛЕЧЕНИЕ" ДАННЫХ ---
+    // 1. Гарантирует наличие массива clients
+    // 2. РАЗДЕЛЯЕТ склеенные бренды (например, "SIRIUS, AJO" -> 2 строки), если они пришли из старого кэша
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
-        return rows.map(row => {
-            if (!row) return null;
-            return {
+        
+        const result: AggregatedDataRow[] = [];
+
+        rows.forEach(row => {
+            if (!row) return;
+
+            const brandRaw = String(row.brand || '').trim();
+            
+            // Проверка на склеенные бренды (наличие запятой, точки с запятой или переноса строки)
+            // Исключаем случаи, когда бренд реально содержит запятую (редко), проверяя длину и контекст
+            const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
+
+            if (hasMultipleBrands) {
+                // Разбиваем строку
+                const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+                
+                if (parts.length > 1) {
+                    // Делим показатели поровну (лучшее приближение для агрегированных данных)
+                    const splitFactor = 1 / parts.length;
+                    
+                    parts.forEach((brandPart, idx) => {
+                        // Создаем новую уникальную строку для каждого бренда
+                        result.push({
+                            ...row,
+                            key: `${row.key}_split_${idx}`, // Уникальный ключ
+                            brand: brandPart,
+                            clientName: `${row.region}: ${brandPart}`, // Обновляем имя группы
+                            fact: (row.fact || 0) * splitFactor,
+                            potential: (row.potential || 0) * splitFactor,
+                            growthPotential: (row.growthPotential || 0) * splitFactor,
+                            // Клиенты остаются те же (ссылка), но это ок для карты, т.к. там идет дедупликация по key
+                            clients: Array.isArray(row.clients) ? row.clients : []
+                        });
+                    });
+                    return; // Исходную "склеенную" строку не добавляем
+                }
+            }
+
+            // Стандартное добавление, если разделение не требуется
+            result.push({
                 ...row,
                 clients: Array.isArray(row.clients) && row.clients.length > 0 
                     ? row.clients 
                     : [{ ...row, key: row.key || row.address || `gen_${Math.random()}` }]
-            };
-        }).filter(Boolean) as AggregatedDataRow[];
+            });
+        });
+
+        return result;
     }, []);
 
     const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
@@ -113,7 +153,7 @@ const App: React.FC = () => {
             const fullJson = chunks.join('');
             if (fullJson) {
                 const data = JSON.parse(fullJson);
-                // APPLY NORMALIZATION
+                // APPLY NORMALIZATION (Fixes combined brands from snapshot)
                 const validated = normalize(data.aggregatedData || []);
                 
                 setAllData(validated);
@@ -293,7 +333,7 @@ const App: React.FC = () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                // APPLY NORMALIZATION ON LOAD
+                // APPLY NORMALIZATION ON LOAD - This fixes persistent display bugs
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
@@ -315,11 +355,8 @@ const App: React.FC = () => {
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
     const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
-        // ... (implementation same as before but respecting useMemo)
-        // We update allData, and allActiveClients updates automatically
         setAllData(prev => {
             return prev.map(group => {
-                // Find group containing the client
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
@@ -329,24 +366,19 @@ const App: React.FC = () => {
                 return group;
             });
         });
-        // DB save logic...
     }, []);
 
     // --- 1. FILTERED DATA CALCULATION ---
-    // Moved up so it can be used for 'allActiveClients' and 'Adapta' props
     const filtered = useMemo(() => {
-        // 1. DATE FILTERING (Recalculate Fact based on monthly breakdown)
         let processedData = allData;
 
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
-                // If monthlyFact is missing, we cannot filter, so we keep the original row
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
                     return row; 
                 }
 
                 let newRowFact = 0;
-                // Sum up volumes for months within the range for the ROW
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
                     if (filterStartDate && dateKey < filterStartDate) return;
@@ -354,11 +386,9 @@ const App: React.FC = () => {
                     newRowFact += val;
                 });
 
-                // RECALCULATE CLIENTS
-                // Only keep clients that have > 0 volume in the selected period
                 const activeClients = row.clients.map(client => {
                     if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
-                        return client; // Fallback to keep if no granular data
+                        return client; 
                     }
                     
                     let clientSum = 0;
@@ -369,25 +399,18 @@ const App: React.FC = () => {
                         clientSum += v;
                     });
                     
-                    // Return updated client with new fact. 
-                    // Filter happens in the next step.
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
 
-                // Return a new row with updated 'fact' and filtered 'clients'
                 return { ...row, fact: newRowFact, clients: activeClients };
-            }).filter(r => r.fact > 0); // Hide rows with 0 sales in selected period
+            }).filter(r => r.fact > 0); 
         }
 
-        // 2. ENRICHMENT (Calculates Plans based on the possibly modified Fact)
         const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
-        
-        // 3. APPLY CATEGORY FILTERS
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
     // --- 2. ACTIVE CLIENTS (DERIVED FROM FILTERED DATA) ---
-    // This ensures the header counter and maps reflect the chosen dates
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -399,29 +422,23 @@ const App: React.FC = () => {
     }, [filtered]);
 
     // --- 3. POTENTIAL CLIENTS (FILTERED FROM OKB) ---
-    // Filter OKB data based on selected regions to avoid map clutter
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
         
-        // Filter out rows without coordinates immediately for performance
         const coordsOnly = okbData.filter(r => {
-            // Robust check for coordinates, handling potential string/number issues
             const lat = r.lat;
             const lon = r.lon;
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
 
-        // If no region filter, return all (or you could limit if performance is still an issue)
         if (filters.region.length === 0) {
             return coordsOnly;
         }
 
-        // Match based on selected regions
         return coordsOnly.filter(row => {
             const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
             if (!rawRegion) return false;
             
-            // Loose matching: does the raw region string contain any of the selected regions?
             return filters.region.some(selectedReg => 
                 rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) || 
                 selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
@@ -476,7 +493,7 @@ const App: React.FC = () => {
                             disabled={processingState.isProcessing}
                             unidentifiedCount={unidentifiedRows.length}
                             activeClientsCount={allActiveClients.length}
-                            uploadedData={filtered} // USE FILTERED DATA HERE
+                            uploadedData={filtered} 
                             dbStatus={dbStatus}
                             onStartEdit={setEditingClient}
                             startDate={filterStartDate} 

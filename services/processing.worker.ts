@@ -276,8 +276,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         // 1. Get raw brand value
         const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
-        // 2. Split by comma or semicolon to handle multiple brands in one row
-        const brands = rawBrand.split(/[,;]/).map(b => b.trim()).filter(b => b.length > 0);
+        // 2. Split by comma, semicolon, pipe, or newline (more aggressive split)
+        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
         
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
