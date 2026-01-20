@@ -372,7 +372,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 
                 // Optimistic History Update
                 const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                const newEntries = [];
+                
+                // FIX: Explicitly type the array to avoid TS7034 error
+                const newEntries: string[] = [];
+                
                 if (isAddressChanged) newEntries.push(`${oldAddress} [${timestamp}]`);
                 if (isCommentChanged) newEntries.push(`Комментарий: "${comment}" [${timestamp}]`);
                 
