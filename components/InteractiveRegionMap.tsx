@@ -424,9 +424,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
 
             const lat = parseCoord(rawLat);
-            const lon = parseCoord(rawLon);
+            let lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
+                // FIX: Shift negative longitudes to keep them connected to Russian Far East
+                if (lon < 0) lon += 360;
+
                 const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                 const marker = L.circleMarker([lat, lon], {
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8,
@@ -443,9 +446,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'coords']);
 
             const lat = parseCoord(rawLat);
-            const lon = parseCoord(rawLon);
+            let lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
+                // FIX: Shift negative longitudes to keep them connected to Russian Far East
+                if (lon < 0) lon += 360;
+
                 // console.log('Рисую маркер:', lat, lon, tt.name);
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([lat, lon], {

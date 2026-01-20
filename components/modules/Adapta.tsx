@@ -5,7 +5,7 @@ import OKBManagement from '../OKBManagement';
 import OutlierDetailsModal from '../OutlierDetailsModal';
 import Modal from '../Modal';
 import { OkbStatus, WorkerResultPayload, AggregatedDataRow, FileProcessingState, CloudLoadParams, MapPoint } from '../../types';
-import { CheckIcon, WarningIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon, TrendingUpIcon, TrashIcon } from '../icons';
+import { CheckIcon, AlertIcon, DataIcon, InfoIcon, SuccessIcon, ChannelIcon, LoaderIcon, SearchIcon, UsersIcon, FactIcon } from '../icons';
 import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
@@ -37,115 +37,6 @@ interface OutlierItem {
     zScore: number;
     reason: string;
 }
-
-// --- SUB-COMPONENT: DATE RANGE CONTROL (FIXED) ---
-const DateRangeControl: React.FC<{
-    startDate: string;
-    endDate: string;
-    onApply: (start: string, end: string) => void;
-    disabled: boolean;
-}> = ({ startDate, endDate, onApply, disabled }) => {
-    
-    const [localStart, setLocalStart] = useState(startDate);
-    const [localEnd, setLocalEnd] = useState(endDate);
-
-    // Sync local state with props whenever they change.
-    useEffect(() => {
-        setLocalStart(startDate);
-        setLocalEnd(endDate);
-    }, [startDate, endDate]);
-
-    const handleApply = () => {
-        onApply(localStart, localEnd);
-    };
-
-    const handleReset = () => {
-        setLocalStart('');
-        setLocalEnd('');
-        onApply('', '');
-    };
-
-    const hasActiveFilter = !!startDate || !!endDate;
-    const isInvalidRange = !!localStart && !!localEnd && localStart > localEnd;
-
-    return (
-        <div className="relative group">
-            <div className="absolute -inset-0.5 bg-gradient-to-r from-orange-600 to-amber-600 rounded-2xl blur opacity-20 group-hover:opacity-40 transition duration-1000"></div>
-            <div className="relative bg-gray-900/80 backdrop-blur-xl p-6 rounded-2xl border border-white/10 shadow-2xl">
-                
-                {/* Header */}
-                <div className="flex items-center gap-4 mb-6">
-                    <div className="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-orange-500 to-amber-600 text-white font-bold shadow-lg shadow-orange-500/30 ring-2 ring-white/10">
-                        3
-                    </div>
-                    <div>
-                        <div className="flex items-center gap-2">
-                            <h2 className="text-lg font-bold text-white leading-tight">Настройка Периода</h2>
-                            {hasActiveFilter && <span className="px-2 py-0.5 rounded-md bg-orange-500/20 text-orange-300 text-[10px] font-bold uppercase border border-orange-500/30">Активен</span>}
-                        </div>
-                        <p className="text-xs text-gray-400">Фильтрация данных по времени</p>
-                    </div>
-                </div>
-
-                {/* Inputs Row */}
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="space-y-1">
-                        <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider ml-1">Начало</label>
-                        <div className="relative">
-                            <input 
-                                type="month" 
-                                value={localStart}
-                                onChange={(e) => setLocalStart(e.target.value)}
-                                disabled={disabled}
-                                className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
-                            />
-                        </div>
-                    </div>
-                    <div className="space-y-1">
-                        <label className="text-[10px] uppercase text-gray-500 font-bold tracking-wider ml-1">Конец</label>
-                        <div className="relative">
-                            <input 
-                                type="month" 
-                                value={localEnd}
-                                onChange={(e) => setLocalEnd(e.target.value)}
-                                disabled={disabled}
-                                className="w-full bg-gray-800/60 border border-gray-600 rounded-xl py-2.5 px-3 text-sm text-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all disabled:opacity-50"
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-3">
-                    <button 
-                        onClick={handleApply}
-                        disabled={disabled || isInvalidRange}
-                        className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        <span className="uppercase tracking-wide text-xs">Применить</span>
-                    </button>
-                    
-                    <button 
-                        onClick={handleReset}
-                        disabled={disabled || (!localStart && !localEnd)}
-                        className="px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-3 rounded-xl transition-all border border-gray-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-lg hover:shadow-gray-900/20 active:scale-[0.98]"
-                        title="Сбросить фильтр (показать всё)"
-                    >
-                        <TrashIcon className="w-4 h-4" />
-                    </button>
-                </div>
-
-                {/* Visual Feedback */}
-                {isInvalidRange && (
-                    <div className="mt-3 text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/20 text-center">
-                        Ошибка: Дата начала позже даты конца
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
-
 
 const Adapta: React.FC<AdaptaProps> = (props) => {
     const [activeTab, setActiveTab] = useState<'ingest' | 'hygiene'>('ingest');
@@ -362,17 +253,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                         <OKBManagement onStatusChange={props.onOkbStatusChange} onDataChange={props.onOkbDataChange} status={props.okbStatus} disabled={props.disabled} />
                         
                         <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
-                        
-                        {/* REDESIGNED DATE RANGE CONTROL */}
-                        <DateRangeControl 
-                            startDate={props.startDate} 
-                            endDate={props.endDate} 
-                            onApply={(start, end) => {
-                                props.onStartDateChange(start);
-                                props.onEndDateChange(end);
-                            }}
-                            disabled={props.disabled}
-                        />
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
