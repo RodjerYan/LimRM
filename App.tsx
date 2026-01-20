@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -26,6 +25,10 @@ const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
+
+// КОНСТАНТА: Максимальный размер JSON-файла в байтах.
+// Ставим 850 КБ, чтобы с гарантированным запасом проходить лимит сервера в 1 МБ (1048576 байт).
+const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
 
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
@@ -66,12 +69,11 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
-    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ И "ЛЕЧЕНИЕ" ДАННЫХ ---
+    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         
         const result: AggregatedDataRow[] = [];
-
         rows.forEach(row => {
             if (!row) return;
 
@@ -97,7 +99,7 @@ const App: React.FC = () => {
                     return;
                 }
             }
-
+            
             result.push({
                 ...row,
                 clients: Array.isArray(row.clients) && row.clients.length > 0 
@@ -105,7 +107,6 @@ const App: React.FC = () => {
                     : [{ ...row, key: row.key || row.address || `gen_${Math.random()}` }]
             });
         });
-
         return result;
     }, []);
 
@@ -121,104 +122,199 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация...', progress: 0 }));
             
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            const fileList = await listRes.json();
+            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
             
-            if (!Array.isArray(fileList) || fileList.length === 0) return false;
+            let fileList = await listRes.json();
+            
+            if (!Array.isArray(fileList) || fileList.length === 0) {
+                console.warn('No snapshot files found');
+                return false;
+            }
+
+            // Сортировка файлов (на всякий случай оставляем)
+            fileList.sort((a: any, b: any) => {
+                const nameA = a.name || '';
+                const nameB = b.name || '';
+                const chunkMatchA = nameA.match(/(?:chunk|part)[-_]?(\d+)/i);
+                const chunkMatchB = nameB.match(/(?:chunk|part)[-_]?(\d+)/i);
+                if (chunkMatchA && chunkMatchB) return parseInt(chunkMatchA[1], 10) - parseInt(chunkMatchB[1], 10);
+                return nameA.localeCompare(nameB);
+            });
 
             let loadedCount = 0;
             const total = fileList.length;
+            
+            let accumulatedRows: AggregatedDataRow[] = [];
+            let loadedMeta: any = null;
+            let isSnapshotCorrupted = false;
 
-            const chunks = await Promise.all(fileList.map(file => 
-                fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`)
-                    .then(res => res.text())
-                    .then(text => {
-                        loadedCount++;
-                        setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-                        return text;
-                    })
-            ));
+            for (const file of fileList) {
+                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
+                if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
+                
+                const text = await res.text();
+                
+                // 1. ДЕТЕКТОР ОБРЕЗКИ: Если файл ровно 1МБ (или чуть больше из-за заголовков), он обрезан сервером.
+                // 1048576 байт = ровно 1 MiB.
+                if (text.length >= 1048576) {
+                    console.warn(`Chunk ${file.name} is truncated (size hit 1MB limit). Ignoring corrupted cloud data.`);
+                    isSnapshotCorrupted = true;
+                    break; // Нет смысла продолжать, данные потеряны
+                }
 
-            const fullJson = chunks.join('');
-            if (fullJson) {
-                const data = JSON.parse(fullJson);
-                const validated = normalize(data.aggregatedData || []);
+                try {
+                    // 2. БЕЗОПАСНЫЙ ПАРСИНГ
+                    const chunkData = JSON.parse(text);
+                    
+                    if (Array.isArray(chunkData.rows)) {
+                        accumulatedRows.push(...chunkData.rows);
+                    } else if (Array.isArray(chunkData.aggregatedData)) {
+                         accumulatedRows.push(...chunkData.aggregatedData);
+                    }
+
+                    if (chunkData.meta) {
+                        loadedMeta = chunkData.meta;
+                    }
+                } catch (jsonErr) {
+                    // Если JSON не парсится (например, старый строковый формат, который теперь обрезан)
+                    console.warn(`Error parsing chunk ${file.id}. It might be legacy/corrupted data.`, jsonErr);
+                    isSnapshotCorrupted = true;
+                    break;
+                }
+                
+                loadedCount++;
+                setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
+            }
+
+            // РЕЗУЛЬТАТ:
+            if (isSnapshotCorrupted) {
+                addNotification('Облачный снимок поврежден (старый формат или лимит размера). Используем локальные данные.', 'warning');
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Сбой облака', progress: 0 }));
+                return false; // Возвращаем false, чтобы App использовал локальные данные
+            }
+
+            if (accumulatedRows.length > 0 || loadedMeta) {
+                const validated = normalize(accumulatedRows);
                 
                 setAllData(validated);
                 allDataRef.current = validated;
                 
-                setUnidentifiedRows(data.unidentifiedRows || []);
-                setOkbRegionCounts(data.okbRegionCounts || {});
-                totalRowsProcessedRef.current = data.totalRowsProcessed || 0;
+                const safeMeta = loadedMeta || {};
+                const uRows = safeMeta.unidentifiedRows || [];
+                const rCounts = safeMeta.okbRegionCounts || {};
+                
+                setUnidentifiedRows(uRows);
+                setOkbRegionCounts(rCounts);
+                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
 
                 await saveAnalyticsState({
                     allData: validated,
-                    unidentifiedRows: data.unidentifiedRows || [],
-                    okbRegionCounts: data.okbRegionCounts || {},
-                    totalRowsProcessed: data.totalRowsProcessed || 0,
+                    unidentifiedRows: uRows,
+                    okbRegionCounts: rCounts,
+                    totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: versionHash,
                     okbData: [], okbStatus: null
                 });
-
+                
                 localStorage.setItem('last_snapshot_version', versionHash);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
                 return true;
             }
+            
+            return false;
+
         } catch (e) { 
-            console.error("Snapshot error:", e); 
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка снимка' }));
+            console.error("Snapshot download error:", e); 
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
+            // Не показываем фатальную ошибку, чтобы не пугать пользователя, просто логируем
         }
         return false;
-    }, [normalize]);
+    }, [normalize, addNotification]);
 
-    // --- ФУНКЦИЯ СОХРАНЕНИЯ В ОБЛАКО (JSON SNAPSHOT) ---
+    // --- СОХРАНЕНИЕ В ОБЛАКО (БЕЗОПАСНОЕ, С УЧЕТОМ РАЗМЕРА) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         try {
-            // Визуальный индикатор в верхней панели
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Обновление облака...', progress: 99 }));
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Анализ данных...', progress: 0 }));
             
-            const payload = {
-                aggregatedData: currentData,
-                unidentifiedRows: currentUnidentified,
-                okbRegionCounts: okbRegionCounts,
-                totalRowsProcessed: totalRowsProcessedRef.current,
-                versionHash: `edit_${Date.now()}`
+            const newVersionHash = `edit_${Date.now()}`;
+            const chunks: string[] = [];
+            
+            // 1. Формируем первый чанк (Метаданные)
+            let currentChunkObj: any = {
+                chunkIndex: 0,
+                versionHash: newVersionHash,
+                rows: [],
+                meta: {
+                    unidentifiedRows: currentUnidentified,
+                    okbRegionCounts: okbRegionCounts,
+                    totalRowsProcessed: totalRowsProcessedRef.current,
+                    versionHash: newVersionHash,
+                    timestamp: Date.now()
+                }
             };
-            
-            const jsonString = JSON.stringify(payload);
-            // REDUCED CHUNK SIZE TO 1MB to prevent Vercel 413 Errors
-            const CHUNK_SIZE = 1 * 1024 * 1024; 
-            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
 
-            // 1. Сохраняем метаданные
+            let currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
+
+            // 2. Добавляем строки, следя за размером
+            for (const row of currentData) {
+                const rowStr = JSON.stringify(row);
+                // +2 байта на запятую и структуру массива
+                const rowSize = new Blob([rowStr]).size + 2; 
+
+                // Если добавление строки превысит лимит 850 КБ
+                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
+                    chunks.push(JSON.stringify(currentChunkObj)); // Фиксируем текущий чанк
+                    
+                    // Начинаем новый
+                    currentChunkObj = {
+                        chunkIndex: chunks.length,
+                        versionHash: newVersionHash,
+                        rows: []
+                        // Meta только в первом, тут не нужна
+                    };
+                    currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
+                }
+
+                currentChunkObj.rows.push(row);
+                currentSize += rowSize;
+            }
+            
+            // Фиксируем последний чанк
+            chunks.push(JSON.stringify(currentChunkObj));
+
+            const totalChunks = chunks.length;
+
+            // 3. Отправляем
+            for (let i = 0; i < totalChunks; i++) {
+                setProcessingState(prev => ({ ...prev, message: `Выгрузка части ${i+1}/${totalChunks}`, progress: Math.round((i/totalChunks)*90) }));
+                
+                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chunk: chunks[i] }) 
+                });
+                
+                if (!res.ok) throw new Error(`Upload failed for chunk ${i}`);
+            }
+            
+            // 4. Метаданные (Финализация)
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    versionHash: payload.versionHash,
+                    versionHash: newVersionHash,
                     chunkCount: totalChunks,
-                    totalRows: payload.totalRowsProcessed,
+                    totalRows: totalRowsProcessedRef.current,
                     timestamp: Date.now()
                 })
             });
 
-            // 2. Сохраняем чанки
-            for (let i = 0; i < totalChunks; i++) {
-                const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk })
-                });
-                if (!res.ok) throw new Error(`Chunk ${i} failed`);
-            }
-
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизировано', progress: 100 }));
-            addNotification('Данные успешно сохранены в облаке', 'success');
-
+            addNotification('Данные успешно сохранены (новый формат)', 'success');
         } catch (e) {
             console.error("Cloud Save Error:", e);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сохранения' }));
-            addNotification('Ошибка синхронизации с облаком', 'warning');
+            addNotification('Ошибка сохранения в облако', 'warning');
         }
     };
 
@@ -269,7 +365,6 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
-                // Save Checkpoint to Cloud
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
             }
             else if (msg.type === 'result_finished') {
@@ -290,7 +385,6 @@ const App: React.FC = () => {
                     okbData: [], okbStatus: null
                 });
                 
-                // Final save to cloud
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
                 
                 localStorage.setItem('last_snapshot_version', finalVersion);
@@ -308,8 +402,6 @@ const App: React.FC = () => {
             const allFiles = listRes.ok ? await listRes.json() : [];
             for (const file of allFiles) {
                 if (processedFileIdsRef.current.has(file.id)) continue;
-                // Note: Actual fetching logic would go here, simplified for brevity as per existing structure
-                // In real implementation, we would fetch chunks and post 'PROCESS_CHUNK' to worker
                 processedFileIdsRef.current.add(file.id);
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
@@ -361,9 +453,7 @@ const App: React.FC = () => {
                     okbData: [], okbStatus: null
                 });
                 
-                // Save local file result to cloud snapshot as well
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
-
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Готово', totalRowsProcessed: payload.totalRowsProcessed }));
                 setActiveModule('amp');
             }
@@ -384,7 +474,6 @@ const App: React.FC = () => {
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
             }
-
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
@@ -399,16 +488,14 @@ const App: React.FC = () => {
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        let newData = [...allDataRef.current]; // Use ref for latest state
+        let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
-
-        // Сценарий 1: Перенос из неопознанных в опознанные
+        
         if (typeof originalIndex === 'number') {
             const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
             if (rowIndex !== -1) {
                 newUnidentified.splice(rowIndex, 1);
             }
-
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
 
@@ -434,9 +521,7 @@ const App: React.FC = () => {
                     clients: [newPoint]
                 });
             }
-        } 
-        // Сценарий 2: Редактирование существующей точки
-        else {
+        } else {
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
@@ -448,29 +533,23 @@ const App: React.FC = () => {
             });
         }
 
-        // Обновляем локальный стейт немедленно
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // КРИТИЧНО: Сохраняем в облако фоном (не блокируя UI)
-        // Комментарии из newPoint будут сохранены внутри структуры newData
+        // Автосохранение (теперь безопасно)
         saveSnapshotToCloud(newData, newUnidentified).catch(err => {
             console.error("Background sync failed:", err);
             addNotification('Сбой фоновой синхронизации', 'error');
         });
-
-    }, [okbRegionCounts]); // Removed dependencies to allow stable callback
+    }, [okbRegionCounts]); 
 
     // --- 1. FILTERED DATA CALCULATION ---
     const filtered = useMemo(() => {
         let processedData = allData;
-
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
-                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
-                    return row; 
-                }
-
+                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row; 
+                
                 let newRowFact = 0;
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
@@ -480,9 +559,7 @@ const App: React.FC = () => {
                 });
 
                 const activeClients = row.clients.map(client => {
-                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
-                        return client; 
-                    }
+                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client; 
                     
                     let clientSum = 0;
                     Object.entries(client.monthlyFact).forEach(([d, v]) => {
@@ -498,12 +575,11 @@ const App: React.FC = () => {
                 return { ...row, fact: newRowFact, clients: activeClients };
             }).filter(r => r.fact > 0); 
         }
-
         const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS (DERIVED FROM FILTERED DATA) ---
+    // --- 2. ACTIVE CLIENTS ---
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -514,7 +590,7 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
-    // --- 3. POTENTIAL CLIENTS (FILTERED FROM OKB) ---
+    // --- 3. POTENTIAL CLIENTS ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
         
@@ -524,10 +600,8 @@ const App: React.FC = () => {
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
 
-        if (filters.region.length === 0) {
-            return coordsOnly;
-        }
-
+        if (filters.region.length === 0) return coordsOnly;
+        
         return coordsOnly.filter(row => {
             const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
             if (!rawRegion) return false;
@@ -595,6 +669,7 @@ const App: React.FC = () => {
                             onEndDateChange={setFilterEndDate}     
                         />
                     )}
+
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
                             <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
@@ -607,9 +682,11 @@ const App: React.FC = () => {
                             <ResultsTable data={filtered} onRowClick={setSelectedDetailsRow} unidentifiedRowsCount={unidentifiedRows.length} onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} disabled={allData.length === 0} />
                         </div>
                     )}
+
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
                     )}
+
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
@@ -624,7 +701,7 @@ const App: React.FC = () => {
                 {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
                 {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
             </Suspense>
-
+            
             {editingClient && (
                 <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
             )}

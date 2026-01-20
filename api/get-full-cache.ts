@@ -73,7 +73,8 @@ async function getSortedFiles(drive: any) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => f.id);
+    // Return objects with id and name instead of just ID strings
+    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name }));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -89,11 +90,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             // Snapshot Operations
             if (action === 'save-chunk') {
-                const sortedIds = await getSortedFiles(drive);
-                if (sortedIds[chunkIndex + 1]) {
+                const sortedFiles = await getSortedFiles(drive);
+                if (sortedFiles[chunkIndex + 1]) {
                     const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
                     await drive.files.update({ 
-                        fileId: sortedIds[chunkIndex + 1], 
+                        fileId: sortedFiles[chunkIndex + 1].id, 
                         media: { mimeType: 'application/json', body: content }, 
                         supportsAllDrives: true 
                     });
@@ -102,10 +103,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(404).json({ error: 'Chunk file slot not found.' });
             }
             if (action === 'save-meta') {
-                const sortedIds = await getSortedFiles(drive);
-                if (sortedIds[0]) {
+                const sortedFiles = await getSortedFiles(drive);
+                if (sortedFiles[0]) {
                     await drive.files.update({ 
-                        fileId: sortedIds[0], 
+                        fileId: sortedFiles[0].id, 
                         media: { mimeType: 'application/json', body: JSON.stringify(body) }, 
                         supportsAllDrives: true 
                     });
@@ -124,17 +125,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'GET') {
             // Snapshot Operations
             if (action === 'get-snapshot-meta') {
-                const sortedIds = await getSortedFiles(drive);
-                if (sortedIds.length === 0) return res.json({ versionHash: 'none' });
-                if (sortedIds[0] === FOLDER_ID) return res.json({ versionHash: 'none', error: 'Misconfiguration' });
+                const sortedFiles = await getSortedFiles(drive);
+                if (sortedFiles.length === 0) return res.json({ versionHash: 'none' });
+                if (sortedFiles[0].id === FOLDER_ID) return res.json({ versionHash: 'none', error: 'Misconfiguration' });
                 
                 try {
-                    console.log(`[get-snapshot-meta] Downloading meta ID: ${sortedIds[0]}`);
-                    const response = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                    console.log(`[get-snapshot-meta] Downloading meta ID: ${sortedFiles[0].id}`);
+                    const response = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
                     const content = JSON.parse(Buffer.from(response.data as any).toString('utf-8'));
                     
                     // Auto-correct chunkCount
-                    const actualChunksFound = Math.max(0, sortedIds.length - 1);
+                    const actualChunksFound = Math.max(0, sortedFiles.length - 1);
                     content.chunkCount = actualChunksFound;
                     
                     return res.json(content);
@@ -144,21 +145,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             }
             if (action === 'get-snapshot-list') {
-                const sortedIds = await getSortedFiles(drive);
-                if (sortedIds.length === 0) return res.json([]);
+                const sortedFiles = await getSortedFiles(drive);
+                if (sortedFiles.length === 0) return res.json([]);
 
                 try {
-                    const metaRes = await drive.files.get({ fileId: sortedIds[0], alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                    const metaRes = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
                     const meta = JSON.parse(Buffer.from(metaRes.data as any).toString('utf-8'));
-                    const activeChunkCount = meta.chunkCount || (sortedIds.length - 1);
+                    const activeChunkCount = meta.chunkCount || (sortedFiles.length - 1);
                     
                     // Get specifically required chunks
-                    const chunkFiles = sortedIds.slice(1, activeChunkCount + 1);
-                    return res.json(chunkFiles.map((id: string) => ({ id })));
+                    const chunkFiles = sortedFiles.slice(1, activeChunkCount + 1);
+                    // Now returning full objects with {id, name} so frontend can sort
+                    return res.json(chunkFiles);
                 } catch (e) {
                     // Fallback
-                    const chunkFiles = sortedIds.slice(1);
-                    return res.json(chunkFiles.map((id: string) => ({ id })));
+                    const chunkFiles = sortedFiles.slice(1);
+                    return res.json(chunkFiles);
                 }
             }
             if (action === 'get-file-content') {
