@@ -18,7 +18,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerMessage, WorkerResultPayload, CloudLoadParams, CoordsCache, OkbStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress, findValueInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 
@@ -398,6 +398,37 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
+    // --- 3. POTENTIAL CLIENTS (FILTERED FROM OKB) ---
+    // Filter OKB data based on selected regions to avoid map clutter
+    const mapPotentialClients = useMemo(() => {
+        if (!okbData || okbData.length === 0) return [];
+        
+        // Filter out rows without coordinates immediately for performance
+        const coordsOnly = okbData.filter(r => {
+            // Robust check for coordinates, handling potential string/number issues
+            const lat = r.lat;
+            const lon = r.lon;
+            return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
+        });
+
+        // If no region filter, return all (or you could limit if performance is still an issue)
+        if (filters.region.length === 0) {
+            return coordsOnly;
+        }
+
+        // Match based on selected regions
+        return coordsOnly.filter(row => {
+            const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
+            if (!rawRegion) return false;
+            
+            // Loose matching: does the raw region string contain any of the selected regions?
+            return filters.region.some(selectedReg => 
+                rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) || 
+                selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
+            );
+        });
+    }, [okbData, filters.region]);
+
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
 
@@ -456,7 +487,7 @@ const App: React.FC = () => {
                     )}
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
-                            <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={[]} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
+                            <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
                             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                 <div className="lg:col-span-1">
                                     <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
