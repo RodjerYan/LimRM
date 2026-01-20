@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -27,13 +28,15 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
 const App: React.FC = () => {
-    // 1. FIXED: Hooks must always be called at the top level, unconditional
+    if (!isApiKeySet) return <ApiKeyErrorDisplay />;
+
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     
     // --- DATE FILTER STATE ---
     const [filterStartDate, setFilterStartDate] = useState<string>('');
     const [filterEndDate, setFilterEndDate] = useState<string>('');
+
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
     
@@ -54,7 +57,6 @@ const App: React.FC = () => {
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     const workerRef = useRef<Worker | null>(null);
-    const isSavingToCloudRef = useRef<boolean>(false); // 4. FIXED: Lock for cloud save race conditions
 
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
@@ -64,22 +66,15 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
-    // 5. FIXED: Worker cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (workerRef.current) {
-                workerRef.current.terminate();
-            }
-        };
-    }, []);
-
     // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ И "ЛЕЧЕНИЕ" ДАННЫХ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         
         const result: AggregatedDataRow[] = [];
+
         rows.forEach(row => {
             if (!row) return;
+
             const brandRaw = String(row.brand || '').trim();
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
 
@@ -102,14 +97,15 @@ const App: React.FC = () => {
                     return;
                 }
             }
+
             result.push({
                 ...row,
-                // 8.1. FIXED: Use stable UUID instead of Math.random
                 clients: Array.isArray(row.clients) && row.clients.length > 0 
                     ? row.clients 
-                    : [{ ...row, key: row.key || row.address || `gen_${crypto.randomUUID()}` }]
+                    : [{ ...row, key: row.key || row.address || `gen_${Math.random()}` }]
             });
         });
+
         return result;
     }, []);
 
@@ -134,31 +130,25 @@ const App: React.FC = () => {
                 return false;
             }
 
-            // 2. FIXED: Sort chunks numerically to ensure correct JSON assembly
-            fileList.sort((a: any, b: any) => {
-                return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-            });
-
             let loadedCount = 0;
             const total = fileList.length;
             const chunks: string[] = [];
 
-            // Fetch chunks SEQUENTIALLY
+            // Fetch chunks SEQUENTIALLY to avoid network congestion and partial loads
             for (const file of fileList) {
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) {
                     throw new Error(`Failed to load chunk ${file.id}: ${res.status} ${res.statusText}`);
                 }
                 const text = await res.text();
+                if (!text && total > 1) {
+                     // Empty chunk in a multi-chunk file is suspicious but possible if it was an empty append
+                     console.warn(`Empty chunk received: ${file.id}`);
+                }
                 chunks.push(text);
                 
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-            }
-
-            // 2. FIXED: Validate chunk completeness
-            if (chunks.length !== fileList.length) {
-                throw new Error(`Integrity check failed: expected ${fileList.length} chunks, got ${chunks.length}`);
             }
 
             const fullJson = chunks.join('');
@@ -203,11 +193,8 @@ const App: React.FC = () => {
 
     // --- ФУНКЦИЯ СОХРАНЕНИЯ В ОБЛАКО (JSON SNAPSHOT) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
-        // 4. FIXED: Prevent race conditions
-        if (isSavingToCloudRef.current) return;
-        isSavingToCloudRef.current = true;
-
         try {
+            // Визуальный индикатор в верхней панели
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Обновление облака...', progress: 99 }));
             
             const payload = {
@@ -219,6 +206,7 @@ const App: React.FC = () => {
             };
             
             const jsonString = JSON.stringify(payload);
+            // REDUCED CHUNK SIZE TO 1MB to prevent Vercel 413 Errors
             const CHUNK_SIZE = 1 * 1024 * 1024; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
 
@@ -247,12 +235,11 @@ const App: React.FC = () => {
 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизировано', progress: 100 }));
             addNotification('Данные успешно сохранены в облаке', 'success');
+
         } catch (e) {
             console.error("Cloud Save Error:", e);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сохранения' }));
             addNotification('Ошибка синхронизации с облаком', 'warning');
-        } finally {
-            isSavingToCloudRef.current = false;
         }
     };
 
@@ -294,23 +281,21 @@ const App: React.FC = () => {
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
                 const validatedChunk = normalize(chunkData);
-                // 3. FIXED: Accumulate data, do not overwrite
-                setAllData(prev => [...prev, ...validatedChunk]);
+                setAllData(validatedChunk);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
                 totalRowsProcessedRef.current = totalProcessed;
             }
             else if (msg.type === 'CHECKPOINT') {
                 const payload = msg.payload;
                 const validated = normalize(payload.aggregatedData);
-                // Checkpoint implies full state at that point in time, usually
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
+                // Save Checkpoint to Cloud
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
                 const validated = normalize(payload.aggregatedData);
-                
                 setOkbRegionCounts(payload.okbRegionCounts);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
@@ -326,6 +311,7 @@ const App: React.FC = () => {
                     okbData: [], okbStatus: null
                 });
                 
+                // Final save to cloud
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
                 
                 localStorage.setItem('last_snapshot_version', finalVersion);
@@ -343,6 +329,8 @@ const App: React.FC = () => {
             const allFiles = listRes.ok ? await listRes.json() : [];
             for (const file of allFiles) {
                 if (processedFileIdsRef.current.has(file.id)) continue;
+                // Note: Actual fetching logic would go here, simplified for brevity as per existing structure
+                // In real implementation, we would fetch chunks and post 'PROCESS_CHUNK' to worker
                 processedFileIdsRef.current.add(file.id);
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
@@ -374,8 +362,7 @@ const App: React.FC = () => {
             else if (msg.type === 'result_chunk_aggregated') {
                 const { data: chunkData, totalProcessed } = msg.payload;
                 const validated = normalize(chunkData);
-                // 3. FIXED: Accumulate local data
-                setAllData(prev => [...prev, ...validated]);
+                setAllData(validated);
                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
             }
             else if (msg.type === 'result_finished') {
@@ -395,12 +382,13 @@ const App: React.FC = () => {
                     okbData: [], okbStatus: null
                 });
                 
+                // Save local file result to cloud snapshot as well
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
+
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Готово', totalRowsProcessed: payload.totalRowsProcessed }));
                 setActiveModule('amp');
             }
         };
-        
         workerRef.current.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData, totalRowsProcessed: 0 } });
         try { const buffer = await file.arrayBuffer(); workerRef.current.postMessage({ type: 'PROCESS_FILE', payload: { fileBuffer: buffer, fileName: file.name } }, [buffer]); } catch (e) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка чтения' })); }
     }, [processingState.isProcessing, okbData, normalize]);
@@ -417,6 +405,7 @@ const App: React.FC = () => {
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
             }
+
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
@@ -431,17 +420,19 @@ const App: React.FC = () => {
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        let newData = [...allDataRef.current]; 
+        let newData = [...allDataRef.current]; // Use ref for latest state
         let newUnidentified = [...unidentifiedRowsRef.current];
 
-        // Logic remains same ...
+        // Сценарий 1: Перенос из неопознанных в опознанные
         if (typeof originalIndex === 'number') {
             const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
             if (rowIndex !== -1) {
                 newUnidentified.splice(rowIndex, 1);
             }
+
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
+
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
@@ -465,6 +456,7 @@ const App: React.FC = () => {
                 });
             }
         } 
+        // Сценарий 2: Редактирование существующей точки
         else {
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
@@ -477,23 +469,29 @@ const App: React.FC = () => {
             });
         }
 
+        // Обновляем локальный стейт немедленно
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
+        // КРИТИЧНО: Сохраняем в облако фоном (не блокируя UI)
+        // Комментарии из newPoint будут сохранены внутри структуры newData
         saveSnapshotToCloud(newData, newUnidentified).catch(err => {
             console.error("Background sync failed:", err);
             addNotification('Сбой фоновой синхронизации', 'error');
         });
-    }, []); // 6. FIXED: Empty dependency array (refs are used)
+
+    }, [okbRegionCounts]); // Removed dependencies to allow stable callback
 
     // --- 1. FILTERED DATA CALCULATION ---
     const filtered = useMemo(() => {
         let processedData = allData;
+
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) {
                     return row; 
                 }
+
                 let newRowFact = 0;
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
@@ -501,6 +499,7 @@ const App: React.FC = () => {
                     if (filterEndDate && dateKey > filterEndDate) return;
                     newRowFact += val;
                 });
+
                 const activeClients = row.clients.map(client => {
                     if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
                         return client; 
@@ -513,18 +512,19 @@ const App: React.FC = () => {
                         if (filterEndDate && d > filterEndDate) return;
                         clientSum += v;
                     });
-                    // 7. FIXED: Deeper immutability by creating new object
+                    
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
-                
+
                 return { ...row, fact: newRowFact, clients: activeClients };
             }).filter(r => r.fact > 0); 
         }
+
         const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS ---
+    // --- 2. ACTIVE CLIENTS (DERIVED FROM FILTERED DATA) ---
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -535,7 +535,7 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
-    // --- 3. POTENTIAL CLIENTS ---
+    // --- 3. POTENTIAL CLIENTS (FILTERED FROM OKB) ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
         
@@ -544,9 +544,11 @@ const App: React.FC = () => {
             const lon = r.lon;
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
+
         if (filters.region.length === 0) {
             return coordsOnly;
         }
+
         return coordsOnly.filter(row => {
             const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
             if (!rawRegion) return false;
@@ -560,9 +562,6 @@ const App: React.FC = () => {
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
-
-    // 1. FIXED: Conditional return AFTER hooks
-    if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
