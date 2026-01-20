@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon, AlertIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
-// Fix for default marker icons in Leaflet when using build tools
+// --- Fix Leaflet Icons ---
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -15,7 +15,6 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// Кастомная иконка для успешно найденных координат
 const greenIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -25,10 +24,16 @@ const greenIcon = new L.Icon({
     shadowSize: [41, 41]
 });
 
+// --- Types ---
 type EditableData = MapPoint | UnidentifiedRow;
-// Добавлен статус 'success' для явного управления анимацией успеха
 type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
+
+interface NominatimResult {
+    lat: string;
+    lon: string;
+    display_name: string;
+}
 
 interface AddressEditModalProps {
     isOpen: boolean;
@@ -41,6 +46,14 @@ interface AddressEditModalProps {
     globalTheme: Theme;
 }
 
+// --- Safe Data Getter ---
+const getSafeOriginalRow = (data: EditableData | null): any => {
+    if (!data) return {};
+    const rawRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
+    return (rawRow && typeof rawRow === 'object') ? rawRow : {};
+};
+
+// --- Subcomponent: SinglePointMap ---
 const SinglePointMap: React.FC<{ 
     lat?: number; 
     lon?: number; 
@@ -57,17 +70,22 @@ const SinglePointMap: React.FC<{
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
+    
+    // Search State
     const [searchQuery, setSearchQuery] = useState('');
-    const [searchResults, setSearchResults] = useState<any[]>([]);
+    const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
     const [isSearching, setIsSearching] = useState(false);
-    const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+    
+    // Cleanup Refs
+    const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const mapResizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
+    // 1. Initialize Map
     useEffect(() => {
-        if (!mapContainerRef.current) return;
-        if (mapRef.current) return;
+        if (!mapContainerRef.current || mapRef.current) return;
 
         const map = L.map(mapContainerRef.current, { 
             scrollWheelZoom: true,
@@ -78,11 +96,8 @@ const SinglePointMap: React.FC<{
         });
 
         mapRef.current = map;
-
         L.control.zoom({ position: 'topleft' }).addTo(map);
-        tileLayerRef.current = L.tileLayer(darkUrl, {
-            attribution: '&copy; OpenStreetMap &copy; CARTO',
-        }).addTo(map);
+        tileLayerRef.current = L.tileLayer(darkUrl, { attribution: '&copy; CARTO' }).addTo(map);
 
         return () => {
             map.remove();
@@ -92,17 +107,21 @@ const SinglePointMap: React.FC<{
         };
     }, []);
 
+    // 2. Handle Theme
     useEffect(() => {
         if (!tileLayerRef.current) return;
-        const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
-        tileLayerRef.current.setUrl(targetUrl);
+        tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
     }, [theme]);
 
+    // 3. Handle Markers & View (Strict Coordinate Check)
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
 
-        if (lat && lon) {
+        // FIX: Strict check for coordinates (0 is valid!)
+        const hasCoords = typeof lat === 'number' && typeof lon === 'number';
+
+        if (hasCoords) {
             const latLng = L.latLng(lat, lon);
             const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
 
@@ -114,9 +133,8 @@ const SinglePointMap: React.FC<{
                 }).addTo(map);
 
                 marker.on('dragend', (e) => {
-                    const m = e.target;
-                    const p = m.getLatLng();
-                    onCoordinatesChange(p.lat, p.lng);
+                    const { lat: newLat, lng: newLon } = e.target.getLatLng();
+                    onCoordinatesChange(newLat, newLon);
                 });
                 markerRef.current = marker;
             } else {
@@ -134,14 +152,21 @@ const SinglePointMap: React.FC<{
             }
         }
         
-        const timer = setTimeout(() => map.invalidateSize(), 200);
-        return () => clearTimeout(timer);
-    }, [lat, lon, isSuccess, isExpanded, address]); 
+        // Fix map size on modal updates
+        if (mapResizeTimeoutRef.current) clearTimeout(mapResizeTimeoutRef.current);
+        mapResizeTimeoutRef.current = setTimeout(() => map.invalidateSize(), 200);
 
+        return () => {
+            if (mapResizeTimeoutRef.current) clearTimeout(mapResizeTimeoutRef.current);
+        };
+    }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]); 
+
+    // Search Logic
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
         setSearchQuery(q);
-        if (searchTimeout.current) clearTimeout(searchTimeout.current);
+        
+        if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
 
         if (q.length < 3) {
             setSearchResults([]);
@@ -149,11 +174,11 @@ const SinglePointMap: React.FC<{
         }
 
         setIsSearching(true);
-        searchTimeout.current = setTimeout(async () => {
+        searchTimeoutRef.current = setTimeout(async () => {
             try {
                 const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&accept-language=ru`);
                 if (res.ok) {
-                    const data = await res.json();
+                    const data: NominatimResult[] = await res.json();
                     setSearchResults(data);
                 }
             } catch (err) {
@@ -164,7 +189,7 @@ const SinglePointMap: React.FC<{
         }, 600);
     };
 
-    const selectResult = (result: any) => {
+    const selectResult = (result: NominatimResult) => {
         const newLat = parseFloat(result.lat);
         const newLon = parseFloat(result.lon);
         if (!isNaN(newLat) && !isNaN(newLon)) {
@@ -177,7 +202,10 @@ const SinglePointMap: React.FC<{
     return (
         <div className="relative h-full w-full group isolate">
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
-            <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
+            <div 
+                ref={mapContainerRef} 
+                className={`h-full w-full rounded-lg bg-gray-800 z-0 ${markerRef.current ? 'cursor-move' : 'cursor-default'}`} 
+            />
             
             <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
@@ -208,34 +236,21 @@ const SinglePointMap: React.FC<{
             </div>
 
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
-                <button 
-                    onClick={onToggleTheme}
-                    className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm"
-                    title={theme === 'dark' ? "Светлая карта" : "Темная карта"}
-                >
+                <button onClick={onToggleTheme} className="map-control-btn" title="Сменить тему">
                     {theme === 'dark' ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
                 </button>
-                {isExpanded ? (
-                    <button onClick={onCollapse} className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm" title="Свернуть карту">
-                        <MinimizeIcon className="w-5 h-5" />
-                    </button>
-                ) : (
-                    <button onClick={onExpand} className="flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm" title="Развернуть карту">
-                        <MaximizeIcon className="w-5 h-5" />
-                    </button>
-                )}
+                <button onClick={isExpanded ? onCollapse : onExpand} className="map-control-btn" title={isExpanded ? "Свернуть" : "Развернуть"}>
+                    {isExpanded ? <MinimizeIcon className="w-5 h-5" /> : <MaximizeIcon className="w-5 h-5" />}
+                </button>
             </div>
+            <style>{`.map-control-btn { @apply flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm; }`}</style>
         </div>
     );
 };
 
-// Safe getter for original row data to prevent null pointer exceptions
-const getSafeOriginalRow = (data: EditableData): any => {
-    const rawRow = (data as MapPoint).originalRow || (data as UnidentifiedRow).rowData;
-    return (rawRow && typeof rawRow === 'object') ? rawRow : {};
-};
-
+// --- Main Component: AddressEditModal ---
 const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme }) => {
+    // State
     const [editedAddress, setEditedAddress] = useState('');
     const [comment, setComment] = useState('');
     const [status, setStatus] = useState<Status>('idle');
@@ -247,77 +262,26 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
-    const justSaved = useRef(false);
 
+    // Refs
+    const isCommentTouched = useRef(false);
+    const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // --- Effect 1: Init Data & Theme ---
     useEffect(() => {
-        if (isOpen) {
-            setMapTheme(globalTheme);
-        }
-    }, [isOpen, globalTheme]);
+        if (!isOpen) return;
+        setMapTheme(globalTheme);
 
-    useEffect(() => {
-        if (isOpen && data && 'key' in data) {
-            const pt = data as MapPoint;
-            
-            // Сброс состояний при открытии
-            if (pt.geocodingError) {
-                setStatus('idle');
-                setError(pt.geocodingError);
-            } else if (pt.isGeocoding) {
-                setStatus('geocoding');
-                setError(null);
-                setManualCoords(null);
-            } else if (status === 'geocoding' && pt.lat && pt.lon) {
-                // Если мы были в режиме геокодирования и получили координаты - это успех
-                setStatus('success'); // Показываем успех
-                setTimeout(() => setStatus('idle'), 2500); // Возвращаем в idle
-                setError(null);
-                setManualCoords(null);
-                if (pt.lastUpdated) {
-                    setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
-                }
-            } else {
-                setStatus('idle');
-            }
-        }
-    }, [data, isOpen, status]);
-
-    const fetchHistory = async (rmName: string, address: string) => {
-        setIsLoadingHistory(true);
-        setHistory([]);
-        try {
-            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
-            if (res.ok) {
-                const result = await res.json();
-                if (result.history) {
-                    // Используем разделитель || и фильтруем пустые строки
-                    // Split только по ||, переносы строк внутри событий сохраняются
-                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
-                    setHistory(historyArray);
-                }
-                if (result.comment && !comment) {
-                    setComment(result.comment);
-                }
-            }
-        } catch (e) {
-            console.error("Failed to fetch history", e);
-        } finally {
-            setIsLoadingHistory(false);
-        }
-    };
-
-    const isUnidentified = (item: EditableData): item is UnidentifiedRow => {
-        return (item as UnidentifiedRow).originalIndex !== undefined;
-    };
-
-    useEffect(() => {
-        if (isOpen && data) {
+        if (data) {
             const originalRow = getSafeOriginalRow(data);
-            let currentAddress = '';
             
-            if (isUnidentified(data)) {
+            // 1. Resolve Address
+            let currentAddress = '';
+            const isUnidentifiedRow = (item: any): item is UnidentifiedRow => item.originalIndex !== undefined;
+
+            if (isUnidentifiedRow(data)) {
                 const rawAddress = findAddressInRow(originalRow) || '';
-                let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
+                let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor', 'партнер']);
                 if (!distributor) {
                     const values = Object.values(originalRow);
                     const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
@@ -329,34 +293,96 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 currentAddress = (data as MapPoint).address;
             }
 
+            // 2. Set State
             setEditedAddress(currentAddress);
-            setComment((data as MapPoint).comment || ''); 
+            setComment((data as MapPoint).comment || '');
+            isCommentTouched.current = false; // Reset touched state
             setManualCoords(null);
             setIsMapExpanded(false);
-            
+            setShowDeleteConfirm(false);
+
+            // 3. Set Status (Initial)
             const pt = data as MapPoint;
-            if (!isUnidentified(data) && pt.isGeocoding) {
+            if (pt.geocodingError) {
+                setStatus('idle');
+                setError(pt.geocodingError);
+            } else if (pt.isGeocoding) {
                 setStatus('geocoding');
+                setError(null);
             } else {
                 setStatus('idle');
+                setError(null);
             }
-            
-            setError(pt.geocodingError || null);
-            setShowDeleteConfirm(false);
-            
+
             if (pt.lastUpdated) {
                 setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
             } else {
                 setLastUpdatedStr(null);
             }
 
+            // 4. Fetch History
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
-                if (!justSaved.current) fetchHistory(rm, currentAddress);
-                else justSaved.current = false;
-            } else setHistory([]);
+                // Check if last update was extremely recent to avoid re-fetch cycle
+                const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
+                if (!isRecent) {
+                    fetchHistory(rm, currentAddress);
+                }
+            } else {
+                setHistory([]);
+            }
         }
-    }, [isOpen, data]);
+    }, [isOpen, data, globalTheme]); // Only runs on open or data change
+
+    // --- Effect 2: Watch Status Changes (e.g., Geocoding -> Success) ---
+    useEffect(() => {
+        if (!isOpen || !data || !('key' in data)) return;
+        const pt = data as MapPoint;
+
+        // Если компонент был в режиме геокодирования, а теперь пришли координаты - показываем успех
+        if (status === 'geocoding' && typeof pt.lat === 'number' && typeof pt.lon === 'number' && !pt.isGeocoding) {
+            setStatus('success');
+            
+            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+            successTimeoutRef.current = setTimeout(() => {
+                setStatus('idle');
+            }, 2500);
+        }
+        
+        return () => {
+            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+        };
+    }, [data, isOpen, status]); // Removed 'status' form internal conditions to avoid logic loops
+
+    // --- Fetch History ---
+    const fetchHistory = useCallback(async (rmName: string, address: string) => {
+        setIsLoadingHistory(true);
+        setHistory([]);
+        try {
+            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
+            if (res.ok) {
+                const result = await res.json();
+                if (result.history) {
+                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
+                    setHistory(historyArray);
+                }
+                // Only update comment if user hasn't touched it
+                if (result.comment && !comment && !isCommentTouched.current) {
+                    setComment(result.comment);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to fetch history", e);
+        } finally {
+            setIsLoadingHistory(false);
+        }
+    }, [comment]);
+
+    // --- Handlers ---
+    const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setComment(e.target.value);
+        isCommentTouched.current = true;
+    };
 
     const handleSave = async () => {
         if (!data) return;
@@ -364,7 +390,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
-        let oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
+        const oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
 
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
@@ -379,6 +405,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         try {
             const rm = findValueInRow(originalRow, ['рм']);
 
+            // 1. API Call: Update Data
             if (isAddressChanged || isCommentChanged) {
                 const res = await fetch('/api/update-address', {
                     method: 'POST',
@@ -388,11 +415,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
                 if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
                 
-                // Optimistic History Update - Strict single event creation
+                // Optimistic History Update
                 const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                
                 let entryText = '';
-                // Объединяем события в одну строку с \n, если изменены оба поля
+                
                 if (isAddressChanged && isCommentChanged) {
                     entryText = `Изменен адрес: ${oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
                 } else if (isAddressChanged) {
@@ -401,28 +427,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     entryText = `Добавлен комментарий: "${comment}" [${timestamp}]`;
                 }
 
-                if (entryText) {
-                    // Добавляем в начало массива истории
-                    setHistory(prev => [entryText, ...prev]);
-                }
-                
-                justSaved.current = true;
+                if (entryText) setHistory(prev => [entryText, ...prev]);
             }
 
-            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor']);
-            if (!distributor) {
-                 const values = Object.values(originalRow);
-                 const possibleDistributor = values.find(v => typeof v === 'string' && v.includes('(') && v.includes(')'));
-                 if (possibleDistributor) distributor = String(possibleDistributor);
-            }
-            const parsed = parseRussianAddress(editedAddress, distributor);
-
+            // 2. API Call: Manual Coords
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
-            let isGeocodingState = isAddressChanged && !manualCoords;
-
+            
             if (manualCoords) {
-                currentLat = manualCoords.lat; currentLon = manualCoords.lon; isGeocodingState = false;
+                currentLat = manualCoords.lat; currentLon = manualCoords.lon;
                 await fetch('/api/update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -430,21 +443,21 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 });
             }
 
-            // Переключаем в статус УСПЕХ, чтобы показать анимацию
+            // 3. UI Updates
             setStatus('success');
+            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
             
-            // Через 2 секунды переключаем дальше
-            setTimeout(() => {
-                if (isGeocodingState) {
-                    setStatus('geocoding');
-                    // Важно: onStartPolling запускаем здесь или он уже запущен useEffect-ом при смене data? 
-                    // Лучше передать данные наверх сразу
-                } else {
-                    setStatus('idle');
-                }
+            const isGeocodingState = isAddressChanged && !manualCoords;
+            
+            successTimeoutRef.current = setTimeout(() => {
+                setStatus(isGeocodingState ? 'geocoding' : 'idle');
             }, 2000);
 
+            // 4. Update Parent State
             const updateTimestamp = Date.now();
+            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']); // simplified check
+            const parsed = parseRussianAddress(editedAddress, distributor);
+
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
                 lat: currentLat, lon: currentLon, status: 'match',
@@ -490,6 +503,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     if (!data) return null;
 
+    // --- Computed Values ---
     const originalRow = getSafeOriginalRow(data);
     const clientName = findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']);
     const currentDisplayAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
@@ -499,8 +513,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
     const isProcessing = status === 'saving' || status === 'deleting';
+    
+    // Unified display coordinates
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
+    
+    // Unified Map Success Flag (Used in multiple places)
+    const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && status !== 'geocoding';
+
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -521,7 +541,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[200]">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Левая колонка: Данные и История */}
+                {/* Левая колонка */}
                 <div className="flex flex-col gap-6">
                     <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar shadow-inner">
                         <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-400">Исходные данные строки</h4>
@@ -548,7 +568,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {history.map((item, idx) => (
                                         <li key={idx} className="p-3 bg-gray-800/40 rounded-lg border border-gray-700/50 text-sm text-gray-400 flex flex-col gap-1.5 hover:bg-gray-800 transition-colors group">
                                             <div className="flex items-center gap-2 text-indigo-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:animate-ping"></span><span>Событие #{history.length - idx}</span></div>
-                                            {/* whitespace-pre-wrap сохраняет переносы строк \n визуально */}
                                             <span className="pl-3 border-l border-gray-700 text-gray-300 break-words whitespace-pre-wrap leading-relaxed">{item}</span>
                                         </li>
                                     ))}
@@ -560,11 +579,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                 </div>
 
-                {/* Правая колонка: Редактор и Карта */}
+                {/* Правая колонка */}
                 <div className="flex flex-col gap-6">
                     <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
                          <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding' && !!displayLat}
+                            lat={displayLat} lon={displayLon} address={editedAddress} 
+                            isSuccess={isMapSuccess}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
@@ -593,20 +613,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
                             <div className="relative">
                                 <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
-                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
+                                <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
                             </div>
 
                             {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
                             
                             <div className="pt-2">
-                                {/* Кнопка "Сохранить" - показываем если idle */}
                                 {status === 'idle' && !error && (
                                     <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
                                         <SaveIcon className="w-5 h-5" /> {saveButtonText}
                                     </button>
                                 )}
                                 
-                                {/* Анимация УСПЕХА - показываем явно при status === 'success' */}
                                 {status === 'success' && (
                                     <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
                                         <CheckIcon className="w-6 h-6" /> Сохранено успешно!
@@ -625,7 +643,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     </div>
                                 )}
 
-                                {/* Геокодирование показываем только если НЕ успех и нет ошибки */}
                                 {status === 'geocoding' && !error && (
                                     <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
                                         <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
@@ -656,7 +673,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 </div>
             </div>
             
-            {/* Оставляем модалку карты без изменений */}
+            {/* Modal Map Expanded */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-gray-900 border-b border-gray-800 backdrop-blur-md">
@@ -668,7 +685,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                     <div className="flex-grow relative">
                         <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} isSuccess={status !== 'geocoding'}
+                            lat={displayLat} lon={displayLon} address={editedAddress} 
+                            isSuccess={isMapSuccess}
                             onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onCollapse={() => setIsMapExpanded(false)} isExpanded={true}
