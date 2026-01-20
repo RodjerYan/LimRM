@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -27,7 +26,8 @@ const greenIcon = new L.Icon({
 });
 
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
+// Добавлен статус 'success' для явного управления анимацией успеха
+type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
 type Theme = 'dark' | 'light';
 
 interface AddressEditModalProps {
@@ -57,7 +57,6 @@ const SinglePointMap: React.FC<{
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
-
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<any[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -69,6 +68,7 @@ const SinglePointMap: React.FC<{
     useEffect(() => {
         if (!mapContainerRef.current) return;
         if (mapRef.current) return;
+
         const map = L.map(mapContainerRef.current, { 
             scrollWheelZoom: true,
             zoomControl: false,
@@ -76,11 +76,14 @@ const SinglePointMap: React.FC<{
             zoom: 5,
             attributionControl: false
         });
+
         mapRef.current = map;
+
         L.control.zoom({ position: 'topleft' }).addTo(map);
         tileLayerRef.current = L.tileLayer(darkUrl, {
             attribution: '&copy; OpenStreetMap &copy; CARTO',
         }).addTo(map);
+
         return () => {
             map.remove();
             mapRef.current = null;
@@ -98,15 +101,18 @@ const SinglePointMap: React.FC<{
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
+
         if (lat && lon) {
             const latLng = L.latLng(lat, lon);
             const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
+
             if (!markerRef.current) {
                 const marker = L.marker(latLng, { 
                     icon: iconToUse,
                     draggable: true,
                     autoPan: true
                 }).addTo(map);
+
                 marker.on('dragend', (e) => {
                     const m = e.target;
                     const p = m.getLatLng();
@@ -116,8 +122,10 @@ const SinglePointMap: React.FC<{
             } else {
                 markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             }
+
             const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
+            
             map.setView(latLng, isExpanded ? 16 : 15);
         } else {
             if (markerRef.current) {
@@ -125,6 +133,7 @@ const SinglePointMap: React.FC<{
                 markerRef.current = null;
             }
         }
+        
         const timer = setTimeout(() => map.invalidateSize(), 200);
         return () => clearTimeout(timer);
     }, [lat, lon, isSuccess, isExpanded, address]); 
@@ -133,10 +142,12 @@ const SinglePointMap: React.FC<{
         const q = e.target.value;
         setSearchQuery(q);
         if (searchTimeout.current) clearTimeout(searchTimeout.current);
+
         if (q.length < 3) {
             setSearchResults([]);
             return;
         }
+
         setIsSearching(true);
         searchTimeout.current = setTimeout(async () => {
             try {
@@ -167,6 +178,7 @@ const SinglePointMap: React.FC<{
         <div className="relative h-full w-full group isolate">
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div ref={mapContainerRef} className="h-full w-full rounded-lg bg-gray-800 cursor-move z-0" />
+            
             <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
@@ -194,6 +206,7 @@ const SinglePointMap: React.FC<{
                     )}
                 </div>
             </div>
+
             <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-auto">
                 <button 
                     onClick={onToggleTheme}
@@ -229,13 +242,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [error, setError] = useState<string | null>(null);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [lastUpdatedStr, setLastUpdatedStr] = useState<string | null>(null);
-    const [saveSuccess, setSaveSuccess] = useState(false);
     const [history, setHistory] = useState<string[]>([]);
     const [isLoadingHistory, setIsLoadingHistory] = useState(false);
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
-
     const justSaved = useRef(false);
 
     useEffect(() => {
@@ -248,26 +259,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (isOpen && data && 'key' in data) {
             const pt = data as MapPoint;
             
-            // КРИТИЧЕСКИЙ ФИКС: Сначала проверяем на наличие ошибки
+            // Сброс состояний при открытии
             if (pt.geocodingError) {
-                setStatus('idle'); // Останавливаем анимацию
+                setStatus('idle');
                 setError(pt.geocodingError);
-                setSaveSuccess(false);
             } else if (pt.isGeocoding) {
                 setStatus('geocoding');
                 setError(null);
                 setManualCoords(null);
             } else if (status === 'geocoding' && pt.lat && pt.lon) {
-                setStatus('idle');
+                // Если мы были в режиме геокодирования и получили координаты - это успех
+                setStatus('success'); // Показываем успех
+                setTimeout(() => setStatus('idle'), 2500); // Возвращаем в idle
                 setError(null);
-                setSaveSuccess(true);
-                setTimeout(() => setSaveSuccess(false), 3000);
                 setManualCoords(null);
                 if (pt.lastUpdated) {
                     setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
                 }
             } else {
-                // Если не грузится и нет ошибки — значит просто idle
                 setStatus('idle');
             }
         }
@@ -281,7 +290,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             if (res.ok) {
                 const result = await res.json();
                 if (result.history) {
-                    const historyArray = result.history.split(/\r?\n|\s*\|\|\s*/).filter(Boolean).reverse();
+                    // Используем разделитель || и фильтруем пустые строки
+                    // Split только по ||, переносы строк внутри событий сохраняются
+                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
                     setHistory(historyArray);
                 }
                 if (result.comment && !comment) {
@@ -303,6 +314,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (isOpen && data) {
             const originalRow = getSafeOriginalRow(data);
             let currentAddress = '';
+            
             if (isUnidentified(data)) {
                 const rawAddress = findAddressInRow(originalRow) || '';
                 let distributor = findValueInRow(originalRow, ['дистрибьютор', 'дистрибьютер', 'distributor', 'партнер', 'контрагент', 'дистриб']);
@@ -316,6 +328,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             } else {
                 currentAddress = (data as MapPoint).address;
             }
+
             setEditedAddress(currentAddress);
             setComment((data as MapPoint).comment || ''); 
             setManualCoords(null);
@@ -327,15 +340,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             } else {
                 setStatus('idle');
             }
-
+            
             setError(pt.geocodingError || null);
             setShowDeleteConfirm(false);
-            setSaveSuccess(false);
+            
             if (pt.lastUpdated) {
                 setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
             } else {
                 setLastUpdatedStr(null);
             }
+
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
                 if (!justSaved.current) fetchHistory(rm, currentAddress);
@@ -351,6 +365,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
         let oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
+
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
         const isCommentChanged = comment.trim() !== currentComment.trim();
@@ -360,27 +375,35 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
 
         setStatus('saving'); setError(null);
+
         try {
             const rm = findValueInRow(originalRow, ['рм']);
+
             if (isAddressChanged || isCommentChanged) {
                 const res = await fetch('/api/update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress, comment }),
                 });
+
                 if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
                 
-                // Optimistic History Update
+                // Optimistic History Update - Strict single event creation
                 const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
                 
-                // FIX: Explicitly type the array to avoid TS7034 error
-                const newEntries: string[] = [];
-                
-                if (isAddressChanged) newEntries.push(`${oldAddress} [${timestamp}]`);
-                if (isCommentChanged) newEntries.push(`Комментарий: "${comment}" [${timestamp}]`);
-                
-                if (newEntries.length > 0) {
-                    setHistory(prev => [...newEntries, ...prev]);
+                let entryText = '';
+                // Объединяем события в одну строку с \n, если изменены оба поля
+                if (isAddressChanged && isCommentChanged) {
+                    entryText = `Изменен адрес: ${oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
+                } else if (isAddressChanged) {
+                    entryText = `Изменен адрес: ${oldAddress} [${timestamp}]`;
+                } else if (isCommentChanged) {
+                    entryText = `Добавлен комментарий: "${comment}" [${timestamp}]`;
+                }
+
+                if (entryText) {
+                    // Добавляем в начало массива истории
+                    setHistory(prev => [entryText, ...prev]);
                 }
                 
                 justSaved.current = true;
@@ -393,6 +416,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                  if (possibleDistributor) distributor = String(possibleDistributor);
             }
             const parsed = parseRussianAddress(editedAddress, distributor);
+
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
             let isGeocodingState = isAddressChanged && !manualCoords;
@@ -406,9 +430,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 });
             }
 
-            // Set Success State
-            setSaveSuccess(true);
-            setTimeout(() => setSaveSuccess(false), 2500);
+            // Переключаем в статус УСПЕХ, чтобы показать анимацию
+            setStatus('success');
+            
+            // Через 2 секунды переключаем дальше
+            setTimeout(() => {
+                if (isGeocodingState) {
+                    setStatus('geocoding');
+                    // Важно: onStartPolling запускаем здесь или он уже запущен useEffect-ом при смене data? 
+                    // Лучше передать данные наверх сразу
+                } else {
+                    setStatus('idle');
+                }
+            }, 2000);
 
             const updateTimestamp = Date.now();
             const tempNewPoint: MapPoint = {
@@ -428,9 +462,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
             if (isGeocodingState) {
-                setStatus('geocoding');
-                onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
-            } else setStatus('idle');
+                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
+            }
+
         } catch (e) {
             setStatus('error_saving'); setError((e as Error).message);
         }
@@ -453,7 +487,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             onDelete(keyToDelete);
         } catch (e) { setStatus('error_deleting'); setError((e as Error).message); }
     };
-    
+
     if (!data) return null;
 
     const originalRow = getSafeOriginalRow(data);
@@ -470,7 +504,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== currentComment.trim();
-    
+
     let saveButtonText = "Сохранить изменения";
     if (isAddressChanged) saveButtonText = "Сохранить новый адрес";
     if (isCoordsChanged) saveButtonText = "Сохранить новые координаты";
@@ -502,6 +536,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             </tbody>
                         </table>
                     </div>
+
                     <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 flex-grow flex flex-col shadow-inner">
                         <div className="flex justify-between items-center mb-4">
                             <h4 className="font-bold text-xs uppercase tracking-widest text-gray-400 flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}</h4>
@@ -513,6 +548,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {history.map((item, idx) => (
                                         <li key={idx} className="p-3 bg-gray-800/40 rounded-lg border border-gray-700/50 text-sm text-gray-400 flex flex-col gap-1.5 hover:bg-gray-800 transition-colors group">
                                             <div className="flex items-center gap-2 text-indigo-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:animate-ping"></span><span>Событие #{history.length - idx}</span></div>
+                                            {/* whitespace-pre-wrap сохраняет переносы строк \n визуально */}
                                             <span className="pl-3 border-l border-gray-700 text-gray-300 break-words whitespace-pre-wrap leading-relaxed">{item}</span>
                                         </li>
                                     ))}
@@ -551,45 +587,32 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         <div className="space-y-4">
                             <div className="relative">
                                 <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Адрес ТТ LimKorm</label>
-                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${saveSuccess ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
-                                {saveSuccess && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-pulse w-5 h-5" />}
+                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${status === 'success' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
+                                {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
                             </div>
 
                             <div className="relative">
                                 <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
-                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
+                                <textarea id="comment-input" rows={2} value={comment} onChange={e => setComment(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
                             </div>
 
                             {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
                             
                             <div className="pt-2">
-                                {status === 'idle' && !error && !saveSuccess && (
+                                {/* Кнопка "Сохранить" - показываем если idle */}
+                                {status === 'idle' && !error && (
                                     <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
                                         <SaveIcon className="w-5 h-5" /> {saveButtonText}
                                     </button>
                                 )}
                                 
-                                {saveSuccess && (
+                                {/* Анимация УСПЕХА - показываем явно при status === 'success' */}
+                                {status === 'success' && (
                                     <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
                                         <CheckIcon className="w-6 h-6" /> Сохранено успешно!
                                     </div>
                                 )}
                                 
-                                {status === 'idle' && error && (
-                                    <div className="space-y-4 animate-fade-in">
-                                        <div className="p-4 bg-red-900/30 border border-red-500/40 rounded-2xl text-red-100 flex gap-4 items-start shadow-inner">
-                                            <div className="mt-1 flex-shrink-0 text-red-500"><ErrorIcon className="w-6 h-6" /></div>
-                                            <div className="flex-grow space-y-1 text-left">
-                                                <p className="text-xs font-bold uppercase tracking-widest text-red-400">Геокодирование не удалось</p>
-                                                <p className="text-xs leading-relaxed opacity-80">{error}</p>
-                                            </div>
-                                        </div>
-                                        <button onClick={handleSave} className="w-full h-14 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-orange-900/20 active:scale-[0.98]">
-                                            <RetryIcon className="w-5 h-5" /> Исправить и повторить
-                                        </button>
-                                    </div>
-                                )}
-
                                 {status === 'saving' && (
                                     <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
                                         <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
@@ -602,6 +625,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     </div>
                                 )}
 
+                                {/* Геокодирование показываем только если НЕ успех и нет ошибки */}
                                 {status === 'geocoding' && !error && (
                                     <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
                                         <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
@@ -631,7 +655,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                 </div>
             </div>
-
+            
+            {/* Оставляем модалку карты без изменений */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-gray-900 border-b border-gray-800 backdrop-blur-md">

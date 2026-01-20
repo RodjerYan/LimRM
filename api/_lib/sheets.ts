@@ -89,16 +89,13 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
 // --- SNAPSHOT FUNCTIONS ---
 
 export async function saveSnapshot(data: any): Promise<void> {
-    // Legacy support or fallback
     const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025']; // Default folder
+    const folderId = ROOT_FOLDERS['2025'];
     if (!folderId) return; 
-    
-    // Just a placeholder, actual snapshot logic is in get-full-cache.ts
+    // Logic is handled in get-full-cache currently
 }
 
 export async function getSnapshot(): Promise<any | null> {
-    // Just a placeholder, actual snapshot logic is in get-full-cache.ts
     return null;
 }
 
@@ -224,25 +221,17 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
     }, `listFilesForYear-${year}`);
 }
 
-/**
- * Downloads file content from Drive (Export for Sheets, Get for others),
- * parses it with XLSX in memory, and returns the requested row slice.
- * This avoids "Range exceeds grid limits" error from Sheets API.
- */
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ', mimeType?: string): Promise<any[][]> {
     const drive = await getGoogleDriveClient();
     let res: any;
 
     try {
-        // Determine method based on mimeType
         if (mimeType === 'application/vnd.google-apps.spreadsheet') {
-             // Google Sheet: Export to XLSX
              res = await callWithRetry(() => drive.files.export({
                 fileId,
                 mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             }, { responseType: 'arraybuffer' }), `export-${fileId}`);
         } else {
-             // Excel/CSV: Download directly
              res = await callWithRetry(() => drive.files.get({
                 fileId,
                 alt: 'media'
@@ -253,19 +242,13 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ', m
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         
-        // Parse ALL rows to JSON (array of arrays)
         const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-        // Slice in memory
-        // Parse range "A90001:CZ91000" -> extract row numbers
         const match = range.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
         if (match) {
-            const startRow = parseInt(match[1], 10) - 1; // 1-based to 0-based
+            const startRow = parseInt(match[1], 10) - 1; 
             const endRow = parseInt(match[2], 10);
-            
-            // If requested start is beyond available rows, return empty array (Graceful EOF)
             if (startRow >= rows.length) return [];
-            
             return rows.slice(startRow, endRow);
         }
 
@@ -283,9 +266,10 @@ function normalizeForComparison(str: string): string {
 
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
-    const entries = historyString.split(/\r?\n|\s*\|\|\s*/);
+    // Updated splitter to handle '||' delimiter primarily, but keep \n for legacy
+    const entries = historyString.split(/\s*\|\|\s*/);
     return entries.some(entry => {
-        const addrPart = entry.split('[')[0];
+        const addrPart = entry.split('[')[0].replace(/Изменен адрес:\s*/i, '');
         return normalizeForComparison(addrPart) === targetAddressNorm;
     });
 }
@@ -371,9 +355,8 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     
     // Create new entry if not found
     if (rowIndex === -1) {
-        // Initial history entry + comment if exists
         let initialHistory = `${oldAddress} [${timestamp}]`;
-        if (comment) initialHistory += `\nКомментарий: "${comment}" [${timestamp}]`;
+        if (comment) initialHistory += `\nКомментарий: "${comment}"`;
         
         await callWithRetry(() => sheets.spreadsheets.values.append({ 
             spreadsheetId: CACHE_SPREADSHEET_ID, 
@@ -393,24 +376,21 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     
     // Determine what changed
     const isAddressChanged = normalizeForComparison(currentStoredAddress) !== newNorm;
-    let historyToAdd = '';
+    let eventEntry = '';
 
-    // 1. Log old address if changed
-    if (isAddressChanged) {
-        historyToAdd += `${currentStoredAddress || oldAddress} [${timestamp}]`;
+    // If both changed, perform a grouped update
+    if (isAddressChanged && comment && comment.trim() !== currentStoredComment.trim()) {
+        eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
+    } else if (isAddressChanged) {
+        eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress} [${timestamp}]`;
+    } else if (comment && comment.trim() !== currentStoredComment.trim()) {
+        eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
     }
 
-    // 2. Log comment if changed or added (ignoring empty)
-    // We check if comment is different to avoid duplicate logs if user saves same comment
-    if (comment !== undefined && comment.trim() !== '' && comment.trim() !== currentStoredComment.trim()) {
-        if (historyToAdd) historyToAdd += '\n'; // Add newline if address also changed
-        historyToAdd += `Комментарий: "${comment}" [${timestamp}]`;
-    }
-
-    // 3. Construct final history string
+    // Use ' || ' as the separator for distinct events
     let finalHistory = currentStoredHistory;
-    if (historyToAdd) {
-        finalHistory = currentStoredHistory ? `${currentStoredHistory}\n${historyToAdd}` : historyToAdd;
+    if (eventEntry) {
+        finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
     }
 
     // 4. Update the row
@@ -421,10 +401,10 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         requestBody: { 
             values: [[
                 newAddress, // Col A (Address)
-                isAddressChanged ? "" : (row[1] || ""), // Col B (Lat) - clear if addr changed
-                isAddressChanged ? "" : (row[2] || ""), // Col C (Lon) - clear if addr changed
+                isAddressChanged ? "" : (row[1] || ""), // Col B (Lat)
+                isAddressChanged ? "" : (row[2] || ""), // Col C (Lon)
                 finalHistory, // Col D (History log)
-                comment !== undefined ? comment : currentStoredComment // Col E (Current Active Comment)
+                comment !== undefined ? comment : currentStoredComment // Col E
             ]] 
         } 
     }), 'updateFullRow');
