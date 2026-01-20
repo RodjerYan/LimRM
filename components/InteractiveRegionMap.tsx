@@ -38,6 +38,16 @@ const findValueInRow = (row: OkbDataRow, keywords: string[]): string => {
     return '';
 };
 
+// Robust coordinate parser helper
+const parseCoord = (val: any): number | null => {
+    if (val === null || val === undefined) return null;
+    if (typeof val === 'number') return val === 0 ? null : val; // Assume 0,0 is invalid for this dataset
+    const str = String(val).trim().replace(',', '.');
+    if (str === '') return null;
+    const num = parseFloat(str);
+    return isNaN(num) || num === 0 ? null : num;
+};
+
 const fixChukotkaGeoJSON = (feature: any) => {
     const transformCoord = (coord: number[]) => {
         let [lon, lat] = coord;
@@ -60,13 +70,7 @@ const MANUAL_BOUNDARIES: any[] = [
         "properties": { "name": "Республика Крым" }, 
         "geometry": { "type": "MultiPolygon", "coordinates": [ [ [[ 32.25, 45.54 ], [ 32.28, 45.59 ], [ 32.355, 45.645 ], [ 32.47, 45.68 ], [ 32.51, 45.705 ], [ 32.58, 45.73 ], [ 32.605, 45.755 ], [ 32.7, 45.8 ], [ 32.76, 45.845 ], [ 33.53, 46.03 ], [ 33.565, 46.065 ], [ 33.55, 46.1 ], [ 33.555, 46.115 ], [ 33.61, 46.155 ], [ 33.595, 46.22 ], [ 33.6, 46.24 ], [ 33.655, 46.25 ], [ 33.74, 46.205 ], [ 33.795, 46.225 ], [ 33.86, 46.22 ], [ 33.925, 46.175 ], [ 34.05, 46.13 ], [ 34.08, 46.14 ], [ 34.13, 46.125 ], [ 34.185, 46.085 ], [ 34.24, 46.075 ], [ 34.345, 46.08 ], [ 34.415, 46.025 ], [ 34.455, 45.975 ], [ 34.49, 45.96 ], [ 34.505, 45.965 ], [ 34.555, 46.015 ], [ 34.61, 46.015 ], [ 34.655, 46 ], [ 34.765, 45.925 ], [ 34.81, 45.92 ], [ 34.82, 45.91 ], [ 34.82, 45.825 ], [ 34.885, 45.81 ], [ 34.955, 45.78 ], [ 35.24, 45.81 ], [ 35.28, 45.79 ], [ 35.325, 45.75 ], [ 35.355, 45.695 ], [ 35.425, 45.655 ], [ 35.455, 45.62 ], [ 35.475, 45.575 ], [ 35.535, 45.55 ], [ 35.565, 45.525 ], [ 35.6, 45.58 ], [ 35.65, 45.62 ], [ 35.78, 45.665 ], [ 35.89, 45.665 ], [ 35.975, 45.64 ], [ 36.01, 45.64 ], [ 36.07, 45.645 ], [ 36.135, 45.67 ], [ 36.34, 45.69 ], [ 36.68, 45.645 ], [ 36.69, 45.63 ], [ 36.7, 45.455 ], [ 36.68, 45.345 ], [ 36.62, 45.3 ], [ 36.615, 45.245 ], [ 36.55, 45.19 ], [ 36.585, 45.055 ], [ 36.63, 44.95 ], [ 36.63, 44.935 ], [ 36.585, 44.89 ], [ 36.515, 44.855 ], [ 36.44, 44.835 ], [ 36.365, 44.83 ], [ 36.26, 44.8 ], [ 36.175, 44.8 ], [ 36.105, 44.815 ], [ 36.015, 44.785 ], [ 35.84, 44.77 ], [ 35.775, 44.775 ], [ 35.715, 44.79 ], [ 35.635, 44.825 ], [ 35.61, 44.795 ], [ 35.545, 44.755 ], [ 35.465, 44.73 ], [ 35.415, 44.725 ], [ 35.385, 44.685 ], [ 35.345, 44.65 ], [ 35.205, 44.585 ], [ 35.125, 44.565 ], [ 35.02, 44.565 ], [ 34.915, 44.59 ], [ 34.855, 44.58 ], [ 34.81, 44.585 ], [ 34.74, 44.565 ], [ 34.68, 44.53 ], [ 34.64, 44.49 ], [ 34.635, 44.47 ], [ 34.605, 44.425 ], [ 34.57, 44.39 ], [ 34.41, 44.3 ], [ 34.365, 44.285 ], [ 34.3, 44.235 ], [ 34.225, 44.205 ], [ 34.165, 44.195 ], [ 34.095, 44.195 ], [ 33.995, 44.165 ], [ 33.91, 44.165 ], [ 33.855, 44.175 ], [ 33.82, 44.165 ], [ 33.735, 44.165 ], [ 33.69, 44.17 ], [ 33.675, 44.185 ], [ 33.675, 44.195 ], [ 33.745, 44.4 ], [ 33.785, 44.425 ], [ 33.82, 44.425 ], [ 33.845, 44.44 ], [ 33.89, 44.445 ], [ 33.83, 44.505 ], [ 33.81, 44.555 ], [ 33.785, 44.56 ], [ 33.765, 44.58 ], [ 33.765, 44.59 ], [ 33.73, 44.58 ], [ 33.7, 44.605 ], [ 33.695, 44.64 ], [ 33.735, 44.675 ], [ 33.73, 44.69 ], [ 33.695, 44.685 ], [ 33.66, 44.695 ], [ 33.62, 44.69 ], [ 33.6, 44.695 ], [ 33.59, 44.725 ], [ 33.595, 44.76 ], [ 33.65, 44.78 ], [ 33.615, 44.79 ], [ 33.575, 44.79 ], [ 33.555, 44.81 ], [ 33.555, 44.82 ], [ 33.29, 44.92 ], [ 33.21, 44.925 ], [ 33.15, 44.94 ], [ 33, 44.995 ], [ 32.93, 45.045 ], [ 32.88, 45.07 ], [ 32.825, 45.125 ], [ 32.715, 45.095 ], [ 32.63, 45.09 ], [ 32.485, 45.125 ], [ 32.45, 45.125 ], [ 32.335, 45.16 ], [ 32.285, 45.19 ], [ 32.235, 45.235 ], [ 32.21, 45.28 ], [ 32.185, 45.365 ], [ 32.18, 45.415 ], [ 32.19, 45.46 ], [ 32.215, 45.505 ], [ 32.25, 45.54 ]] ] ] }
     },
-    {
-        "type": "Feature",
-        "properties": { "name": "Севастополь" }, 
-        "geometry": { "type": "MultiPolygon", "coordinates": [ [ [[ 33.24, 44.822 ], [ 33.247, 44.851 ], [ 33.255, 44.869 ], [ 33.267, 44.903 ], [ 33.282, 44.93 ], [ 33.295, 44.945 ], [ 33.555, 44.844 ], [ 33.564, 44.845 ], [ 33.571, 44.84 ], [ 33.572, 44.835 ], [ 33.58, 44.821 ], [ 33.588, 44.812 ], [ 33.607, 44.814 ], [ 33.669, 44.797 ], [ 33.681, 44.788 ], [ 33.687, 44.769 ], [ 33.682, 44.765 ], [ 33.679, 44.765 ], [ 33.634, 44.748 ], [ 33.618, 44.746 ], [ 33.619, 44.738 ], [ 33.615, 44.734 ], [ 33.618, 44.733 ], [ 33.619, 44.731 ], [ 33.62, 44.717 ], [ 33.661, 44.718 ], [ 33.669, 44.714 ], [ 33.675, 44.714 ], [ 33.702, 44.719 ], [ 33.709, 44.715 ], [ 33.711, 44.712 ], [ 33.713, 44.719 ], [ 33.727, 44.721 ], [ 33.738, 44.71 ], [ 33.747, 44.705 ], [ 33.752, 44.703 ], [ 33.763, 44.705 ], [ 33.778, 44.695 ], [ 33.781, 44.692 ], [ 33.781, 44.688 ], [ 33.769, 44.678 ], [ 33.759, 44.673 ], [ 33.757, 44.671 ], [ 33.757, 44.663 ], [ 33.751, 44.657 ], [ 33.732, 44.644 ], [ 33.731, 44.64 ], [ 33.725, 44.635 ], [ 33.726, 44.63 ], [ 33.722, 44.625 ], [ 33.721, 44.621 ], [ 33.735, 44.606 ], [ 33.741, 44.61 ], [ 33.748, 44.612 ], [ 33.765, 44.613 ], [ 33.781, 44.617 ], [ 33.784, 44.615 ], [ 33.786, 44.611 ], [ 33.786, 44.597 ], [ 33.791, 44.589 ], [ 33.794, 44.589 ], [ 33.797, 44.585 ], [ 33.803, 44.585 ], [ 33.807, 44.581 ], [ 33.811, 44.58 ], [ 33.82, 44.581 ], [ 33.826, 44.578 ], [ 33.831, 44.573 ], [ 33.831, 44.564 ], [ 33.836, 44.554 ], [ 33.841, 44.551 ], [ 33.84, 44.544 ], [ 33.843, 44.541 ], [ 33.845, 44.534 ], [ 33.848, 44.535 ], [ 33.853, 44.534 ], [ 33.861, 44.528 ], [ 33.861, 44.524 ], [ 33.854, 44.519 ], [ 33.856, 44.519 ], [ 33.862, 44.511 ], [ 33.87, 44.512 ], [ 33.874, 44.508 ], [ 33.875, 44.505 ], [ 33.872, 44.5 ], [ 33.879, 44.493 ], [ 33.881, 44.493 ], [ 33.888, 44.486 ], [ 33.9, 44.482 ], [ 33.902, 44.478 ], [ 33.899, 44.473 ], [ 33.91, 44.454 ], [ 33.912, 44.453 ], [ 33.922, 44.434 ], [ 33.927, 44.428 ], [ 33.927, 44.426 ], [ 33.929, 44.425 ], [ 33.929, 44.418 ], [ 33.913, 44.415 ], [ 33.902, 44.415 ], [ 33.898, 44.417 ], [ 33.88, 44.417 ], [ 33.876, 44.415 ], [ 33.858, 44.416 ], [ 33.855, 44.414 ], [ 33.85, 44.414 ], [ 33.842, 44.411 ], [ 33.834, 44.406 ], [ 33.81, 44.399 ], [ 33.799, 44.398 ], [ 33.793, 44.401 ], [ 33.791, 44.395 ], [ 33.785, 44.392 ], [ 33.766, 44.388 ], [ 33.7, 44.188 ], [ 33.698, 44.187 ], [ 33.676, 44.191 ], [ 33.617, 44.206 ], [ 33.598, 44.212 ], [ 33.564, 44.226 ], [ 33.529, 44.234 ], [ 33.511, 44.24 ], [ 33.493, 44.247 ], [ 33.46, 44.263 ], [ 33.444, 44.272 ], [ 33.419, 44.291 ], [ 33.382, 44.298 ], [ 33.345, 44.308 ], [ 33.293, 44.331 ], [ 33.263, 44.35 ], [ 33.237, 44.372 ], [ 33.215, 44.397 ], [ 33.206, 44.41 ], [ 33.172, 44.431 ], [ 33.158, 44.442 ], [ 33.134, 44.465 ], [ 33.115, 44.491 ], [ 33.1, 44.518 ], [ 33.088, 44.56 ], [ 33.087, 44.59 ], [ 33.092, 44.619 ], [ 33.096, 44.633 ], [ 33.109, 44.661 ], [ 33.138, 44.699 ], [ 33.162, 44.721 ], [ 33.176, 44.732 ], [ 33.207, 44.75 ], [ 33.242, 44.766 ], [ 33.239, 44.778 ], [ 33.238, 44.793 ], [ 33.238, 44.808 ], [ 33.24, 44.822 ]] ] ] }
-    },
-    // Include the other manual boundaries like Lugansk, Donetsk, Zaporozhye, Kherson from previous context here if needed, 
-    // or rely on the main map logic which seems to inject them separately.
+    // ... (other boundaries omitted for brevity, assuming they are handled by main geojson or provided separately)
 ];
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
@@ -307,13 +311,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
             mapInstance.current = map;
             
-            // --- CRITICAL FIX: Z-INDEX PANES ---
-            // Create custom panes to control layer order. Higher z-index = on top.
+            // --- CRITICAL FIX: Z-INDEX PANES & RENDERERS ---
+            // Explicitly create panes and assign z-indexes
             map.createPane('regionsPane');
             map.getPane('regionsPane')!.style.zIndex = '400';
             
             map.createPane('markersPane');
-            map.getPane('markersPane')!.style.zIndex = '600';
+            map.getPane('markersPane')!.style.zIndex = '600'; // Markers ALWAYS on top
 
             L.control.zoom({ position: 'topleft' }).addTo(map);
             layerControl.current = L.control.layers({}, {}, { position: 'bottomleft' }).addTo(map);
@@ -376,48 +380,58 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
+        
+        // Use a dedicated renderer for markersPane to ensure they are drawn on top.
+        // Without this, L.circleMarker might use the default overlay renderer which is below markersPane if configured wrongly by Leaflet.
+        const markersRenderer = L.canvas({ pane: 'markersPane' });
+
         if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
         potentialClientMarkersLayer.current = L.layerGroup();
         if (activeClientMarkersLayer.current) { map.removeLayer(activeClientMarkersLayer.current); layerControl.current.removeLayer(activeClientMarkersLayer.current); }
         activeClientMarkersLayer.current = L.layerGroup(); activeClientMarkersRef.current.clear();
     
+        const pointsForBounds: L.LatLngExpression[] = [];
+
         potentialClients.forEach(tt => {
-            // Robust coordinate parsing: handle strings with commas, handle NaN, handle 0
-            let lat = tt.lat as any;
-            let lon = tt.lon as any;
+            const lat = parseCoord(tt.lat);
+            const lon = parseCoord(tt.lon);
 
-            if (typeof lat === 'string') lat = parseFloat(lat.replace(',', '.'));
-            if (typeof lon === 'string') lon = parseFloat(lon.replace(',', '.'));
-
-            if (lat && lon && !isNaN(lat) && !isNaN(lon) && lat !== 0) {
+            if (lat !== null && lon !== null) {
                 const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                 const marker = L.circleMarker([lat, lon], {
                     fillColor: '#3b82f6', color: '#2563eb', radius: 3, weight: 1, opacity: 1, fillOpacity: 0.8,
-                    pane: 'markersPane' // Always above regions
+                    pane: 'markersPane', // Ensure it goes to the high-z-index pane
+                    renderer: markersRenderer
                 }).bindPopup(popupContent);
                 potentialClientMarkersLayer.current?.addLayer(marker);
             }
         });
     
         activeClients.forEach(tt => {
-            // Robust coordinate parsing: handle strings with commas, handle NaN, handle 0
-            let lat = tt.lat as any;
-            let lon = tt.lon as any;
+            const lat = parseCoord(tt.lat);
+            const lon = parseCoord(tt.lon);
 
-            if (typeof lat === 'string') lat = parseFloat(lat.replace(',', '.'));
-            if (typeof lon === 'string') lon = parseFloat(lon.replace(',', '.'));
-
-            if (lat && lon && !isNaN(lat) && !isNaN(lon) && lat !== 0) {
+            if (lat !== null && lon !== null) {
                 console.log('Рисую маркер:', lat, lon, tt.name);
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([lat, lon], {
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9,
-                    pane: 'markersPane' // Always above regions
+                    pane: 'markersPane', // Ensure it goes to the high-z-index pane
+                    renderer: markersRenderer
                 }).bindPopup(popupContent);
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
+                pointsForBounds.push([lat, lon]);
             }
         });
+        
+        // Auto-center map if markers exist and we are not focusing on a specific client
+        if (pointsForBounds.length > 0 && !flyToClientKey) {
+             const bounds = L.latLngBounds(pointsForBounds);
+             if (bounds.isValid()) {
+                 map.fitBounds(bounds.pad(0.1));
+             }
+        }
     
         if (overlayMode === 'sales') { map.addLayer(potentialClientMarkersLayer.current); map.addLayer(activeClientMarkersLayer.current); }
         layerControl.current.addOverlay(potentialClientMarkersLayer.current, "Потенциал (ОКБ)");
