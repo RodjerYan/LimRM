@@ -204,17 +204,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
 
-    // Debug logging for data analysis
-    useEffect(() => {
-        if (potentialClients.length > 0) {
-            console.log('--- MAP DEBUG: Potential Client Sample ---', potentialClients[0]);
-            console.log('--- MAP DEBUG: Keys ---', Object.keys(potentialClients[0]));
-        }
-        if (activeClients.length > 0) {
-            console.log('--- MAP DEBUG: Active Client Sample ---', activeClients[0]);
-        }
-    }, [potentialClients, activeClients]);
-
     useEffect(() => {
         const fetchGeoData = async () => {
             const CACHE_NAME = 'limkorm-geo-v2';
@@ -452,7 +441,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 // FIX: Shift negative longitudes to keep them connected to Russian Far East
                 if (lon < 0) lon += 360;
 
-                // console.log('Рисую маркер:', lat, lon, tt.name);
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
                 const marker = L.circleMarker([lat, lon], {
                     fillColor: '#22c55e', color: '#16a34a', radius: 4, weight: 1, opacity: 1, fillOpacity: 0.9,

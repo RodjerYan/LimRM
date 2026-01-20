@@ -363,21 +363,71 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     const rows = response.data.values || [];
     const oldNorm = normalizeForComparison(oldAddress);
     const newNorm = normalizeForComparison(newAddress);
+    
     let rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === oldNorm);
     if (rowIndex === -1) rowIndex = rows.findIndex((r: any) => isAddressInHistory(String(r[3] || ''), oldNorm));
+    
     const timestamp = new Date().toLocaleString('ru-RU');
+    
+    // Create new entry if not found
     if (rowIndex === -1) {
-        await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[newAddress, '', '', `${oldAddress} [${timestamp}]`, comment || ""]] } }), 'appendNewUpdate');
+        // Initial history entry + comment if exists
+        let initialHistory = `${oldAddress} [${timestamp}]`;
+        if (comment) initialHistory += `\nКомментарий: "${comment}" [${timestamp}]`;
+        
+        await callWithRetry(() => sheets.spreadsheets.values.append({ 
+            spreadsheetId: CACHE_SPREADSHEET_ID, 
+            range: `'${actualSheetTitle}'!A1`, 
+            valueInputOption: 'USER_ENTERED', 
+            requestBody: { values: [[newAddress, '', '', initialHistory, comment || ""]] } 
+        }), 'appendNewUpdate');
         return;
     }
-    const row = rows[rowIndex]; const rowNumber = rowIndex + 1;
-    if (normalizeForComparison(String(row[0] || '')) === newNorm) {
-        if (comment !== undefined) await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!E${rowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[comment]] } }), 'updateComment');
-        return;
+
+    const row = rows[rowIndex];
+    const rowNumber = rowIndex + 1;
+    
+    const currentStoredAddress = String(row[0] || '');
+    const currentStoredHistory = String(row[3] || '');
+    const currentStoredComment = String(row[4] || '');
+    
+    // Determine what changed
+    const isAddressChanged = normalizeForComparison(currentStoredAddress) !== newNorm;
+    let historyToAdd = '';
+
+    // 1. Log old address if changed
+    if (isAddressChanged) {
+        historyToAdd += `${currentStoredAddress || oldAddress} [${timestamp}]`;
     }
-    const historyEntry = `${String(row[0] || oldAddress)} [${timestamp}]`;
-    const newHistory = row[3] ? `${row[3]}\n${historyEntry}` : historyEntry;
-    await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[newAddress, "", "", newHistory, comment !== undefined ? comment : (row[4] || '')]] } }), 'updateFullRow');
+
+    // 2. Log comment if changed or added (ignoring empty)
+    // We check if comment is different to avoid duplicate logs if user saves same comment
+    if (comment !== undefined && comment.trim() !== '' && comment.trim() !== currentStoredComment.trim()) {
+        if (historyToAdd) historyToAdd += '\n'; // Add newline if address also changed
+        historyToAdd += `Комментарий: "${comment}" [${timestamp}]`;
+    }
+
+    // 3. Construct final history string
+    let finalHistory = currentStoredHistory;
+    if (historyToAdd) {
+        finalHistory = currentStoredHistory ? `${currentStoredHistory}\n${historyToAdd}` : historyToAdd;
+    }
+
+    // 4. Update the row
+    await callWithRetry(() => sheets.spreadsheets.values.update({ 
+        spreadsheetId: CACHE_SPREADSHEET_ID, 
+        range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`, 
+        valueInputOption: 'USER_ENTERED', 
+        requestBody: { 
+            values: [[
+                newAddress, // Col A (Address)
+                isAddressChanged ? "" : (row[1] || ""), // Col B (Lat) - clear if addr changed
+                isAddressChanged ? "" : (row[2] || ""), // Col C (Lon) - clear if addr changed
+                finalHistory, // Col D (History log)
+                comment !== undefined ? comment : currentStoredComment // Col E (Current Active Comment)
+            ]] 
+        } 
+    }), 'updateFullRow');
 }
 
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {

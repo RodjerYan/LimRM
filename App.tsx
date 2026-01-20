@@ -185,7 +185,8 @@ const App: React.FC = () => {
             };
             
             const jsonString = JSON.stringify(payload);
-            const CHUNK_SIZE = 3.5 * 1024 * 1024;
+            // REDUCED CHUNK SIZE TO 1MB to prevent Vercel 413 Errors
+            const CHUNK_SIZE = 1 * 1024 * 1024; 
             const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
 
             // 1. Сохраняем метаданные
@@ -203,11 +204,12 @@ const App: React.FC = () => {
             // 2. Сохраняем чанки
             for (let i = 0; i < totalChunks; i++) {
                 const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-                await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
+                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chunk })
                 });
+                if (!res.ok) throw new Error(`Chunk ${i} failed`);
             }
 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизировано', progress: 100 }));

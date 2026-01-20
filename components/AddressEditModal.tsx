@@ -369,9 +369,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress, comment }),
                 });
                 if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
+                
+                // Optimistic History Update
                 const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                if (isAddressChanged) setHistory(prev => [`${oldAddress} [${timestamp}]`, ...prev]);
-                else if (isCommentChanged) setHistory(prev => [`Комментарий: "${comment}" [${timestamp}]`, ...prev]);
+                const newEntries = [];
+                if (isAddressChanged) newEntries.push(`${oldAddress} [${timestamp}]`);
+                if (isCommentChanged) newEntries.push(`Комментарий: "${comment}" [${timestamp}]`);
+                
+                if (newEntries.length > 0) {
+                    setHistory(prev => [...newEntries, ...prev]);
+                }
+                
                 justSaved.current = true;
             }
 
@@ -395,7 +403,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 });
             }
 
-            setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2000);
+            // Set Success State
+            setSaveSuccess(true);
+            setTimeout(() => setSaveSuccess(false), 2500);
+
             const updateTimestamp = Date.now();
             const tempNewPoint: MapPoint = {
                 key: normalizeAddress(editedAddress),
@@ -549,10 +560,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
                             
                             <div className="pt-2">
-                                {status === 'idle' && !error && (
+                                {status === 'idle' && !error && !saveSuccess && (
                                     <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
                                         <SaveIcon className="w-5 h-5" /> {saveButtonText}
                                     </button>
+                                )}
+                                
+                                {saveSuccess && (
+                                    <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
+                                        <CheckIcon className="w-6 h-6" /> Сохранено успешно!
+                                    </div>
                                 )}
                                 
                                 {status === 'idle' && error && (
@@ -571,8 +588,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 )}
 
                                 {status === 'saving' && (
-                                    <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold animate-pulse shadow-sm">
-                                        <LoaderIcon className="w-5 h-5" /> Синхронизация данных...
+                                    <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
+                                        <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
                                     </div>
                                 )}
                                 
