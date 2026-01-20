@@ -67,8 +67,6 @@ const App: React.FC = () => {
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
     // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ И "ЛЕЧЕНИЕ" ДАННЫХ ---
-    // 1. Гарантирует наличие массива clients
-    // 2. РАЗДЕЛЯЕТ склеенные бренды (например, "SIRIUS, AJO" -> 2 строки), если они пришли из старого кэша
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         
@@ -78,38 +76,28 @@ const App: React.FC = () => {
             if (!row) return;
 
             const brandRaw = String(row.brand || '').trim();
-            
-            // Проверка на склеенные бренды (наличие запятой, точки с запятой или переноса строки)
-            // Исключаем случаи, когда бренд реально содержит запятую (редко), проверяя длину и контекст
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
 
             if (hasMultipleBrands) {
-                // Разбиваем строку
                 const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-                
                 if (parts.length > 1) {
-                    // Делим показатели поровну (лучшее приближение для агрегированных данных)
                     const splitFactor = 1 / parts.length;
-                    
                     parts.forEach((brandPart, idx) => {
-                        // Создаем новую уникальную строку для каждого бренда
                         result.push({
                             ...row,
-                            key: `${row.key}_split_${idx}`, // Уникальный ключ
+                            key: `${row.key}_split_${idx}`,
                             brand: brandPart,
-                            clientName: `${row.region}: ${brandPart}`, // Обновляем имя группы
+                            clientName: `${row.region}: ${brandPart}`,
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
-                            // Клиенты остаются те же (ссылка), но это ок для карты, т.к. там идет дедупликация по key
                             clients: Array.isArray(row.clients) ? row.clients : []
                         });
                     });
-                    return; // Исходную "склеенную" строку не добавляем
+                    return;
                 }
             }
 
-            // Стандартное добавление, если разделение не требуется
             result.push({
                 ...row,
                 clients: Array.isArray(row.clients) && row.clients.length > 0 
@@ -153,7 +141,6 @@ const App: React.FC = () => {
             const fullJson = chunks.join('');
             if (fullJson) {
                 const data = JSON.parse(fullJson);
-                // APPLY NORMALIZATION (Fixes combined brands from snapshot)
                 const validated = normalize(data.aggregatedData || []);
                 
                 setAllData(validated);
@@ -182,6 +169,56 @@ const App: React.FC = () => {
         }
         return false;
     }, [normalize]);
+
+    // --- ФУНКЦИЯ СОХРАНЕНИЯ В ОБЛАКО (JSON SNAPSHOT) ---
+    const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
+        try {
+            // Визуальный индикатор в верхней панели
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Обновление облака...', progress: 99 }));
+            
+            const payload = {
+                aggregatedData: currentData,
+                unidentifiedRows: currentUnidentified,
+                okbRegionCounts: okbRegionCounts,
+                totalRowsProcessed: totalRowsProcessedRef.current,
+                versionHash: `edit_${Date.now()}`
+            };
+            
+            const jsonString = JSON.stringify(payload);
+            const CHUNK_SIZE = 3.5 * 1024 * 1024;
+            const totalChunks = Math.ceil(jsonString.length / CHUNK_SIZE);
+
+            // 1. Сохраняем метаданные
+            await fetch('/api/get-full-cache?action=save-meta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    versionHash: payload.versionHash,
+                    chunkCount: totalChunks,
+                    totalRows: payload.totalRowsProcessed,
+                    timestamp: Date.now()
+                })
+            });
+
+            // 2. Сохраняем чанки
+            for (let i = 0; i < totalChunks; i++) {
+                const chunk = jsonString.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chunk })
+                });
+            }
+
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизировано', progress: 100 }));
+            addNotification('Данные успешно сохранены в облаке', 'success');
+
+        } catch (e) {
+            console.error("Cloud Save Error:", e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сохранения' }));
+            addNotification('Ошибка синхронизации с облаком', 'warning');
+        }
+    };
 
     // --- ОБРАБОТКА ОБЛАКА (WORKER) ---
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
@@ -230,7 +267,8 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
-                // Save Logic...
+                // Save Checkpoint to Cloud
+                saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
             }
             else if (msg.type === 'result_finished') {
                 const payload = msg.payload as WorkerResultPayload;
@@ -250,6 +288,9 @@ const App: React.FC = () => {
                     okbData: [], okbStatus: null
                 });
                 
+                // Final save to cloud
+                saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
+                
                 localStorage.setItem('last_snapshot_version', finalVersion);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Завершено', totalRowsProcessed: payload.totalRowsProcessed }));
             }
@@ -260,15 +301,13 @@ const App: React.FC = () => {
             payload: { okbData, cacheData, totalRowsProcessed: rowsProcessedSoFar, restoredData: allDataRef.current, restoredUnidentified: unidentifiedRowsRef.current } 
         });
         
-        // Start fetching file list and processing...
         try {
             const listRes = await fetch(`/api/get-akb?year=${params.year}&mode=list`);
             const allFiles = listRes.ok ? await listRes.json() : [];
             for (const file of allFiles) {
                 if (processedFileIdsRef.current.has(file.id)) continue;
-                // ... (simplified loop for brevity, same logic as before)
-                // Trigger worker for chunks
-                // workerRef.current.postMessage({ type: 'PROCESS_CHUNK', ... })
+                // Note: Actual fetching logic would go here, simplified for brevity as per existing structure
+                // In real implementation, we would fetch chunks and post 'PROCESS_CHUNK' to worker
                 processedFileIdsRef.current.add(file.id);
             }
             workerRef.current?.postMessage({ type: 'FINALIZE_STREAM' });
@@ -319,6 +358,10 @@ const App: React.FC = () => {
                     versionHash: finalVersion,
                     okbData: [], okbStatus: null
                 });
+                
+                // Save local file result to cloud snapshot as well
+                saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
+
                 setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Готово', totalRowsProcessed: payload.totalRowsProcessed }));
                 setActiveModule('amp');
             }
@@ -333,7 +376,6 @@ const App: React.FC = () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                // APPLY NORMALIZATION ON LOAD - This fixes persistent display bugs
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
@@ -354,9 +396,46 @@ const App: React.FC = () => {
     }, [handleDownloadSnapshot, normalize]);
 
     // --- DATA UPDATE HANDLER (For Edit Modal) ---
-    const handleDataUpdate = useCallback(async (oldKey: string, newPoint: MapPoint) => {
-        setAllData(prev => {
-            return prev.map(group => {
+    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
+        let newData = [...allDataRef.current]; // Use ref for latest state
+        let newUnidentified = [...unidentifiedRowsRef.current];
+
+        // Сценарий 1: Перенос из неопознанных в опознанные
+        if (typeof originalIndex === 'number') {
+            const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
+            if (rowIndex !== -1) {
+                newUnidentified.splice(rowIndex, 1);
+            }
+
+            const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
+            const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
+
+            if (existingGroupIndex !== -1) {
+                newData[existingGroupIndex] = {
+                    ...newData[existingGroupIndex],
+                    fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
+                    clients: [...newData[existingGroupIndex].clients, newPoint]
+                };
+            } else {
+                newData.push({
+                    key: groupKey,
+                    rm: newPoint.rm,
+                    region: newPoint.region,
+                    city: newPoint.city,
+                    brand: newPoint.brand,
+                    packaging: newPoint.packaging,
+                    clientName: `${newPoint.region}: ${newPoint.brand}`,
+                    fact: newPoint.fact || 0,
+                    potential: (newPoint.fact || 0) * 1.15, 
+                    growthPotential: 0,
+                    growthPercentage: 0,
+                    clients: [newPoint]
+                });
+            }
+        } 
+        // Сценарий 2: Редактирование существующей точки
+        else {
+            newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     const updatedClients = [...group.clients];
@@ -365,8 +444,20 @@ const App: React.FC = () => {
                 }
                 return group;
             });
+        }
+
+        // Обновляем локальный стейт немедленно
+        setAllData(newData);
+        setUnidentifiedRows(newUnidentified);
+        
+        // КРИТИЧНО: Сохраняем в облако фоном (не блокируя UI)
+        // Комментарии из newPoint будут сохранены внутри структуры newData
+        saveSnapshotToCloud(newData, newUnidentified).catch(err => {
+            console.error("Background sync failed:", err);
+            addNotification('Сбой фоновой синхронизации', 'error');
         });
-    }, []);
+
+    }, [okbRegionCounts]); // Removed dependencies to allow stable callback
 
     // --- 1. FILTERED DATA CALCULATION ---
     const filtered = useMemo(() => {
@@ -464,7 +555,7 @@ const App: React.FC = () => {
                             <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Ready' : 'Syncing...'}</span>
                         </div>
                         {processingState.isProcessing && (
-                            <div className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-bold text-indigo-300">
+                            <div className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-bold text-indigo-300 animate-pulse">
                                 {processingState.message} {Math.round(processingState.progress)}%
                             </div>
                         )}
