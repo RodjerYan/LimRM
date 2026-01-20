@@ -6,7 +6,6 @@ import RMAnalysisModal from './RMAnalysisModal';
 import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
-import GamificationModal from './GamificationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
 import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
@@ -271,9 +270,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
     const [regionSearch, setRegionSearch] = useState('');
     
-    // Idea 10: Gamification State
-    const [isLeagueModalOpen, setIsLeagueModalOpen] = useState(false);
-
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
 
@@ -464,9 +460,8 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span><span>Высокий План</span></div>
                         <div className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span><span>Сниженный План</span></div>
                     </div>
-                    <button onClick={() => setIsLeagueModalOpen(true)} className="ml-auto flex items-center gap-2 bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold border border-yellow-500/50 shadow-lg">🏆 Лига Чемпионов</button>
                     {okbData.length > 0 && (
-                        <button onClick={prepareExportData} className="flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"><ExportIcon /> Скачать непокрытый потенциал (XLSX)</button>
+                        <button onClick={prepareExportData} className="ml-auto flex items-center gap-2 bg-emerald-600/80 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors text-xs font-bold shadow-lg border border-emerald-500/50"><ExportIcon /> Скачать непокрытый потенциал (XLSX)</button>
                     )}
                 </div>
 
@@ -554,7 +549,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             {selectedBrandForDetails && <BrandPackagingModal isOpen={isBrandModalOpen} onClose={() => setIsBrandModalOpen(false)} brandMetric={selectedBrandForDetails} regionName={selectedBrandRegion} onExplain={(metric) => setExplanationData(metric)} onAnalyze={handleAnalyzePackaging} />}
             <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
             {explanationData && <GrowthExplanationModal isOpen={!!explanationData} onClose={() => setExplanationData(null)} data={explanationData} baseRate={baseRate} zIndex="z-[60]" />}
-            <GamificationModal isOpen={isLeagueModalOpen} onClose={() => setIsLeagueModalOpen(false)} data={metricsData} />
             <Modal isOpen={isExportModalOpen} onClose={() => setIsExportModalOpen(false)} title="Настройка выгрузки" footer={<div className="flex justify-between p-4 bg-gray-900/50 border-t border-gray-700"><button onClick={() => setIsExportModalOpen(false)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg">Отмена</button><button onClick={performExport} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-lg">Скачать Excel</button></div>}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[60vh]">
                     <div className="border border-gray-700 rounded-xl overflow-hidden flex flex-col"><div className="bg-gray-800 p-2 text-xs font-bold uppercase">Страны</div><div className="flex-grow overflow-y-auto p-2">{availableCountries.map(c => (<label key={c} className="flex items-center p-2 hover:bg-gray-800 rounded cursor-pointer"><input type="checkbox" checked={selectedCountries.has(c)} onChange={() => toggleCountry(c)} className="mr-2" /><span>{c}</span></label>))}</div></div>
