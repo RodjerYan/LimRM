@@ -26,9 +26,10 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY === 'key_is_set';
 
-// КОНСТАНТА: Количество строк данных в одном JSON-файле (чанке)
-// 5000 строк обычно занимают 1-2 МБ, что безопасно для fetch и JSON.parse
-const ROWS_PER_CHUNK = 5000;
+// КОНСТАНТА: Максимальный размер JSON-файла в байтах.
+// Ставим 850 КБ (0.85 МБ), чтобы с запасом проходить лимит 1 МБ (1048576 байт)
+// с учетом заголовков, оверхеда JSON и кодировки.
+const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
 
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
@@ -69,7 +70,7 @@ const App: React.FC = () => {
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
 
-    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ И "ЛЕЧЕНИЕ" ДАННЫХ ---
+    // --- УНИВЕРСАЛЬНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         
@@ -117,7 +118,6 @@ const App: React.FC = () => {
     }, []);
 
     // --- ЗАГРУЗКА СНИМКА (SNAPSHOT) ---
-    // ИСПРАВЛЕННАЯ ЛОГИКА: Загружаем чанки и парсим их КАК ОБЪЕКТЫ, а не как текст
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация...', progress: 0 }));
@@ -132,7 +132,7 @@ const App: React.FC = () => {
                 return false;
             }
 
-            // 1. Сортировка (оставляем улучшенную, она все равно полезна для порядка данных)
+            // Сортировка файлов
             fileList.sort((a: any, b: any) => {
                 const nameA = a.name || '';
                 const nameB = b.name || '';
@@ -152,57 +152,55 @@ const App: React.FC = () => {
             let loadedCount = 0;
             const total = fileList.length;
             
-            // Накопители данных
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
+            let hasCorruption = false;
 
-            // 2. Последовательная загрузка и ПАРСИНГ каждого чанка
             for (const file of fileList) {
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 
                 const text = await res.text();
-                if (!text) continue;
+                // ПРОВЕРКА НА ОБРЕЗКУ: Если размер ровно 1 МБ (1048576 байт), значит сервер обрезал файл
+                if (text.length === 1048576) {
+                    console.error(`Chunk ${file.name} is exactly 1MB. It was truncated by the server.`);
+                    hasCorruption = true;
+                    // Мы не прерываем загрузку полностью, но пометим флаг
+                    // Попытка спарсить скорее всего упадет ниже
+                }
 
                 try {
-                    // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Парсим каждый файл отдельно!
-                    // Мы ожидаем, что каждый файл - это валидный JSON объект.
                     const chunkData = JSON.parse(text);
                     
-                    // Если это старый формат (одна большая строка), код упадет в catch, 
-                    // но для новой системы это штатное поведение.
-                    
-                    // Собираем строки данных
                     if (Array.isArray(chunkData.rows)) {
                         accumulatedRows.push(...chunkData.rows);
                     } else if (Array.isArray(chunkData.aggregatedData)) {
-                         // Fallback для совместимости, если вдруг чанк содержит полную структуру
                          accumulatedRows.push(...chunkData.aggregatedData);
                     }
 
-                    // Ищем метаданные (они могут быть в первом или любом чанке)
                     if (chunkData.meta) {
                         loadedMeta = chunkData.meta;
                     }
-                    
                 } catch (jsonErr) {
                     console.error(`Error parsing chunk ${file.id}:`, jsonErr);
-                    // Если это НЕ "Unterminated string", а просто битый файл - мы это увидим
-                    throw new Error(`Corrupted chunk file: ${file.name}`);
+                    hasCorruption = true;
+                    // Если файл битый - пропускаем его, спасаем то что есть
                 }
                 
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
             }
 
+            if (hasCorruption) {
+                addNotification('Некоторые данные повреждены из-за лимитов сервера. Загружено частично.', 'warning');
+            }
+
             if (accumulatedRows.length > 0 || loadedMeta) {
-                // Восстанавливаем состояние из накопленных данных
                 const validated = normalize(accumulatedRows);
                 
                 setAllData(validated);
                 allDataRef.current = validated;
                 
-                // Метаданные (или дефолтные значения)
                 const safeMeta = loadedMeta || {};
                 const uRows = safeMeta.unidentifiedRows || [];
                 const rCounts = safeMeta.okbRegionCounts || {};
@@ -211,16 +209,19 @@ const App: React.FC = () => {
                 setOkbRegionCounts(rCounts);
                 totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
 
-                await saveAnalyticsState({
-                    allData: validated,
-                    unidentifiedRows: uRows,
-                    okbRegionCounts: rCounts,
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: versionHash,
-                    okbData: [], okbStatus: null
-                });
+                // Если есть повреждения, НЕ сохраняем локально как "последнюю версию", чтобы не затереть нормальный бэкап
+                if (!hasCorruption) {
+                     await saveAnalyticsState({
+                        allData: validated,
+                        unidentifiedRows: uRows,
+                        okbRegionCounts: rCounts,
+                        totalRowsProcessed: totalRowsProcessedRef.current,
+                        versionHash: versionHash,
+                        okbData: [], okbStatus: null
+                    });
+                    localStorage.setItem('last_snapshot_version', versionHash);
+                }
                 
-                localStorage.setItem('last_snapshot_version', versionHash);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
                 return true;
             }
@@ -230,64 +231,92 @@ const App: React.FC = () => {
         } catch (e) { 
             console.error("Snapshot download error:", e); 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка загрузки' }));
-            addNotification('Ошибка загрузки или поврежденные данные', 'error');
+            addNotification('Ошибка загрузки данных', 'error');
         }
         return false;
     }, [normalize, addNotification]);
 
-    // --- ФУНКЦИЯ СОХРАНЕНИЯ В ОБЛАКО (JSON SNAPSHOT) ---
-    // ИСПРАВЛЕННАЯ ЛОГИКА: Разбиваем массив на части и сохраняем как отдельные валидные JSON объекты
+    // --- СОХРАНЕНИЕ В ОБЛАКО С "ВЕСОВОЙ" НАРЕЗКОЙ ---
+    // ГЛАВНОЕ ИСПРАВЛЕНИЕ: Разбиваем не по кол-ву строк, а по размеру JSON в байтах
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Подготовка данных...', progress: 0 }));
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Анализ размера данных...', progress: 0 }));
             
             const newVersionHash = `edit_${Date.now()}`;
             
-            // 1. Разбиваем данные на пакеты (chunks) по ROWS_PER_CHUNK
-            const totalRows = currentData.length;
-            const totalChunks = Math.ceil(totalRows / ROWS_PER_CHUNK) || 1;
+            // Подготавливаем чанки
+            const chunks: string[] = [];
             
-            for (let i = 0; i < totalChunks; i++) {
-                const start = i * ROWS_PER_CHUNK;
-                const end = start + ROWS_PER_CHUNK;
-                const chunkRows = currentData.slice(start, end);
-                
-                // Формируем объект чанка
-                const chunkPayload: any = {
-                    chunkIndex: i,
-                    totalChunks: totalChunks,
+            // 1. Создаем первый чанк с метаданными
+            let currentChunkObj: any = {
+                chunkIndex: 0,
+                versionHash: newVersionHash,
+                rows: [],
+                meta: {
+                    unidentifiedRows: currentUnidentified,
+                    okbRegionCounts: okbRegionCounts,
+                    totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: newVersionHash,
-                    rows: chunkRows, // Валидный массив
-                };
+                    timestamp: Date.now()
+                }
+            };
 
-                // Добавляем метаданные только в первый чанк (chunk 0) для экономии места
-                if (i === 0) {
-                    chunkPayload.meta = {
-                        unidentifiedRows: currentUnidentified,
-                        okbRegionCounts: okbRegionCounts,
-                        totalRowsProcessed: totalRowsProcessedRef.current,
+            // Оценка размера первого чанка (метаданные могут быть тяжелыми)
+            // Используем черновую оценку
+            let currentChunkJson = JSON.stringify(currentChunkObj);
+            let currentSize = new Blob([currentChunkJson]).size;
+
+            // 2. Итеративно добавляем строки, следя за размером
+            for (const row of currentData) {
+                // Сериализуем одну строку, чтобы узнать её размер
+                const rowStr = JSON.stringify(row);
+                // +2 байта на запятую и пробел в массиве JSON
+                const rowSize = new Blob([rowStr]).size + 2; 
+
+                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
+                    // Текущий чанк полон. Сохраняем его.
+                    chunks.push(JSON.stringify(currentChunkObj));
+                    
+                    // Начинаем новый чанк
+                    currentChunkObj = {
+                        chunkIndex: chunks.length,
                         versionHash: newVersionHash,
-                        timestamp: Date.now()
+                        rows: []
+                        // Meta больше не нужна
                     };
+                    // Базовый размер пустой структуры
+                    currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
                 }
 
-                // Сериализуем ЭТОТ КОНКРЕТНЫЙ объект. 
-                // Это безопасно, т.к. размер контролируем, и это валидный JSON.
-                const chunkJson = JSON.stringify(chunkPayload);
+                // Добавляем строку в текущий чанк
+                currentChunkObj.rows.push(row);
+                currentSize += rowSize;
+            }
+            
+            // Добавляем последний чанк
+            chunks.push(JSON.stringify(currentChunkObj));
 
-                // Отправляем
+            const totalChunks = chunks.length;
+
+            // 3. Отправляем чанки
+            for (let i = 0; i < totalChunks; i++) {
+                // В объект чанка добавим totalChunks для информации (парсим обратно чтобы вставить)
+                // Это не очень эффективно, но безопасно. Либо можно было сразу вставлять.
+                // Для простоты оставим как есть, серверу обычно всё равно на поле totalChunks внутри JSON,
+                // главное метаданные в конце.
+                
                 setProcessingState(prev => ({ ...prev, message: `Выгрузка части ${i+1}/${totalChunks}`, progress: Math.round((i/totalChunks)*90) }));
                 
                 const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk: chunkJson }) // Оборачиваем, т.к. API может ожидать { chunk: string }
+                    body: JSON.stringify({ chunk: chunks[i] }) 
                 });
                 
                 if (!res.ok) throw new Error(`Upload failed for chunk ${i}`);
             }
             
-            // 2. Финализируем (Meta)
+            // 4. Финализируем
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -355,6 +384,7 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
+                // Используем новую безопасную функцию сохранения
                 saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
             }
             else if (msg.type === 'result_finished') {
