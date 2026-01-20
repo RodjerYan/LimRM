@@ -1,8 +1,7 @@
 
 import { google, sheets_v4, drive_v3 } from 'googleapis';
-import { OkbDataRow } from '../../types';
-import { Readable } from 'stream';
 import * as XLSX from 'xlsx';
+import { OkbDataRow } from '../../types';
 
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
@@ -115,17 +114,12 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         if (rowArray.every(cell => !cell)) return null;
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
-        
-        // Robust coordinate finding
-        let latVal = row['lat'] || row['latitude'] || row['широта'] || row['широта (lat)'];
-        let lonVal = row['lon'] || row['longitude'] || row['долгота'] || row['долгота (lon)'];
-        
-        // Fallback to specific columns if headers fail or match raw structure
-        if (rowArray.length > 12 && (!latVal || !lonVal)) {
+        let latVal = row['lat'] || row['latitude'];
+        let lonVal = row['lon'] || row['longitude'];
+        if (rowArray.length > 12) {
              const rawLon = rowArray[11]; const rawLat = rowArray[12];
              if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
         }
-        
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
