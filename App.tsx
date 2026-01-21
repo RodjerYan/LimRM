@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -131,14 +132,13 @@ const App: React.FC = () => {
                 return false;
             }
 
-            // Сортировка файлов (на всякий случай оставляем)
+            // Сортировка файлов
             fileList.sort((a: any, b: any) => {
                 const nameA = a.name || '';
                 const nameB = b.name || '';
-                const chunkMatchA = nameA.match(/(?:chunk|part)[-_]?(\d+)/i);
-                const chunkMatchB = nameB.match(/(?:chunk|part)[-_]?(\d+)/i);
-                if (chunkMatchA && chunkMatchB) return parseInt(chunkMatchA[1], 10) - parseInt(chunkMatchB[1], 10);
-                return nameA.localeCompare(nameB);
+                const numA = parseInt(nameA.match(/\d+/)?.[0] || '0', 10);
+                const numB = parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
+                return numA - numB;
             });
 
             let loadedCount = 0;
@@ -154,16 +154,13 @@ const App: React.FC = () => {
                 
                 const text = await res.text();
                 
-                // 1. ДЕТЕКТОР ОБРЕЗКИ: Если файл ровно 1МБ (или чуть больше из-за заголовков), он обрезан сервером.
-                // 1048576 байт = ровно 1 MiB.
                 if (text.length >= 1048576) {
                     console.warn(`Chunk ${file.name} is truncated (size hit 1MB limit). Ignoring corrupted cloud data.`);
                     isSnapshotCorrupted = true;
-                    break; // Нет смысла продолжать, данные потеряны
+                    break;
                 }
 
                 try {
-                    // 2. БЕЗОПАСНЫЙ ПАРСИНГ
                     const chunkData = JSON.parse(text);
                     
                     if (Array.isArray(chunkData.rows)) {
@@ -176,7 +173,6 @@ const App: React.FC = () => {
                         loadedMeta = chunkData.meta;
                     }
                 } catch (jsonErr) {
-                    // Если JSON не парсится (например, старый строковый формат, который теперь обрезан)
                     console.warn(`Error parsing chunk ${file.id}. It might be legacy/corrupted data.`, jsonErr);
                     isSnapshotCorrupted = true;
                     break;
@@ -186,11 +182,10 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
             }
 
-            // РЕЗУЛЬТАТ:
             if (isSnapshotCorrupted) {
                 addNotification('Облачный снимок поврежден (старый формат или лимит размера). Используем локальные данные.', 'warning');
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Сбой облака', progress: 0 }));
-                return false; // Возвращаем false, чтобы App использовал локальные данные
+                return false; 
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
@@ -226,7 +221,6 @@ const App: React.FC = () => {
         } catch (e) { 
             console.error("Snapshot download error:", e); 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-            // Не показываем фатальную ошибку, чтобы не пугать пользователя, просто логируем
         }
         return false;
     }, [normalize, addNotification]);
@@ -239,38 +233,26 @@ const App: React.FC = () => {
             const newVersionHash = `edit_${Date.now()}`;
             const chunks: string[] = [];
             
-            // 1. Формируем первый чанк (Метаданные)
+            // 1. Формируем чанки
             let currentChunkObj: any = {
                 chunkIndex: 0,
                 versionHash: newVersionHash,
                 rows: [],
-                meta: {
-                    unidentifiedRows: currentUnidentified,
-                    okbRegionCounts: okbRegionCounts,
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: newVersionHash,
-                    timestamp: Date.now()
-                }
+                // Meta only in first chunk if needed, but safe to split logic
             };
 
             let currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
 
-            // 2. Добавляем строки, следя за размером
             for (const row of currentData) {
                 const rowStr = JSON.stringify(row);
-                // +2 байта на запятую и структуру массива
                 const rowSize = new Blob([rowStr]).size + 2; 
 
-                // Если добавление строки превысит лимит 850 КБ
                 if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); // Фиксируем текущий чанк
-                    
-                    // Начинаем новый
+                    chunks.push(JSON.stringify(currentChunkObj)); 
                     currentChunkObj = {
                         chunkIndex: chunks.length,
                         versionHash: newVersionHash,
                         rows: []
-                        // Meta только в первом, тут не нужна
                     };
                     currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
                 }
@@ -278,30 +260,29 @@ const App: React.FC = () => {
                 currentChunkObj.rows.push(row);
                 currentSize += rowSize;
             }
-            
-            // Фиксируем последний чанк
             chunks.push(JSON.stringify(currentChunkObj));
 
             const totalChunks = chunks.length;
 
-            // 3. Отправляем
+            // 2. Отправляем чанки
             for (let i = 0; i < totalChunks; i++) {
                 setProcessingState(prev => ({ ...prev, message: `Выгрузка части ${i+1}/${totalChunks}`, progress: Math.round((i/totalChunks)*90) }));
-                
                 const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chunk: chunks[i] }) 
                 });
-                
                 if (!res.ok) throw new Error(`Upload failed for chunk ${i}`);
             }
             
-            // 4. Метаданные (Финализация)
+            // 3. Отправляем метаданные (Только после успешной загрузки всех частей)
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    unidentifiedRows: currentUnidentified,
+                    okbRegionCounts: okbRegionCounts,
+                    totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: newVersionHash,
                     chunkCount: totalChunks,
                     totalRows: totalRowsProcessedRef.current,
@@ -486,7 +467,7 @@ const App: React.FC = () => {
         init();
     }, [handleDownloadSnapshot, normalize]);
 
-    // --- DATA UPDATE HANDLER (For Edit Modal) ---
+    // --- DATA UPDATE HANDLER ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
@@ -536,20 +517,18 @@ const App: React.FC = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // Автосохранение (теперь безопасно)
         saveSnapshotToCloud(newData, newUnidentified).catch(err => {
             console.error("Background sync failed:", err);
             addNotification('Сбой фоновой синхронизации', 'error');
         });
     }, [okbRegionCounts]); 
 
-    // --- 1. FILTERED DATA CALCULATION ---
+    // --- FILTERED DATA ---
     const filtered = useMemo(() => {
         let processedData = allData;
         if (filterStartDate || filterEndDate) {
             processedData = allData.map(row => {
                 if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row; 
-                
                 let newRowFact = 0;
                 Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
                     if (dateKey === 'unknown') return; 
@@ -557,10 +536,8 @@ const App: React.FC = () => {
                     if (filterEndDate && dateKey > filterEndDate) return;
                     newRowFact += val;
                 });
-
                 const activeClients = row.clients.map(client => {
                     if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client; 
-                    
                     let clientSum = 0;
                     Object.entries(client.monthlyFact).forEach(([d, v]) => {
                         if (d === 'unknown') return;
@@ -568,10 +545,8 @@ const App: React.FC = () => {
                         if (filterEndDate && d > filterEndDate) return;
                         clientSum += v;
                     });
-                    
                     return { ...client, fact: clientSum };
                 }).filter(c => (c.fact || 0) > 0);
-
                 return { ...row, fact: newRowFact, clients: activeClients };
             }).filter(r => r.fact > 0); 
         }
@@ -579,7 +554,7 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- 2. ACTIVE CLIENTS ---
+    // --- ACTIVE CLIENTS ---
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -590,22 +565,18 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
-    // --- 3. POTENTIAL CLIENTS ---
+    // --- POTENTIAL CLIENTS ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
-        
         const coordsOnly = okbData.filter(r => {
             const lat = r.lat;
             const lon = r.lon;
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
-
         if (filters.region.length === 0) return coordsOnly;
-        
         return coordsOnly.filter(row => {
             const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
             if (!rawRegion) return false;
-            
             return filters.region.some(selectedReg => 
                 rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) || 
                 selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
@@ -659,6 +630,8 @@ const App: React.FC = () => {
                             onOkbDataChange={setOkbData}
                             disabled={processingState.isProcessing}
                             unidentifiedCount={unidentifiedRows.length}
+                            // NEW: Pass handler for modal
+                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
                             activeClientsCount={allActiveClients.length}
                             uploadedData={filtered} 
                             dbStatus={dbStatus}
@@ -679,7 +652,13 @@ const App: React.FC = () => {
                                 </div>
                                 <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
                             </div>
-                            <ResultsTable data={filtered} onRowClick={setSelectedDetailsRow} unidentifiedRowsCount={unidentifiedRows.length} onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} disabled={allData.length === 0} />
+                            <ResultsTable 
+                                data={filtered} 
+                                onRowClick={setSelectedDetailsRow} 
+                                unidentifiedRowsCount={unidentifiedRows.length} 
+                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
+                                disabled={allData.length === 0} 
+                            />
                         </div>
                     )}
 

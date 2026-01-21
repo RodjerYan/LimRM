@@ -20,6 +20,7 @@ interface AdaptaProps {
     onOkbDataChange: (data: any[]) => void;
     disabled: boolean;
     unidentifiedCount: number;
+    onUnidentifiedClick?: () => void; // New Prop
     activeClientsCount: number;
     uploadedData?: AggregatedDataRow[]; 
     dbStatus?: 'empty' | 'ready' | 'loading';
@@ -280,11 +281,28 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     <div className="text-xl font-bold text-white font-mono">{props.activeClientsCount.toLocaleString()}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-emerald-400 mt-2 uppercase font-bold">● Гео-объектов</div>
                                 </div>
-                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Неопознанные</div>
-                                    <div className="text-xl font-bold text-white font-mono">{props.unidentifiedCount.toLocaleString()}</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-amber-400 mt-2 uppercase font-bold">⚠️ Ошибка разбора</div>
+                                
+                                {/* UNIDENTIFIED CARD - NOW CLICKABLE */}
+                                <div 
+                                    className={`bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 transition-all ${props.onUnidentifiedClick ? 'cursor-pointer hover:bg-gray-800 hover:border-gray-600 group' : ''}`}
+                                    onClick={props.onUnidentifiedClick}
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Неопознанные</div>
+                                        {props.onUnidentifiedClick && <div className="opacity-0 group-hover:opacity-100 transition-opacity text-indigo-400"><SearchIcon small/></div>}
+                                    </div>
+                                    <div className={`text-xl font-bold font-mono ${props.unidentifiedCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                        {props.unidentifiedCount.toLocaleString()}
+                                    </div>
+                                    <div className="flex items-center gap-1 text-[9px] mt-2 uppercase font-bold">
+                                        {props.unidentifiedCount > 0 ? (
+                                            <span className="text-amber-400">⚠️ Ошибка разбора</span>
+                                        ) : (
+                                            <span className="text-emerald-400">✔ Все ОК</span>
+                                        )}
+                                    </div>
                                 </div>
+
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Охват ОКБ</div>
                                     <div className="text-xl font-bold text-white font-mono">{coverageOkb}%</div>

@@ -122,16 +122,24 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
             <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700">
                 <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты Анализа</h2>
                 <div className="w-full md:w-auto flex items-center gap-3">
-                    {unidentifiedRowsCount > 0 && (
-                        <button
-                            onClick={onUnidentifiedClick}
-                            className="bg-danger/80 hover:bg-danger text-white font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 animate-pulse flex-shrink-0"
-                            title="Нажмите, чтобы исправить адреса, которые не удалось распознать"
-                        >
-                            <WarningIcon/>
-                            <span>Неопределенные адреса ({unidentifiedRowsCount})</span>
-                        </button>
-                    )}
+                    {/* Unidentified Button: Now always visible, changes style based on count */}
+                    <button
+                        onClick={onUnidentifiedClick}
+                        className={`font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 flex-shrink-0 ${
+                            unidentifiedRowsCount > 0 
+                                ? 'bg-danger/80 hover:bg-danger text-white animate-pulse' 
+                                : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30'
+                        }`}
+                        title="Нажмите, чтобы просмотреть список адресов"
+                    >
+                        {unidentifiedRowsCount > 0 ? <WarningIcon/> : <CheckIcon small/>}
+                        <span>
+                            {unidentifiedRowsCount > 0 
+                                ? `Неопределенные адреса (${unidentifiedRowsCount})` 
+                                : `Все адреса распознаны`}
+                        </span>
+                    </button>
+
                     <div className="relative w-full md:w-64">
                         <input type="text" placeholder="Поиск по таблице..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
                             className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition" />
