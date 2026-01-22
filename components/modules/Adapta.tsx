@@ -10,7 +10,7 @@ import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
     processingState: FileProcessingState;
-    onStartProcessing: (file: File) => void;
+    // onStartProcessing removed
     onStartCloudProcessing?: (params: CloudLoadParams) => void;
     onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
@@ -31,6 +31,9 @@ interface AdaptaProps {
     endDate: string;
     onStartDateChange: (date: string) => void;
     onEndDateChange: (date: string) => void;
+    
+    // Kept for compatibility if passed but unused, or can be removed entirely
+    onStartProcessing?: (file: File) => void; 
 }
 
 interface OutlierItem {
@@ -255,7 +258,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                         <OKBManagement onStatusChange={props.onOkbStatusChange} onDataChange={props.onOkbDataChange} status={props.okbStatus} disabled={props.disabled} />
                         
-                        <FileUpload processingState={props.processingState} onStartProcessing={props.onStartProcessing} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
+                        <FileUpload processingState={props.processingState} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">

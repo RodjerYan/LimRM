@@ -77,8 +77,8 @@ const SinglePointMap: React.FC<{
     const [isSearching, setIsSearching] = useState(false);
     
     // Cleanup Refs
-    const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-    const mapResizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const mapResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
@@ -265,7 +265,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     // Refs
     const isCommentTouched = useRef(false);
-    const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // --- Effect 1: Init Data & Theme ---
     useEffect(() => {

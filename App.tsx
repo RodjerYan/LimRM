@@ -443,33 +443,6 @@ const App: React.FC = () => {
         }
     }, [okbData, processingState.isProcessing, initWorker]);
 
-    // --- ОБРАБОТКА ФАЙЛА (ЛОКАЛЬНО) ---
-    const handleStartLocalProcessing = useCallback(async (file: File) => {
-        if (processingState.isProcessing) return;
-        
-        setActiveModule('adapta');
-        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Чтение...', fileName: file.name, startTime: Date.now() }));
-        
-        processedFileIdsRef.current.clear();
-        setAllData([]); 
-        setUnidentifiedRows([]); 
-        totalRowsProcessedRef.current = 0;
-        
-        let cacheData: CoordsCache = {};
-        try { const response = await fetch(`/api/get-full-cache?t=${Date.now()}`); if (response.ok) cacheData = await response.json(); } catch (error) {}
-        
-        const worker = initWorker();
-        worker.postMessage({ type: 'INIT_STREAM', payload: { okbData, cacheData, totalRowsProcessed: 0 } });
-        
-        try { 
-            const buffer = await file.arrayBuffer(); 
-            worker.postMessage({ type: 'PROCESS_FILE', payload: { fileBuffer: buffer, fileName: file.name } }, [buffer]); 
-            worker.postMessage({ type: 'FINALIZE_STREAM' });
-        } catch (e) { 
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка чтения' })); 
-        }
-    }, [processingState.isProcessing, okbData, initWorker]);
-
     // --- INIT ---
     useEffect(() => {
         const init = async () => {
@@ -640,7 +613,6 @@ const App: React.FC = () => {
                     {activeModule === 'adapta' && (
                         <Adapta 
                             processingState={processingState}
-                            onStartProcessing={handleStartLocalProcessing}
                             onStartCloudProcessing={handleStartCloudProcessing}
                             onFileProcessed={() => {}}
                             onProcessingStateChange={() => {}}
@@ -659,6 +631,7 @@ const App: React.FC = () => {
                             endDate={filterEndDate}     
                             onStartDateChange={setFilterStartDate} 
                             onEndDateChange={setFilterEndDate}     
+                            onStartProcessing={() => {}} // Removed
                         />
                     )}
 
