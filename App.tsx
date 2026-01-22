@@ -226,7 +226,7 @@ const App: React.FC = () => {
             // Final Defaults
             region = (region && region.trim()) ? region : 'Нет данных';
             brand = (brand && brand.trim()) ? brand : 'Нет данных';
-            packaging = (packaging && packaging.trim()) ? packaging : 'Не указана';
+            packaging = (packaging && packaging.trim()) ? packaging : 'Нет данных';
             rm = (rm && rm.trim()) ? rm : 'Нет данных';
 
             // Construct clientName if still missing
