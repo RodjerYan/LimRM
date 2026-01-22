@@ -11,7 +11,7 @@ interface ModalProps {
     zIndex?: string; // New prop for stacking control
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl', zIndex = 'z-50' }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, maxWidth = 'max-w-7xl', zIndex = 'z-[9999]' }) => {
 
     useEffect(() => {
         const handleEsc = (event: KeyboardEvent) => {

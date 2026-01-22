@@ -539,7 +539,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     );
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[200]">
+        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Левая колонка */}
                 <div className="flex flex-col gap-6">
