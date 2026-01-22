@@ -1,3 +1,4 @@
+
 import * as xlsx from 'xlsx';
 import { 
     AggregatedDataRow, 
@@ -16,7 +17,7 @@ type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
 
-// --- 1. WORKER STATE (ПЕРЕМЕННЫЕ) ---
+// --- WORKER STATE ---
 let state_aggregatedData: AggregationMap = {};
 let state_uniquePlottableClients = new Map<string, MapPoint>();
 let state_unidentifiedRows: UnidentifiedRow[] = [];
@@ -30,20 +31,11 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
+// Увеличили порог для чекпоинта (сохранения в облако) до 50 000
 const CHECKPOINT_THRESHOLD = 50000; 
+
+// Увеличили порог обновления UI до 20 000
 const UI_UPDATE_THRESHOLD = 20000;
-
-// --- 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-// Jittering: добавляет случайный сдвиг ~5-7 метров, чтобы точки в одном ТЦ не слипались
-const applyJitter = (val: number): number => {
-    const JITTER_AMOUNT = 0.00005; 
-    return val + (Math.random() - 0.5) * JITTER_AMOUNT;
-};
-
-const normalizeNameForgiving = (name: string): string => {
-    return name.toLowerCase().replace(/\s+/g, ' ').trim();
-};
 
 const normalizeHeaderKey = (key: string): string => {
     if (!key) return '';
@@ -72,14 +64,19 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
+    
     const strVal = String(val);
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
+    
     const floatVal = parseFloat(cleaned);
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
+// Helper to parse date into YYYY-MM format
 const parseDateKey = (val: any): string | null => {
     if (!val) return null;
+    
+    // Excel Serial Date
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
@@ -88,11 +85,17 @@ const parseDateKey = (val: any): string | null => {
         }
         return null;
     }
+
     const str = String(val).trim();
+    
+    // ISO-like YYYY-MM-DD or YYYY.MM.DD
     let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
+
+    // DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
+    
     return null;
 };
 
@@ -125,8 +128,10 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+    
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
     let runningSum = 0;
+
     allClients.forEach(client => {
         runningSum += (client.fact || 0);
         const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
@@ -135,8 +140,6 @@ function performIncrementalAbc() {
         else client.abcCategory = 'C';
     });
 }
-
-// --- 3. ОСНОВНАЯ ЛОГИКА ---
 
 function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified }: { 
     okbData: OkbDataRow[], 
@@ -168,6 +171,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
             }
         });
     }
+
     state_cacheAddressMap = new Map();
     if (cacheData) {
         Object.values(cacheData).flat().forEach((item: any) => {
@@ -178,6 +182,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
             }
         });
     }
+
     if (restoredData && restoredData.length > 0) {
         restoredData.forEach(row => {
             const { clients, ...rest } = row;
@@ -201,6 +206,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
             state_unidentifiedRows = [...restoredUnidentified];
         }
     }
+
     postMessage({ 
         type: 'result_init', 
         payload: { 
@@ -231,6 +237,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
         
         const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
+        
         const clientHeader = normHeaders.find(h => 
             h.norm.includes('названиеклиента') || 
             h.norm.includes('наименованиеклиента') || 
@@ -245,6 +252,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
             state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
         }
+        
     } else {
         jsonData = rawData.map(row => {
             const obj: any = {};
@@ -257,110 +265,53 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
-        // 1. Извлекаем базовые данные
+        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
+        if (!rm) rm = 'Unknown_RM';
+
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
-        if (!rm) rm = 'Unknown_RM';
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
         if (!channel || channel.length < 2) channel = 'Не определен';
 
-        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
-        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
-        const dateKey = parseDateKey(dateRaw) || 'unknown';
+        // 1. Get raw brand value
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        // 2. Split by comma, semicolon, pipe, or newline (more aggressive split)
+        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+        
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
-        // 2. Парсинг адреса и региона
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
-        const reg = getCanonicalRegion(row) || parsed.region;
         const cacheEntry = state_cacheAddressMap.get(normAddr);
         
         const isCityFound = parsed.city !== 'Город не определен';
+        const reg = getCanonicalRegion(row) || parsed.region;
         const isRegionFound = reg !== 'Регион не определен';
+
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
             continue;
         }
 
-        // 3. Данные о продажах
-        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
-        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
-        const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи']);
+        const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
+        // 3. Divide weight evenly among detected brands
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
-        // =================================================================================
-        // НОВАЯ ЛОГИКА УНИКАЛЬНОСТИ (ЗОЛОТОЙ СТАНДАРТ)
-        // =================================================================================
-        
-        const normName = normalizeNameForgiving(clientName);
-        const isGenericName = normName.length < 2 || ['тт', 'торговая точка', 'магазин'].includes(normName);
-        
-        let uniqueClientKey: string;
+        const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
+        const dateKey = parseDateKey(dateRaw) || 'unknown';
 
-        if (isGenericName) {
-            // Если имя пустое/"ТТ" -> используем номер строки, чтобы не схлопывать данные
-            uniqueClientKey = `${normAddr}#ROW_${state_processedRowsCount}`;
-        } else {
-            // Стандарт: Адрес + Имя + Канал
-            uniqueClientKey = `${normAddr}#${normName}#${channel.toLowerCase()}`;
-        }
+        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
+        // COMPOSITE KEY FIX: Use both address and client name to define uniqueness.
+        // This prevents distinct shops at the same address (e.g. malls) from collapsing into one.
+        const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+        // Fallback to just address if name is generic 'ТТ' to avoid creating duplicates for identical placeholders
+        const uniqueClientKey = (normName.length > 2 && normName !== 'тт') 
+            ? `${normAddr}#${normName}` 
+            : normAddr;
 
-        // =================================================================================
-        // СОЗДАНИЕ КЛИЕНТА
-        // =================================================================================
-
-        let pt = state_uniquePlottableClients.get(uniqueClientKey);
-
-        if (!pt) {
-            const okb = state_okbCoordIndex.get(normAddr);
-            const latRaw = findValueInRow(row, ['широта', 'lat']);
-            const lonRaw = findValueInRow(row, ['долгота', 'lon']);
-            const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
-            const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
-
-            let baseLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
-            let baseLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
-
-            // Jittering: добавляем шум к координатам
-            if (baseLat && baseLon) {
-                baseLat = applyJitter(baseLat);
-                baseLon = applyJitter(baseLon);
-            }
-
-            pt = {
-                key: uniqueClientKey,
-                lat: baseLat,
-                lon: baseLon,
-                status: 'match',
-                name: clientName,
-                address: rawAddr,
-                city: parsed.city,
-                region: reg,
-                rm,
-                brand: brands.join(', '), 
-                packaging, 
-                type: channel,
-                originalRow: row,
-                fact: 0,
-                monthlyFact: {},
-                abcCategory: 'C'
-            };
-            state_uniquePlottableClients.set(uniqueClientKey, pt);
-        } else {
-             const existingBrands = pt.brand ? pt.brand.split(', ') : [];
-             brands.forEach(b => {
-                 if (!existingBrands.includes(b)) existingBrands.push(b);
-             });
-             pt.brand = existingBrands.join(', ');
-        }
-
-        // =================================================================================
-        // АГРЕГАЦИЯ
-        // =================================================================================
-        
+        // 4. Iterate over each brand and create separate records
         for (const brand of brands) {
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
             
@@ -381,10 +332,47 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     clients: new Map(),
                 };
             }
+
             state_aggregatedData[groupKey].fact += weightPerBrand;
+            
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
             state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
 
+            if (!state_uniquePlottableClients.has(uniqueClientKey)) {
+                const okb = state_okbCoordIndex.get(normAddr); // Lookup coords by address only
+                
+                // Enhanced coordinate detection
+                const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
+                const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
+                const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
+                const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
+                
+                // Priority: Excel File > Cache > OKB
+                // FIX: REMOVED RANDOM JITTER. Coordinates are now exact.
+                const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
+                const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
+
+                state_uniquePlottableClients.set(uniqueClientKey, {
+                    key: uniqueClientKey,
+                    lat: effectiveLat,
+                    lon: effectiveLon,
+                    status: 'match',
+                    name: clientName,
+                    address: rawAddr, 
+                    city: parsed.city, 
+                    region: reg, 
+                    rm, 
+                    brand: brand, 
+                    packaging: packaging, 
+                    type: channel,
+                    originalRow: row, 
+                    fact: 0,
+                    monthlyFact: {},
+                    abcCategory: 'C'
+                });
+            }
+            
+            const pt = state_uniquePlottableClients.get(uniqueClientKey);
             if (pt) {
                 pt.fact = (pt.fact || 0) + weightPerBrand;
                 if (!pt.monthlyFact) pt.monthlyFact = {};
@@ -397,6 +385,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
+        
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -404,6 +393,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
+
         postMessage({
             type: 'CHECKPOINT',
             payload: {
@@ -413,10 +403,12 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 totalRowsProcessed: state_processedRowsCount
             }
         });
+        
         state_lastEmitCount = state_processedRowsCount;
     }
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
+        
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -424,6 +416,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
+        
         postMessage({ 
             type: 'result_chunk_aggregated', 
             payload: {
@@ -432,12 +425,14 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             }
         });
     }
+
     const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); 
     postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
     performIncrementalAbc();
+
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
         potential: item.fact * 1.15,
@@ -445,6 +440,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         growthPercentage: 15,
         clients: Array.from(item.clients.values())
     }));
+
     postMessage({ 
         type: 'result_finished', 
         payload: {

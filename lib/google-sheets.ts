@@ -118,8 +118,11 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         if (rowArray.every(cell => !cell)) return null;
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
+        
         let latVal = row['lat'] || row['latitude'];
-        let lonVal = row['lon'] || row['longitude'];
+        // FIX: Added 'lng' support here too
+        let lonVal = row['lon'] || row['lng'] || row['longitude'];
+        
         if (rowArray.length > 12) {
              const rawLon = rowArray[11]; const rawLat = rowArray[12];
              if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
