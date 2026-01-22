@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -58,7 +59,6 @@ const App: React.FC = () => {
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     const workerRef = useRef<Worker | null>(null);
-    // FIX: Правильный тип для браузерного таймера
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
@@ -82,7 +82,7 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ (Stable Keys) ---
+    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -95,6 +95,7 @@ const App: React.FC = () => {
             }
             return undefined;
         };
+        
         const isValidCoord = (n: any) => typeof n === 'number' && !isNaN(n) && n !== 0;
 
         rows.forEach((row, index) => {
@@ -102,7 +103,6 @@ const App: React.FC = () => {
             const brandRaw = String(row.brand || '').trim();
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
 
-            // FIX: Стабильный ключ на основе контента или индекса (не random)
             const generateStableKey = (base: any, suffix: string | number) => {
                 const baseStr = base.key || base.address || `idx_${index}`;
                 return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
@@ -110,12 +110,27 @@ const App: React.FC = () => {
 
             const normalizeClient = (c: any, cIdx: number) => {
                 const clientObj = { ...c };
+                const original = c.originalRow || {}; 
+
+                // 1. Explicitly map 'lng' to 'lon' if present
+                if (c.lng !== undefined) {
+                    clientObj.lon = safeFloat(c.lng);
+                }
+                // Also check 'lat' explicitly
+                if (c.lat !== undefined) {
+                    clientObj.lat = safeFloat(c.lat);
+                }
+
+                // 2. Fallback checks if still invalid
                 if (!isValidCoord(clientObj.lat)) {
-                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat);
+                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
+                                    safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
                 }
                 if (!isValidCoord(clientObj.lon)) {
-                    clientObj.lon = safeFloat(c.lng) || safeFloat(c.lon) || safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon);
+                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
+                                    safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
                 }
+                
                 if (!clientObj.key) {
                     clientObj.key = generateStableKey(row, `cli_${cIdx}`);
                 }
@@ -142,9 +157,14 @@ const App: React.FC = () => {
                 }
             }
             
-            const normalizedClients = Array.isArray(row.clients) && row.clients.length > 0 
-                ? row.clients.map(normalizeClient)
-                : [{ ...row, key: row.key || row.address || generateStableKey(row, 'sgl') }];
+            // Handle rows without 'clients' array (flat structure from snapshot)
+            // If row.clients is missing, treat the row itself as the client source
+            let clientSource = row.clients;
+            if (!Array.isArray(clientSource) || clientSource.length === 0) {
+                 clientSource = [row];
+            }
+
+            const normalizedClients = clientSource.map(normalizeClient);
 
             result.push({
                 ...row,
@@ -158,8 +178,6 @@ const App: React.FC = () => {
     // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         try {
-            // Не блокируем UI сообщением, если это фоновое сохранение (можно добавить проп isBackground)
-            // Но для надежности покажем индикатор в углу или консоли
             console.log('Начало сохранения в облако...', currentData.length);
             
             const newVersionHash = `edit_${Date.now()}`;
@@ -194,7 +212,6 @@ const App: React.FC = () => {
             const totalChunks = chunks.length;
 
             for (let i = 0; i < totalChunks; i++) {
-                // Можно использовать fetch без await если не важен порядок, но для надежности лучше последовательно
                 const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -271,7 +288,7 @@ const App: React.FC = () => {
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
-                setAllData(accumulatedRows); // Тут безопасная перезапись, т.к. это первичная загрузка
+                setAllData(accumulatedRows);
                 
                 const safeMeta = loadedMeta || {};
                 setUnidentifiedRows(safeMeta.unidentifiedRows || []);
@@ -316,7 +333,6 @@ const App: React.FC = () => {
                 const { data: chunkData, totalProcessed } = msg.payload;
                 const validatedChunk = normalize(chunkData);
                 
-                // FIX: Merge вместо Append для предотвращения дублей
                 setAllData(prev => {
                     const map = new Map(prev.map(r => [r.key, r]));
                     validatedChunk.forEach(r => map.set(r.key, r));
@@ -330,9 +346,6 @@ const App: React.FC = () => {
                 const payload = msg.payload;
                 const validated = normalize(payload.aggregatedData);
                 
-                // FIX: Также используем Merge, если чекпоинт частичный (для безопасности)
-                // Если worker гарантирует полный стейт, можно использовать setAllData(validated),
-                // но map-merge безопаснее для UI.
                 setAllData(prev => {
                     const map = new Map(prev.map(r => [r.key, r]));
                     validated.forEach(r => map.set(r.key, r));
@@ -341,7 +354,6 @@ const App: React.FC = () => {
 
                 setUnidentifiedRows(payload.unidentifiedRows);
                 
-                // Фоновое сохранение без блокировки, но с проверкой
                 if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
                 saveTimeoutRef.current = setTimeout(() => {
                     saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
@@ -352,7 +364,6 @@ const App: React.FC = () => {
                 const validated = normalize(payload.aggregatedData);
                 setOkbRegionCounts(payload.okbRegionCounts);
                 
-                // Final set - here we replace fully because process is done
                 setAllData(validated);
                 setUnidentifiedRows(payload.unidentifiedRows);
                 setDbStatus('ready');
@@ -379,7 +390,6 @@ const App: React.FC = () => {
     const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
         if (processingState.isProcessing) return;
         
-        // FIX: Явный сброс перед началом
         processedFileIdsRef.current.clear();
         setAllData([]);
         setUnidentifiedRows([]);
@@ -411,7 +421,6 @@ const App: React.FC = () => {
                 setProcessingState(prev => ({ ...prev, message: `Загрузка: ${file.name}` }));
                 
                 try {
-                    // FIX: Реальная загрузка
                     const fileRes = await fetch(`/api/get-akb?action=get-file-content&fileId=${file.id}`); 
                     if (!fileRes.ok) throw new Error('File load error');
                     
@@ -441,7 +450,6 @@ const App: React.FC = () => {
         setActiveModule('adapta');
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Чтение...', fileName: file.name, startTime: Date.now() }));
         
-        // Сброс
         processedFileIdsRef.current.clear();
         setAllData([]); 
         setUnidentifiedRows([]); 
@@ -468,7 +476,6 @@ const App: React.FC = () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                // Локальная загрузка - тут merge не нужен, так как это старт
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
@@ -492,7 +499,6 @@ const App: React.FC = () => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
-        // Логика обновления (копипаст из оригинала, предположим она корректна для задачи)
         if (typeof originalIndex === 'number') {
             const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
             if (rowIndex !== -1) newUnidentified.splice(rowIndex, 1);
@@ -528,7 +534,6 @@ const App: React.FC = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // FIX: Debounce cloud save
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => {
             saveSnapshotToCloud(newData, newUnidentified).catch(err => {
