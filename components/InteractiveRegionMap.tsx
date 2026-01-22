@@ -532,7 +532,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 </button>
             </div>
 
-            <div className="absolute bottom-8 left-8 z-[400] flex gap-2">
+            <div className="absolute bottom-8 left-24 z-[400] flex gap-2">
                 <div className="bg-gray-900/90 backdrop-blur-md p-1 rounded-xl border border-white/10 shadow-xl flex">
                     {(['sales', 'pets', 'competitors', 'age'] as OverlayMode[]).map(mode => (
                         <button key={mode} onClick={() => setOverlayMode(mode)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${overlayMode === mode ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
