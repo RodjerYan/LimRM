@@ -370,9 +370,14 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         // Keep existing if not changed, or use new if manual
         finalLat = lat !== undefined ? lat : (row[1] ? parseFloat(row[1]) : undefined);
         finalLon = lon !== undefined ? lon : (row[2] ? parseFloat(row[2]) : undefined);
-        // If manual coords are present, status is confirmed. If reverting to old, keep old status unless it was pending/invalid? 
-        // Safer to assume if we have coords now, it is confirmed or matches old valid state.
-        finalStatus = (lat !== undefined) ? 'confirmed' : currentStoredStatus;
+        // If manual coords are present, status is confirmed. 
+        // If reusing existing, we retain existing status unless we have valid coords now which implies confirmed.
+        if (lat !== undefined) {
+             finalStatus = 'confirmed';
+        } else {
+             // Retain existing status if valid, else infer confirmed if coords exist
+             finalStatus = currentStoredStatus || (finalLat && finalLon ? 'confirmed' : 'pending');
+        }
     }
     
     if (comment === undefined) finalComment = currentStoredComment;
