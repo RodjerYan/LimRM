@@ -116,10 +116,13 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         // FIX: Support 'lng' as well as 'lon' and 'longitude'
         let lonVal = row['lon'] || row['lng'] || row['longitude'];
         
-        if (rowArray.length > 12) {
-             const rawLon = rowArray[11]; const rawLat = rowArray[12];
-             if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
-        }
+        // FIX: Removed legacy logic that unconditionally overrode coordinates with columns 11/12 (L/M).
+        // This was causing data corruption when the sheet structure changed.
+        // if (rowArray.length > 12) {
+        //      const rawLon = rowArray[11]; const rawLat = rowArray[12];
+        //      if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
+        // }
+
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());

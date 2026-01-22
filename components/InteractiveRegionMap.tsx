@@ -430,7 +430,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             let lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
-                if (lon < 0) lon += 360;
+                // FIX: Only shift longitude if it's in the Chukotka/Antimeridian range (< -170)
+                // Do not apply this to normal negative longitudes (Western Hemisphere).
+                if (lon < -170) lon += 360;
 
                 const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                 const marker = L.circleMarker([lat, lon], {
@@ -448,7 +450,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             let lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
-                if (lon < 0) lon += 360;
+                // FIX: Only shift longitude if it's in the Chukotka/Antimeridian range (< -170)
+                if (lon < -170) lon += 360;
+                
                 pointsForBounds.push([lat, lon]);
 
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);

@@ -123,10 +123,12 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         // FIX: Added 'lng' support here too
         let lonVal = row['lon'] || row['lng'] || row['longitude'];
         
-        if (rowArray.length > 12) {
-             const rawLon = rowArray[11]; const rawLat = rowArray[12];
-             if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
-        }
+        // REMOVED LEGACY OVERRIDE
+        // if (rowArray.length > 12) {
+        //      const rawLon = rowArray[11]; const rawLat = rowArray[12];
+        //      if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
+        // }
+
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
