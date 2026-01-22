@@ -108,7 +108,7 @@ const getCanonicalRegion = (row: any): string => {
         }
         return standardizeRegion(cleanVal);
     }
-    return 'Регион не определен';
+    return 'Нет данных';
 };
 
 const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
@@ -162,7 +162,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     if (okbData) {
         okbData.forEach(row => {
             const reg = getCanonicalRegion(row);
-            if (reg !== 'Регион не определен') {
+            if (reg !== 'Нет данных' && reg !== 'Регион не определен') {
                 state_okbRegionCounts[reg] = (state_okbRegionCounts[reg] || 0) + 1;
                 if (!state_okbByRegion[reg]) state_okbByRegion[reg] = [];
                 state_okbByRegion[reg].push(row);
@@ -263,29 +263,38 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
-        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
-        if (!rm) rm = 'Unknown_RM';
+        let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []) || 'Нет данных';
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = 'Не определен';
+        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']) || 'Нет данных';
 
         // 1. Get raw brand value
-        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Нет данных';
         // 2. Split by comma, semicolon, pipe, or newline (more aggressive split)
-        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+        const brands = rawBrand === 'Нет данных' 
+            ? ['Нет данных'] 
+            : rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
         
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Нет данных';
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
         
         const isCityFound = parsed.city !== 'Город не определен';
-        const reg = getCanonicalRegion(row) || parsed.region;
-        const isRegionFound = reg !== 'Регион не определен';
+        let reg = getCanonicalRegion(row);
+        
+        if (reg === 'Нет данных' || reg === 'Регион не определен') {
+            if (parsed.region !== 'Регион не определен') {
+                reg = parsed.region;
+            } else {
+                reg = 'Нет данных';
+            }
+        }
+        
+        const isRegionFound = reg !== 'Нет данных';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
@@ -300,7 +309,12 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
-        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
+        let clientName = String(row[state_clientNameHeader || ''] || '').trim();
+        // If client name header found nothing, try finding 'name' key specifically
+        if (!clientName) {
+             clientName = findValueInRow(row, ['name', 'наименование', 'клиент']) || 'ТТ';
+        }
+
         // COMPOSITE KEY FIX: Use both address and client name to define uniqueness.
         // This prevents distinct shops at the same address (e.g. malls) from collapsing into one.
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
@@ -455,5 +469,4 @@ self.onmessage = async (e) => {
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
-    // Removed PROCESS_FILE to align with JSON-only approach
 };

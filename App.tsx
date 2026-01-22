@@ -112,7 +112,7 @@ const App: React.FC = () => {
         };
     }, []);
 
-    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
+    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ И ВОССТАНОВЛЕНИЕ ДАННЫХ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -138,54 +138,41 @@ const App: React.FC = () => {
                 return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
             };
 
-            // Handle rows without 'clients' array (flat structure from snapshot)
+            // 1. Identify Client Source (Handle Flat vs Aggregated JSON)
             let clientSource = row.clients;
             if (!Array.isArray(clientSource) || clientSource.length === 0) {
-                 clientSource = [row];
+                 clientSource = [row]; // Treat the row itself as the client if nested array missing
             }
 
             const normalizedClients = clientSource.map((c: any, cIdx: number) => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
 
-                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
-                if (c.lng !== undefined) {
-                    clientObj.lon = safeFloat(c.lng);
-                }
-                // Also ensure 'lat' is picked up directly
-                if (c.lat !== undefined) {
-                    clientObj.lat = safeFloat(c.lat);
-                }
+                // Coordinate Recovery
+                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
+                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
 
-                // 2. Fallback checks if still invalid
                 if (!isValidCoord(clientObj.lat)) {
-                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
-                                    safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
+                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(original.lat);
                 }
                 if (!isValidCoord(clientObj.lon)) {
-                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
-                                    safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
+                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(original.lon);
                 }
                 
                 if (!clientObj.key) {
                     clientObj.key = generateStableKey(row, `cli_${cIdx}`);
                 }
                 
-                // Recover missing client fields from originalRow if possible
-                if (!clientObj.region || clientObj.region === 'Нет данных') {
-                    clientObj.region = findValueInRow(original, ['регион', 'субъект', 'область']) || 'Нет данных';
-                }
-                if (!clientObj.packaging || clientObj.packaging === 'Нет данных') {
-                    clientObj.packaging = findValueInRow(original, ['фасовка', 'упаковка']) || 'Нет данных';
-                }
-                if (!clientObj.brand || clientObj.brand === 'Нет данных') {
-                    clientObj.brand = findValueInRow(original, ['бренд', 'торговая марка']) || 'Нет данных';
-                }
+                // Deep Field Recovery for Clients
+                if (!clientObj.region || clientObj.region === '') clientObj.region = findValueInRow(clientObj, ['region', 'регион', 'область']) || findValueInRow(original, ['region', 'регион', 'область']);
+                if (!clientObj.packaging || clientObj.packaging === '') clientObj.packaging = findValueInRow(clientObj, ['packaging', 'фасовка', 'упаковка']) || findValueInRow(original, ['packaging', 'фасовка', 'упаковка']);
+                if (!clientObj.brand || clientObj.brand === '') clientObj.brand = findValueInRow(clientObj, ['brand', 'бренд', 'торговая марка']) || findValueInRow(original, ['brand', 'бренд']);
+                if (!clientObj.name || clientObj.name === '') clientObj.name = findValueInRow(clientObj, ['name', 'наименование', 'клиент']) || findValueInRow(original, ['name', 'наименование']);
 
                 return clientObj;
             });
 
-            // Handle flattened rows that might need splitting (Legacy support)
+            // Handle legacy flattened rows that might need splitting
             if (hasMultipleBrands && !Array.isArray(row.clients)) {
                 const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
                 if (parts.length > 1) {
@@ -199,43 +186,53 @@ const App: React.FC = () => {
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: [] // Should not happen in new logic, but safe fallback
+                            clients: [] 
                         });
                     });
                     return;
                 }
             }
 
-            // --- RECOVERY LOGIC ---
-            // Ensure critical fields for ResultsTable are present
+            // --- RECOVERY LOGIC FOR AGGREGATED ROW ---
+            // Aggressively search for missing fields in top-level row first
             let region = row.region;
-            let brand = row.brand;
-            let packaging = row.packaging;
-            let rm = row.rm;
+            if (!region || region === '') region = findValueInRow(row, ['region', 'регион', 'область']);
             
-            // Fallback: Peek at first client to recover data if the aggregate row is bare
-            const firstClient = normalizedClients[0];
-            if (firstClient) {
-                if (!region || region === 'Регион не определен' || region === 'Нет данных') region = firstClient.region;
-                if (!brand || brand === 'Бренд не определен' || brand === 'Нет данных') brand = firstClient.brand;
-                if (!rm || rm === 'РМ не назначен' || rm === 'Нет данных') rm = firstClient.rm;
-                if (!packaging || packaging === 'Не указана' || packaging === 'Нет данных') packaging = firstClient.packaging;
+            let brand = row.brand;
+            if (!brand || brand === '') brand = findValueInRow(row, ['brand', 'бренд', 'торговая марка']);
+            
+            let packaging = row.packaging;
+            if (!packaging || packaging === '') packaging = findValueInRow(row, ['packaging', 'фасовка', 'упаковка']);
+
+            let rm = row.rm;
+            if (!rm || rm === '') rm = findValueInRow(row, ['rm', 'рм', 'менеджер']);
+
+            // Client Name Strategy: Look for specific name keys if clientName is missing
+            let clientName = row.clientName;
+            if (!clientName || clientName === '') {
+                clientName = findValueInRow(row, ['clientName', 'название группы', 'name', 'наименование', 'клиент']);
             }
 
-            // Defaults (Explicit "Нет данных" per user request)
+            // Fallback: Peek at first client if top-level fields are still missing
+            const firstClient = normalizedClients[0];
+            if (firstClient) {
+                if (!region) region = firstClient.region;
+                if (!brand) brand = firstClient.brand;
+                if (!rm) rm = firstClient.rm;
+                if (!packaging) packaging = firstClient.packaging;
+                if (!clientName) clientName = firstClient.name;
+            }
+
+            // Final Defaults
             region = (region && region.trim()) ? region : 'Нет данных';
             brand = (brand && brand.trim()) ? brand : 'Нет данных';
-            packaging = (packaging && packaging.trim()) ? packaging : 'Нет данных';
+            packaging = (packaging && packaging.trim()) ? packaging : 'Не указана';
             rm = (rm && rm.trim()) ? rm : 'Нет данных';
 
-            // Ensure clientName exists for the table
-            let clientName = row.clientName;
+            // Construct clientName if still missing
             if (!clientName || clientName === 'undefined' || clientName.trim() === '') {
-                // Construct sensible name
-                if (region !== 'Нет данных' && brand !== 'Нет данных') {
+                if (brand !== 'Нет данных') {
                     clientName = `${region}: ${brand}`;
-                } else if (normalizedClients.length > 0 && normalizedClients[0].name) {
-                    clientName = normalizedClients[0].name;
                 } else {
                     clientName = 'Группа: Нет данных';
                 }
