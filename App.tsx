@@ -112,11 +112,11 @@ const App: React.FC = () => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
 
-                // 1. Explicitly map 'lng' to 'lon' if present
+                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
                 if (c.lng !== undefined) {
                     clientObj.lon = safeFloat(c.lng);
                 }
-                // Also check 'lat' explicitly
+                // Also ensure 'lat' is picked up directly
                 if (c.lat !== undefined) {
                     clientObj.lat = safeFloat(c.lat);
                 }
