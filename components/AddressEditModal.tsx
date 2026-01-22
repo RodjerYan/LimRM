@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -404,49 +405,54 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         try {
             const rm = findValueInRow(originalRow, ['рм']);
+            
+            // Atomic Update Request Object
+            const payload: any = { 
+                rmName: rm, 
+                oldAddress, 
+                newAddress: editedAddress, 
+                comment 
+            };
 
-            // 1. API Call: Update Data
-            if (isAddressChanged || isCommentChanged) {
-                const res = await fetch('/api/update-address', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress, comment }),
-                });
-
-                if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
-                
-                // Optimistic History Update
-                const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-                let entryText = '';
-                
-                if (isAddressChanged && isCommentChanged) {
-                    entryText = `Изменен адрес: ${oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
-                } else if (isAddressChanged) {
-                    entryText = `Изменен адрес: ${oldAddress} [${timestamp}]`;
-                } else if (isCommentChanged) {
-                    entryText = `Добавлен комментарий: "${comment}" [${timestamp}]`;
-                }
-
-                if (entryText) setHistory(prev => [entryText, ...prev]);
-            }
-
-            // 2. API Call: Manual Coords
+            // If manual coords set, pass them to update-address as well to do it atomically
             let currentLat = (data as MapPoint).lat;
             let currentLon = (data as MapPoint).lon;
             
             if (manualCoords) {
-                currentLat = manualCoords.lat; currentLon = manualCoords.lon;
-                await fetch('/api/update-coords', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rmName: rm, updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] })
-                });
+                currentLat = manualCoords.lat;
+                currentLon = manualCoords.lon;
+                payload.lat = currentLat;
+                payload.lon = currentLon;
             }
+
+            // 1. API Call: Update Data (Unified endpoint)
+            const res = await fetch('/api/update-address', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
+                
+            // Optimistic History Update
+            const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            let entryText = '';
+            
+            if (isAddressChanged && isCommentChanged) {
+                entryText = `Изменен адрес: ${oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
+            } else if (isAddressChanged) {
+                entryText = `Изменен адрес: ${oldAddress} [${timestamp}]`;
+            } else if (isCommentChanged) {
+                entryText = `Добавлен комментарий: "${comment}" [${timestamp}]`;
+            }
+
+            if (entryText) setHistory(prev => [entryText, ...prev]);
 
             // 3. UI Updates
             setStatus('success');
             if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
             
+            // If address changed but NO manual coords, we are in 'geocoding' state
             const isGeocodingState = isAddressChanged && !manualCoords;
             
             successTimeoutRef.current = setTimeout(() => {
@@ -455,7 +461,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
             // 4. Update Parent State
             const updateTimestamp = Date.now();
-            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']); // simplified check
+            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
             const parsed = parseRussianAddress(editedAddress, distributor);
 
             const tempNewPoint: MapPoint = {

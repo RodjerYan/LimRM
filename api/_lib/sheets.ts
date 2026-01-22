@@ -356,7 +356,7 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     if (data.length > 0) await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data } }), 'batchUpdateCoords');
 }
 
-export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string): Promise<void> {
+export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string, lat?: number, lon?: number): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:E` }), 'getAddrForUpdate2') as any;
@@ -378,7 +378,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[newAddress, '', '', initialHistory, comment || ""]] } 
+            requestBody: { values: [[newAddress, lat || '', lon || '', initialHistory, comment || ""]] } 
         }), 'appendNewUpdate');
         return;
     }
@@ -392,14 +392,16 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     
     // Determine what changed
     const isAddressChanged = normalizeForComparison(currentStoredAddress) !== newNorm;
+    const isCommentChanged = comment !== undefined && comment.trim() !== currentStoredComment.trim();
+    
     let eventEntry = '';
 
     // If both changed, perform a grouped update
-    if (isAddressChanged && comment && comment.trim() !== currentStoredComment.trim()) {
+    if (isAddressChanged && isCommentChanged) {
         eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
     } else if (isAddressChanged) {
         eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress} [${timestamp}]`;
-    } else if (comment && comment.trim() !== currentStoredComment.trim()) {
+    } else if (isCommentChanged) {
         eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
     }
 
@@ -409,6 +411,13 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
     }
 
+    // Determine Coords to write
+    // If lat/lon passed explicitly, use them.
+    // Else, if address changed, assume coords are invalid (wipe).
+    // Else, keep existing.
+    const newLat = lat !== undefined ? lat : (isAddressChanged ? "" : (row[1] || ""));
+    const newLon = lon !== undefined ? lon : (isAddressChanged ? "" : (row[2] || ""));
+
     // 4. Update the row
     await callWithRetry(() => sheets.spreadsheets.values.update({ 
         spreadsheetId: CACHE_SPREADSHEET_ID, 
@@ -417,8 +426,8 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         requestBody: { 
             values: [[
                 newAddress, // Col A (Address)
-                isAddressChanged ? "" : (row[1] || ""), // Col B (Lat)
-                isAddressChanged ? "" : (row[2] || ""), // Col C (Lon)
+                newLat,     // Col B (Lat)
+                newLon,     // Col C (Lon)
                 finalHistory, // Col D (History log)
                 comment !== undefined ? comment : currentStoredComment // Col E
             ]] 
