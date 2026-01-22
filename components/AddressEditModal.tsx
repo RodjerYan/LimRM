@@ -27,7 +27,7 @@ const greenIcon = new L.Icon({
 
 // --- Types ---
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
+type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding' | 'polling';
 type Theme = 'dark' | 'light';
 
 interface NominatimResult {
@@ -263,10 +263,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const [manualCoords, setManualCoords] = useState<{ lat: number; lon: number } | null>(null);
     const [mapTheme, setMapTheme] = useState<Theme>(globalTheme);
     const [isMapExpanded, setIsMapExpanded] = useState(false);
+    const [pollingTarget, setPollingTarget] = useState<{ rm: string, address: string } | null>(null);
 
     // Refs
     const isCommentTouched = useRef(false);
-    const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Cleanup polling on unmount/close
+    useEffect(() => {
+        return () => {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+        };
+    }, []);
 
     // --- Effect 1: Init Data & Theme ---
     useEffect(() => {
@@ -301,6 +309,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setManualCoords(null);
             setIsMapExpanded(false);
             setShowDeleteConfirm(false);
+            setPollingTarget(null);
 
             // 3. Set Status (Initial)
             const pt = data as MapPoint;
@@ -324,7 +333,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // 4. Fetch History
             const rm = findValueInRow(originalRow, ['рм']);
             if (rm && currentAddress) {
-                // Check if last update was extremely recent to avoid re-fetch cycle
                 const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
                 if (!isRecent) {
                     fetchHistory(rm, currentAddress);
@@ -333,27 +341,98 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setHistory([]);
             }
         }
-    }, [isOpen, data, globalTheme]); // Only runs on open or data change
+    }, [isOpen, data, globalTheme]); 
 
-    // --- Effect 2: Watch Status Changes (e.g., Geocoding -> Success) ---
+    // --- Polling Logic ---
     useEffect(() => {
-        if (!isOpen || !data || !('key' in data)) return;
-        const pt = data as MapPoint;
+        if (!pollingTarget) return;
 
-        // Если компонент был в режиме геокодирования, а теперь пришли координаты - показываем успех
-        if (status === 'geocoding' && typeof pt.lat === 'number' && typeof pt.lon === 'number' && !pt.isGeocoding) {
-            setStatus('success');
-            
-            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-            successTimeoutRef.current = setTimeout(() => {
-                setStatus('idle');
-            }, 2500);
-        }
+        const { rm, address } = pollingTarget;
+        setStatus('polling');
         
+        let attempts = 0;
+        const maxAttempts = 30; // 60 seconds (2s interval)
+
+        pollIntervalRef.current = setInterval(async () => {
+            attempts++;
+            try {
+                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
+                if (res.ok) {
+                    const result = await res.json();
+                    
+                    // CRITICAL: Strict coord validation. 
+                    // Only accept if type is number AND status is explicitly confirmed.
+                    // This prevents premature updates if DB still has partial data.
+                    const hasValidCoords = typeof result.lat === 'number' && typeof result.lon === 'number';
+                    const isConfirmed = result.coordStatus === 'confirmed'; 
+
+                    if (hasValidCoords && isConfirmed) {
+                        clearInterval(pollIntervalRef.current!);
+                        setPollingTarget(null);
+                        
+                        // Success! Now perform the final update
+                        finalizeUpdate(result);
+                    }
+                }
+            } catch (e) {
+                console.warn("Polling error:", e);
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(pollIntervalRef.current!);
+                setPollingTarget(null);
+                setStatus('error_geocoding');
+                setError('Время ожидания координат истекло. Попробуйте позже.');
+            }
+        }, 2000);
+
         return () => {
-            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         };
-    }, [data, isOpen, status]); // Removed 'status' form internal conditions to avoid logic loops
+    }, [pollingTarget]);
+
+    // --- Finalize Update (After polling or manual coords) ---
+    const finalizeUpdate = (savedData: any) => {
+        if (!data) return;
+        const originalRow = getSafeOriginalRow(data);
+        const originalIndex = (data as UnidentifiedRow).originalIndex;
+        const oldKey = (data as MapPoint).key || normalizeAddress((data as MapPoint).address || findAddressInRow(originalRow) || '');
+        const rm = findValueInRow(originalRow, ['рм']);
+
+        const updateTimestamp = Date.now();
+        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
+        const parsed = parseRussianAddress(savedData.address, distributor);
+
+        const tempNewPoint: MapPoint = {
+            key: normalizeAddress(savedData.address),
+            lat: savedData.lat, 
+            lon: savedData.lon, 
+            status: 'match',
+            name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+            address: savedData.address, 
+            city: parsed.city, 
+            region: parsed.region, 
+            rm: rm,
+            brand: findValueInRow(originalRow, ['торговая марка']),
+            packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
+            type: findValueInRow(originalRow, ['канал продаж']),
+            contacts: findValueInRow(originalRow, ['контакты']),
+            originalRow: originalRow, 
+            fact: (data as MapPoint).fact,
+            isGeocoding: false, 
+            lastUpdated: updateTimestamp, 
+            comment: savedData.comment,
+            coordStatus: savedData.coordStatus, // New Field
+            geocodingError: undefined 
+        };
+        
+        onDataUpdate(oldKey, tempNewPoint, originalIndex);
+        setStatus('success');
+        
+        setTimeout(() => {
+            if (isOpen) onClose();
+        }, 1500);
+    };
 
     // --- Fetch History ---
     const fetchHistory = useCallback(async (rmName: string, address: string) => {
@@ -367,7 +446,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
                     setHistory(historyArray);
                 }
-                // Only update comment if user hasn't touched it
                 if (result.comment && !comment && !isCommentTouched.current) {
                     setComment(result.comment);
                 }
@@ -391,7 +469,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
-        const oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
 
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
@@ -406,7 +483,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         try {
             const rm = findValueInRow(originalRow, ['рм']);
             
-            // Atomic Update Request Object
             const payload: any = { 
                 rmName: rm, 
                 oldAddress, 
@@ -414,18 +490,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 comment 
             };
 
-            // If manual coords set, pass them to update-address as well to do it atomically
-            let currentLat = (data as MapPoint).lat;
-            let currentLon = (data as MapPoint).lon;
-            
             if (manualCoords) {
-                currentLat = manualCoords.lat;
-                currentLon = manualCoords.lon;
-                payload.lat = currentLat;
-                payload.lon = currentLon;
+                payload.lat = manualCoords.lat;
+                payload.lon = manualCoords.lon;
             }
 
-            // 1. API Call: Update Data (Unified endpoint)
             const res = await fetch('/api/update-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -433,56 +502,27 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             });
 
             if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при сохранении.'); }
-                
-            // Optimistic History Update
-            const timestamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-            let entryText = '';
             
-            if (isAddressChanged && isCommentChanged) {
-                entryText = `Изменен адрес: ${oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
-            } else if (isAddressChanged) {
-                entryText = `Изменен адрес: ${oldAddress} [${timestamp}]`;
-            } else if (isCommentChanged) {
-                entryText = `Добавлен комментарий: "${comment}" [${timestamp}]`;
+            const responseData = await res.json();
+            const savedData = responseData.data;
+
+            // If manual coords are present, we are done immediately.
+            if (manualCoords) {
+                finalizeUpdate({ ...savedData, lat: manualCoords.lat, lon: manualCoords.lon, coordStatus: 'confirmed' });
+                return;
             }
 
-            if (entryText) setHistory(prev => [entryText, ...prev]);
-
-            // 3. UI Updates
-            setStatus('success');
-            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-            
-            // If address changed but NO manual coords, we are in 'geocoding' state
-            const isGeocodingState = isAddressChanged && !manualCoords;
-            
-            successTimeoutRef.current = setTimeout(() => {
-                setStatus(isGeocodingState ? 'geocoding' : 'idle');
-            }, 2000);
-
-            // 4. Update Parent State
-            const updateTimestamp = Date.now();
-            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
-            const parsed = parseRussianAddress(editedAddress, distributor);
-
-            const tempNewPoint: MapPoint = {
-                key: normalizeAddress(editedAddress),
-                lat: currentLat, lon: currentLon, status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
-                address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
-                brand: findValueInRow(originalRow, ['торговая марка']),
-                packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-                type: findValueInRow(originalRow, ['канал продаж']),
-                contacts: findValueInRow(originalRow, ['контакты']),
-                originalRow: originalRow, fact: (data as MapPoint).fact,
-                isGeocoding: isGeocodingState, lastUpdated: updateTimestamp, comment,
-                geocodingError: undefined 
-            };
-            
-            onDataUpdate(oldKey, tempNewPoint, originalIndex);
-            
-            if (isGeocodingState) {
-                 onStartPolling(rm, editedAddress, tempNewPoint.key, tempNewPoint, originalIndex);
+            // If address wasn't changed (just comment), we reuse existing coords.
+            if (!isAddressChanged && (savedData.lat || (data as MapPoint).lat)) {
+                 const latToUse = savedData.lat !== undefined ? savedData.lat : (data as MapPoint).lat;
+                 const lonToUse = savedData.lon !== undefined ? savedData.lon : (data as MapPoint).lon;
+                 finalizeUpdate({ ...savedData, lat: latToUse, lon: lonToUse, coordStatus: 'confirmed' });
+                 return;
             }
+
+            // If address changed and we didn't provide manual coords, the server cleared them.
+            // Start polling to wait for external geocoder.
+            setPollingTarget({ rm, address: savedData.address });
 
         } catch (e) {
             setStatus('error_saving'); setError((e as Error).message);
@@ -518,14 +558,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const currentComment = (data as MapPoint).comment || '';
     const detailsToShow = Object.entries(originalRow).map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
-    const isProcessing = status === 'saving' || status === 'deleting';
+    const isProcessing = status === 'saving' || status === 'deleting' || status === 'polling';
     
-    // Unified display coordinates
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
     
-    // Unified Map Success Flag (Used in multiple places)
-    const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && status !== 'geocoding';
+    // Ensure map shows success ONLY if we have coords AND we are not waiting for new ones
+    const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && status !== 'polling' && status !== 'geocoding';
 
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== currentDisplayAddress.trim().toLowerCase();
     const isCoordsChanged = manualCoords !== null;
@@ -539,13 +578,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     const customFooter = (
         <div className="flex justify-between items-center p-4 bg-gray-900/80 rounded-b-2xl border-t border-gray-700 flex-shrink-0 backdrop-blur-md">
-            <button onClick={onBack} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2 shadow-sm"><ArrowLeftIcon className="w-4 h-4" /> Назад</button>
-            <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-6 rounded-lg transition duration-200 shadow-md">Закрыть</button>
+            <button onClick={onBack} disabled={isProcessing} className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition duration-200 flex items-center gap-2 shadow-sm"><ArrowLeftIcon className="w-4 h-4" /> Назад</button>
+            <button onClick={onClose} disabled={isProcessing} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold py-2 px-6 rounded-lg transition duration-200 shadow-md">Закрыть</button>
         </div>
     );
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
+        <Modal isOpen={isOpen} onClose={isProcessing ? () => {} : onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Левая колонка */}
                 <div className="flex flex-col gap-6">
@@ -604,7 +643,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 Параметры объекта
                             </h4>
                             {!showDeleteConfirm ? (
-                                <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full" title="Удалить запись"><TrashIcon className="w-4 h-4" /></button>
+                                <button onClick={() => setShowDeleteConfirm(true)} disabled={isProcessing} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full disabled:opacity-50" title="Удалить запись"><TrashIcon className="w-4 h-4" /></button>
                             ) : (
                                 <div className="flex items-center gap-3 bg-red-900/30 px-3 py-1.5 rounded-xl border border-red-500/30 animate-fade-in"><span className="text-[10px] font-bold text-red-300 uppercase">Удалить?</span><button onClick={handleDelete} className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all">Нет</button></div>
                             )}
@@ -613,13 +652,13 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         <div className="space-y-4">
                             <div className="relative">
                                 <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Адрес ТТ LimKorm</label>
-                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${status === 'success' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
+                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'success'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${status === 'success' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
                                 {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
                             </div>
 
                             <div className="relative">
                                 <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
-                                <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
+                                <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
                             </div>
 
                             {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
@@ -639,7 +678,19 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 
                                 {status === 'saving' && (
                                     <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
-                                        <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
+                                        <LoaderIcon className="w-5 h-5 animate-spin" /> Отправка на сервер...
+                                    </div>
+                                )}
+
+                                {status === 'polling' && (
+                                    <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 shadow-inner">
+                                        <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm animate-pulse">
+                                            <LoaderIcon className="w-4 h-4" /> 
+                                            <span>Ожидание координат от Google...</span>
+                                        </div>
+                                        <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
+                                            Адрес обновлен. Система ждет, пока сервер вычислит новые координаты. Это может занять до 30 сек.
+                                        </p>
                                     </div>
                                 )}
                                 
@@ -649,19 +700,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     </div>
                                 )}
 
-                                {status === 'geocoding' && !error && (
-                                    <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
-                                        <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
-                                            <LoaderIcon className="w-4 h-4" /> 
-                                            <span>Поиск в облачном реестре...</span>
-                                        </div>
-                                        <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
-                                            Запрос передан геокодеру. Система оповестит о результате автоматически.
-                                        </p>
-                                    </div>
-                                )}
-
-                                {(status === 'error_saving' || status === 'error_deleting') && (
+                                {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
                                     <div className="text-center space-y-4 animate-fade-in">
                                         <div className="flex items-center justify-center gap-3 text-red-400 text-xs bg-red-900/20 p-3 rounded-xl border border-red-500/20 shadow-inner">
                                             <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}

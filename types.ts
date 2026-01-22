@@ -39,6 +39,7 @@ export interface MapPoint {
     contacts?: string;
     isCached?: boolean; // To distinguish between new and cached clients on the map
     isGeocoding?: boolean; // New flag: indicates if coordinates are currently being fetched
+    coordStatus?: 'pending' | 'confirmed' | 'invalid'; // Explicit status from DB
     geocodingError?: string; // New field: error message from external geocoder
     originalRow: any; // To hold the full original data row for detailed viewing
     fact?: number; // Sales volume for this specific point
@@ -233,7 +234,7 @@ export type WorkerMessage =
     | WorkerStreamFinish
     | WorkerInputFile; // Added here
 
-export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>;
+export type CoordsCache = Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string; coordStatus?: string }[]>;
 
 export interface GrowthFactors {
     base: number;

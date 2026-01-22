@@ -118,9 +118,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Legacy Cache Operations
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
             if (action === 'update-address') { 
-                // Enhanced update: allows updating address, comment, and coords in one atomic operation
-                await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment, body.lat, body.lon); 
-                return res.json({success:true}); 
+                // Enhanced update: returns the actual written state
+                const result = await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment, body.lat, body.lon); 
+                return res.json(result); 
             }
             if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
             if (action === 'delete-address') { await deleteAddressFromCache(body.rmName, body.address); return res.json({success:true}); }

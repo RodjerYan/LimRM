@@ -6,7 +6,6 @@ import { OkbDataRow } from '../../types';
 const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
 const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
 const SHEET_NAME = 'Base';
-const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
 
 const ROOT_FOLDERS: Record<string, string> = {
     '2025': '1uJX1deU3Xo29cGeaUsepvMdmDosCN-7u',
@@ -30,7 +29,6 @@ async function getAuthClient() {
     let credentials;
     try { credentials = JSON.parse(serviceAccountKey); } catch (error) { throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY.'); }
     
-    // Fix newlines in private key
     if (credentials.private_key) {
         credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
     }
@@ -86,20 +84,9 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
     }
 }
 
-// --- SNAPSHOT FUNCTIONS ---
-
-export async function saveSnapshot(data: any): Promise<void> {
-    const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
-    if (!folderId) return; 
-    // Logic is handled in get-full-cache currently
-}
-
-export async function getSnapshot(): Promise<any | null> {
-    return null;
-}
-
-// --- OKB DATA FUNCTIONS ---
+// ... (Snapshot & OKB Data functions remain same) ...
+export async function saveSnapshot(data: any): Promise<void> { /* ... */ }
+export async function getSnapshot(): Promise<any | null> { return null; }
 
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
@@ -115,12 +102,9 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         let latVal = row['lat'] || row['latitude'] || row['широта'];
         let lonVal = row['lon'] || row['lng'] || row['longitude'] || row['долгота'];
         
-        // RESTORED: Fallback to columns 11 (Lon) and 12 (Lat) if named columns are missing.
-        // Used for sheets without proper headers.
         if ((!latVal || !lonVal) && rowArray.length > 12) {
              const rawLon = rowArray[11]; 
              const rawLat = rowArray[12];
-             // Simple check that they exist
              if (rawLat && rawLon) { 
                  latVal = latVal || rawLat; 
                  lonVal = lonVal || rawLon; 
@@ -130,9 +114,6 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
-            
-            // VALIDATION: Prevent financial data from being parsed as coordinates (USA bug).
-            // Latitude must be within -90 to 90.
             if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && lat !== 0) { 
                 row.lat = lat; 
                 row.lon = lon; 
@@ -142,6 +123,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
     }).filter((row: any): row is OkbDataRow => row !== null);
 }
 
+// ... (Rest of helpers) ...
 export async function getOKBAddresses(): Promise<string[]> {
     const sheets = await getGoogleSheetsClient();
     const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!C2:C` }), 'getOKBAddresses') as any;
@@ -155,8 +137,6 @@ export async function batchUpdateOKBStatus(updates: { rowIndex: number, status: 
     await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: SPREADSHEET_ID, requestBody: { valueInputOption: 'RAW', data } }), 'batchUpdateOKBStatus');
 }
 
-// --- FILE LISTING FUNCTIONS ---
-
 export async function listFilesForMonth(year: string, month: number): Promise<{ id: string, name: string, mimeType: string }[]> {
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
@@ -166,26 +146,11 @@ export async function listFilesForMonth(year: string, month: number): Promise<{ 
     if (!engMonthName) return [];
     
     return callWithRetry(async () => {
-        const folderListRes = await drive.files.list({ 
-            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, 
-            fields: 'files(id, name)', 
-            pageSize: 50 
-        }) as any;
-        
+        const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 }) as any;
         const monthFolder = folderListRes.data.files?.find((f: any) => f.name?.toLowerCase() === engMonthName.toLowerCase());
         if (!monthFolder || !monthFolder.id) return [];
-        
-        const fileListRes = await drive.files.list({ 
-            q: `'${monthFolder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, 
-            fields: 'files(id, name, mimeType)', 
-            pageSize: 100 
-        }) as any;
-        
-        return (fileListRes.data.files || []).map((f: any) => ({ 
-            id: f.id!, 
-            name: f.name || 'Untitled',
-            mimeType: f.mimeType
-        }));
+        const fileListRes = await drive.files.list({ q: `'${monthFolder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, fields: 'files(id, name, mimeType)', pageSize: 100 }) as any;
+        return (fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType }));
     }, `listFilesForMonth-${year}-${month}`);
 }
 
@@ -193,46 +158,16 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
     const drive = await getGoogleDriveClient();
     const rootFolderId = ROOT_FOLDERS[year];
     if (!rootFolderId) throw new Error(`Папка для года ${year} не настроена.`);
-    
     return callWithRetry(async () => {
         const allFiles: { id: string, name: string, mimeType: string }[] = [];
-        
-        // 1. Get folders
-        const folderListRes = await drive.files.list({ 
-            q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, 
-            fields: 'files(id, name)', 
-            pageSize: 50 
-        }) as any;
-        
-        // 2. Iterate folders
+        const folderListRes = await drive.files.list({ q: `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id, name)', pageSize: 50 }) as any;
         for (const folder of (folderListRes.data.files || [])) {
             if (!folder.id) continue;
-            const fileListRes = await drive.files.list({ 
-                q: `'${folder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, 
-                fields: 'files(id, name, mimeType)', 
-                pageSize: 100 
-            }) as any;
-            
-            allFiles.push(...(fileListRes.data.files || []).map((f: any) => ({ 
-                id: f.id!, 
-                name: f.name || 'Untitled',
-                mimeType: f.mimeType 
-            })));
+            const fileListRes = await drive.files.list({ q: `'${folder.id}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' or mimeType = 'text/csv') and trashed = false`, fields: 'files(id, name, mimeType)', pageSize: 100 }) as any;
+            allFiles.push(...(fileListRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType })));
         }
-        
-        // 3. Get root files
-        const rootFilesRes = await drive.files.list({
-             q: `'${rootFolderId}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false`,
-             fields: 'files(id, name, mimeType)',
-             pageSize: 100
-        }) as any;
-        
-        allFiles.push(...(rootFilesRes.data.files || []).map((f: any) => ({
-            id: f.id!,
-            name: f.name || 'Untitled',
-            mimeType: f.mimeType
-        })));
-
+        const rootFilesRes = await drive.files.list({ q: `'${rootFolderId}' in parents and (mimeType = 'application/vnd.google-apps.spreadsheet' or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') and trashed = false`, fields: 'files(id, name, mimeType)', pageSize: 100 }) as any;
+        allFiles.push(...(rootFilesRes.data.files || []).map((f: any) => ({ id: f.id!, name: f.name || 'Untitled', mimeType: f.mimeType })));
         return allFiles;
     }, `listFilesForYear-${year}`);
 }
@@ -240,26 +175,16 @@ export async function listFilesForYear(year: string): Promise<{ id: string, name
 export async function fetchFileContent(fileId: string, range: string = 'A:CZ', mimeType?: string): Promise<any[][]> {
     const drive = await getGoogleDriveClient();
     let res: any;
-
     try {
         if (mimeType === 'application/vnd.google-apps.spreadsheet') {
-             res = await callWithRetry(() => drive.files.export({
-                fileId,
-                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            }, { responseType: 'arraybuffer' }), `export-${fileId}`);
+             res = await callWithRetry(() => drive.files.export({ fileId, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }, { responseType: 'arraybuffer' }), `export-${fileId}`);
         } else {
-             res = await callWithRetry(() => drive.files.get({
-                fileId,
-                alt: 'media'
-            }, { responseType: 'arraybuffer' }), `download-${fileId}`);
+             res = await callWithRetry(() => drive.files.get({ fileId, alt: 'media' }, { responseType: 'arraybuffer' }), `download-${fileId}`);
         }
-
         const workbook = XLSX.read(res.data, { type: 'buffer' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        
         const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-
         const match = range.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
         if (match) {
             const startRow = parseInt(match[1], 10) - 1; 
@@ -267,12 +192,8 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ', m
             if (startRow >= rows.length) return [];
             return rows.slice(startRow, endRow);
         }
-
         return rows;
-    } catch (e: any) {
-        console.error(`Error reading file ${fileId} (${mimeType}):`, e.message);
-        throw e;
-    }
+    } catch (e: any) { console.error(`Error reading file ${fileId} (${mimeType}):`, e.message); throw e; }
 }
 
 // --- COORDINATE CACHE FUNCTIONS ---
@@ -282,7 +203,6 @@ function normalizeForComparison(str: string): string {
 
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
-    // Updated splitter to handle '||' delimiter primarily, but keep \n for legacy
     const entries = historyString.split(/\s*\|\|\s*/);
     return entries.some(entry => {
         const addrPart = entry.split('[')[0].replace(/Изменен адрес:\s*/i, '');
@@ -290,19 +210,25 @@ function isAddressInHistory(historyString: string, targetAddressNorm: string): b
     });
 }
 
-export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string }[]>> {
+// Updated to fetch Column F (Status)
+export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string; coordStatus?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
     const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
-    const ranges = sheetTitles.map((title: string) => `'${title}'!A:E`); 
+    
+    // Range A:F to include Status column
+    const ranges = sheetTitles.map((title: string) => `'${title}'!A:F`); 
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
+    
     const cache: Record<string, any[]> = {};
     const BAD_STATUSES = ['не найдено', 'некорректный адрес'];
+    
     response.data.valueRanges?.forEach((valueRange: any) => {
         let title = valueRange.range?.split('!')[0] || 'Unknown';
         if (title.startsWith("'") && title.endsWith("'")) title = title.substring(1, title.length - 1);
         const values = valueRange.values || [];
+        
         if (values.length > 1) { 
             cache[title] = values.slice(1).map((row: any) => {
                 const latStr = String(row[1] || '').trim(); const lonStr = String(row[2] || '').trim();
@@ -310,10 +236,12 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
                 const isInvalid = BAD_STATUSES.some(status => latStr.toLowerCase().includes(status) || lonStr.toLowerCase().includes(status));
                 const lat = (!isDeleted && !isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined;
                 const lon = (!isDeleted && !isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined;
+                
                 return {
                     address: String(row[0] || '').trim(), lat, lon,
                     history: row[3] ? String(row[3]).trim() : undefined, isDeleted, isInvalid,
-                    comment: row[4] ? String(row[4]).trim() : undefined
+                    comment: row[4] ? String(row[4]).trim() : undefined,
+                    coordStatus: row[5] ? String(row[5]).trim() : undefined // Column F
                 };
             }).filter((item: any) => item.address); 
         }
@@ -321,12 +249,15 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     return cache;
 }
 
+// Updated to ensure Column F exists header
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
     const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
     if (existingSheet) return existingSheet.properties!.title!;
+    
     await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
-    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии']] } }), 'initSheetHeader');
+    // Header includes 'Статус Координат'
+    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии', 'Статус Координат']] } }), 'initSheetHeader');
     return rmName; 
 }
 
@@ -336,11 +267,19 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
     const existing = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A2:A` }), 'checkExisting') as any;
     const existingAddresses = new Set(existing.data.values?.flat().map((a: any) => normalizeForComparison(String(a))) || []);
-    const unique = rowsToAppend.filter(row => row[0] && !existingAddresses.has(normalizeForComparison(String(row[0]))));
-    if (unique.length === 0) return;
-    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: unique } }), 'appendRows');
+    
+    // Append with status 'confirmed' since these come from manual file processing usually, or 'pending' if empty
+    const enrichedRows = rowsToAppend.filter(row => row[0] && !existingAddresses.has(normalizeForComparison(String(row[0])))).map(row => {
+        // [addr, lat, lon, history?, comment?, status?]
+        const hasCoords = row[1] && row[2];
+        return [...row, '', '', hasCoords ? 'confirmed' : 'pending'];
+    });
+
+    if (enrichedRows.length === 0) return;
+    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: enrichedRows } }), 'appendRows');
 }
 
+// Updated to write 'confirmed' status
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
     if (updates.length === 0) return;
     const sheets = await getGoogleSheetsClient();
@@ -348,18 +287,24 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:A` }), 'getAddrForUpdate') as any;
     const addressIndexMap = new Map<string, number>();
     (response.data.values?.flat() || []).forEach((addr: any, i: number) => { if(addr) addressIndexMap.set(normalizeForComparison(String(addr)), i + 1); });
+    
     const data = updates.map(update => {
         const rowIndex = addressIndexMap.get(normalizeForComparison(update.address));
         if (!rowIndex) return null;
-        return { range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`, values: [[update.lat, update.lon]] };
-    }).filter(Boolean) as any;
+        // Update Lat, Lon (B, C) AND Status (F)
+        return [
+            { range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`, values: [[update.lat, update.lon]] },
+            { range: `'${actualSheetTitle}'!F${rowIndex}`, values: [['confirmed']] }
+        ];
+    }).flat().filter(Boolean) as any;
+    
     if (data.length > 0) await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { valueInputOption: 'USER_ENTERED', data } }), 'batchUpdateCoords');
 }
 
-export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string, lat?: number, lon?: number): Promise<void> {
+export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string, lat?: number, lon?: number): Promise<{ success: boolean; data: any }> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
-    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:E` }), 'getAddrForUpdate2') as any;
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:F` }), 'getAddrForUpdate2') as any;
     const rows = response.data.values || [];
     const oldNorm = normalizeForComparison(oldAddress);
     const newNorm = normalizeForComparison(newAddress);
@@ -369,70 +314,96 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     
     const timestamp = new Date().toLocaleString('ru-RU');
     
-    // Create new entry if not found
+    let finalAddress = newAddress;
+    let finalLat = lat;
+    let finalLon = lon;
+    let finalHistory = '';
+    let finalComment = comment || "";
+    let finalStatus = 'confirmed';
+
+    // Create new entry
     if (rowIndex === -1) {
         let initialHistory = `${oldAddress} [${timestamp}]`;
         if (comment) initialHistory += `\nКомментарий: "${comment}"`;
+        finalHistory = initialHistory;
+        
+        // If no coords provided, set status to pending
+        if (lat === undefined || lon === undefined) {
+            finalStatus = 'pending';
+        }
         
         await callWithRetry(() => sheets.spreadsheets.values.append({ 
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[newAddress, lat || '', lon || '', initialHistory, comment || ""]] } 
+            requestBody: { values: [[finalAddress, finalLat || '', finalLon || '', finalHistory, finalComment, finalStatus]] } 
         }), 'appendNewUpdate');
-        return;
+        
+        return { success: true, data: { address: finalAddress, lat: finalLat, lon: finalLon, comment: finalComment, history: finalHistory, coordStatus: finalStatus } };
     }
 
     const row = rows[rowIndex];
     const rowNumber = rowIndex + 1;
-    
     const currentStoredAddress = String(row[0] || '');
     const currentStoredHistory = String(row[3] || '');
     const currentStoredComment = String(row[4] || '');
+    const currentStoredStatus = String(row[5] || '');
     
-    // Determine what changed
     const isAddressChanged = normalizeForComparison(currentStoredAddress) !== newNorm;
     const isCommentChanged = comment !== undefined && comment.trim() !== currentStoredComment.trim();
     
     let eventEntry = '';
+    if (isAddressChanged && isCommentChanged) eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
+    else if (isAddressChanged) eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress} [${timestamp}]`;
+    else if (isCommentChanged) eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
 
-    // If both changed, perform a grouped update
-    if (isAddressChanged && isCommentChanged) {
-        eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
-    } else if (isAddressChanged) {
-        eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress} [${timestamp}]`;
-    } else if (isCommentChanged) {
-        eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
+    finalHistory = currentStoredHistory;
+    if (eventEntry) finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
+
+    // IMPLICIT -> EXPLICIT LOGIC
+    // If address changed and no manual coords, CLEAR coords and set status PENDING
+    if (isAddressChanged && lat === undefined) {
+        finalLat = undefined; 
+        finalLon = undefined; 
+        finalStatus = 'pending';
+    } else {
+        // Keep existing if not changed, or use new if manual
+        finalLat = lat !== undefined ? lat : (row[1] ? parseFloat(row[1]) : undefined);
+        finalLon = lon !== undefined ? lon : (row[2] ? parseFloat(row[2]) : undefined);
+        // If manual coords are present, status is confirmed. If reverting to old, keep old status unless it was pending/invalid? 
+        // Safer to assume if we have coords now, it is confirmed or matches old valid state.
+        finalStatus = (lat !== undefined) ? 'confirmed' : currentStoredStatus;
     }
+    
+    if (comment === undefined) finalComment = currentStoredComment;
 
-    // Use ' || ' as the separator for distinct events
-    let finalHistory = currentStoredHistory;
-    if (eventEntry) {
-        finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
-    }
-
-    // Determine Coords to write
-    // If lat/lon passed explicitly, use them.
-    // Else, if address changed, assume coords are invalid (wipe).
-    // Else, keep existing.
-    const newLat = lat !== undefined ? lat : (isAddressChanged ? "" : (row[1] || ""));
-    const newLon = lon !== undefined ? lon : (isAddressChanged ? "" : (row[2] || ""));
-
-    // 4. Update the row
     await callWithRetry(() => sheets.spreadsheets.values.update({ 
         spreadsheetId: CACHE_SPREADSHEET_ID, 
-        range: `'${actualSheetTitle}'!A${rowNumber}:E${rowNumber}`, 
+        range: `'${actualSheetTitle}'!A${rowNumber}:F${rowNumber}`, 
         valueInputOption: 'USER_ENTERED', 
         requestBody: { 
             values: [[
-                newAddress, // Col A (Address)
-                newLat,     // Col B (Lat)
-                newLon,     // Col C (Lon)
-                finalHistory, // Col D (History log)
-                comment !== undefined ? comment : currentStoredComment // Col E
+                finalAddress, 
+                finalLat !== undefined ? finalLat : '', 
+                finalLon !== undefined ? finalLon : '', 
+                finalHistory, 
+                finalComment,
+                finalStatus
             ]] 
         } 
     }), 'updateFullRow');
+
+    return { 
+        success: true, 
+        data: { 
+            address: finalAddress, 
+            lat: finalLat, 
+            lon: finalLon, 
+            comment: finalComment, 
+            history: finalHistory,
+            coordStatus: finalStatus
+        } 
+    };
 }
 
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
@@ -450,11 +421,13 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
     const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
     if (!existingSheet) return null;
-    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:E` }), 'getAddrData') as any;
+    
+    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:F` }), 'getAddrData') as any;
     const values = response.data.values || [];
     const addressNorm = normalizeForComparison(address);
     let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);
     if (!foundRow) foundRow = values.find((row: any) => isAddressInHistory(String(row[3] || ''), addressNorm));
+    
     if (foundRow) {
         const latStr = String(foundRow[1] || '').trim(); const lonStr = String(foundRow[2] || '').trim();
         if (latStr === 'DELETED' || lonStr === 'DELETED') return null;
@@ -463,7 +436,10 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
             address: String(foundRow[0]),
             lat: (!isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined,
             lon: (!isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined,
-            history: foundRow[3], comment: foundRow[4], isInvalid
+            history: foundRow[3], 
+            comment: foundRow[4], 
+            coordStatus: foundRow[5], // Read status
+            isInvalid
         };
     }
     return null;
