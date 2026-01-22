@@ -142,6 +142,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const groupedChannelData = useMemo(() => {
         if (!selectedChannel || !props.uploadedData) return null;
         const uniqueClientsInChannel = new Map<string, MapPoint & { totalFact: number }>();
+        const safeLower = (val: any) => (val || '').toString().toLowerCase();
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(c => {
@@ -152,7 +153,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                 if ((c.type || 'Не определен') === selectedChannel) {
                     const search = channelSearchTerm.toLowerCase();
-                    if (!search || c.name.toLowerCase().includes(search) || c.address.toLowerCase().includes(search) || c.rm.toLowerCase().includes(search)) {
+                    // Safer check for includes
+                    if (!search || safeLower(c.name).includes(search) || safeLower(c.address).includes(search) || safeLower(c.rm).includes(search)) {
                         if (!uniqueClientsInChannel.has(c.key)) {
                             uniqueClientsInChannel.set(c.key, { ...c, totalFact: 0 });
                         }

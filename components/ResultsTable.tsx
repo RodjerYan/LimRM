@@ -26,7 +26,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     const enrichWithCost = (row: AggregatedDataRow) => {
         // Simple heuristic: Small volume clients in remote regions cost more
         const volumeFactor = row.fact > 500 ? 1 : (row.fact > 100 ? 2 : 3);
-        const regionCost = row.region.length % 3 + 1; // Random static factor based on name length
+        const regionCost = (row.region || '').length % 3 + 1; // Random static factor based on name length
         return (volumeFactor * regionCost) * 1.5; 
     };
 
@@ -45,24 +45,32 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     };
 
     const filteredData = useMemo(() => {
+        // Helper for safe string comparison
+        const safeLower = (val: any) => (val || '').toString().toLowerCase();
+
         if (!searchTerm) return data.map(d => ({ ...d, costScore: enrichWithCost(d) }));
         const lowercasedFilter = searchTerm.toLowerCase().trim();
         
         return data.filter(item => {
-            if (item.clientName.toLowerCase().includes(lowercasedFilter)) return true;
-            if (item.rm.toLowerCase().includes(lowercasedFilter)) return true;
-            if (item.region.toLowerCase().includes(lowercasedFilter)) return true;
-            if (item.brand.toLowerCase().includes(lowercasedFilter)) return true;
-            if (item.packaging.toLowerCase().includes(lowercasedFilter)) return true;
-            return item.clients.some(client => {
-                if (client.address.toLowerCase().includes(lowercasedFilter)) return true;
-                if (client.name.toLowerCase().includes(lowercasedFilter)) return true;
-                if (client.originalRow) {
-                    const rawAddress = findAddressInRow(client.originalRow);
-                    if (rawAddress && rawAddress.toLowerCase().includes(lowercasedFilter)) return true;
-                }
-                return false;
-            });
+            if (safeLower(item.clientName).includes(lowercasedFilter)) return true;
+            if (safeLower(item.rm).includes(lowercasedFilter)) return true;
+            if (safeLower(item.region).includes(lowercasedFilter)) return true;
+            if (safeLower(item.brand).includes(lowercasedFilter)) return true;
+            if (safeLower(item.packaging).includes(lowercasedFilter)) return true;
+            
+            // Check nested clients safely
+            if (Array.isArray(item.clients)) {
+                return item.clients.some(client => {
+                    if (safeLower(client.address).includes(lowercasedFilter)) return true;
+                    if (safeLower(client.name).includes(lowercasedFilter)) return true;
+                    if (client.originalRow) {
+                        const rawAddress = findAddressInRow(client.originalRow);
+                        if (rawAddress && rawAddress.toLowerCase().includes(lowercasedFilter)) return true;
+                    }
+                    return false;
+                });
+            }
+            return false;
         }).map(d => ({ ...d, costScore: enrichWithCost(d) }));
     }, [data, searchTerm]);
 
@@ -72,6 +80,12 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
             sortableItems.sort((a, b) => {
                 const aValue = (a as any)[sortConfig.key];
                 const bValue = (b as any)[sortConfig.key];
+                
+                // Handle potential nulls/undefined in sort
+                if (aValue === bValue) return 0;
+                if (aValue === null || aValue === undefined) return 1;
+                if (bValue === null || bValue === undefined) return -1;
+
                 if (typeof aValue === 'number' && typeof bValue === 'number') {
                     return sortConfig.direction === 'ascending' ? aValue - bValue : bValue - aValue;
                 }

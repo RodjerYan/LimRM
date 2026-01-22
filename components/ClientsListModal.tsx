@@ -93,7 +93,19 @@ const ClientsListModal: React.FC<ClientsListModalProps> = ({ isOpen, onClose, ti
         const worksheet = XLSX.utils.json_to_sheet(exportData); const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, worksheet, 'Клиенты'); XLSX.writeFile(workbook, `Clients_List_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
-    const filteredData = useMemo(() => { if (!searchTerm) return clients; const lowercasedFilter = searchTerm.toLowerCase(); return clients.filter(item => item.name.toLowerCase().includes(lowercasedFilter) || item.address.toLowerCase().includes(lowercasedFilter) || item.city.toLowerCase().includes(lowercasedFilter) || item.rm.toLowerCase().includes(lowercasedFilter) || item.brand.toLowerCase().includes(lowercasedFilter)); }, [clients, searchTerm]);
+    const filteredData = useMemo(() => { 
+        if (!searchTerm) return clients; 
+        const lowercasedFilter = searchTerm.toLowerCase(); 
+        const safeLower = (val: any) => (val || '').toString().toLowerCase();
+
+        return clients.filter(item => 
+            safeLower(item.name).includes(lowercasedFilter) || 
+            safeLower(item.address).includes(lowercasedFilter) || 
+            safeLower(item.city).includes(lowercasedFilter) || 
+            safeLower(item.rm).includes(lowercasedFilter) || 
+            safeLower(item.brand).includes(lowercasedFilter)
+        ); 
+    }, [clients, searchTerm]);
 
     const sortedData = useMemo(() => {
         let sortableItems = [...filteredData];

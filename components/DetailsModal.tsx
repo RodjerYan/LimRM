@@ -44,10 +44,10 @@ const GroupedClientsList: React.FC<{ clients: MapPoint[]; onStartEdit: (client: 
     const filteredClients = clients.filter(client => {
         const searchLower = searchTerm.toLowerCase().trim();
         if (!searchLower) return true;
-        return (
-            client.address.toLowerCase().includes(searchLower) ||
-            client.name.toLowerCase().includes(searchLower)
-        );
+        // Defensive coding: Ensure strings exist before calling toLowerCase
+        const addr = (client.address || '').toString().toLowerCase();
+        const name = (client.name || '').toString().toLowerCase();
+        return addr.includes(searchLower) || name.includes(searchLower);
     });
 
     return (
