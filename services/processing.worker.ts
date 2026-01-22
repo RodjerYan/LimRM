@@ -1,5 +1,4 @@
 
-import * as xlsx from 'xlsx';
 import { 
     AggregatedDataRow, 
     OkbDataRow, 
@@ -7,7 +6,6 @@ import {
     MapPoint, 
     CoordsCache,
     UnidentifiedRow,
-    WorkerResultPayload
 } from '../types';
 import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
@@ -216,8 +214,8 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     });
     
     const statusMsg = totalRowsProcessed 
-        ? `Восстановление сессии (Локальная база): ${totalRowsProcessed} строк...` 
-        : 'Связь установлена. Начало индексации...';
+        ? `Восстановление сессии: ${totalRowsProcessed} строк...` 
+        : 'Связь установлена. Готов к обработке...';
         
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
@@ -427,7 +425,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     }
 
     const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 3500000) * 85); 
-    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая передача: ${state_processedRowsCount.toLocaleString()} строк...`, totalProcessed: state_processedRowsCount } });
+    postMessage({ type: 'progress', payload: { percentage: currentProgress, message: `Потоковая обработка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } });
 }
 
 async function finalizeStream(postMessage: PostMessageFn) {
@@ -456,25 +454,6 @@ self.onmessage = async (e) => {
     const msg = e.data;
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
-    else if (msg.type === 'PROCESS_FILE') {
-        const { fileBuffer, fileName } = msg.payload;
-        try {
-            const workbook = xlsx.read(fileBuffer, { type: 'array' });
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = xlsx.utils.sheet_to_json(firstSheet, { header: 1 }) as any[][];
-            
-            const CHUNK_SIZE = 5000;
-            const total = rows.length;
-            
-            for (let i = 0; i < total; i += CHUNK_SIZE) {
-                const chunk = rows.slice(i, i + CHUNK_SIZE);
-                processChunk({ rawData: chunk, isFirstChunk: i === 0, fileName }, self.postMessage);
-                await new Promise(r => setTimeout(r, 0));
-            }
-            await finalizeStream(self.postMessage);
-        } catch (e) {
-            self.postMessage({ type: 'error', payload: `File parse error: ${(e as Error).message}` });
-        }
-    }
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
+    // Removed PROCESS_FILE to align with JSON-only approach
 };

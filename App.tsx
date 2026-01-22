@@ -16,7 +16,7 @@ import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import { 
     AggregatedDataRow, FilterState, NotificationMessage, 
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
-    WorkerMessage, WorkerResultPayload, CloudLoadParams, CoordsCache, OkbStatus
+    WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
@@ -55,7 +55,6 @@ const App: React.FC = () => {
     });
 
     const totalRowsProcessedRef = useRef<number>(0);
-    const processedFileIdsRef = useRef<Set<string>>(new Set());
     const allDataRef = useRef<AggregatedDataRow[]>([]);
     const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
     const workerRef = useRef<Worker | null>(null);
@@ -241,10 +240,10 @@ const App: React.FC = () => {
         }
     };
 
-    // --- ЗАГРУЗКА СНИМКА ---
+    // --- ЗАГРУЗКА СНИМКА (JSON) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация...', progress: 0 }));
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
@@ -316,132 +315,29 @@ const App: React.FC = () => {
         return false;
     }, [normalize, addNotification]);
 
-    // --- WORKER SETUP HELPER ---
-    const initWorker = useCallback(() => {
-        if (workerRef.current) workerRef.current.terminate();
-        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
-        
-        workerRef.current.onmessage = async (e: MessageEvent<WorkerMessage>) => {
-            const msg = e.data;
-            if (msg.type === 'progress') {
-                setProcessingState(prev => ({ ...prev, progress: msg.payload.percentage, message: msg.payload.message, totalRowsProcessed: msg.payload.totalProcessed ?? prev.totalRowsProcessed }));
-                if (msg.payload.totalProcessed) totalRowsProcessedRef.current = msg.payload.totalProcessed;
-            }
-            else if (msg.type === 'result_init') setOkbRegionCounts(msg.payload.okbRegionCounts);
-            
-            else if (msg.type === 'result_chunk_aggregated') {
-                const { data: chunkData, totalProcessed } = msg.payload;
-                const validatedChunk = normalize(chunkData);
-                
-                setAllData(prev => {
-                    const map = new Map(prev.map(r => [r.key, r]));
-                    validatedChunk.forEach(r => map.set(r.key, r));
-                    return Array.from(map.values());
-                });
-                
-                setProcessingState(prev => ({ ...prev, totalRowsProcessed: totalProcessed }));
-                totalRowsProcessedRef.current = totalProcessed;
-            }
-            else if (msg.type === 'CHECKPOINT') {
-                const payload = msg.payload;
-                const validated = normalize(payload.aggregatedData);
-                
-                setAllData(prev => {
-                    const map = new Map(prev.map(r => [r.key, r]));
-                    validated.forEach(r => map.set(r.key, r));
-                    return Array.from(map.values());
-                });
-
-                setUnidentifiedRows(payload.unidentifiedRows);
-                
-                if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                saveTimeoutRef.current = setTimeout(() => {
-                    saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
-                }, 1000);
-            }
-            else if (msg.type === 'result_finished') {
-                const payload = msg.payload as WorkerResultPayload;
-                const validated = normalize(payload.aggregatedData);
-                setOkbRegionCounts(payload.okbRegionCounts);
-                
-                setAllData(validated);
-                setUnidentifiedRows(payload.unidentifiedRows);
-                setDbStatus('ready');
-                
-                const finalVersion = `processed_${Date.now()}`;
-                await saveAnalyticsState({
-                    allData: validated,
-                    unidentifiedRows: payload.unidentifiedRows,
-                    okbRegionCounts: payload.okbRegionCounts,
-                    totalRowsProcessed: payload.totalRowsProcessed,
-                    versionHash: finalVersion,
-                    okbData: [], okbStatus: null
-                });
-                
-                saveSnapshotToCloud(validated, payload.unidentifiedRows).catch(console.error);
-                localStorage.setItem('last_snapshot_version', finalVersion);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, progress: 100, message: 'Завершено', totalRowsProcessed: payload.totalRowsProcessed }));
-            }
-        };
-        return workerRef.current;
-    }, [normalize]);
-
-    // --- ОБРАБОТКА ОБЛАКА (WORKER) ---
-    const handleStartCloudProcessing = useCallback(async (params: CloudLoadParams) => {
+    // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
+    const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
         
-        processedFileIdsRef.current.clear();
-        setAllData([]);
-        setUnidentifiedRows([]);
-        setOkbRegionCounts({});
-
-        setProcessingState(prev => ({ 
-            ...prev, isProcessing: true, progress: 0, message: 'Подготовка...', startTime: Date.now() 
-        }));
-        
-        let cacheData: CoordsCache = {};
-        try {
-            const response = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-            if (response.ok) cacheData = await response.json();
-        } catch (error) {}
-        
-        const worker = initWorker();
-        worker.postMessage({ 
-            type: 'INIT_STREAM', 
-            payload: { okbData, cacheData, totalRowsProcessed: 0, restoredData: [], restoredUnidentified: [] } 
-        });
+        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
         
         try {
-            const listRes = await fetch(`/api/get-akb?year=${params.year}&mode=list`);
-            const allFiles = listRes.ok ? await listRes.json() : [];
-            
-            for (const file of allFiles) {
-                if (processedFileIdsRef.current.has(file.id)) continue;
-                
-                setProcessingState(prev => ({ ...prev, message: `Загрузка: ${file.name}` }));
-                
-                try {
-                    const fileRes = await fetch(`/api/get-akb?action=get-file-content&fileId=${file.id}`); 
-                    if (!fileRes.ok) throw new Error('File load error');
-                    
-                    const buffer = await fileRes.arrayBuffer();
-                    
-                    worker.postMessage({ 
-                        type: 'PROCESS_FILE', 
-                        payload: { fileBuffer: buffer, fileName: file.name } 
-                    }, [buffer]); 
-
-                    processedFileIdsRef.current.add(file.id);
-
-                } catch (err) {
-                    console.error(`Ошибка файла ${file.name}`, err);
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.ok) {
+                const serverMeta = await metaRes.json();
+                if (serverMeta?.versionHash) {
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
+                } else {
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
                 }
+            } else {
+               throw new Error("Meta fetch failed");
             }
-            worker.postMessage({ type: 'FINALIZE_STREAM' });
         } catch (e) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка соединения' }));
         }
-    }, [okbData, processingState.isProcessing, initWorker]);
+    }, [processingState.isProcessing, handleDownloadSnapshot]);
 
     // --- INIT ---
     useEffect(() => {
@@ -613,7 +509,7 @@ const App: React.FC = () => {
                     {activeModule === 'adapta' && (
                         <Adapta 
                             processingState={processingState}
-                            onStartCloudProcessing={handleStartCloudProcessing}
+                            onForceUpdate={handleForceUpdate}
                             onFileProcessed={() => {}}
                             onProcessingStateChange={() => {}}
                             okbData={okbData}
@@ -631,7 +527,6 @@ const App: React.FC = () => {
                             endDate={filterEndDate}     
                             onStartDateChange={setFilterStartDate} 
                             onEndDateChange={setFilterEndDate}     
-                            onStartProcessing={() => {}} // Removed
                         />
                     )}
 

@@ -10,8 +10,8 @@ import { detectOutliers } from '../../utils/analytics';
 
 interface AdaptaProps {
     processingState: FileProcessingState;
-    // onStartProcessing removed
-    onStartCloudProcessing?: (params: CloudLoadParams) => void;
+    // Updated prop for forcing update
+    onForceUpdate?: () => void;
     onFileProcessed: (data: WorkerResultPayload) => void;
     onProcessingStateChange: (isLoading: boolean, message: string) => void;
     okbData: any[];
@@ -20,20 +20,17 @@ interface AdaptaProps {
     onOkbDataChange: (data: any[]) => void;
     disabled: boolean;
     unidentifiedCount: number;
-    onUnidentifiedClick?: () => void; // New Prop
+    onUnidentifiedClick?: () => void; 
     activeClientsCount: number;
     uploadedData?: AggregatedDataRow[]; 
     dbStatus?: 'empty' | 'ready' | 'loading';
     onStartEdit?: (client: MapPoint) => void;
     
-    // NEW: Date Props
+    // Date Props
     startDate: string;
     endDate: string;
     onStartDateChange: (date: string) => void;
     onEndDateChange: (date: string) => void;
-    
-    // Kept for compatibility if passed but unused, or can be removed entirely
-    onStartProcessing?: (file: File) => void; 
 }
 
 interface OutlierItem {
@@ -258,7 +255,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                         <OKBManagement onStatusChange={props.onOkbStatusChange} onDataChange={props.onOkbDataChange} status={props.okbStatus} disabled={props.disabled} />
                         
-                        <FileUpload processingState={props.processingState} onStartCloudProcessing={props.onStartCloudProcessing} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
+                        <FileUpload processingState={props.processingState} onForceUpdate={props.onForceUpdate} okbStatus={props.okbStatus} disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'} />
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
@@ -275,10 +272,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
-                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">СТРОК В EXCEL</div>
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">ОБРАБОТАНО ЗАПИСЕЙ</div>
                                     <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
                                     <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
-                                        {props.processingState.isProcessing ? 'Синхронизация файлов...' : (props.startDate || props.endDate ? 'Отфильтровано' : 'Всего записей')}
+                                        {props.processingState.isProcessing ? 'Чтение снимка...' : (props.startDate || props.endDate ? 'Отфильтровано' : 'Всего в системе')}
                                     </div>
                                 </div>
                                 <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
@@ -350,7 +347,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 </div>
                             ) : (
                                 <div className="h-40 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded-xl bg-black/10">
-                                    <p className="text-sm italic">Сканирование облачных файлов...</p>
+                                    <p className="text-sm italic">Сканирование JSON-данных...</p>
                                 </div>
                             )}
                         </div>

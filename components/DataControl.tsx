@@ -2,11 +2,11 @@
 import React from 'react';
 import FileUpload from './FileUpload';
 import OKBManagement from './OKBManagement';
-import { OkbStatus, FileProcessingState, OkbDataRow, CloudLoadParams } from '../types';
+import { OkbStatus, FileProcessingState, OkbDataRow } from '../types';
 
 interface DataControlProps {
     processingState: FileProcessingState;
-    onStartCloudProcessing?: (params: CloudLoadParams) => void;
+    onForceUpdate?: () => void;
     onOkbStatusChange: (status: OkbStatus) => void;
     onOkbDataChange: (data: OkbDataRow[]) => void;
     okbStatus: OkbStatus | null;
@@ -24,7 +24,7 @@ const DataControl: React.FC<DataControlProps> = (props) => {
             />
             <FileUpload 
                 processingState={props.processingState}
-                onStartCloudProcessing={props.onStartCloudProcessing}
+                onForceUpdate={props.onForceUpdate}
                 okbStatus={props.okbStatus}
                 disabled={props.disabled || !props.okbStatus || props.okbStatus.status !== 'ready'}
             />
