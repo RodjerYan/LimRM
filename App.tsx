@@ -1,84 +1,115 @@
-
-import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
-import RoiGenome from './components/modules/RoiGenome'; 
-import InteractiveRegionMap from './components/InteractiveRegionMap';
-import Filters from './components/Filters';
-import PotentialChart from './components/PotentialChart';
-import ResultsTable from './components/ResultsTable';
-import { RMDashboard } from './components/RMDashboard';
-import Notification from './components/Notification';
-import AddressEditModal from './components/AddressEditModal'; 
+import RoiGenome from './components/modules/RoiGenome';
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import ResultsTable from './components/ResultsTable';
+import Filters from './components/Filters';
+import MetricsSummary from './components/MetricsSummary';
+import { RMDashboard } from './components/RMDashboard';
+import AddressEditModal from './components/AddressEditModal';
+import ClientsListModal from './components/ClientsListModal';
+import UnidentifiedRowsModal from './components/UnidentifiedRowsModal';
+import DetailsModal from './components/DetailsModal';
+
 import { 
-    AggregatedDataRow, FilterState, NotificationMessage, 
-    OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
-    WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus
+    AggregatedDataRow, 
+    OkbDataRow, 
+    OkbStatus, 
+    FileProcessingState, 
+    WorkerMessage,
+    MapPoint,
+    UnidentifiedRow,
+    FilterState
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow } from './utils/dataUtils';
-import { enrichDataWithSmartPlan } from './services/planning/integration';
-import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
-
-const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
-const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
-
-const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
-
-// Максимальный размер JSON-файла в байтах (850 КБ)
-const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
+import { calculateSummaryMetrics, applyFilters, getFilterOptions, findValueInRow } from './utils/dataUtils';
 
 const App: React.FC = () => {
-    if (!isApiKeySet) return <ApiKeyErrorDisplay />;
-
-    const [activeModule, setActiveModule] = useState('adapta');
-    const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
+    // State
+    const [activeTab, setActiveTab] = useState('adapta');
+    const [apiKeyError, setApiKeyError] = useState(false);
     
-    // --- DATE FILTER STATE ---
-    const [filterStartDate, setFilterStartDate] = useState<string>('');
-    const [filterEndDate, setFilterEndDate] = useState<string>('');
-    const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
-    
-    // Shared State for Adapta
+    // Data State
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
-    const [okbRegionCounts, setOkbRegionCounts] = useState<{[key: string]: number}>({});
-    
+    const [aggregatedData, setAggregatedData] = useState<AggregatedDataRow[]>([]);
     const [unidentifiedRows, setUnidentifiedRows] = useState<UnidentifiedRow[]>([]);
-    const [filters, setFilters] = useState<FilterState>({ rm: '', brand: [], packaging: [], region: [] });
+    const [okbRegionCounts, setOkbRegionCounts] = useState<Record<string, number>>({});
     
+    // UI State
     const [processingState, setProcessingState] = useState<FileProcessingState>({
-        isProcessing: false, progress: 0, message: 'Система готова', fileName: null, backgroundMessage: null, startTime: null, totalRowsProcessed: 0
+        isProcessing: false,
+        progress: 0,
+        message: '',
+        fileName: null,
+        backgroundMessage: null,
+        startTime: null
+    });
+    
+    const [filters, setFilters] = useState<FilterState>({
+        rm: '',
+        brand: [],
+        packaging: [],
+        region: []
     });
 
-    const totalRowsProcessedRef = useRef<number>(0);
-    const allDataRef = useRef<AggregatedDataRow[]>([]);
-    const unidentifiedRowsRef = useRef<UnidentifiedRow[]>([]);
-    const workerRef = useRef<Worker | null>(null);
-    const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [dateRange, setDateRange] = useState<{start: string, end: string}>({ start: '', end: '' });
 
-    const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
-    const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
+    // Modals
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+    const [unidentifiedModalOpen, setUnidentifiedModalOpen] = useState(false);
+    const [detailsModalData, setDetailsModalData] = useState<AggregatedDataRow | null>(null);
+    const [showClientsList, setShowClientsList] = useState(false);
+    const [clientsListTitle, setClientsListTitle] = useState('');
+    const [clientsListSource, setClientsListSource] = useState<MapPoint[]>([]);
 
-    // Sync refs
-    useEffect(() => { allDataRef.current = allData; }, [allData]);
-    useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
+    const workerRef = useRef<Worker | null>(null);
 
-    // Cleanup worker
     useEffect(() => {
-        return () => {
-            if (workerRef.current) workerRef.current.terminate();
+        // Basic check for API Key availability (optional)
+        if (import.meta.env.VITE_GEMINI_API_KEY !== 'key_is_set') {
+             // setApiKeyError(true);
+        }
+        
+        // Initialize Worker
+        workerRef.current = new Worker(new URL('./services/processing.worker.ts', import.meta.url), { type: 'module' });
+        
+        workerRef.current.onmessage = (e: MessageEvent<WorkerMessage>) => {
+            const msg = e.data;
+            if (msg.type === 'progress') {
+                setProcessingState(prev => ({
+                    ...prev,
+                    isProcessing: true,
+                    progress: msg.payload.percentage,
+                    message: msg.payload.message,
+                    totalRowsProcessed: msg.payload.totalProcessed
+                }));
+            } else if (msg.type === 'result_init') {
+                 setOkbRegionCounts(msg.payload.okbRegionCounts);
+            } else if (msg.type === 'result_chunk_aggregated') {
+                 setAggregatedData(msg.payload.data);
+                 setProcessingState(prev => ({ ...prev, totalRowsProcessed: msg.payload.totalProcessed }));
+            } else if (msg.type === 'result_finished') {
+                 setAggregatedData(msg.payload.aggregatedData);
+                 setUnidentifiedRows(msg.payload.unidentifiedRows);
+                 setOkbRegionCounts(msg.payload.okbRegionCounts);
+                 setProcessingState(prev => ({ 
+                     ...prev, 
+                     isProcessing: false, 
+                     progress: 100, 
+                     message: 'Обработка завершена',
+                     totalRowsProcessed: msg.payload.totalRowsProcessed 
+                 }));
+            } else if (msg.type === 'error') {
+                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: `Ошибка: ${msg.payload}` }));
+            }
         };
-    }, []);
 
-    const addNotification = useCallback((message: string, type: NotificationMessage['type']) => {
-        const newNotification: NotificationMessage = { id: Date.now(), message, type };
-        setNotifications(prev => [...prev, newNotification]);
-        setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
+        return () => {
+            workerRef.current?.terminate();
+        };
     }, []);
 
     // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
@@ -107,7 +138,13 @@ const App: React.FC = () => {
                 return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
             };
 
-            const normalizeClient = (c: any, cIdx: number) => {
+            // Handle rows without 'clients' array (flat structure from snapshot)
+            let clientSource = row.clients;
+            if (!Array.isArray(clientSource) || clientSource.length === 0) {
+                 clientSource = [row];
+            }
+
+            const normalizedClients = clientSource.map((c: any, cIdx: number) => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
 
@@ -133,10 +170,23 @@ const App: React.FC = () => {
                 if (!clientObj.key) {
                     clientObj.key = generateStableKey(row, `cli_${cIdx}`);
                 }
-                return clientObj;
-            };
+                
+                // Recover missing client fields from originalRow if possible
+                if (!clientObj.region || clientObj.region === 'Нет данных') {
+                    clientObj.region = findValueInRow(original, ['регион', 'субъект', 'область']) || 'Нет данных';
+                }
+                if (!clientObj.packaging || clientObj.packaging === 'Нет данных') {
+                    clientObj.packaging = findValueInRow(original, ['фасовка', 'упаковка']) || 'Нет данных';
+                }
+                if (!clientObj.brand || clientObj.brand === 'Нет данных') {
+                    clientObj.brand = findValueInRow(original, ['бренд', 'торговая марка']) || 'Нет данных';
+                }
 
-            if (hasMultipleBrands) {
+                return clientObj;
+            });
+
+            // Handle flattened rows that might need splitting (Legacy support)
+            if (hasMultipleBrands && !Array.isArray(row.clients)) {
                 const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
                 if (parts.length > 1) {
                     const splitFactor = 1 / parts.length;
@@ -145,28 +195,59 @@ const App: React.FC = () => {
                             ...row,
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
-                            clientName: `${row.region}: ${brandPart}`,
+                            clientName: `${row.region || 'Регион'}: ${brandPart}`,
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
+                            clients: [] // Should not happen in new logic, but safe fallback
                         });
                     });
                     return;
                 }
             }
+
+            // --- RECOVERY LOGIC ---
+            // Ensure critical fields for ResultsTable are present
+            let region = row.region;
+            let brand = row.brand;
+            let packaging = row.packaging;
+            let rm = row.rm;
             
-            // Handle rows without 'clients' array (flat structure from snapshot)
-            // If row.clients is missing, treat the row itself as the client source
-            let clientSource = row.clients;
-            if (!Array.isArray(clientSource) || clientSource.length === 0) {
-                 clientSource = [row];
+            // Fallback: Peek at first client to recover data if the aggregate row is bare
+            const firstClient = normalizedClients[0];
+            if (firstClient) {
+                if (!region || region === 'Регион не определен' || region === 'Нет данных') region = firstClient.region;
+                if (!brand || brand === 'Бренд не определен' || brand === 'Нет данных') brand = firstClient.brand;
+                if (!rm || rm === 'РМ не назначен' || rm === 'Нет данных') rm = firstClient.rm;
+                if (!packaging || packaging === 'Не указана' || packaging === 'Нет данных') packaging = firstClient.packaging;
             }
 
-            const normalizedClients = clientSource.map(normalizeClient);
+            // Defaults (Explicit "Нет данных" per user request)
+            region = (region && region.trim()) ? region : 'Нет данных';
+            brand = (brand && brand.trim()) ? brand : 'Нет данных';
+            packaging = (packaging && packaging.trim()) ? packaging : 'Нет данных';
+            rm = (rm && rm.trim()) ? rm : 'Нет данных';
+
+            // Ensure clientName exists for the table
+            let clientName = row.clientName;
+            if (!clientName || clientName === 'undefined' || clientName.trim() === '') {
+                // Construct sensible name
+                if (region !== 'Нет данных' && brand !== 'Нет данных') {
+                    clientName = `${region}: ${brand}`;
+                } else if (normalizedClients.length > 0 && normalizedClients[0].name) {
+                    clientName = normalizedClients[0].name;
+                } else {
+                    clientName = 'Группа: Нет данных';
+                }
+            }
 
             result.push({
                 ...row,
+                region,
+                brand,
+                packaging,
+                rm,
+                clientName,
                 key: row.key || generateStableKey(row, 'm'),
                 clients: normalizedClients
             });
@@ -174,403 +255,163 @@ const App: React.FC = () => {
         return result;
     }, []);
 
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ) ---
-    const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
-        try {
-            console.log('Начало сохранения в облако...', currentData.length);
-            
-            const newVersionHash = `edit_${Date.now()}`;
-            const chunks: string[] = [];
-            
-            let currentChunkObj: any = {
-                chunkIndex: 0,
-                versionHash: newVersionHash,
-                rows: [],
-            };
-            
-            let currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
-            
-            for (const row of currentData) {
-                const rowStr = JSON.stringify(row);
-                const rowSize = new Blob([rowStr]).size + 2; 
-                
-                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
-                    currentChunkObj = {
-                        chunkIndex: chunks.length,
-                        versionHash: newVersionHash,
-                        rows: []
-                    };
-                    currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
-                }
-                currentChunkObj.rows.push(row);
-                currentSize += rowSize;
-            }
-            chunks.push(JSON.stringify(currentChunkObj));
-            
-            const totalChunks = chunks.length;
+    // Derived Data
+    const filteredData = useMemo(() => applyFilters(aggregatedData, filters), [aggregatedData, filters]);
+    const filterOptions = useMemo(() => getFilterOptions(aggregatedData), [aggregatedData]);
+    const metrics = useMemo(() => calculateSummaryMetrics(filteredData), [filteredData]);
 
-            for (let i = 0; i < totalChunks; i++) {
-                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk: chunks[i] }) 
-                });
-                if (!res.ok) throw new Error(`Upload failed for chunk ${i}`);
-            }
-            
-            await fetch('/api/get-full-cache?action=save-meta', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    unidentifiedRows: currentUnidentified,
-                    okbRegionCounts: okbRegionCounts,
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: newVersionHash,
-                    chunkCount: totalChunks,
-                    totalRows: totalRowsProcessedRef.current,
-                    timestamp: Date.now()
-                })
-            });
-            
-            addNotification('Автосохранение завершено', 'success');
-        } catch (e) {
-            console.error("Cloud Save Error:", e);
-            addNotification('Ошибка сохранения в облако', 'warning');
-        }
+    const activeClientsCount = useMemo(() => {
+        const unique = new Set<string>();
+        filteredData.forEach(r => r.clients.forEach(c => unique.add(c.key)));
+        return unique.size;
+    }, [filteredData]);
+
+    // Handlers
+    const handleForceUpdate = () => {
+        // Logic to trigger worker update if needed.
     };
 
-    // --- ЗАГРУЗКА СНИМКА (JSON) ---
-    const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
-        try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
-            
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
-            
-            let fileList = await listRes.json();
-            if (!Array.isArray(fileList) || fileList.length === 0) return false;
-
-            fileList.sort((a: any, b: any) => {
-                const nameA = a.name || '';
-                const nameB = b.name || '';
-                const numA = parseInt(nameA.match(/\d+/)?.[0] || '0', 10);
-                const numB = parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
-                return numA - numB;
-            });
-
-            let loadedCount = 0;
-            const total = fileList.length;
-            let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = null;
-
-            for (const file of fileList) {
-                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
-                const text = await res.text();
-
-                if (text.length >= 1048576) {
-                    addNotification('Снимок поврежден (лимит размера)', 'warning');
-                    return false;
-                }
-                
-                const chunkData = JSON.parse(text);
-                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                
-                if (newRows.length > 0) {
-                    accumulatedRows.push(...normalize(newRows));
-                }
-                if (chunkData.meta) loadedMeta = chunkData.meta;
-                
-                loadedCount++;
-                setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-            }
-
-            if (accumulatedRows.length > 0 || loadedMeta) {
-                setAllData(accumulatedRows);
-                
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
-                
-                await saveAnalyticsState({
-                    allData: accumulatedRows,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: versionHash,
-                    okbData: [], okbStatus: null
-                });
-                
-                localStorage.setItem('last_snapshot_version', versionHash);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                return true;
-            }
-            return false;
-        } catch (e) { 
-            console.error("Snapshot error:", e); 
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-        }
-        return false;
-    }, [normalize, addNotification]);
-
-    // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
-    const handleForceUpdate = useCallback(async () => {
-        if (processingState.isProcessing) return;
-        
-        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
-        
-        try {
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
-                } else {
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
-                }
-            } else {
-               throw new Error("Meta fetch failed");
-            }
-        } catch (e) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка соединения' }));
-        }
-    }, [processingState.isProcessing, handleDownloadSnapshot]);
-
-    // --- INIT ---
-    useEffect(() => {
-        const init = async () => {
-            setDbStatus('loading');
-            const local = await loadAnalyticsState();
-            if (local?.allData?.length > 0) {
-                const validatedLocal = normalize(local.allData);
-                setAllData(validatedLocal);
-                setUnidentifiedRows(local.unidentifiedRows || []);
-                setOkbRegionCounts(local.okbRegionCounts || {});
-                setDbStatus('ready');
-            }
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
-                }
-            }
-        };
-        init();
-    }, [handleDownloadSnapshot, normalize]);
-
-    // --- DATA UPDATE HANDLER (DEBOUNCED) ---
-    const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        let newData = [...allDataRef.current]; 
-        let newUnidentified = [...unidentifiedRowsRef.current];
-        
-        if (typeof originalIndex === 'number') {
-            const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
-            if (rowIndex !== -1) newUnidentified.splice(rowIndex, 1);
-            
-            const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
-            const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
-            
-            if (existingGroupIndex !== -1) {
-                newData[existingGroupIndex] = {
-                    ...newData[existingGroupIndex],
-                    fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
-                    clients: [...newData[existingGroupIndex].clients, newPoint]
-                };
-            } else {
-                newData.push({
-                    key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging,
-                    clientName: `${newPoint.region}: ${newPoint.brand}`, fact: newPoint.fact || 0,
-                    potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint]
-                });
-            }
-        } else {
-            newData = newData.map(group => {
-                const clientIndex = group.clients.findIndex(c => c.key === oldKey);
-                if (clientIndex !== -1) {
-                    const updatedClients = [...group.clients];
-                    updatedClients[clientIndex] = newPoint;
-                    return { ...group, clients: updatedClients };
-                }
-                return group;
-            });
-        }
-
-        setAllData(newData);
-        setUnidentifiedRows(newUnidentified);
-        
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-            saveSnapshotToCloud(newData, newUnidentified).catch(err => {
-                console.error("Auto-save failed:", err);
-            });
-        }, 2000);
-
-    }, [okbRegionCounts]); 
-
-    // --- FILTERED DATA ---
-    const filtered = useMemo(() => {
-        let processedData = allData;
-        if (filterStartDate || filterEndDate) {
-            processedData = allData.map(row => {
-                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row; 
-                let newRowFact = 0;
-                Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
-                    if (dateKey === 'unknown') return; 
-                    if (filterStartDate && dateKey < filterStartDate) return;
-                    if (filterEndDate && dateKey > filterEndDate) return;
-                    newRowFact += val;
-                });
-                const activeClients = row.clients.map(client => {
-                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client; 
-                    let clientSum = 0;
-                    Object.entries(client.monthlyFact).forEach(([d, v]) => {
-                        if (d === 'unknown') return;
-                        if (filterStartDate && d < filterStartDate) return;
-                        if (filterEndDate && d > filterEndDate) return;
-                        clientSum += v;
-                    });
-                    return { ...client, fact: clientSum };
-                }).filter(c => (c.fact || 0) > 0);
-                return { ...row, fact: newRowFact, clients: activeClients };
-            }).filter(r => r.fact > 0); 
-        }
-        const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
-        return applyFilters(smart, filters);
-    }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
-
-    // --- ACTIVE CLIENTS ---
-    const allActiveClients = useMemo(() => {
-        const clientsMap = new Map<string, MapPoint>();
-        filtered.forEach(row => {
-            if (row && Array.isArray(row.clients)) {
-                row.clients.forEach(c => { if (c && c.key) clientsMap.set(c.key, c); });
-            }
-        });
-        return Array.from(clientsMap.values());
-    }, [filtered]);
-
-    // --- POTENTIAL CLIENTS ---
-    const mapPotentialClients = useMemo(() => {
-        if (!okbData || okbData.length === 0) return [];
-        const coordsOnly = okbData.filter(r => {
-            const lat = r.lat;
-            const lon = r.lon;
-            return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
-        });
-        if (filters.region.length === 0) return coordsOnly;
-        return coordsOnly.filter(row => {
-            const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
-            if (!rawRegion) return false;
-            return filters.region.some(selectedReg => 
-                rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) || 
-                selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
-            );
-        });
-    }, [okbData, filters.region]);
-
-    const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
-    const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
+    if (apiKeyError) return <ApiKeyErrorDisplay />;
 
     return (
-        <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">
-            <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
+        <div className="flex h-screen bg-primary-dark text-text-main font-sans overflow-hidden">
+            <Navigation activeTab={activeTab} onTabChange={setActiveTab} />
             
-            <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
-                <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
-                    <div className="flex items-center gap-6">
-                        <div className="flex flex-col">
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Local DB</span>
-                            </div>
-                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Ready' : 'Syncing...'}</span>
-                        </div>
-                        {processingState.isProcessing && (
-                            <div className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-bold text-indigo-300 animate-pulse">
-                                {processingState.message} {Math.round(processingState.progress)}%
-                            </div>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-4 text-right">
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-gray-500 uppercase font-bold">Активных ТТ</span>
-                            <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString()}</span>
-                        </div>
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white">L</div>
-                    </div>
-                </div>
+            <main className="flex-1 overflow-y-auto custom-scrollbar relative p-6">
+                {activeTab === 'adapta' && (
+                    <Adapta 
+                        processingState={processingState}
+                        onForceUpdate={handleForceUpdate}
+                        onFileProcessed={() => {}}
+                        onProcessingStateChange={() => {}}
+                        okbData={okbData}
+                        okbStatus={okbStatus}
+                        onOkbStatusChange={setOkbStatus}
+                        onOkbDataChange={setOkbData}
+                        disabled={processingState.isProcessing}
+                        unidentifiedCount={unidentifiedRows.length}
+                        onUnidentifiedClick={() => setUnidentifiedModalOpen(true)}
+                        activeClientsCount={activeClientsCount}
+                        uploadedData={aggregatedData}
+                        dbStatus={aggregatedData.length > 0 ? 'ready' : 'empty'}
+                        startDate={dateRange.start}
+                        endDate={dateRange.end}
+                        onStartDateChange={(d) => setDateRange(p => ({ ...p, start: d }))}
+                        onEndDateChange={(d) => setDateRange(p => ({ ...p, end: d }))}
+                        onStartEdit={(c) => setEditingClient(c)}
+                    />
+                )}
 
-                <div className="py-8 px-4 lg:px-8">
-                    {activeModule === 'adapta' && (
-                        <Adapta 
-                            processingState={processingState}
-                            onForceUpdate={handleForceUpdate}
-                            onFileProcessed={() => {}}
-                            onProcessingStateChange={() => {}}
-                            okbData={okbData}
-                            okbStatus={okbStatus}
-                            onOkbStatusChange={setOkbStatus}
-                            onOkbDataChange={setOkbData}
-                            disabled={processingState.isProcessing}
-                            unidentifiedCount={unidentifiedRows.length}
-                            onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)}
-                            activeClientsCount={allActiveClients.length}
-                            uploadedData={filtered} 
-                            dbStatus={dbStatus}
-                            onStartEdit={setEditingClient}
-                            startDate={filterStartDate} 
-                            endDate={filterEndDate}     
-                            onStartDateChange={setFilterStartDate} 
-                            onEndDateChange={setFilterEndDate}     
+                {activeTab === 'amp' && (
+                    <div className="space-y-6 animate-fade-in">
+                        <MetricsSummary 
+                            metrics={metrics} 
+                            okbStatus={okbStatus} 
+                            disabled={false} 
+                            onActiveClientsClick={() => {
+                                setClientsListTitle('Активные клиенты (фильтр)');
+                                const allClients = filteredData.flatMap(r => r.clients);
+                                setClientsListSource(allClients);
+                                setShowClientsList(true);
+                            }}
                         />
-                    )}
-
-                    {activeModule === 'amp' && (
-                        <div className="space-y-6">
-                            <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
-                            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                <div className="lg:col-span-1">
-                                    <Filters options={filterOptions} currentFilters={filters} onFilterChange={setFilters} onReset={() => setFilters({rm:'', brand:[], packaging:[], region:[]})} disabled={allData.length === 0} />
-                                </div>
-                                <div className="lg:col-span-3"><PotentialChart data={filtered} /></div>
+                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-[calc(100vh-250px)]">
+                            <div className="lg:col-span-1 h-full">
+                                <Filters 
+                                    options={filterOptions} 
+                                    currentFilters={filters} 
+                                    onFilterChange={setFilters} 
+                                    onReset={() => setFilters({ rm: '', brand: [], packaging: [], region: [] })} 
+                                    disabled={false} 
+                                />
                             </div>
-                            <ResultsTable 
-                                data={filtered} 
-                                onRowClick={setSelectedDetailsRow} 
-                                unidentifiedRowsCount={unidentifiedRows.length} 
-                                onUnidentifiedClick={() => setIsUnidentifiedModalOpen(true)} 
-                                disabled={allData.length === 0} 
-                            />
+                            <div className="lg:col-span-3 h-full overflow-hidden flex flex-col">
+                                <ResultsTable 
+                                    data={filteredData} 
+                                    onRowClick={setDetailsModalData} 
+                                    onPlanClick={() => {}}
+                                    disabled={false} 
+                                    unidentifiedRowsCount={unidentifiedRows.length}
+                                    onUnidentifiedClick={() => setUnidentifiedModalOpen(true)}
+                                />
+                            </div>
                         </div>
-                    )}
+                    </div>
+                )}
 
-                    {activeModule === 'dashboard' && (
-                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
-                    )}
+                {activeTab === 'dashboard' && (
+                    <RMDashboard 
+                        isOpen={true} 
+                        onClose={() => setActiveTab('adapta')} 
+                        data={filteredData} 
+                        okbRegionCounts={okbRegionCounts} 
+                        okbData={okbData}
+                        mode="page"
+                        metrics={metrics}
+                        okbStatus={okbStatus}
+                        onActiveClientsClick={() => {
+                             setClientsListTitle('Активные клиенты (Dashboard)');
+                             const allClients = filteredData.flatMap(r => r.clients);
+                             setClientsListSource(allClients);
+                             setShowClientsList(true);
+                        }}
+                        onEditClient={(c) => setEditingClient(c)}
+                    />
+                )}
 
-                    {activeModule === 'prophet' && <Prophet data={filtered} />}
-                    {activeModule === 'agile' && <AgileLearning data={filtered} />}
-                    {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
-                </div>
+                {activeTab === 'prophet' && <Prophet data={filteredData} />}
+                {activeTab === 'agile' && <AgileLearning data={filteredData} />}
+                {activeTab === 'roi-genome' && <RoiGenome data={filteredData} />}
             </main>
 
-            <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">
-                {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}
-            </div>
+            {/* Modals */}
+            <AddressEditModal 
+                isOpen={!!editingClient} 
+                onClose={() => setEditingClient(null)} 
+                onBack={() => setEditingClient(null)}
+                data={editingClient} 
+                onDataUpdate={() => {}}
+                onStartPolling={() => {}}
+                onDelete={() => {}}
+                globalTheme="dark"
+            />
 
-            <Suspense fallback={null}>
-                {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
-                {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
-            </Suspense>
-            
-            {editingClient && (
-                <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
-            )}
+            <UnidentifiedRowsModal 
+                isOpen={unidentifiedModalOpen} 
+                onClose={() => setUnidentifiedModalOpen(false)} 
+                rows={unidentifiedRows}
+                onStartEdit={(row) => {
+                    setUnidentifiedModalOpen(false);
+                    setEditingClient(row); 
+                }} 
+            />
+
+            <DetailsModal 
+                isOpen={!!detailsModalData} 
+                onClose={() => setDetailsModalData(null)} 
+                data={detailsModalData} 
+                okbStatus={okbStatus}
+                onStartEdit={(client) => {
+                    setDetailsModalData(null);
+                    setEditingClient(client);
+                }}
+            />
+
+            <ClientsListModal 
+                isOpen={showClientsList} 
+                onClose={() => setShowClientsList(false)} 
+                title={clientsListTitle} 
+                clients={clientsListSource}
+                onClientSelect={(c) => {
+                    setShowClientsList(false);
+                    setEditingClient(c);
+                }}
+                onStartEdit={(c) => {
+                    setShowClientsList(false);
+                    setEditingClient(c);
+                }}
+                showAbcLegend={true}
+            />
         </div>
     );
 };
