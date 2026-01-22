@@ -29,7 +29,10 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
+// Увеличили порог для чекпоинта (сохранения в облако) до 50 000
 const CHECKPOINT_THRESHOLD = 50000; 
+
+// Увеличили порог обновления UI до 20 000
 const UI_UPDATE_THRESHOLD = 20000;
 
 const normalizeHeaderKey = (key: string): string => {
@@ -59,14 +62,19 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
+    
     const strVal = String(val);
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
+    
     const floatVal = parseFloat(cleaned);
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
+// Helper to parse date into YYYY-MM format
 const parseDateKey = (val: any): string | null => {
     if (!val) return null;
+    
+    // Excel Serial Date
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
@@ -75,11 +83,17 @@ const parseDateKey = (val: any): string | null => {
         }
         return null;
     }
+
     const str = String(val).trim();
+    
+    // ISO-like YYYY-MM-DD or YYYY.MM.DD
     let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
+
+    // DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
+    
     return null;
 };
 
@@ -94,7 +108,7 @@ const getCanonicalRegion = (row: any): string => {
         }
         return standardizeRegion(cleanVal);
     }
-    return 'Нет данных';
+    return 'Регион не определен';
 };
 
 const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
@@ -112,8 +126,10 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+    
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
     let runningSum = 0;
+
     allClients.forEach(client => {
         runningSum += (client.fact || 0);
         const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
@@ -134,9 +150,11 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_uniquePlottableClients = new Map();
     state_unidentifiedRows = [];
     state_headers = [];
+    
     state_processedRowsCount = totalRowsProcessed || 0;
     state_lastEmitCount = state_processedRowsCount;
     state_lastCheckpointCount = state_processedRowsCount;
+    
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
@@ -144,7 +162,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     if (okbData) {
         okbData.forEach(row => {
             const reg = getCanonicalRegion(row);
-            if (reg !== 'Нет данных' && reg !== 'Регион не определен') {
+            if (reg !== 'Регион не определен') {
                 state_okbRegionCounts[reg] = (state_okbRegionCounts[reg] || 0) + 1;
                 if (!state_okbByRegion[reg]) state_okbByRegion[reg] = [];
                 state_okbByRegion[reg].push(row);
@@ -181,6 +199,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
                 });
             }
         });
+        
         if (restoredUnidentified) {
             state_unidentifiedRows = [...restoredUnidentified];
         }
@@ -188,7 +207,10 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 
     postMessage({ 
         type: 'result_init', 
-        payload: { okbRegionCounts: state_okbRegionCounts, totalUnidentified: state_unidentifiedRows.length } 
+        payload: { 
+            okbRegionCounts: state_okbRegionCounts,
+            totalUnidentified: state_unidentifiedRows.length 
+        } 
     });
     
     const statusMsg = totalRowsProcessed 
@@ -200,6 +222,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk } = payload;
+    
     let jsonData: any[] = [];
     if (isFirstChunk || state_headers.length === 0) {
         const hRow = rawData.findIndex(row => row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
@@ -212,6 +235,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
         
         const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
+        
         const clientHeader = normHeaders.find(h => 
             h.norm.includes('названиеклиента') || 
             h.norm.includes('наименованиеклиента') || 
@@ -226,6 +250,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             const nameHeader = normHeaders.find(h => h.norm.includes('наименование') && !h.norm.includes('товар') && !h.norm.includes('продук'));
             state_clientNameHeader = nameHeader ? nameHeader.original : undefined;
         }
+        
     } else {
         jsonData = rawData.map(row => {
             const obj: any = {};
@@ -238,43 +263,29 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
-        // --- STRICT "Нет данных" ENFORCEMENT ---
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
-        if (!rm || rm.trim() === '') rm = 'Нет данных';
+        if (!rm) rm = 'Unknown_RM';
 
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.trim() === '') channel = 'Нет данных';
+        if (!channel || channel.length < 2) channel = 'Не определен';
 
-        let rawBrand = findValueInRow(row, ['торговая марка', 'бренд']);
-        if (!rawBrand || rawBrand.trim() === '') rawBrand = 'Нет данных';
-        
+        // 1. Get raw brand value
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         // 2. Split by comma, semicolon, pipe, or newline (more aggressive split)
-        const brands = rawBrand === 'Нет данных' 
-            ? ['Нет данных'] 
-            : rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
         
-        let packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']);
-        if (!packaging || packaging.trim() === '') packaging = 'Нет данных';
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
         
         const isCityFound = parsed.city !== 'Город не определен';
-        let reg = getCanonicalRegion(row);
-        
-        if (reg === 'Нет данных' || reg === 'Регион не определен') {
-            if (parsed.region !== 'Регион не определен') {
-                reg = parsed.region;
-            } else {
-                reg = 'Нет данных';
-            }
-        }
-        
-        const isRegionFound = reg !== 'Нет данных';
+        const reg = getCanonicalRegion(row) || parsed.region;
+        const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
@@ -283,22 +294,22 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
+        // 3. Divide weight evenly among detected brands
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
-        let clientName = String(row[state_clientNameHeader || ''] || '').trim();
-        // If client name header found nothing, try finding 'name' key specifically
-        if (!clientName) {
-             clientName = findValueInRow(row, ['name', 'наименование', 'клиент']) || 'ТТ';
-        }
-
+        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
+        // COMPOSITE KEY FIX: Use both address and client name to define uniqueness.
+        // This prevents distinct shops at the same address (e.g. malls) from collapsing into one.
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+        // Fallback to just address if name is generic 'ТТ' to avoid creating duplicates for identical placeholders
         const uniqueClientKey = (normName.length > 2 && normName !== 'тт') 
             ? `${normAddr}#${normName}` 
             : normAddr;
 
+        // 4. Iterate over each brand and create separate records
         for (const brand of brands) {
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
             
@@ -326,13 +337,16 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
-                const okb = state_okbCoordIndex.get(normAddr);
+                const okb = state_okbCoordIndex.get(normAddr); // Lookup coords by address only
                 
+                // Enhanced coordinate detection
                 const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
                 const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
                 const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
                 const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
                 
+                // Priority: Excel File > Cache > OKB
+                // FIX: REMOVED RANDOM JITTER. Coordinates are now exact.
                 const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
                 const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
 
@@ -369,6 +383,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
+        
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -376,6 +391,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
+
         postMessage({
             type: 'CHECKPOINT',
             payload: {
@@ -385,10 +401,12 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 totalRowsProcessed: state_processedRowsCount
             }
         });
+        
         state_lastEmitCount = state_processedRowsCount;
     }
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
+        
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -396,9 +414,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
+        
         postMessage({ 
             type: 'result_chunk_aggregated', 
-            payload: { data: partialData, totalProcessed: state_processedRowsCount }
+            payload: {
+                data: partialData,
+                totalProcessed: state_processedRowsCount
+            }
         });
     }
 
@@ -408,6 +430,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
 async function finalizeStream(postMessage: PostMessageFn) {
     performIncrementalAbc();
+
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
         potential: item.fact * 1.15,
@@ -415,6 +438,7 @@ async function finalizeStream(postMessage: PostMessageFn) {
         growthPercentage: 15,
         clients: Array.from(item.clients.values())
     }));
+
     postMessage({ 
         type: 'result_finished', 
         payload: {
@@ -431,4 +455,5 @@ self.onmessage = async (e) => {
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
+    // Removed PROCESS_FILE to align with JSON-only approach
 };
