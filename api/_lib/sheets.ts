@@ -112,21 +112,31 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
         
-        let latVal = row['lat'] || row['latitude'];
-        // FIX: Support 'lng' as well as 'lon' and 'longitude'
-        let lonVal = row['lon'] || row['lng'] || row['longitude'];
+        let latVal = row['lat'] || row['latitude'] || row['широта'];
+        let lonVal = row['lon'] || row['lng'] || row['longitude'] || row['долгота'];
         
-        // FIX: Removed legacy logic that unconditionally overrode coordinates with columns 11/12 (L/M).
-        // This was causing data corruption when the sheet structure changed.
-        // if (rowArray.length > 12) {
-        //      const rawLon = rowArray[11]; const rawLat = rowArray[12];
-        //      if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
-        // }
+        // RESTORED: Fallback to columns 11 (Lon) and 12 (Lat) if named columns are missing.
+        // Used for sheets without proper headers.
+        if ((!latVal || !lonVal) && rowArray.length > 12) {
+             const rawLon = rowArray[11]; 
+             const rawLat = rowArray[12];
+             // Simple check that they exist
+             if (rawLat && rawLon) { 
+                 latVal = latVal || rawLat; 
+                 lonVal = lonVal || rawLon; 
+             }
+        }
 
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
-            if (!isNaN(lat) && !isNaN(lon)) { row.lat = lat; row.lon = lon; }
+            
+            // VALIDATION: Prevent financial data from being parsed as coordinates (USA bug).
+            // Latitude must be within -90 to 90.
+            if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && lat !== 0) { 
+                row.lat = lat; 
+                row.lon = lon; 
+            }
         }
         return row as OkbDataRow;
     }).filter((row: any): row is OkbDataRow => row !== null);

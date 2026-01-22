@@ -120,14 +120,26 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
         let latVal = row['lat'] || row['latitude'];
         let lonVal = row['lon'] || row['lng'] || row['longitude'];
-        if (rowArray.length > 12) {
-             const rawLon = rowArray[11]; const rawLat = rowArray[12];
-             if (rawLat && rawLon) { latVal = rawLat; lonVal = rawLon; }
+        
+        // RESTORED FALLBACK FOR MISSING HEADERS
+        if ((!latVal || !lonVal) && rowArray.length > 12) {
+             const rawLon = rowArray[11]; 
+             const rawLat = rowArray[12];
+             if (rawLat && rawLon) { 
+                 latVal = latVal || rawLat; 
+                 lonVal = lonVal || rawLon; 
+             }
         }
+
         if (latVal && lonVal) {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
-            if (!isNaN(lat) && !isNaN(lon)) { row.lat = lat; row.lon = lon; }
+            
+            // VALIDATION TO PREVENT CORRUPTION
+            if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && lat !== 0) { 
+                row.lat = lat; 
+                row.lon = lon; 
+            }
         }
         return row as OkbDataRow;
     }).filter((row: any): row is OkbDataRow => row !== null);
