@@ -198,7 +198,10 @@ export async function fetchFileContent(fileId: string, range: string = 'A:CZ', m
 
 // --- COORDINATE CACHE FUNCTIONS ---
 function normalizeForComparison(str: string): string {
-    return String(str || '').toLowerCase().replace(/\u00A0/g, ' ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim();
+    return String(str || '').toLowerCase()
+        .replace(/ё/g, 'е')
+        .replace(/[\s\u00A0.,-]+/g, ' ')
+        .trim();
 }
 
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
@@ -253,6 +256,7 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
     const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    
     if (existingSheet) return existingSheet.properties!.title!;
     
     await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
@@ -302,13 +306,20 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
 }
 
 export async function updateAddressInCache(rmName: string, oldAddress: string, newAddress: string, comment?: string, lat?: number, lon?: number): Promise<{ success: boolean; data: any }> {
+    if (!rmName) throw new Error("RM Name is required");
     const sheets = await getGoogleSheetsClient();
+    
+    // Ensure we are working with the correct sheet for this RM
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
+    
+    // Check range across all columns to find the row
     const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A:F` }), 'getAddrForUpdate2') as any;
     const rows = response.data.values || [];
+    
     const oldNorm = normalizeForComparison(oldAddress);
     const newNorm = normalizeForComparison(newAddress);
     
+    // Strict search in Column A (Index 0) first, then history (Index 3)
     let rowIndex = rows.findIndex((r: any) => normalizeForComparison(r[0]) === oldNorm);
     if (rowIndex === -1) rowIndex = rows.findIndex((r: any) => isAddressInHistory(String(r[3] || ''), oldNorm));
     
@@ -321,29 +332,32 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     let finalComment = comment || "";
     let finalStatus = 'confirmed';
 
-    // Create new entry
+    // Create new entry (Append)
     if (rowIndex === -1) {
         let initialHistory = `${oldAddress} [${timestamp}]`;
         if (comment) initialHistory += `\nКомментарий: "${comment}"`;
         finalHistory = initialHistory;
         
-        // If no coords provided, set status to pending
+        // If no coords provided, set status to pending and use empty strings
         if (lat === undefined || lon === undefined) {
             finalStatus = 'pending';
+            finalLat = undefined;
+            finalLon = undefined;
         }
         
         await callWithRetry(() => sheets.spreadsheets.values.append({ 
             spreadsheetId: CACHE_SPREADSHEET_ID, 
             range: `'${actualSheetTitle}'!A1`, 
             valueInputOption: 'USER_ENTERED', 
-            requestBody: { values: [[finalAddress, finalLat || '', finalLon || '', finalHistory, finalComment, finalStatus]] } 
+            requestBody: { values: [[finalAddress, finalLat ?? '', finalLon ?? '', finalHistory, finalComment, finalStatus]] } 
         }), 'appendNewUpdate');
         
         return { success: true, data: { address: finalAddress, lat: finalLat, lon: finalLon, comment: finalComment, history: finalHistory, coordStatus: finalStatus } };
     }
 
+    // Update existing entry
     const row = rows[rowIndex];
-    const rowNumber = rowIndex + 1;
+    const rowNumber = rowIndex + 1; // 1-based index for API
     const currentStoredAddress = String(row[0] || '');
     const currentStoredHistory = String(row[3] || '');
     const currentStoredComment = String(row[4] || '');
@@ -361,7 +375,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     if (eventEntry) finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
 
     // IMPLICIT -> EXPLICIT LOGIC
-    // If address changed and no manual coords, CLEAR coords and set status PENDING
+    // If address changed and no manual coords, CLEAR coords (EMPTY STRING) and set status PENDING
     if (isAddressChanged && lat === undefined) {
         finalLat = undefined; 
         finalLon = undefined; 
@@ -370,8 +384,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         // Keep existing if not changed, or use new if manual
         finalLat = lat !== undefined ? lat : (row[1] ? parseFloat(row[1]) : undefined);
         finalLon = lon !== undefined ? lon : (row[2] ? parseFloat(row[2]) : undefined);
-        // If manual coords are present, status is confirmed. 
-        // If reusing existing, we retain existing status unless we have valid coords now which implies confirmed.
+        
         if (lat !== undefined) {
              finalStatus = 'confirmed';
         } else {
@@ -389,8 +402,8 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         requestBody: { 
             values: [[
                 finalAddress, 
-                finalLat !== undefined ? finalLat : '', 
-                finalLon !== undefined ? finalLon : '', 
+                finalLat !== undefined ? finalLat : "", // Ensure empty string if undefined
+                finalLon !== undefined ? finalLon : "", // Ensure empty string if undefined
                 finalHistory, 
                 finalComment,
                 finalStatus
