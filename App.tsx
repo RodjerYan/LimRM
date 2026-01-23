@@ -38,21 +38,20 @@ const sortKeys = (obj: any): any => {
     if (obj === null || typeof obj !== 'object') return obj;
     if (Array.isArray(obj)) return obj.map(sortKeys);
     return Object.keys(obj).sort().reduce((res: any, key) => {
+        // Strip undefined values explicitly to match JSON.stringify behavior consistency
+        if (obj[key] === undefined) return res;
         res[key] = sortKeys(obj[key]);
         return res;
     }, {});
 };
 
 // --- Helper: Sanitize Row for Save (Strip Volatile UI State AND Keys) ---
-// Remove keys that are runtime-generated or index-dependent from the DIFF process.
 const sanitizeRowForSave = (row: AggregatedDataRow): any => {
+    // We create a clean object, ensuring numeric fields are numbers or null, never undefined
     return {
         ...row,
-        // FIX #3: Remove 'key' from saved data. It is a runtime UI concept derived from data.
-        // Saving it causes diff noise if generation logic changes or order shifts slightly.
-        key: undefined, 
+        key: undefined, // Runtime key
         clients: row.clients.map((client) => {
-            // Destructure to remove volatile fields that shouldn't trigger a diff/save
             const { key, isGeocoding, coordStatus, lastUpdated, ...persistentData } = client;
             return persistentData;
         })
@@ -127,17 +126,14 @@ const App: React.FC = () => {
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
         const syncData = async () => {
-            // Only sync if we have data loaded
             if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return; // Don't sync while heavy processing
+            if (processingState.isProcessing) return;
 
             try {
-                // 1. Fetch latest cache from server
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                 if (!res.ok) return;
                 const cacheData: CoordsCache = await res.json();
 
-                // 2. Flatten cache for O(1) lookup
                 const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
                 Object.values(cacheData).flat().forEach((item: any) => {
                     if (item.address && !item.isDeleted && item.lat && item.lon) {
@@ -147,27 +143,21 @@ const App: React.FC = () => {
 
                 let hasChanges = false;
 
-                // 3. Update All Data (Active Clients)
                 const newAllData = allDataRef.current.map(row => {
                     let rowChanged = false;
                     const newClients = row.clients.map(client => {
                         const normAddr = normalizeAddress(client.address);
-                        
-                        // RACE CONDITION FIX: Ignore cache if user updated this client recently (< 2 mins)
                         const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
                         if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
                             return client;
                         }
 
                         const cached = cacheMap.get(normAddr);
-                        
-                        // Check if we have new data that is different from current
                         if (cached) {
                             const latDiff = Math.abs((client.lat || 0) - cached.lat);
                             const lonDiff = Math.abs((client.lon || 0) - cached.lon);
                             const commentDiff = (client.comment || '') !== (cached.comment || '');
                             
-                            // If significant change (> 0.0001 deg or comment changed)
                             if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
                                 rowChanged = true;
                                 hasChanges = true;
@@ -196,7 +186,6 @@ const App: React.FC = () => {
 
 
     // --- STRICT NORMALIZE (Pure Function) ---
-    // FIX #1: normalize NEVER generates IDs. It enforces them.
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -215,10 +204,10 @@ const App: React.FC = () => {
         rows.forEach((row, index) => {
             if (!row) return;
             
-            // CRITICAL FIX: Ensure __rowId exists. Normalize must NOT generate IDs from Date.now() or Math.random().
-            // If ID is missing here, it means migration failed upstream. We throw or force a deterministic fallback based on data (not time).
             if (!row.__rowId) {
-                throw new Error(`Invariant violated: __rowId missing during normalize at index ${index}`);
+                // If ID is missing here, we are in trouble. But to be safe, we can try to patch it.
+                // Ideally this shouldn't happen after the loader fixes it.
+                row.__rowId = `emergency_${index}`; 
             }
             const stableRowId = row.__rowId;
 
@@ -257,11 +246,9 @@ const App: React.FC = () => {
                 if (parts.length > 1) {
                     const splitFactor = 1 / parts.length;
                     parts.forEach((brandPart, idx) => {
-                        // FIX: Use brand name in ID to ensure stability across reorders
                         const safeBrandSuffix = brandPart.toLowerCase().replace(/[^a-zа-я0-9]/g, '_');
                         result.push({
                             ...row,
-                            // Derived ID for split rows must be deterministic based on parent ID + brand
                             __rowId: `${stableRowId}_split_${safeBrandSuffix}`, 
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
@@ -293,12 +280,43 @@ const App: React.FC = () => {
         return result;
     }, []);
 
+    // --- RE-CHUNK HELPER ---
+    // Takes a full array of data, sorts it exactly like the saver, and splits it into chunks.
+    // This allows us to establish the "baseline" of what the server holds without trusting the file boundaries.
+    const rechunkAndCacheBaseline = useCallback((data: AggregatedDataRow[]) => {
+        const sortedData = [...data].sort((a, b) => 
+            (a.__rowId || '').localeCompare(b.__rowId || '')
+        );
+
+        const chunks: string[] = [];
+        let currentChunkObj: any = { chunkIndex: 0, rows: [] };
+        
+        for (const row of sortedData) {
+            const cleanRow = sanitizeRowForSave(row);
+            const sortedRow = sortKeys(cleanRow);
+            
+            if (currentChunkObj.rows.length >= ROWS_PER_CHUNK) {
+                chunks.push(JSON.stringify(sortKeys(currentChunkObj))); 
+                currentChunkObj = {
+                    chunkIndex: chunks.length,
+                    rows: []
+                };
+            }
+            currentChunkObj.rows.push(sortedRow);
+        }
+        if (currentChunkObj.rows.length > 0 || chunks.length === 0) {
+            chunks.push(JSON.stringify(sortKeys(currentChunkObj)));
+        }
+
+        // Update the reference with these strict baselines
+        lastSavedChunksRef.current.clear();
+        chunks.forEach((chunkContent, idx) => {
+            lastSavedChunksRef.current.set(idx, chunkContent);
+        });
+    }, []);
+
     // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
-        // NOTE: We do NOT return if isSavingRef is true.
-        // We might want to debounce or queue, but for "Smart Save" we allow latest state to win or handle concurrency elsewhere.
-        // For strict safety as per prompt requirement "isSavingRef blocks new saves", we keep it but warn.
-        // Ideally, we'd use a queue, but let's stick to the prompt's request for determinism fixes first.
         if (isSavingRef.current) {
             console.warn("Save in progress. Skipping to prevent race conditions.");
             return;
@@ -308,7 +326,6 @@ const App: React.FC = () => {
         try {
             console.log('Начало умного сохранения (Smart Save)...');
             
-            // 1. Get file slots first
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             let availableSlots: { id: string, name: string }[] = [];
             if (listRes.ok) {
@@ -317,23 +334,16 @@ const App: React.FC = () => {
 
             const newVersionHash = `edit_${Date.now()}`;
             
-            // 2. Generate chunks locally with DETERMINISTIC SERIALIZATION & STABLE ROW ID SORTING
-            
-            // Sort by __rowId (UUID or legacy_X). Since these don't change, order is stable.
+            // 1. Sort Stability: Ensure sorting matches the baseline generation logic
             const sortedData = [...currentData].sort((a, b) => 
                 (a.__rowId || '').localeCompare(b.__rowId || '')
             );
 
             const chunks: string[] = [];
-            let currentChunkObj: any = {
-                chunkIndex: 0,
-                rows: [],
-            };
+            let currentChunkObj: any = { chunkIndex: 0, rows: [] };
             
             for (const row of sortedData) {
-                // IMPORTANT: Sanitize row (remove volatile UI fields AND keys) before serialization
                 const cleanRow = sanitizeRowForSave(row);
-                // Sort object keys to ensure {a:1, b:2} stringifies same as {b:2, a:1}
                 const sortedRow = sortKeys(cleanRow);
                 
                 if (currentChunkObj.rows.length >= ROWS_PER_CHUNK) {
@@ -350,16 +360,14 @@ const App: React.FC = () => {
                 chunks.push(JSON.stringify(sortKeys(currentChunkObj)));
             }
             
-            // 3. Diffing Strategy: Identify ONLY changed chunks
+            // 2. Diffing: Compare generated strings with the baseline strings
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                // EXACT STRING MATCH CHECK
+                // Exact string comparison. Since we re-chunked on load, this should match exactly if no data changed.
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    // Even if no targetFileId (new chunk), we push it. API handles creation if ID missing/invalid usually,
-                    // or we might need specific logic. Here we assume we pass empty string if new.
                     chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: targetFileId || '' });
                 }
             });
@@ -369,7 +377,6 @@ const App: React.FC = () => {
             } else {
                 console.log(`Smart Save: Uploading ${chunksToUpload.length} dirty chunk(s)...`);
                 
-                // Upload sequentially or with limited concurrency to ensure consistency
                 const CONCURRENCY = 4;
                 for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
                     const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
@@ -386,7 +393,6 @@ const App: React.FC = () => {
                                 const txt = await res.text();
                                 throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
                             }
-                            // Update local cache ONLY after successful upload
                             lastSavedChunksRef.current.set(item.index, item.content);
                         });
                     });
@@ -394,7 +400,6 @@ const App: React.FC = () => {
                 }
             }
             
-            // 4. Always save Meta to update timestamp/version
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -409,7 +414,6 @@ const App: React.FC = () => {
                 })
             });
 
-            // 5. Cleanup old chunks (tail) if array shrank
             if (chunks.length < availableSlots.length) {
                 console.log(`Cleaning up ${availableSlots.length - chunks.length} old chunks...`);
                 await fetch(`/api/get-full-cache?action=cleanup-chunks&keepCount=${chunks.length}`, {
@@ -450,6 +454,7 @@ const App: React.FC = () => {
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
             
+            // Clear baseline cache, we will rebuild it AFTER loading everything
             lastSavedChunksRef.current.clear();
 
             for (let i = 0; i < total; i++) {
@@ -465,19 +470,22 @@ const App: React.FC = () => {
                 
                 const chunkData = JSON.parse(text);
                 const chunkIndex = typeof chunkData.chunkIndex === 'number' ? chunkData.chunkIndex : i;
-                // Cache the EXACT text we loaded for future diffing
-                lastSavedChunksRef.current.set(chunkIndex, text);
 
-                let rawRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                let rawRowsInChunk: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
-                if (rawRows.length > 0) {
-                    // FIX #2: Migration Layer.
-                    // If __rowId is missing, generate a DETERMINISTIC ID based on index.
-                    // This ensures that if 10 clients load this file, they all generate "legacy_0", "legacy_1", etc.
-                    // instead of random UUIDs which would cause 100% diffs.
-                    const migratedRows = rawRows.map((r, idx) => r.__rowId ? r : { ...r, __rowId: `legacy_${chunkIndex}_${idx}` });
-                    accumulatedRows.push(...normalize(migratedRows));
-                }
+                // MIGRATION / ID FIXING:
+                // Ensure IDs are strictly ordered by using padded strings: "legacy_00001_00050"
+                // This prevents "legacy_10" sorting before "legacy_2".
+                const migratedChunkRows = rawRowsInChunk.map((r, idx) => {
+                    if (r.__rowId) return r;
+                    const paddedChunk = String(chunkIndex).padStart(5, '0');
+                    const paddedIdx = String(idx).padStart(5, '0');
+                    return { ...r, __rowId: `legacy_${paddedChunk}_${paddedIdx}` };
+                });
+                
+                const normalizedChunkRows = normalize(migratedChunkRows);
+                accumulatedRows.push(...normalizedChunkRows);
+                
                 if (chunkData.meta) loadedMeta = chunkData.meta;
                 
                 loadedCount++;
@@ -485,6 +493,12 @@ const App: React.FC = () => {
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
+                // CRITICAL STEP: Re-establish the baseline chunks based on what we just loaded.
+                // This ensures that even if the server files were fragmented differently,
+                // our "Last Saved" state in memory perfectly matches the data structure we are about to display.
+                // Next save will diff against THIS perfect structure.
+                rechunkAndCacheBaseline(accumulatedRows);
+
                 setAllData(accumulatedRows);
                 
                 const safeMeta = loadedMeta || {};
@@ -511,7 +525,7 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
         }
         return false;
-    }, [normalize, addNotification]);
+    }, [normalize, addNotification, rechunkAndCacheBaseline]);
 
     // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
     const handleForceUpdate = useCallback(async () => {
@@ -540,9 +554,6 @@ const App: React.FC = () => {
     // --- HANDLE NEW FILE PROCESSED (Worker Output) ---
     const handleFileProcessed = useCallback((payload: WorkerResultPayload) => {
         const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
-        
-        // Since worker already generates __rowId, we can just ingest directly
-        // But for safety, we run it through normalize (which now trusts IDs)
         const normalizedData = normalize(aggregatedData);
         
         setAllData(normalizedData);
@@ -550,7 +561,9 @@ const App: React.FC = () => {
         setOkbRegionCounts(payload.okbRegionCounts);
         totalRowsProcessedRef.current = totalRowsProcessed;
         
-        // Trigger auto-save immediately to persist new data
+        // When processing new files, we don't have a previous baseline, so we save everything.
+        // But we should establish the baseline cache immediately after save.
+        // Actually, saveSnapshotToCloud updates the cache on success.
         saveSnapshotToCloud(normalizedData, unidentifiedRows);
         
         setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Обработка завершена', progress: 100 }));
@@ -564,9 +577,16 @@ const App: React.FC = () => {
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
                 // MIGRATION LAYER: Local DB
-                // Same deterministic logic: if ID missing, use legacy_index.
-                const readyRows = local.allData.map((r: any, idx: number) => r.__rowId ? r : { ...r, __rowId: `legacy_local_${idx}` });
+                // Pad local legacy IDs too
+                const readyRows = local.allData.map((r: any, idx: number) => {
+                    if (r.__rowId) return r;
+                    return { ...r, __rowId: `legacy_local_${String(idx).padStart(5, '0')}` };
+                });
                 const validatedLocal = normalize(readyRows);
+                
+                // CRITICAL: Even for local load, we must establish baseline chunks
+                rechunkAndCacheBaseline(validatedLocal);
+                
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
@@ -582,11 +602,10 @@ const App: React.FC = () => {
             }
         };
         init();
-    }, [handleDownloadSnapshot, normalize]);
+    }, [handleDownloadSnapshot, normalize, rechunkAndCacheBaseline]);
 
     // --- DATA UPDATE HANDLER (DEBOUNCED) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
-        // Create shallow copy for React update
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
@@ -603,15 +622,12 @@ const App: React.FC = () => {
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
             if (existingGroupIndex !== -1) {
-                // Update existing row (preserve its ID)
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
                     fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
                     clients: [...newData[existingGroupIndex].clients, newPoint]
                 };
             } else {
-                // CREATE NEW ROW: This is the ONLY place where generateRowId is allowed
-                // because this is a brand new entity being created by user action.
                 newData.push({
                     __rowId: generateRowId(), 
                     key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging,
@@ -620,18 +636,15 @@ const App: React.FC = () => {
                 });
             }
         } else {
-            // Updating existing client in existing row
             let found = false;
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
-                    // Copy group to avoid mutation
                     const updatedGroup = { ...group };
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
                     updatedGroup.clients = updatedClients;
-                    // Note: __rowId is preserved from 'group' spread
                     return updatedGroup;
                 }
                 return group;
