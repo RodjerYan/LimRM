@@ -331,7 +331,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             }
 
             // 4. Fetch History
-            const rm = findValueInRow(originalRow, ['рм']);
+            // FIX: Use top-level RM property directly
+            const rm = data.rm || findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
             if (rm && currentAddress) {
                 const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
                 if (!isRecent) {
@@ -356,7 +357,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         pollIntervalRef.current = setInterval(async () => {
             attempts++;
             try {
-                const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
+                // Ensure RM is properly encoded, avoiding empty string if possible
+                const rmParam = encodeURIComponent(rm || 'Unknown_RM');
+                const addrParam = encodeURIComponent(address);
+                const res = await fetch(`/api/get-cached-address?rmName=${rmParam}&address=${addrParam}&t=${Date.now()}`);
+                
                 if (res.ok) {
                     const result = await res.json();
                     
@@ -397,7 +402,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalRow = getSafeOriginalRow(data);
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldKey = (data as MapPoint).key || normalizeAddress((data as MapPoint).address || findAddressInRow(originalRow) || '');
-        const rm = findValueInRow(originalRow, ['рм']);
+        
+        // FIX: Use top-level RM property
+        const rm = data.rm || findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
 
         const updateTimestamp = Date.now();
         let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
@@ -481,7 +488,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setStatus('saving'); setError(null);
 
         try {
-            const rm = findValueInRow(originalRow, ['рм']);
+            // FIX: Use top-level RM property
+            const rm = data.rm || findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
             
             const payload: any = { 
                 rmName: rm, 
@@ -533,7 +541,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (!data) return;
         const originalRow = getSafeOriginalRow(data);
         const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-        const rm = findValueInRow(originalRow, ['рм']);
+        // FIX: Use top-level RM property
+        const rm = data.rm || findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
+        
         setStatus('deleting'); setError(null);
         try {
             const res = await fetch('/api/delete-address', {
