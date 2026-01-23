@@ -67,7 +67,7 @@ const App: React.FC = () => {
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
 
-    // --- NEW: AUTH STATE ---
+    // --- AUTH STATE ---
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
     // Sync refs
@@ -242,12 +242,10 @@ const App: React.FC = () => {
             // 1. Get slots
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             
-            // --- NEW: AUTH CHECK ---
             if (listRes.status === 401) {
-                setIsAuthModalOpen(true); // Open modal if auth needed
+                setIsAuthModalOpen(true); 
                 throw new Error("Требуется авторизация Google");
             }
-            // -----------------------
 
             let availableSlots: { id: string, name: string }[] = [];
             if (listRes.ok) {
@@ -285,24 +283,22 @@ const App: React.FC = () => {
                             body: JSON.stringify({ chunk: item.content }) 
                         });
                         
-                        // --- NEW: AUTH CHECK INSIDE LOOP ---
                         if (res.status === 401) {
                             setIsAuthModalOpen(true);
                             throw new Error("Авторизация истекла во время сохранения");
                         }
-                        // -----------------------------------
 
                         if (!res.ok) {
                             const txt = await res.text();
                             console.error(`Upload failed for chunk ${item.index}:`, txt);
-                            continue;
+                            // CRITICAL FIX: Break the loop on error to avoid 105 re-uploads of errors
+                            throw new Error(`Upload failed for chunk ${item.index}`);
                         }
                         
                         lastSavedChunksRef.current.set(item.index, item.content);
                     } catch (err) {
-                        // Re-throw if it's our auth error, otherwise log
-                        if (err instanceof Error && err.message.includes("Авторизация")) throw err;
-                        console.error(`Network error for chunk ${item.index}`, err);
+                        // Re-throw to stop processing and notify user
+                        throw err;
                     }
                 }
             }
@@ -323,19 +319,16 @@ const App: React.FC = () => {
                 })
             });
 
-            // --- NEW: AUTH CHECK META ---
             if (metaRes.status === 401) {
                 setIsAuthModalOpen(true);
                 throw new Error("Требуется авторизация для сохранения мета-данных");
             }
-            // ----------------------------
             
             addNotification('Изменения сохранены', 'success');
         } catch (e: any) {
             console.error("Cloud Save Error:", e);
-            // Don't show generic error if it's just auth needed (modal will show)
             if (!e.message?.includes("Авторизация")) {
-                 addNotification('Ошибка сохранения в облако', 'warning');
+                 addNotification('Ошибка сохранения: ' + e.message, 'warning');
             }
         } finally {
             isSavingRef.current = false;
@@ -348,7 +341,6 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            // Check auth on load too
             if (listRes.status === 401) {
                 setIsAuthModalOpen(true);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Требуется вход' }));
@@ -394,6 +386,7 @@ const App: React.FC = () => {
 
             if (accumulatedRows.length > 0 || loadedMeta) {
                 setAllData(accumulatedRows);
+                // RE-chunk logic to prime cache
                 const baselineChunks = generateChunks(accumulatedRows);
                 baselineChunks.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
@@ -460,6 +453,7 @@ const App: React.FC = () => {
             if (local?.allData?.length > 0) {
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
+                // Prime cache for local data too
                 const baselineChunks = generateChunks(validatedLocal);
                 baselineChunks.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
