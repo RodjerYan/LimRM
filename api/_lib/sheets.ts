@@ -206,10 +206,18 @@ function normalizeForComparison(str: string): string {
 
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
-    const entries = historyString.split(/\s*\|\|\s*/);
+    // Split by || OR newline sequences, robust against messy Excel data
+    const entries = historyString.split(/[\r\n]+|\s*\|\|\s*/);
+    
     return entries.some(entry => {
-        const addrPart = entry.split('[')[0].replace(/Изменен адрес:\s*/i, '');
-        return normalizeForComparison(addrPart) === targetAddressNorm;
+        // Strip timestamps [Date] and prefix "Изменен адрес:"
+        let addrPart = entry.replace(/^Изменен адрес:\s*/i, '');
+        // Strip timestamp like [23.01.2026...]
+        addrPart = addrPart.split('[')[0];
+        // Clean up trailing punctuation just in case
+        const cleanAddr = addrPart.trim().replace(/[,;]+$/, '');
+        
+        return normalizeForComparison(cleanAddr) === targetAddressNorm;
     });
 }
 
@@ -252,17 +260,35 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     return cache;
 }
 
-// Updated to ensure Column F exists header
+// Updated to ensure Column F exists header AND avoid duplication
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
-    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
+    // Find sheet case-insensitively
+    let sheetTitle = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase())?.properties?.title;
     
-    if (existingSheet) return existingSheet.properties!.title!;
+    if (!sheetTitle) {
+        try {
+            await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
+            sheetTitle = rmName;
+        } catch (e: any) {
+            // Handle race condition where sheet might be created between check and add
+            if (e.message && e.message.includes('already exists')) {
+                sheetTitle = rmName;
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    // CRITICAL FIX: Check if header exists before appending!
+    const headerCheck = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${sheetTitle}'!A1` }), 'checkHeader') as any;
+    const headerVal = headerCheck.data.values?.[0]?.[0];
     
-    await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
-    // Header includes 'Статус Координат'
-    await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${rmName}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии', 'Статус Координат']] } }), 'initSheetHeader');
-    return rmName; 
+    if (headerVal !== 'Адрес ТТ') {
+         await callWithRetry(() => sheets.spreadsheets.values.update({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${sheetTitle}'!A1`, valueInputOption: 'RAW', requestBody: { values: [['Адрес ТТ', 'lat', 'lon', 'История Изменений', 'Комментарии', 'Статус Координат']] } }), 'initSheetHeader');
+    }
+    
+    return sheetTitle!; 
 }
 
 export async function appendToCache(rmName: string, rowsToAppend: (string | number | undefined)[][]): Promise<void> {
@@ -332,7 +358,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     let finalComment = comment || "";
     let finalStatus = 'confirmed';
 
-    // Create new entry (Append)
+    // Create new entry (Append) if strictly not found
     if (rowIndex === -1) {
         let initialHistory = `${oldAddress} [${timestamp}]`;
         if (comment) initialHistory += `\nКомментарий: "${comment}"`;
@@ -372,7 +398,17 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     else if (isCommentChanged) eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
 
     finalHistory = currentStoredHistory;
-    if (eventEntry) finalHistory = currentStoredHistory ? `${eventEntry} || ${currentStoredHistory}` : eventEntry;
+    
+    // Append to history. Use newline to separate from previous history.
+    if (eventEntry) {
+        if (finalHistory) {
+            // Check if last char is newline
+            if (!finalHistory.endsWith('\n')) finalHistory += '\n';
+            finalHistory += `|| ${eventEntry}`; 
+        } else {
+            finalHistory = eventEntry;
+        }
+    }
 
     // IMPLICIT -> EXPLICIT LOGIC
     // If address changed and no manual coords, CLEAR coords (EMPTY STRING) and set status PENDING
@@ -450,10 +486,15 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
         const latStr = String(foundRow[1] || '').trim(); const lonStr = String(foundRow[2] || '').trim();
         if (latStr === 'DELETED' || lonStr === 'DELETED') return null;
         const isInvalid = ['не найдено', 'некорректный адрес'].some(s => latStr.toLowerCase().includes(s));
+        
+        // Ensure lat/lon are not "lat" or "lon" text headers
+        const lat = (!isInvalid && latStr && latStr.toLowerCase() !== 'lat') ? parseFloat(latStr.replace(',', '.')) : undefined;
+        const lon = (!isInvalid && lonStr && lonStr.toLowerCase() !== 'lon') ? parseFloat(lonStr.replace(',', '.')) : undefined;
+
         return {
             address: String(foundRow[0]),
-            lat: (!isInvalid && latStr) ? parseFloat(latStr.replace(',', '.')) : undefined,
-            lon: (!isInvalid && lonStr) ? parseFloat(lonStr.replace(',', '.')) : undefined,
+            lat,
+            lon,
             history: foundRow[3], 
             comment: foundRow[4], 
             coordStatus: foundRow[5], // Read status
