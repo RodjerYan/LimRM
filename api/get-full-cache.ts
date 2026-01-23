@@ -1,11 +1,10 @@
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { google } from 'googleapis';
 import { Buffer } from 'buffer';
 
-// --- ИЗМЕНЕНИЕ: Убрали импорт nookies ---
-// import { parseCookies } from 'nookies'; 
-
+// Импортируем готовый клиент Drive, который использует Service Account из переменных окружения
 import { 
+    getGoogleDriveClient,
     getFullCoordsCache, 
     getAddressFromCache, 
     appendToCache, 
@@ -16,30 +15,6 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
-);
-
-// --- НОВАЯ ФУНКЦИЯ: Чтение кук без сторонних библиотек ---
-function parseCookies(req: VercelRequest) {
-    const list: { [key: string]: string } = {};
-    const cookieHeader = req.headers.cookie;
-    if (!cookieHeader) return list;
-
-    cookieHeader.split(';').forEach(function(cookie) {
-        let [name, ...rest] = cookie.split('=');
-        name = name?.trim();
-        if (!name) return;
-        const value = rest.join('=').trim();
-        if (!value) return;
-        list[name] = decodeURIComponent(value);
-    });
-    return list;
-}
-// ---------------------------------------------------------
-
 async function getRawBody(req: VercelRequest): Promise<any> {
     const buffers = [];
     for await (const chunk of req) { buffers.push(chunk); }
@@ -49,10 +24,12 @@ async function getRawBody(req: VercelRequest): Promise<any> {
 
 async function getAppFolderId(drive: any) {
     try {
+        // Ищем папку в корне Сервисного Аккаунта (или в расшаренной с ним папке)
         const q = "mimeType = 'application/vnd.google-apps.folder' and name = 'LimRM_Snapshots' and trashed = false";
         const res = await drive.files.list({ q, fields: 'files(id)' });
         if (res.data.files && res.data.files.length > 0) return res.data.files[0].id;
         
+        // Если нет - создаем
         const newFolder = await drive.files.create({
             requestBody: { name: 'LimRM_Snapshots', mimeType: 'application/vnd.google-apps.folder' },
             fields: 'id'
@@ -83,17 +60,11 @@ async function getSortedFiles(drive: any, folderId: string) {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
     
-    // Используем нашу новую функцию
-    const cookies = parseCookies(req);
-    const storedTokens = cookies.google_tokens;
-
-    if (!storedTokens) {
-        return res.status(401).json({ error: 'Auth required', needLogin: true });
-    }
-
     try {
-        oauth2Client.setCredentials(JSON.parse(storedTokens));
-        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+        // АВТОРИЗАЦИЯ: Используем Service Account (общий для всех)
+        // Если ключа нет, getGoogleDriveClient выбросит ошибку, которая уйдет в catch
+        const drive = await getGoogleDriveClient();
+        
         const FOLDER_ID = await getAppFolderId(drive);
         const action = req.query.action as string;
         const chunkIndex = req.query.chunkIndex ? parseInt(req.query.chunkIndex as string, 10) : -1;
@@ -132,6 +103,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             }
 
+            // Операции с кэшем адресов (Google Sheets)
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
             if (action === 'update-address') { 
                 if (!body.rmName) return res.status(400).json({ error: 'RM Name is missing' });
@@ -177,10 +149,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Invalid action' });
 
     } catch (error: any) {
-        if (error.code === 401 || error.message?.includes('invalid_grant')) {
-             return res.status(401).json({ error: 'Auth expired', needLogin: true });
-        }
-        if (req.query.action === 'get-snapshot-meta') return res.status(200).json({ versionHash: 'none' });
+        console.error("API Error:", error);
+        // Больше не возвращаем 401 для логина, так как логин не нужен.
+        // Если ошибка авторизации - значит проблема с Service Account Key на сервере.
         return res.status(500).json({ error: error.message, details: error.stack });
     }
 }

@@ -68,9 +68,6 @@ const App: React.FC = () => {
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
 
-    // --- AUTH STATE ---
-    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-
     // Sync refs
     useEffect(() => { allDataRef.current = allData; }, [allData]);
     useEffect(() => { unidentifiedRowsRef.current = unidentifiedRows; }, [unidentifiedRows]);
@@ -95,7 +92,6 @@ const App: React.FC = () => {
             if (processingState.isProcessing) return;
             try {
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                if (res.status === 401) return; // Silent fail on polling auth error
                 if (!res.ok) return;
                 const cacheData: CoordsCache = await res.json();
                 
@@ -222,7 +218,6 @@ const App: React.FC = () => {
     }, []);
 
     // --- GENERATE CHUNKS (STICKY STRATEGY) ---
-    // Instead of naive slicing, we group by _chunkIndex to ensure rows stay in their original files.
     const generateChunks = (rowsData: AggregatedDataRow[]): string[] => {
         const chunksMap = new Map<number, AggregatedDataRow[]>();
         let maxChunkIndex = -1;
@@ -240,7 +235,6 @@ const App: React.FC = () => {
         });
 
         // 2. Assign new rows to chunks (fill existing or create new)
-        // For simplicity, we just create new chunks for new rows to avoid complex rebalancing
         let currentChunkIndex = maxChunkIndex + 1;
         
         for (let i = 0; i < newRows.length; i += GROUPS_PER_CHUNK) {
@@ -251,19 +245,12 @@ const App: React.FC = () => {
             currentChunkIndex++;
         }
         
-        // 3. Convert Map to Array of JSON strings
-        // We must ensure the array is dense (no holes) if possible, but map iteration handles sparse keys.
-        // The file saving logic uses the index in the array as the file index.
-        // So we need to iterate up to the max index found.
-        
         // Recalculate max index after adding new chunks
         const finalMaxIndex = Math.max(maxChunkIndex, currentChunkIndex - 1);
         
         const chunks: string[] = [];
         for (let i = 0; i <= finalMaxIndex; i++) {
-            const rows = chunksMap.get(i) || []; // Handle deleted/empty chunks
-            // If a chunk becomes empty due to deletions, we save an empty array to effectively "delete" the file content
-            // or we could skip it, but that might mess up indexing. Saving empty row set is safer.
+            const rows = chunksMap.get(i) || []; 
             const chunkObj = { chunkIndex: i, rows: rows };
             chunks.push(JSON.stringify(chunkObj));
         }
@@ -279,20 +266,14 @@ const App: React.FC = () => {
         }
         isSavingRef.current = true;
         try {
-            console.log('Начало умного сохранения (Sticky Chunks)...');
+            console.log('Начало умного сохранения (Sticky Chunks) - Service Account...');
             
             // 1. Get slots
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             
-            if (listRes.status === 401) {
-                setIsAuthModalOpen(true); 
-                throw new Error("Требуется авторизация Google");
-            }
+            if (!listRes.ok) throw new Error("Failed to fetch snapshot list");
 
-            let availableSlots: { id: string, name: string }[] = [];
-            if (listRes.ok) {
-                availableSlots = await listRes.json();
-            }
+            let availableSlots: { id: string, name: string }[] = await listRes.json();
 
             // 2. Generate chunks (Sticky)
             const chunks = generateChunks(currentData);
@@ -303,9 +284,6 @@ const App: React.FC = () => {
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
                 
-                // Compare content string. 
-                // Since Sticky Chunking keeps order and grouping consistent,
-                // this check is now extremely accurate.
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
@@ -330,11 +308,6 @@ const App: React.FC = () => {
                             body: JSON.stringify({ chunk: item.content }) 
                         });
                         
-                        if (res.status === 401) {
-                            setIsAuthModalOpen(true);
-                            throw new Error("Авторизация истекла во время сохранения");
-                        }
-
                         if (!res.ok) {
                             const txt = await res.text();
                             console.error(`Upload failed for chunk ${item.index}:`, txt);
@@ -364,17 +337,12 @@ const App: React.FC = () => {
                 })
             });
 
-            if (metaRes.status === 401) {
-                setIsAuthModalOpen(true);
-                throw new Error("Требуется авторизация для сохранения мета-данных");
-            }
+            if (!metaRes.ok) throw new Error("Meta save failed");
             
-            addNotification('Изменения сохранены', 'success');
+            addNotification('Изменения сохранены (Облако)', 'success');
         } catch (e: any) {
             console.error("Cloud Save Error:", e);
-            if (!e.message?.includes("Авторизация")) {
-                 addNotification('Ошибка сохранения: ' + e.message, 'warning');
-            }
+            addNotification('Ошибка сохранения в облако: ' + e.message, 'warning');
         } finally {
             isSavingRef.current = false;
         }
@@ -386,12 +354,6 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (listRes.status === 401) {
-                setIsAuthModalOpen(true);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Требуется вход' }));
-                return false;
-            }
-
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
             
             let fileList = await listRes.json();
@@ -411,7 +373,6 @@ const App: React.FC = () => {
             
             lastSavedChunksRef.current.clear();
             
-            // We use the file list index as the chunk index to ensure consistency on load
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
@@ -422,7 +383,6 @@ const App: React.FC = () => {
                     let newRows: any[] = Array.isArray(parsed.rows) ? parsed.rows : (Array.isArray(parsed.aggregatedData) ? parsed.aggregatedData : []);
                     
                     // INJECT STICKY INDEX
-                    // Before normalizing, tag these raw rows with the file index they came from.
                     newRows.forEach((r: any) => r._chunkIndex = i);
 
                     if (newRows.length > 0) {
@@ -476,11 +436,6 @@ const App: React.FC = () => {
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
         try {
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.status === 401) {
-                setIsAuthModalOpen(true);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Нужен вход' }));
-                return;
-            }
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash) {
@@ -515,9 +470,6 @@ const App: React.FC = () => {
                 setDbStatus('ready');
             }
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.status === 401) {
-                return; 
-            }
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
@@ -546,8 +498,6 @@ const App: React.FC = () => {
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
-            // Note: For new groups, they won't have _chunkIndex initially, 
-            // so generateChunks will assign them to the last chunk. This is correct.
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
@@ -742,40 +692,6 @@ const App: React.FC = () => {
             
             {editingClient && (
                 <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
-            )}
-
-            {/* --- GOOGLE LOGIN MODAL --- */}
-            {isAuthModalOpen && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-                    <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center relative overflow-hidden">
-                        {/* Decorative glow */}
-                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-indigo-500 blur-[20px]"></div>
-                        
-                        <div className="w-16 h-16 bg-gray-800 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-gray-700">
-                             <span className="text-3xl">📂</span>
-                        </div>
-                        
-                        <h3 className="text-2xl font-bold mb-3 text-white">Требуется Google Диск</h3>
-                        <p className="mb-8 text-gray-400 leading-relaxed">
-                            Для сохранения данных и работы с облаком необходимо авторизоваться и предоставить доступ к Google Диску.
-                        </p>
-                        
-                        <div className="flex flex-col gap-3">
-                            <a 
-                                href="/api/auth/google"
-                                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-500 hover:to-purple-500 font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2"
-                            >
-                                Войти через Google
-                            </a>
-                            <button 
-                                onClick={() => setIsAuthModalOpen(false)}
-                                className="w-full py-3.5 bg-gray-800 text-gray-400 rounded-xl hover:bg-gray-750 hover:text-white font-medium transition-colors"
-                            >
-                                Отмена
-                            </button>
-                        </div>
-                    </div>
-                </div>
             )}
         </div>
     );
