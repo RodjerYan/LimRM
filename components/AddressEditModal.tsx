@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+// We keep the import for bundlers, but we'll also add a fallback injection for the CSS
+// because in some cloud environments the CSS import might not resolve via importmap.
+import 'leaflet/dist/leaflet.css'; 
 import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
@@ -9,6 +11,7 @@ import { parseRussianAddress } from '../services/addressParser';
 import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
 // --- Fix Leaflet Icons ---
+// This fix is necessary because webpack/bundlers can mess up default icon paths
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
     iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
@@ -94,36 +97,66 @@ const SinglePointMap: React.FC<{
 
     // 1. Initialize Map
     useEffect(() => {
-        if (!mapContainerRef.current || mapRef.current) return;
+        if (!mapContainerRef.current) return;
 
-        const map = L.map(mapContainerRef.current, { 
-            scrollWheelZoom: true,
-            zoomControl: false,
-            center: [55.75, 37.61],
-            zoom: 5,
-            attributionControl: false
-        });
+        // CSS Injection fallback
+        if (!document.getElementById('leaflet-css-fallback')) {
+            const link = document.createElement('link');
+            link.id = 'leaflet-css-fallback';
+            link.rel = 'stylesheet';
+            link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+            document.head.appendChild(link);
+        }
 
-        mapRef.current = map;
-        L.control.zoom({ position: 'topleft' }).addTo(map);
-        tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
+        // Delay initialization slightly to allow modal animation to start/frame to settle
+        const timer = setTimeout(() => {
+            if (!mapContainerRef.current) return;
+            if (mapRef.current) return; // Already initialized
 
-        // Force invalidation to ensure map renders correctly in modal
-        setTimeout(() => map.invalidateSize(), 100);
-        setTimeout(() => map.invalidateSize(), 500);
+            const map = L.map(mapContainerRef.current, { 
+                scrollWheelZoom: true,
+                zoomControl: false,
+                center: [55.75, 37.61],
+                zoom: 5,
+                attributionControl: false
+            });
 
-        // ResizeObserver for robust responsiveness
-        const resizeObserver = new ResizeObserver(() => {
-            map.invalidateSize();
-        });
-        resizeObserver.observe(mapContainerRef.current);
+            mapRef.current = map;
+            L.control.zoom({ position: 'topleft' }).addTo(map);
+            tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
+
+            // Force multiple invalidations to handle modal transition
+            setTimeout(() => map.invalidateSize(), 10);
+            setTimeout(() => map.invalidateSize(), 200);
+            setTimeout(() => map.invalidateSize(), 500);
+            setTimeout(() => map.invalidateSize(), 1000);
+
+            // ResizeObserver for robust responsiveness
+            const resizeObserver = new ResizeObserver(() => {
+                if (mapRef.current) {
+                    mapRef.current.invalidateSize();
+                }
+            });
+            resizeObserver.observe(mapContainerRef.current);
+
+            // Cleanup function for this specific map instance
+            // We attach it to the map instance or handle it in the parent cleanup, 
+            // but since we are in a timeout, we need to be careful.
+            (mapContainerRef.current as any)._resizeObserver = resizeObserver;
+
+        }, 100);
 
         return () => {
-            resizeObserver.disconnect();
-            map.remove();
-            mapRef.current = null;
-            markerRef.current = null;
-            tileLayerRef.current = null;
+            clearTimeout(timer);
+            if (mapContainerRef.current && (mapContainerRef.current as any)._resizeObserver) {
+                (mapContainerRef.current as any)._resizeObserver.disconnect();
+            }
+            if (mapRef.current) {
+                mapRef.current.remove();
+                mapRef.current = null;
+                markerRef.current = null;
+                tileLayerRef.current = null;
+            }
         };
     }, []); // Run once on mount
 
@@ -135,51 +168,57 @@ const SinglePointMap: React.FC<{
 
     // 3. Handle Markers & View (Strict Coordinate Check)
     useEffect(() => {
-        const map = mapRef.current;
-        if (!map) return;
+        // We need to wait for map to be initialized if it's pending in the timeout
+        const interval = setInterval(() => {
+            const map = mapRef.current;
+            if (!map) return;
+            clearInterval(interval);
 
-        const hasCoords = typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0;
+            const hasCoords = typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0;
 
-        if (hasCoords) {
-            const latLng = L.latLng(lat, lon);
-            const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
+            if (hasCoords) {
+                const latLng = L.latLng(lat, lon);
+                const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
 
-            if (!markerRef.current) {
-                const marker = L.marker(latLng, { 
-                    icon: iconToUse,
-                    draggable: true,
-                    autoPan: true
-                }).addTo(map);
+                if (!markerRef.current) {
+                    const marker = L.marker(latLng, { 
+                        icon: iconToUse,
+                        draggable: true,
+                        autoPan: true
+                    }).addTo(map);
 
-                marker.on('dragend', (e) => {
-                    const { lat: newLat, lng: newLon } = e.target.getLatLng();
-                    onCoordinatesChange(newLat, newLon);
-                });
-                markerRef.current = marker;
+                    marker.on('dragend', (e) => {
+                        const { lat: newLat, lng: newLon } = e.target.getLatLng();
+                        onCoordinatesChange(newLat, newLon);
+                    });
+                    markerRef.current = marker;
+                } else {
+                    markerRef.current.setLatLng(latLng).setIcon(iconToUse);
+                }
+
+                const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
+                markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
+                
+                // Set view only if significant movement or first load
+                const currentCenter = map.getCenter();
+                const dist = currentCenter.distanceTo(latLng);
+                if (dist > 100 || map.getZoom() < 10) {
+                    map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
+                }
             } else {
-                markerRef.current.setLatLng(latLng).setIcon(iconToUse);
+                if (markerRef.current) {
+                    map.removeLayer(markerRef.current);
+                    markerRef.current = null;
+                }
+                // Default view if no coords
+                map.setView([55.75, 37.61], 5);
             }
-
-            const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
-            markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
             
-            // Set view only if significant movement or first load
-            const currentCenter = map.getCenter();
-            const dist = currentCenter.distanceTo(latLng);
-            if (dist > 100) {
-                map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
-            }
-        } else {
-            if (markerRef.current) {
-                map.removeLayer(markerRef.current);
-                markerRef.current = null;
-            }
-            // Default view if no coords
-            map.setView([55.75, 37.61], 5);
-        }
-        
-        map.invalidateSize();
-    }, [lat, lon, isSuccess, isExpanded, address]); // Removed onCoordinatesChange from dep array to avoid loops
+            map.invalidateSize();
+        }, 100);
+
+        return () => clearInterval(interval);
+    }, [lat, lon, isSuccess, isExpanded, address]); 
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
