@@ -23,7 +23,7 @@ interface AdaptaProps {
     onUnidentifiedClick?: () => void; 
     activeClientsCount: number;
     uploadedData?: AggregatedDataRow[]; 
-    dbStatus?: 'empty' | 'ready' | 'loading' | 'error';
+    dbStatus?: 'empty' | 'ready' | 'loading';
     onStartEdit?: (client: MapPoint) => void;
     
     // Date Props

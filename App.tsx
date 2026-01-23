@@ -27,8 +27,10 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-// CONSTANT: Fixed number of groups per chunk for NEW chunks.
-const GROUPS_PER_CHUNK = 150; 
+// Максимальный размер JSON-файла в байтах (850 КБ)
+const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
+
+// Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
 
 const App: React.FC = () => {
@@ -41,7 +43,7 @@ const App: React.FC = () => {
     const [filterStartDate, setFilterStartDate] = useState<string>('');
     const [filterEndDate, setFilterEndDate] = useState<string>('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading' | 'error'>('empty');
+    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
     
     // Shared State for Adapta
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -61,9 +63,12 @@ const App: React.FC = () => {
     const manualUpdateTimestamps = useRef<Map<string, number>>(new Map());
     const workerRef = useRef<Worker | null>(null);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isSavingRef = useRef(false); 
+    const isSavingRef = useRef(false); // Lock for save operation
     
+    // SMART SAVE: Cache for the content of the last saved/loaded chunks
+    // Key: Chunk Index, Value: Stringified JSON content
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
+
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
@@ -88,13 +93,17 @@ const App: React.FC = () => {
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
         const syncData = async () => {
+            // Only sync if we have data loaded
             if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return;
+            if (processingState.isProcessing) return; // Don't sync while heavy processing
+
             try {
+                // 1. Fetch latest cache from server
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                 if (!res.ok) return;
                 const cacheData: CoordsCache = await res.json();
-                
+
+                // 2. Flatten cache for O(1) lookup
                 const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
                 Object.values(cacheData).flat().forEach((item: any) => {
                     if (item.address && !item.isDeleted && item.lat && item.lon) {
@@ -103,19 +112,28 @@ const App: React.FC = () => {
                 });
 
                 let hasChanges = false;
+
+                // 3. Update All Data (Active Clients)
                 const newAllData = allDataRef.current.map(row => {
                     let rowChanged = false;
                     const newClients = row.clients.map(client => {
                         const normAddr = normalizeAddress(client.address);
+                        
+                        // RACE CONDITION FIX: Ignore cache if user updated this client recently (< 2 mins)
                         const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
                         if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
                             return client;
                         }
+
                         const cached = cacheMap.get(normAddr);
+                        
+                        // Check if we have new data that is different from current
                         if (cached) {
                             const latDiff = Math.abs((client.lat || 0) - cached.lat);
                             const lonDiff = Math.abs((client.lon || 0) - cached.lon);
                             const commentDiff = (client.comment || '') !== (cached.comment || '');
+                            
+                            // If significant change (> 0.0001 deg or comment changed)
                             if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
                                 rowChanged = true;
                                 hasChanges = true;
@@ -124,21 +142,26 @@ const App: React.FC = () => {
                         }
                         return client;
                     });
+                    
                     if (rowChanged) return { ...row, clients: newClients };
                     return row;
                 });
+
                 if (hasChanges) {
                     setAllData(newAllData);
                 }
+
             } catch (e) {
                 console.error("Auto-sync failed", e);
             }
         };
+
         const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
         return () => clearInterval(intervalId);
     }, [processingState.isProcessing]);
 
-    // --- NORMALIZATION ---
+
+    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -158,6 +181,7 @@ const App: React.FC = () => {
             if (!row) return;
             const brandRaw = String(row.brand || '').trim();
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
+
             const generateStableKey = (base: any, suffix: string | number) => {
                 const baseStr = base.key || base.address || `idx_${index}`;
                 return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
@@ -166,9 +190,17 @@ const App: React.FC = () => {
             const normalizeClient = (c: any, cIdx: number) => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
-                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
-                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
-                
+
+                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
+                if (c.lng !== undefined) {
+                    clientObj.lon = safeFloat(c.lng);
+                }
+                // Also ensure 'lat' is picked up directly
+                if (c.lat !== undefined) {
+                    clientObj.lat = safeFloat(c.lat);
+                }
+
+                // 2. Fallback checks if still invalid
                 if (!isValidCoord(clientObj.lat)) {
                     clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
                                     safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
@@ -177,7 +209,10 @@ const App: React.FC = () => {
                     clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
                                     safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
                 }
-                if (!clientObj.key) clientObj.key = generateStableKey(row, `cli_${cIdx}`);
+                
+                if (!clientObj.key) {
+                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
+                }
                 return clientObj;
             };
 
@@ -194,136 +229,135 @@ const App: React.FC = () => {
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : [],
-                            _chunkIndex: row._chunkIndex // PRESERVE CHUNK INDEX
+                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
                         });
                     });
                     return;
                 }
             }
             
+            // Handle rows without 'clients' array (flat structure from snapshot)
+            // If row.clients is missing, treat the row itself as the client source
             let clientSource = row.clients;
             if (!Array.isArray(clientSource) || clientSource.length === 0) {
                  clientSource = [row];
             }
+
             const normalizedClients = clientSource.map(normalizeClient);
+
             result.push({
                 ...row,
                 key: row.key || generateStableKey(row, 'm'),
-                clients: normalizedClients,
-                _chunkIndex: row._chunkIndex // PRESERVE CHUNK INDEX
+                clients: normalizedClients
             });
         });
         return result;
     }, []);
 
-    // --- GENERATE CHUNKS (STICKY STRATEGY) ---
-    const generateChunks = (rowsData: AggregatedDataRow[]): string[] => {
-        const chunksMap = new Map<number, AggregatedDataRow[]>();
-        let maxChunkIndex = -1;
-        const newRows: AggregatedDataRow[] = [];
-
-        // 1. Group existing rows into their assigned buckets
-        rowsData.forEach(row => {
-            if (typeof row._chunkIndex === 'number') {
-                if (!chunksMap.has(row._chunkIndex)) chunksMap.set(row._chunkIndex, []);
-                chunksMap.get(row._chunkIndex)!.push(row);
-                if (row._chunkIndex > maxChunkIndex) maxChunkIndex = row._chunkIndex;
-            } else {
-                newRows.push(row);
-            }
-        });
-
-        // 2. Assign new rows to chunks (fill existing or create new)
-        let currentChunkIndex = maxChunkIndex + 1;
-        
-        for (let i = 0; i < newRows.length; i += GROUPS_PER_CHUNK) {
-            const slice = newRows.slice(i, i + GROUPS_PER_CHUNK);
-            // Assign index to new rows for future consistency
-            slice.forEach(r => r._chunkIndex = currentChunkIndex);
-            chunksMap.set(currentChunkIndex, slice);
-            currentChunkIndex++;
-        }
-        
-        // Recalculate max index after adding new chunks
-        const finalMaxIndex = Math.max(maxChunkIndex, currentChunkIndex - 1);
-        
-        const chunks: string[] = [];
-        for (let i = 0; i <= finalMaxIndex; i++) {
-            const rows = chunksMap.get(i) || []; 
-            const chunkObj = { chunkIndex: i, rows: rows };
-            chunks.push(JSON.stringify(chunkObj));
-        }
-        
-        return chunks;
-    };
-
-    // --- SAVE SNAPSHOT (CLOUD) ---
+    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         if (isSavingRef.current) {
             console.warn("Save already in progress, skipping.");
             return;
         }
         isSavingRef.current = true;
+
         try {
-            console.log('Начало умного сохранения (Sticky Chunks) - Service Account...');
+            console.log('Начало умного сохранения...');
             
-            // 1. Get slots
+            // 1. Get file slots first
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            
-            if (!listRes.ok) throw new Error("Failed to fetch snapshot list");
+            let availableSlots: { id: string, name: string }[] = [];
+            if (listRes.ok) {
+                availableSlots = await listRes.json();
+            }
 
-            let availableSlots: { id: string, name: string }[] = await listRes.json();
-
-            // 2. Generate chunks (Sticky)
-            const chunks = generateChunks(currentData);
+            const newVersionHash = `edit_${Date.now()}`;
+            const encoder = new TextEncoder();
+            const getByteSize = (str: string) => encoder.encode(str).length;
             
-            // 3. Diffing
+            // 2. Generate chunks locally
+            const chunks: string[] = [];
+            let currentChunkObj: any = {
+                chunkIndex: 0,
+                versionHash: newVersionHash,
+                rows: [],
+            };
+            
+            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
+            
+            for (const row of currentData) {
+                const rowStr = JSON.stringify(row);
+                const rowSize = getByteSize(rowStr) + 2; 
+                
+                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
+                    chunks.push(JSON.stringify(currentChunkObj)); 
+                    currentChunkObj = {
+                        chunkIndex: chunks.length,
+                        versionHash: newVersionHash,
+                        rows: []
+                    };
+                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
+                }
+                currentChunkObj.rows.push(row);
+                currentSize += rowSize;
+            }
+            chunks.push(JSON.stringify(currentChunkObj));
+            
+            // 3. Diffing Strategy: Identify ONLY changed chunks
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                
+                // Simple string comparison is very fast
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
+                    if (targetFileId) {
+                        chunksToUpload.push({ 
+                            index: idx, 
+                            content: chunkContent, 
+                            targetFileId 
+                        });
+                    } else {
+                        // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
+                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
+                    }
                 }
             });
 
             if (chunksToUpload.length === 0) {
-                console.log("No data chunks changed.");
+                console.log("No data chunks changed. Skipping large upload.");
             } else {
                 console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
                 
-                // Serial Upload
-                for (const item of chunksToUpload) {
-                    const queryParams = item.targetFileId 
-                        ? `action=save-chunk&targetFileId=${item.targetFileId}` 
-                        : `action=save-chunk&chunkIndex=${item.index}`;
+                // Concurrency Control
+                const CONCURRENCY = 4;
+                for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
+                    const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
+                        const queryParams = item.targetFileId 
+                            ? `action=save-chunk&targetFileId=${item.targetFileId}` 
+                            : `action=save-chunk&chunkIndex=${item.index}`;
 
-                    try {
-                        const res = await fetch(`/api/get-full-cache?${queryParams}`, {
+                        return fetch(`/api/get-full-cache?${queryParams}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ chunk: item.content }) 
+                        }).then(async res => {
+                            if (!res.ok) {
+                                const txt = await res.text();
+                                throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
+                            }
+                            // Update cache ONLY on success
+                            lastSavedChunksRef.current.set(item.index, item.content);
                         });
-                        
-                        if (!res.ok) {
-                            const txt = await res.text();
-                            console.error(`Upload failed for chunk ${item.index}:`, txt);
-                            throw new Error(`Upload failed for chunk ${item.index}`);
-                        }
-                        
-                        lastSavedChunksRef.current.set(item.index, item.content);
-                    } catch (err) {
-                        throw err;
-                    }
+                    });
+                    
+                    await Promise.all(batch);
                 }
             }
             
-            // 4. Save Meta
-            const newVersionHash = `edit_${Date.now()}`;
-            const metaRes = await fetch('/api/get-full-cache?action=save-meta', {
+            // 4. Always save Meta to update timestamp/versionHash
+            await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -336,19 +370,17 @@ const App: React.FC = () => {
                     timestamp: Date.now()
                 })
             });
-
-            if (!metaRes.ok) throw new Error("Meta save failed");
             
-            addNotification('Изменения сохранены (Облако)', 'success');
-        } catch (e: any) {
+            addNotification('Изменения сохранены', 'success');
+        } catch (e) {
             console.error("Cloud Save Error:", e);
-            addNotification('Ошибка сохранения в облако: ' + e.message, 'warning');
+            addNotification('Ошибка сохранения в облако', 'warning');
         } finally {
             isSavingRef.current = false;
         }
     };
 
-    // --- LOAD SNAPSHOT ---
+    // --- ЗАГРУЗКА СНИМКА (JSON) ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
@@ -358,6 +390,7 @@ const App: React.FC = () => {
             
             let fileList = await listRes.json();
             if (!Array.isArray(fileList) || fileList.length === 0) return false;
+
             fileList.sort((a: any, b: any) => {
                 const nameA = a.name || '';
                 const nameB = b.name || '';
@@ -371,38 +404,39 @@ const App: React.FC = () => {
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
             
+            // Clear cache before fresh load
             lastSavedChunksRef.current.clear();
-            
+
+            // Load files sequentially or in small parallel batches
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 const text = await res.text();
-                try {
-                    const parsed = JSON.parse(text);
-                    let newRows: any[] = Array.isArray(parsed.rows) ? parsed.rows : (Array.isArray(parsed.aggregatedData) ? parsed.aggregatedData : []);
-                    
-                    // INJECT STICKY INDEX
-                    newRows.forEach((r: any) => r._chunkIndex = i);
 
-                    if (newRows.length > 0) {
-                        accumulatedRows.push(...normalize(newRows));
-                    }
-                    if (parsed.meta) loadedMeta = parsed.meta;
-                } catch (e) {
-                    console.warn("Error parsing loaded chunk", e);
+                // CACHE POPULATION: Store the exact text we received
+                // This assumes files are returned in chunk index order (0, 1, 2...)
+                lastSavedChunksRef.current.set(i, text);
+
+                if (text.length >= 1048576) {
+                    addNotification('Снимок поврежден (лимит размера)', 'warning');
+                    return false;
                 }
+                
+                const chunkData = JSON.parse(text);
+                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                
+                if (newRows.length > 0) {
+                    accumulatedRows.push(...normalize(newRows));
+                }
+                if (chunkData.meta) loadedMeta = chunkData.meta;
+                
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
                 setAllData(accumulatedRows);
-                // Prime cache using the EXACT same logic (Sticky)
-                const baselineChunks = generateChunks(accumulatedRows);
-                baselineChunks.forEach((content, idx) => {
-                    lastSavedChunksRef.current.set(idx, content);
-                });
                 
                 const safeMeta = loadedMeta || {};
                 setUnidentifiedRows(safeMeta.unidentifiedRows || []);
@@ -426,25 +460,23 @@ const App: React.FC = () => {
         } catch (e) { 
             console.error("Snapshot error:", e); 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-            return false;
         }
+        return false;
     }, [normalize, addNotification]);
 
-    // --- FORCE UPDATE ---
+    // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
+        
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
+        
         try {
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash) {
-                    const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    if (success) {
-                        setDbStatus('ready');
-                    } else {
-                        setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Сбой загрузки' }));
-                    }
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
                 } else {
                     setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
                 }
@@ -460,48 +492,32 @@ const App: React.FC = () => {
     useEffect(() => {
         const init = async () => {
             setDbStatus('loading');
-            try {
-                const local = await loadAnalyticsState();
-                if (local?.allData?.length > 0) {
-                    const validatedLocal = normalize(local.allData);
-                    setAllData(validatedLocal);
-                    // Prime cache for local data too
-                    const baselineChunks = generateChunks(validatedLocal);
-                    baselineChunks.forEach((content, idx) => {
-                        lastSavedChunksRef.current.set(idx, content);
-                    });
-                    setUnidentifiedRows(local.unidentifiedRows || []);
-                    setOkbRegionCounts(local.okbRegionCounts || {});
-                }
-                
-                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-                if (metaRes.ok) {
-                    const serverMeta = await metaRes.json();
-                    if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                        const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                        if (!success) {
-                             console.warn("Failed to download snapshot, using local if available");
-                        }
-                    }
-                } else {
-                    console.warn("Failed to connect to snapshot server (500/404)");
-                }
-            } catch (e) {
-                console.error("Init Error:", e);
-                addNotification('Ошибка подключения к серверу данных. Работаем локально.', 'warning');
-            } finally {
-                // Ensure UI unblocks even if server is down or empty
+            const local = await loadAnalyticsState();
+            if (local?.allData?.length > 0) {
+                const validatedLocal = normalize(local.allData);
+                setAllData(validatedLocal);
+                setUnidentifiedRows(local.unidentifiedRows || []);
+                setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
+            }
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.ok) {
+                const serverMeta = await metaRes.json();
+                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
+                }
             }
         };
         init();
     }, [handleDownloadSnapshot, normalize]);
 
-    // --- DATA UPDATE HANDLER ---
+    // --- DATA UPDATE HANDLER (DEBOUNCED) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
+        // RACE CONDITION PROTECTION: Mark this address as manually updated
         if (newPoint.address) {
             const normAddr = normalizeAddress(newPoint.address);
             manualUpdateTimestamps.current.set(normAddr, Date.now());
@@ -530,19 +546,22 @@ const App: React.FC = () => {
         } else {
             let found = false;
             newData = newData.map(group => {
+                // IMPORTANT: Search for the specific client by key
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
-                    
-                    // IMPORTANT: The parent group's _chunkIndex is preserved here naturally
                     return { ...group, clients: updatedClients };
                 }
                 return group;
             });
-            if (!found) console.warn(`Could not find client with key: ${oldKey} to update.`);
+            
+            if (!found) {
+                console.warn(`Could not find client with key: ${oldKey} to update.`);
+            }
         }
+
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
@@ -552,6 +571,7 @@ const App: React.FC = () => {
                 console.error("Auto-save failed:", err);
             });
         }, 2000);
+
     }, [okbRegionCounts]); 
 
     // --- FILTERED DATA ---
@@ -585,7 +605,7 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- ACTIVE & POTENTIAL CLIENTS ---
+    // --- ACTIVE CLIENTS ---
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -596,6 +616,7 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
+    // --- POTENTIAL CLIENTS ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
         const coordsOnly = okbData.filter(r => {
@@ -670,6 +691,7 @@ const App: React.FC = () => {
                             onEndDateChange={setFilterEndDate}     
                         />
                     )}
+
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
                             <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
@@ -688,9 +710,11 @@ const App: React.FC = () => {
                             />
                         </div>
                     )}
+
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
                     )}
+
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
