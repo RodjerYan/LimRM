@@ -27,14 +27,13 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-// Максимальный размер JSON-файла в байтах (850 КБ)
-const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
+// FIXED ROWS PER CHUNK
+const ROWS_PER_CHUNK = 500;
 
 // Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
 
 // --- Helper for Deterministic Serialization ---
-// Recursively sorts object keys to ensure JSON.stringify produces identical strings for identical data
 const sortKeys = (obj: any): any => {
     if (obj === null || typeof obj !== 'object') return obj;
     if (Array.isArray(obj)) return obj.map(sortKeys);
@@ -42,6 +41,28 @@ const sortKeys = (obj: any): any => {
         res[key] = sortKeys(obj[key]);
         return res;
     }, {});
+};
+
+// --- Helper: Sanitize Row for Save (Strip Volatile UI State AND Keys) ---
+// Remove keys that are runtime-generated or index-dependent from the DIFF process.
+const sanitizeRowForSave = (row: AggregatedDataRow): any => {
+    return {
+        ...row,
+        key: undefined, // Don't save runtime grouping keys to cloud/diff
+        clients: row.clients.map((client) => {
+            // Destructure to remove volatile fields that shouldn't trigger a diff/save
+            const { key, isGeocoding, coordStatus, lastUpdated, ...persistentData } = client;
+            return persistentData;
+        })
+    };
+};
+
+// --- Helper for Unique IDs ---
+const generateRowId = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
 const App: React.FC = () => {
@@ -172,7 +193,7 @@ const App: React.FC = () => {
     }, [processingState.isProcessing]);
 
 
-    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
+    // --- STRICT NORMALIZE (Pure Function) ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -190,6 +211,14 @@ const App: React.FC = () => {
 
         rows.forEach((row, index) => {
             if (!row) return;
+            
+            // CRITICAL: Ensure __rowId exists. Normalize must NOT generate IDs.
+            // If ID is missing, it's a violation of data integrity for 'normalized' data.
+            if (!row.__rowId) {
+                throw new Error('Invariant violated: __rowId missing during normalize');
+            }
+            const stableRowId = row.__rowId;
+
             const brandRaw = String(row.brand || '').trim();
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
 
@@ -202,16 +231,9 @@ const App: React.FC = () => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
 
-                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
-                if (c.lng !== undefined) {
-                    clientObj.lon = safeFloat(c.lng);
-                }
-                // Also ensure 'lat' is picked up directly
-                if (c.lat !== undefined) {
-                    clientObj.lat = safeFloat(c.lat);
-                }
+                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
+                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
 
-                // 2. Fallback checks if still invalid
                 if (!isValidCoord(clientObj.lat)) {
                     clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
                                     safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
@@ -232,8 +254,11 @@ const App: React.FC = () => {
                 if (parts.length > 1) {
                     const splitFactor = 1 / parts.length;
                     parts.forEach((brandPart, idx) => {
+                        // FIX: Use brand name in ID to ensure stability across reorders
+                        const safeBrandSuffix = brandPart.toLowerCase().replace(/[^a-zа-я0-9]/g, '_');
                         result.push({
                             ...row,
+                            __rowId: `${stableRowId}_split_${safeBrandSuffix}`, 
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
                             clientName: `${row.region}: ${brandPart}`,
@@ -247,8 +272,6 @@ const App: React.FC = () => {
                 }
             }
             
-            // Handle rows without 'clients' array (flat structure from snapshot)
-            // If row.clients is missing, treat the row itself as the client source
             let clientSource = row.clients;
             if (!Array.isArray(clientSource) || clientSource.length === 0) {
                  clientSource = [row];
@@ -258,6 +281,7 @@ const App: React.FC = () => {
 
             result.push({
                 ...row,
+                __rowId: stableRowId,
                 key: row.key || generateStableKey(row, 'm'),
                 clients: normalizedClients
             });
@@ -284,40 +308,35 @@ const App: React.FC = () => {
             }
 
             const newVersionHash = `edit_${Date.now()}`;
-            const encoder = new TextEncoder();
-            const getByteSize = (str: string) => encoder.encode(str).length;
             
-            // 2. Generate chunks locally with DETERMINISTIC SERIALIZATION
+            // 2. Generate chunks locally with DETERMINISTIC SERIALIZATION & STABLE ROW ID SORTING
+            
+            const sortedData = [...currentData].sort((a, b) => 
+                (a.__rowId || '').localeCompare(b.__rowId || '')
+            );
+
             const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
                 rows: [],
             };
             
-            // Initialize size with the empty container (keys sorted)
-            let currentSize = getByteSize(JSON.stringify(sortKeys(currentChunkObj)));
-            
-            for (const row of currentData) {
-                // Determine stable string for the row by sorting keys
-                const sortedRow = sortKeys(row);
-                const rowStr = JSON.stringify(sortedRow);
-                const rowSize = getByteSize(rowStr) + 2; // +2 for comma overhead approx
+            for (const row of sortedData) {
+                // IMPORTANT: Sanitize row (remove volatile UI fields AND keys) before serialization
+                const cleanRow = sanitizeRowForSave(row);
+                const sortedRow = sortKeys(cleanRow);
                 
-                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    // Finalize current chunk: sort its keys to ensure stability
+                // Chunk-by-Count Strategy:
+                if (currentChunkObj.rows.length >= ROWS_PER_CHUNK) {
                     chunks.push(JSON.stringify(sortKeys(currentChunkObj))); 
-                    
                     currentChunkObj = {
                         chunkIndex: chunks.length,
                         rows: []
                     };
-                    currentSize = getByteSize(JSON.stringify(sortKeys(currentChunkObj)));
                 }
                 currentChunkObj.rows.push(sortedRow);
-                currentSize += rowSize;
             }
             
-            // Push the last partial chunk if it has data or if chunks is empty
             if (currentChunkObj.rows.length > 0 || chunks.length === 0) {
                 chunks.push(JSON.stringify(sortKeys(currentChunkObj)));
             }
@@ -327,17 +346,11 @@ const App: React.FC = () => {
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                // Simple string comparison is now SAFE because of sortKeys
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     if (targetFileId) {
-                        chunksToUpload.push({ 
-                            index: idx, 
-                            content: chunkContent, 
-                            targetFileId 
-                        });
+                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
                     } else {
-                        // New chunk needed
                         chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
                     }
                 }
@@ -365,16 +378,14 @@ const App: React.FC = () => {
                                 const txt = await res.text();
                                 throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
                             }
-                            // Update cache ONLY on success
                             lastSavedChunksRef.current.set(item.index, item.content);
                         });
                     });
-                    
                     await Promise.all(batch);
                 }
             }
             
-            // 4. Always save Meta to update timestamp/versionHash
+            // 4. Always save Meta
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -388,6 +399,14 @@ const App: React.FC = () => {
                     timestamp: Date.now()
                 })
             });
+
+            // 5. Cleanup old chunks (tail) on server
+            if (chunks.length < availableSlots.length) {
+                console.log(`Cleaning up ${availableSlots.length - chunks.length} old chunks...`);
+                await fetch(`/api/get-full-cache?action=cleanup-chunks&keepCount=${chunks.length}`, {
+                    method: 'POST'
+                });
+            }
             
             addNotification('Изменения сохранены', 'success');
         } catch (e) {
@@ -418,14 +437,12 @@ const App: React.FC = () => {
             });
 
             let loadedCount = 0;
-            const total = fileList.length;
+            const total = Math.min(fileList.length, chunkCount); 
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
             
-            // Clear cache before fresh load
             lastSavedChunksRef.current.clear();
 
-            // Load files sequentially or in small parallel batches
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
@@ -438,15 +455,17 @@ const App: React.FC = () => {
                 }
                 
                 const chunkData = JSON.parse(text);
-                
-                // CACHE POPULATION: Use the REAL chunkIndex from the file content, or fallback to 'i'
                 const chunkIndex = typeof chunkData.chunkIndex === 'number' ? chunkData.chunkIndex : i;
                 lastSavedChunksRef.current.set(chunkIndex, text);
 
-                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                let rawRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
-                if (newRows.length > 0) {
-                    accumulatedRows.push(...normalize(newRows));
+                if (rawRows.length > 0) {
+                    // MIGRATION LAYER: Deterministic ID generation based on index
+                    // If __rowId is missing, generate a STABLE one: legacy_0, legacy_1, etc.
+                    // This ensures all clients generate the SAME ID for the same legacy data.
+                    const migratedRows = rawRows.map((r, idx) => r.__rowId ? r : { ...r, __rowId: `legacy_${idx}` });
+                    accumulatedRows.push(...normalize(migratedRows));
                 }
                 if (chunkData.meta) loadedMeta = chunkData.meta;
                 
@@ -507,13 +526,36 @@ const App: React.FC = () => {
         }
     }, [processingState.isProcessing, handleDownloadSnapshot]);
 
+    // --- HANDLE NEW FILE PROCESSED (Worker Output) ---
+    const handleFileProcessed = useCallback((payload: WorkerResultPayload) => {
+        const { aggregatedData, unidentifiedRows, totalRowsProcessed } = payload;
+        
+        // Since worker already generates __rowId, we can just ingest directly
+        // But for safety, we run it through normalize (which now trusts IDs)
+        const normalizedData = normalize(aggregatedData);
+        
+        setAllData(normalizedData);
+        setUnidentifiedRows(unidentifiedRows);
+        setOkbRegionCounts(payload.okbRegionCounts);
+        totalRowsProcessedRef.current = totalRowsProcessed;
+        
+        // Trigger auto-save immediately to persist new data
+        saveSnapshotToCloud(normalizedData, unidentifiedRows);
+        
+        setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Обработка завершена', progress: 100 }));
+        setDbStatus('ready');
+    }, [normalize]);
+
     // --- INIT ---
     useEffect(() => {
         const init = async () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
-                const validatedLocal = normalize(local.allData);
+                // MIGRATION LAYER: Local DB
+                // Same deterministic logic: if ID missing, use index.
+                const readyRows = local.allData.map((r: any, idx: number) => r.__rowId ? r : { ...r, __rowId: `legacy_${idx}` });
+                const validatedLocal = normalize(readyRows);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
@@ -536,7 +578,6 @@ const App: React.FC = () => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
-        // RACE CONDITION PROTECTION: Mark this address as manually updated
         if (newPoint.address) {
             const normAddr = normalizeAddress(newPoint.address);
             manualUpdateTimestamps.current.set(normAddr, Date.now());
@@ -557,6 +598,7 @@ const App: React.FC = () => {
                 };
             } else {
                 newData.push({
+                    __rowId: generateRowId(), // NEW ROW -> Generate ID (Allowed here, this is creation)
                     key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging,
                     clientName: `${newPoint.region}: ${newPoint.brand}`, fact: newPoint.fact || 0,
                     potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint]
@@ -565,7 +607,6 @@ const App: React.FC = () => {
         } else {
             let found = false;
             newData = newData.map(group => {
-                // IMPORTANT: Search for the specific client by key
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
@@ -691,7 +732,7 @@ const App: React.FC = () => {
                         <Adapta 
                             processingState={processingState}
                             onForceUpdate={handleForceUpdate}
-                            onFileProcessed={() => {}}
+                            onFileProcessed={handleFileProcessed}
                             onProcessingStateChange={() => {}}
                             okbData={okbData}
                             okbStatus={okbStatus}

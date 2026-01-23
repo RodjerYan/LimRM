@@ -124,6 +124,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
                 return res.status(404).json({ error: 'Meta file slot not found.' });
             }
+            
+            // NEW: Cleanup old/unused chunks
+            if (action === 'cleanup-chunks') {
+                const keepCount = parseInt(req.query.keepCount as string, 10);
+                if (!isNaN(keepCount)) {
+                    const sortedFiles = await getSortedFiles(drive);
+                    // sortedFiles[0] is meta. Chunks start at 1.
+                    // If keepCount is 5, we keep meta + 5 chunks = index 0 to 5.
+                    // Delete files from index (keepCount + 1) onwards.
+                    
+                    // Filter based on logical index in name, not just array position, for safety
+                    const filesToDelete = sortedFiles.slice(1).filter((f: any) => {
+                         const match = f.name.match(/\d+/);
+                         const idx = match ? parseInt(match[0], 10) : -1;
+                         // Chunk 0 corresponds to file index 0 (if mapped 1:1), but here we assume chunks are 0,1,2...
+                         // and filename usually contains index. 
+                         // If file list is [meta, chunk_0, chunk_1 ... chunk_89]
+                         // And keepCount is 80.
+                         // We want to delete chunk_80, chunk_81...
+                         return idx >= keepCount;
+                    });
+                    
+                    console.log(`[CLEANUP] Deleting ${filesToDelete.length} obsolete chunks...`);
+                    
+                    await Promise.all(filesToDelete.map((f: any) => 
+                        drive.files.delete({ fileId: f.id }).catch((e: any) => console.error(`Failed to delete ${f.id}`, e))
+                    ));
+                    
+                    return res.status(200).json({ status: 'cleanup_done', deleted: filesToDelete.length });
+                }
+                return res.status(400).json({ error: 'Invalid keepCount' });
+            }
 
             // Legacy Cache Operations
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }

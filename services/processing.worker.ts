@@ -11,6 +11,14 @@ import { parseRussianAddress } from './addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
 
+// Helper for Unique IDs
+const generateRowId = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
+
 type PostMessageFn = (message: WorkerMessage) => void;
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
 type OkbCoordIndex = Map<string, { lat: number; lon: number }>;
@@ -315,6 +323,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             
             if (!state_aggregatedData[groupKey]) {
                 state_aggregatedData[groupKey] = {
+                    __rowId: generateRowId(),
                     key: groupKey, 
                     clientName: `${reg}: ${brand}`, 
                     brand: brand, 

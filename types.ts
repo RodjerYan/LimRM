@@ -1,5 +1,6 @@
 
 export interface AggregatedDataRow {
+    __rowId: string; // IMMUTABLE ID for stable chunking/diffing
     key: string;
     rm: string;
     clientName: string;

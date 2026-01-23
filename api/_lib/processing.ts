@@ -9,6 +9,9 @@ import { parseRussianAddress } from '../../services/addressParser';
 import { standardizeRegion, REGION_KEYWORD_MAP } from '../../utils/addressMappings';
 import { normalizeAddress, findAddressInRow, findValueInRow } from '../../utils/dataUtils';
 
+// Helper for Unique IDs
+const generateRowId = () => `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
 type AggregationMap = { [key: string]: Omit<AggregatedDataRow, 'clients' | 'potentialClients'> & { clients: Map<string, MapPoint> } };
 
 const normalizeHeaderKey = (key: string): string => {
@@ -141,6 +144,7 @@ export function processBatch(
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
             if (!aggregatedData[groupKey]) {
                 aggregatedData[groupKey] = {
+                    __rowId: generateRowId(),
                     key: groupKey, 
                     clientName: `${reg}: ${brand}`, 
                     brand: brand, 
