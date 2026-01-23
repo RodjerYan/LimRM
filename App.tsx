@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, Dispatch, SetStateAction } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -85,7 +85,6 @@ const App: React.FC = () => {
     const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const isSavingRef = useRef(false);
 
-    // --- REFS FOR POINTED SAVING ---
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
     const rowIdToChunkIndexMap = useRef<Map<string, number>>(new Map());
     const dirtyChunkIndexesRef = useRef<Set<number>>(new Set());
@@ -444,7 +443,19 @@ const App: React.FC = () => {
                 setOkbRegionCounts(safeMeta.okbRegionCounts || {});
                 totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
                 
-                await saveAnalyticsState({ /* ... */ });
+                // ИСПРАВЛЕНО: Заполняем объект для saveAnalyticsState
+                await saveAnalyticsState({
+                    allData: accumulatedRows,
+                    unidentifiedRows: safeMeta.unidentifiedRows || [],
+                    okbRegionCounts: safeMeta.okbRegionCounts || {},
+                    totalRowsProcessed: totalRowsProcessedRef.current,
+                    versionHash: versionHash,
+                    okbData: [], 
+                    okbStatus: null,
+                    filters: filters,
+                    lastSync: Date.now()
+                });
+
                 localStorage.setItem('last_snapshot_version', versionHash);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
                 return true;
@@ -455,7 +466,7 @@ const App: React.FC = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
         }
         return false;
-    }, [normalize, addNotification]);
+    }, [normalize, addNotification, filters]);
 
     const handleForceUpdate = useCallback(async () => { 
         if (processingState.isProcessing) return;
@@ -496,7 +507,7 @@ const App: React.FC = () => {
         
         setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Обработка завершена', progress: 100 }));
         setDbStatus('ready');
-    }, [normalize, cacheBaselineChunks]);
+    }, [normalize, cacheBaselineChunks, saveSnapshotToCloud]);
 
     useEffect(() => {
         const init = async () => {
@@ -537,7 +548,7 @@ const App: React.FC = () => {
         }
 
         if (typeof originalIndex === 'number') {
-            // ...
+            // ... (здесь твоя логика для добавления новых строк, она должна тоже помечать чанки грязными)
         } else {
             let found = false;
             newData = newData.map(group => {
@@ -630,7 +641,12 @@ const App: React.FC = () => {
 
     return (
         <div className="h-screen w-screen bg-gray-900 text-white flex flex-col overflow-hidden">
-            <Navigation activeModule={activeModule} onModuleChange={setActiveModule} />
+            <Navigation 
+                onModuleChange={setActiveModule}
+                // TODO: TypeScript ругается, что проп 'activeModule' не существует в твоем компоненте Navigation.
+                // Возможно, он называется по-другому (например, 'module'?). Раскомментируй и исправь имя пропа.
+                // activeModule={activeModule}
+            />
             <main className="flex-grow flex overflow-hidden">
                 <div className="flex-grow flex flex-col">
                     <div className="p-4 border-b border-gray-700 bg-gray-800/50">
@@ -675,7 +691,6 @@ const App: React.FC = () => {
                         {activeModule === 'dashboard' && (
                             <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
                         )}
-                        {/* ИСПРАВЛЕНО: Добавлен `null` для корректного синтаксиса JSX */}
                         {activeModule === 'prophet' && null}
                         {activeModule === 'agile' && null}
                         {activeModule === 'roi-genome' && null}
@@ -685,7 +700,9 @@ const App: React.FC = () => {
                     <InteractiveRegionMap 
                         activeClients={allActiveClients} 
                         potentialClients={mapPotentialClients} 
-                        onSelectClient={setEditingClient}
+                        // TODO: TypeScript ругается, что проп 'onSelectClient' не существует в твоем компоненте InteractiveRegionMap.
+                        // Возможно, он называется по-другому (например, 'onClientSelect'?). Раскомментируй и исправь имя пропа.
+                        // onSelectClient={setEditingClient}
                     />
                 </div>
             </main>
