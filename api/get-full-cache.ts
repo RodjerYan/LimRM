@@ -117,11 +117,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             // Legacy Cache Operations
             if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
+            
             if (action === 'update-address') { 
+                if (!body.rmName) {
+                    return res.status(400).json({ error: 'RM Name is missing' });
+                }
                 // Enhanced update: returns the actual written state
                 const result = await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment, body.lat, body.lon); 
                 return res.json(result); 
             }
+            
             if (action === 'update-coords') { await updateCacheCoords(body.rmName, body.updates); return res.json({success:true}); }
             if (action === 'delete-address') { await deleteAddressFromCache(body.rmName, body.address); return res.json({success:true}); }
         }
@@ -178,6 +183,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-full-cache' || !action) return res.json(await getFullCoordsCache());
             if (action === 'get-cached-address') {
                 const { rmName, address } = req.query;
+                if (!rmName || !address) return res.status(400).json({ error: 'Missing rmName or address' });
                 const cached = await getAddressFromCache(rmName as string, address as string);
                 return cached ? res.json(cached) : res.status(404).json({ error: 'Not found' });
             }
@@ -187,6 +193,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (error: any) {
         console.error("API Error:", error);
         if (action === 'get-snapshot-meta') return res.status(200).json({ versionHash: 'none' });
-        return res.status(500).json({ error: error.message });
+        return res.status(500).json({ error: error.message, details: error.stack });
     }
 }
