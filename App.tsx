@@ -41,7 +41,7 @@ const App: React.FC = () => {
     const [filterStartDate, setFilterStartDate] = useState<string>('');
     const [filterEndDate, setFilterEndDate] = useState<string>('');
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
-    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
+    const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading' | 'error'>('empty');
     
     // Shared State for Adapta
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -426,8 +426,8 @@ const App: React.FC = () => {
         } catch (e) { 
             console.error("Snapshot error:", e); 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
+            return false;
         }
-        return false;
     }, [normalize, addNotification]);
 
     // --- FORCE UPDATE ---
@@ -439,8 +439,12 @@ const App: React.FC = () => {
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
+                    const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    if (success) {
+                        setDbStatus('ready');
+                    } else {
+                        setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Сбой загрузки' }));
+                    }
                 } else {
                     setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
                 }
@@ -456,26 +460,38 @@ const App: React.FC = () => {
     useEffect(() => {
         const init = async () => {
             setDbStatus('loading');
-            const local = await loadAnalyticsState();
-            if (local?.allData?.length > 0) {
-                const validatedLocal = normalize(local.allData);
-                setAllData(validatedLocal);
-                // Prime cache for local data too
-                const baselineChunks = generateChunks(validatedLocal);
-                baselineChunks.forEach((content, idx) => {
-                    lastSavedChunksRef.current.set(idx, content);
-                });
-                setUnidentifiedRows(local.unidentifiedRows || []);
-                setOkbRegionCounts(local.okbRegionCounts || {});
-                setDbStatus('ready');
-            }
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
+            try {
+                const local = await loadAnalyticsState();
+                if (local?.allData?.length > 0) {
+                    const validatedLocal = normalize(local.allData);
+                    setAllData(validatedLocal);
+                    // Prime cache for local data too
+                    const baselineChunks = generateChunks(validatedLocal);
+                    baselineChunks.forEach((content, idx) => {
+                        lastSavedChunksRef.current.set(idx, content);
+                    });
+                    setUnidentifiedRows(local.unidentifiedRows || []);
+                    setOkbRegionCounts(local.okbRegionCounts || {});
                 }
+                
+                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+                if (metaRes.ok) {
+                    const serverMeta = await metaRes.json();
+                    if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                        const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                        if (!success) {
+                             console.warn("Failed to download snapshot, using local if available");
+                        }
+                    }
+                } else {
+                    console.warn("Failed to connect to snapshot server (500/404)");
+                }
+            } catch (e) {
+                console.error("Init Error:", e);
+                addNotification('Ошибка подключения к серверу данных. Работаем локально.', 'warning');
+            } finally {
+                // Ensure UI unblocks even if server is down or empty
+                setDbStatus('ready');
             }
         };
         init();
