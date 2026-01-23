@@ -19,6 +19,9 @@ export interface AggregatedDataRow {
     // New Strategic Metrics
     costToServeScore?: number; // 1-10 scale
     eComShare?: number; // Estimated % of online sales in this segment
+
+    // STICKY CHUNKING
+    _chunkIndex?: number; // Stores the index of the file this row was loaded from
 }
 
 export type MapPointStatus = 'match' | 'potential';

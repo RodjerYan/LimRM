@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -26,7 +27,7 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-// CONSTANT: Fixed number of groups per chunk to ensure stability.
+// CONSTANT: Fixed number of groups per chunk for NEW chunks.
 const GROUPS_PER_CHUNK = 150; 
 const POLLING_INTERVAL_MS = 15000;
 
@@ -197,7 +198,8 @@ const App: React.FC = () => {
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
+                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : [],
+                            _chunkIndex: row._chunkIndex // PRESERVE CHUNK INDEX
                         });
                     });
                     return;
@@ -212,20 +214,60 @@ const App: React.FC = () => {
             result.push({
                 ...row,
                 key: row.key || generateStableKey(row, 'm'),
-                clients: normalizedClients
+                clients: normalizedClients,
+                _chunkIndex: row._chunkIndex // PRESERVE CHUNK INDEX
             });
         });
         return result;
     }, []);
 
-    // --- GENERATE CHUNKS ---
+    // --- GENERATE CHUNKS (STICKY STRATEGY) ---
+    // Instead of naive slicing, we group by _chunkIndex to ensure rows stay in their original files.
     const generateChunks = (rowsData: AggregatedDataRow[]): string[] => {
+        const chunksMap = new Map<number, AggregatedDataRow[]>();
+        let maxChunkIndex = -1;
+        const newRows: AggregatedDataRow[] = [];
+
+        // 1. Group existing rows into their assigned buckets
+        rowsData.forEach(row => {
+            if (typeof row._chunkIndex === 'number') {
+                if (!chunksMap.has(row._chunkIndex)) chunksMap.set(row._chunkIndex, []);
+                chunksMap.get(row._chunkIndex)!.push(row);
+                if (row._chunkIndex > maxChunkIndex) maxChunkIndex = row._chunkIndex;
+            } else {
+                newRows.push(row);
+            }
+        });
+
+        // 2. Assign new rows to chunks (fill existing or create new)
+        // For simplicity, we just create new chunks for new rows to avoid complex rebalancing
+        let currentChunkIndex = maxChunkIndex + 1;
+        
+        for (let i = 0; i < newRows.length; i += GROUPS_PER_CHUNK) {
+            const slice = newRows.slice(i, i + GROUPS_PER_CHUNK);
+            // Assign index to new rows for future consistency
+            slice.forEach(r => r._chunkIndex = currentChunkIndex);
+            chunksMap.set(currentChunkIndex, slice);
+            currentChunkIndex++;
+        }
+        
+        // 3. Convert Map to Array of JSON strings
+        // We must ensure the array is dense (no holes) if possible, but map iteration handles sparse keys.
+        // The file saving logic uses the index in the array as the file index.
+        // So we need to iterate up to the max index found.
+        
+        // Recalculate max index after adding new chunks
+        const finalMaxIndex = Math.max(maxChunkIndex, currentChunkIndex - 1);
+        
         const chunks: string[] = [];
-        for (let i = 0; i < rowsData.length; i += GROUPS_PER_CHUNK) {
-            const slice = rowsData.slice(i, i + GROUPS_PER_CHUNK);
-            const chunkObj = { chunkIndex: chunks.length, rows: slice };
+        for (let i = 0; i <= finalMaxIndex; i++) {
+            const rows = chunksMap.get(i) || []; // Handle deleted/empty chunks
+            // If a chunk becomes empty due to deletions, we save an empty array to effectively "delete" the file content
+            // or we could skip it, but that might mess up indexing. Saving empty row set is safer.
+            const chunkObj = { chunkIndex: i, rows: rows };
             chunks.push(JSON.stringify(chunkObj));
         }
+        
         return chunks;
     };
 
@@ -237,7 +279,7 @@ const App: React.FC = () => {
         }
         isSavingRef.current = true;
         try {
-            console.log('Начало умного сохранения...');
+            console.log('Начало умного сохранения (Sticky Chunks)...');
             
             // 1. Get slots
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
@@ -252,13 +294,18 @@ const App: React.FC = () => {
                 availableSlots = await listRes.json();
             }
 
-            // 2. Generate chunks
+            // 2. Generate chunks (Sticky)
             const chunks = generateChunks(currentData);
             
             // 3. Diffing
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
+            
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
+                
+                // Compare content string. 
+                // Since Sticky Chunking keeps order and grouping consistent,
+                // this check is now extremely accurate.
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
@@ -291,13 +338,11 @@ const App: React.FC = () => {
                         if (!res.ok) {
                             const txt = await res.text();
                             console.error(`Upload failed for chunk ${item.index}:`, txt);
-                            // CRITICAL FIX: Break the loop on error to avoid 105 re-uploads of errors
                             throw new Error(`Upload failed for chunk ${item.index}`);
                         }
                         
                         lastSavedChunksRef.current.set(item.index, item.content);
                     } catch (err) {
-                        // Re-throw to stop processing and notify user
                         throw err;
                     }
                 }
@@ -365,6 +410,8 @@ const App: React.FC = () => {
             let loadedMeta: any = null;
             
             lastSavedChunksRef.current.clear();
+            
+            // We use the file list index as the chunk index to ensure consistency on load
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
@@ -373,6 +420,11 @@ const App: React.FC = () => {
                 try {
                     const parsed = JSON.parse(text);
                     let newRows: any[] = Array.isArray(parsed.rows) ? parsed.rows : (Array.isArray(parsed.aggregatedData) ? parsed.aggregatedData : []);
+                    
+                    // INJECT STICKY INDEX
+                    // Before normalizing, tag these raw rows with the file index they came from.
+                    newRows.forEach((r: any) => r._chunkIndex = i);
+
                     if (newRows.length > 0) {
                         accumulatedRows.push(...normalize(newRows));
                     }
@@ -386,7 +438,7 @@ const App: React.FC = () => {
 
             if (accumulatedRows.length > 0 || loadedMeta) {
                 setAllData(accumulatedRows);
-                // RE-chunk logic to prime cache
+                // Prime cache using the EXACT same logic (Sticky)
                 const baselineChunks = generateChunks(accumulatedRows);
                 baselineChunks.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
@@ -464,7 +516,6 @@ const App: React.FC = () => {
             }
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.status === 401) {
-                // Not blocking init, but user will need to login to save/load new
                 return; 
             }
             if (metaRes.ok) {
@@ -495,6 +546,8 @@ const App: React.FC = () => {
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
+            // Note: For new groups, they won't have _chunkIndex initially, 
+            // so generateChunks will assign them to the last chunk. This is correct.
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
@@ -516,6 +569,8 @@ const App: React.FC = () => {
                     found = true;
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
+                    
+                    // IMPORTANT: The parent group's _chunkIndex is preserved here naturally
                     return { ...group, clients: updatedClients };
                 }
                 return group;
