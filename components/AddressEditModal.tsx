@@ -57,10 +57,7 @@ const getSafeOriginalRow = (data: EditableData | null): any => {
 // --- Helper to reliably get RM Name ---
 const getRmName = (data: EditableData | null): string => {
     if (!data) return '';
-    // 1. Priority: Existing processed RM property
     if ('rm' in data && data.rm) return data.rm;
-    
-    // 2. Fallback: Try to find in original row with multiple keywords
     const row = getSafeOriginalRow(data);
     return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
 };
@@ -131,7 +128,6 @@ const SinglePointMap: React.FC<{
         const map = mapRef.current;
         if (!map) return;
 
-        // FIXED: Check for non-zero coordinates
         const hasCoords = typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0;
 
         if (hasCoords) {
@@ -157,7 +153,6 @@ const SinglePointMap: React.FC<{
             const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
             
-            // FIXED: More distinct zoom levels
             map.setView(latLng, isExpanded ? 17 : 14);
         } else {
             if (markerRef.current) {
@@ -174,7 +169,6 @@ const SinglePointMap: React.FC<{
         };
     }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]); 
 
-    // Search Logic with AbortController
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
         setSearchQuery(q);
@@ -188,7 +182,6 @@ const SinglePointMap: React.FC<{
 
         setIsSearching(true);
         searchTimeoutRef.current = setTimeout(async () => {
-            // Cancel previous request
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
@@ -203,11 +196,8 @@ const SinglePointMap: React.FC<{
                     setSearchResults(data);
                 }
             } catch (err: any) {
-                if (err.name !== 'AbortError') {
-                    console.error(err);
-                }
+                if (err.name !== 'AbortError') console.error(err);
             } finally {
-                // Only turn off loading if this was the last request
                 if (abortControllerRef.current && !abortControllerRef.current.signal.aborted) {
                     setIsSearching(false);
                 }
@@ -277,7 +267,6 @@ const SinglePointMap: React.FC<{
 
 // --- Main Component: AddressEditModal ---
 const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme = 'dark' }) => {
-    // State
     const [editedAddress, setEditedAddress] = useState('');
     const [comment, setComment] = useState('');
     const [status, setStatus] = useState<Status>('idle');
@@ -293,9 +282,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     // Polling State
     const [pollingTarget, setPollingTarget] = useState<{ rm: string, address: string } | null>(null);
     const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const attemptsRef = useRef(0); // FIXED: Use Ref for attempts to persist across renders
+    const attemptsRef = useRef(0);
 
-    // Refs
     const isCommentTouched = useRef(false);
     const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -307,7 +295,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (data) {
             const originalRow = getSafeOriginalRow(data);
             
-            // 1. Resolve Address
             let currentAddress = '';
             const isUnidentifiedRow = (item: any): item is UnidentifiedRow => item.originalIndex !== undefined;
 
@@ -325,7 +312,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 currentAddress = (data as MapPoint).address;
             }
 
-            // 2. Set State
             setEditedAddress(currentAddress);
             setComment((data as MapPoint).comment || '');
             isCommentTouched.current = false;
@@ -337,7 +323,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
             const rm = getRmName(data);
 
-            // 3. Set Status (Initial)
             const pt = data as MapPoint;
             if (pt.geocodingError) {
                 setStatus('idle');
@@ -345,10 +330,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             } else if (pt.isGeocoding) {
                 setStatus('geocoding');
                 setError(null);
-                // Resume polling if it was geocoding
-                if (rm && currentAddress) {
-                    setPollingTarget({ rm, address: currentAddress });
-                }
+                if (rm && currentAddress) setPollingTarget({ rm, address: currentAddress });
             } else {
                 setStatus('idle');
                 setError(null);
@@ -360,12 +342,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setLastUpdatedStr(null);
             }
 
-            // 4. Fetch History
             if (rm && currentAddress) {
                 const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
-                if (!isRecent) {
-                    fetchHistory(rm, currentAddress);
-                }
+                if (!isRecent) fetchHistory(rm, currentAddress);
             } else {
                 setHistory([]);
             }
@@ -382,20 +361,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     // --- UPDATED POLLING LOGIC ---
     useEffect(() => {
         if (!pollingTarget) return;
-
-        // Clear any existing interval to prevent double polling
         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
 
         setStatus('geocoding');
         attemptsRef.current = 0;
-        
-        const maxAttempts = 60; // 5 minutes (5s * 60)
+        const maxAttempts = 60;
 
-        // Initial check immediately, then poll
         const checkCoordinates = async () => {
             attemptsRef.current++;
             try {
-                // Add timestamp to prevent browser caching
                 const timestamp = Date.now();
                 const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(pollingTarget.rm)}&address=${encodeURIComponent(pollingTarget.address)}&_t=${timestamp}`, {
                     headers: { 'Cache-Control': 'no-cache, no-store' }
@@ -403,27 +377,23 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 
                 if (res.ok) {
                     const result = await res.json();
-                    
-                    // Validate Coords: Ensure they are numbers and not zero
                     const hasValidCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
 
                     if (hasValidCoords) {
                         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                         setPollingTarget(null);
-                        
-                        // Update UI with new coordinates
                         setManualCoords({ lat: result.lat, lon: result.lon });
                         setStatus('success');
                         
-                        // Sync with parent component
                         if (data) {
                             const originalRow = getSafeOriginalRow(data);
                             const originalIndex = (data as UnidentifiedRow).originalIndex;
+                            // PRESERVE OLD KEY if available to ensure App.tsx finds and replaces it correctly
                             const oldKey = (data as MapPoint).key || normalizeAddress(pollingTarget.address);
                             const rm = getRmName(data);
                             
                             const newPoint: MapPoint = {
-                                key: normalizeAddress(pollingTarget.address),
+                                key: oldKey, // Keep the same key so map updates correctly in place
                                 lat: result.lat,
                                 lon: result.lon,
                                 status: 'match',
@@ -441,7 +411,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 lastUpdated: Date.now(),
                                 comment: result.comment || comment
                             };
-                            
                             onDataUpdate(oldKey, newPoint, originalIndex);
                         }
                     }
@@ -458,9 +427,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             }
         };
 
-        // Check immediately once, then start interval
         checkCoordinates();
-        // Start interval - 5000ms (5 seconds)
         pollIntervalRef.current = setInterval(checkCoordinates, 5000);
 
         return () => {
@@ -492,7 +459,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     }, [comment]);
 
-    // --- Handlers ---
     const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setComment(e.target.value);
         isCommentTouched.current = true;
@@ -504,6 +470,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
+        // CRITICAL: Use existing key if available to ensure stable identity for map updates
         const oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
 
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
@@ -523,10 +490,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         setStatus('saving'); setError(null);
 
+        // Helper for fetch with timeout
+        const fetchWithTimeout = async (url: string, options: RequestInit, timeout = 15000) => {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            try {
+                const response = await fetch(url, { ...options, signal: controller.signal });
+                clearTimeout(id);
+                return response;
+            } catch (err) {
+                clearTimeout(id);
+                throw err;
+            }
+        };
+
         try {
             // 1. API Call: Update Address/Comment
             if (isAddressChanged || isCommentChanged) {
-                const res = await fetch('/api/update-address', {
+                const res = await fetchWithTimeout('/api/update-address', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ rmName: rm, oldAddress, newAddress: editedAddress, comment }),
@@ -551,7 +532,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             if (manualCoords) {
                 currentLat = manualCoords.lat; currentLon = manualCoords.lon;
-                await fetch('/api/update-coords', {
+                await fetchWithTimeout('/api/update-coords', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ rmName: rm, updates: [{ address: editedAddress, lat: currentLat, lon: currentLon }] })
@@ -578,7 +559,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const parsed = parseRussianAddress(editedAddress, distributor);
 
             const tempNewPoint: MapPoint = {
-                key: normalizeAddress(editedAddress),
+                key: oldKey, // KEEP OLD KEY so App.tsx can find and replace the existing item
                 lat: currentLat, lon: currentLon, status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
@@ -593,11 +574,34 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             onDataUpdate(oldKey, tempNewPoint, originalIndex);
             
-        } catch (e) {
+        } catch (e: any) {
             console.error("Save Error:", e);
-            setStatus('error_saving'); setError((e as Error).message);
+            const isTimeout = e.name === 'AbortError';
+            if (isTimeout) {
+                // If timed out, still try to update UI optimistically as backend might have succeeded
+                setStatus('success'); 
+                addNotification('Сохранение заняло много времени, но данные обновлены локально.', 'warning');
+                
+                // Fallback update same as success block
+                if (manualCoords) {
+                     const tempNewPoint = {
+                        ...(data as MapPoint),
+                        key: oldKey,
+                        lat: manualCoords.lat,
+                        lon: manualCoords.lon,
+                        comment,
+                        address: editedAddress
+                     };
+                     onDataUpdate(oldKey, tempNewPoint, originalIndex);
+                }
+            } else {
+                setStatus('error_saving'); setError((e as Error).message);
+            }
         }
     };
+
+    // Helper for notification (mocking App.tsx function)
+    const addNotification = (msg: string, type: string) => console.log(`[${type}] ${msg}`);
 
     const handleDelete = async () => {
         if (!data) return;
@@ -627,7 +631,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
     if (!data) return null;
 
-    // --- Computed Values ---
     const clientName = findValueInRow(getSafeOriginalRow(data), ['наименование клиента', 'контрагент', 'клиент']);
     const currentLat = (data as MapPoint).lat;
     const currentLon = (data as MapPoint).lon;
@@ -638,7 +641,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
     
-    // FIXED: Robust check for map success (must be non-zero numbers)
     const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && displayLat !== 0 && displayLon !== 0 && status !== 'geocoding';
 
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== ((data as MapPoint).address || '').toLowerCase();

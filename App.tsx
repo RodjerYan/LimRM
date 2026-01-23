@@ -470,15 +470,22 @@ const App: React.FC = () => {
                 });
             }
         } else {
+            let found = false;
             newData = newData.map(group => {
+                // IMPORTANT: Search for the specific client by key
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
+                    found = true;
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
                     return { ...group, clients: updatedClients };
                 }
                 return group;
             });
+            
+            if (!found) {
+                console.warn(`Could not find client with key: ${oldKey} to update.`);
+            }
         }
 
         setAllData(newData);

@@ -10,7 +10,7 @@ import type { FeatureCollection } from 'geojson';
 import { MANUAL_BOUNDARIES } from '../data/manual_boundaries';
 
 type Theme = 'dark' | 'light';
-type OverlayMode = 'sales' | 'pets' | 'competitors' | 'age';
+type OverlayMode = 'sales' | 'pets' | 'competitors' | 'age' | 'abc';
 
 interface InteractiveRegionMapProps {
     data: AggregatedDataRow[];
@@ -102,6 +102,29 @@ const fixChukotkaGeoJSON = (feature: any) => {
 };
 
 const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
+    if (mode === 'abc') {
+        return (
+            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+                    ABC Анализ (Вклад)
+                </h4>
+                <div className="space-y-1.5">
+                    <div className="flex items-center">
+                        <span className="w-3 h-3 mr-2 rounded-full bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]"></span>
+                        <span className="text-xs font-bold text-amber-400">A (80% Выручки)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-3 h-3 mr-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
+                        <span className="text-xs font-medium text-emerald-400">B (15% Выручки)</span>
+                    </div>
+                    <div className="flex items-center">
+                        <span className="w-3 h-3 mr-2 rounded-full bg-gray-500"></span>
+                        <span className="text-xs text-gray-400">C (5% Выручки)</span>
+                    </div>
+                </div>
+            </div>
+        );
+    }
     if (mode === 'pets') {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
@@ -291,7 +314,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
         const baseBorder = { weight: isSelected ? 2 : 1, opacity: 1, color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), fillColor: 'transparent', fillOpacity: 0, className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon', pane: 'regionsPane' };
-        if (overlayMode === 'sales') { return { ...baseBorder, fillColor: isSelected ? '#818cf8' : '#111827', fillOpacity: isSelected ? 0.3 : 0.2, interactive: true }; }
+        if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#818cf8' : '#111827', fillOpacity: isSelected ? 0.3 : 0.2, interactive: true }; }
         if (overlayMode === 'pets') {
             const density = marketData.petDensityIndex; let fillColor = '#6b7280'; let fillOpacity = 0.3;
             if (density > 80) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (density > 50) { fillColor = '#f59e0b'; fillOpacity = 0.5; }
@@ -396,9 +419,16 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         }
     }, [localTheme]);
     
-    const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string) => `
+    const createPopupContent = (name: string, address: string, type: string, contacts: string | undefined, key: string, abcCategory?: string) => {
+        let badge = '';
+        if (abcCategory === 'A') badge = '<span class="px-2 py-0.5 rounded bg-amber-500 text-black font-bold text-xs ml-2">A</span>';
+        else if (abcCategory === 'B') badge = '<span class="px-2 py-0.5 rounded bg-emerald-500 text-white font-bold text-xs ml-2">B</span>';
+        else if (abcCategory === 'C') badge = '<span class="px-2 py-0.5 rounded bg-gray-500 text-white font-bold text-xs ml-2">C</span>';
+
+        return `
         <div class="popup-inner-content">
-            <b>${name}</b><br>${address}<br><small>${type || 'н/д'}</small>
+            <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
+            ${address}<br><small>${type || 'н/д'}</small>
             ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
             <button class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2" data-key="${key}">
                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
@@ -406,6 +436,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             </button>
         </div>
     `;
+    };
     
     useEffect(() => {
         const map = mapInstance.current;
@@ -421,28 +452,40 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         const pointsForBounds: L.LatLngExpression[] = [];
 
-        potentialClients.forEach(tt => {
-            // Robust check for coordinates in various keys, using the enhanced getCoordinate helper
-            const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
-            const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+        // Only show potential clients if NOT in ABC mode (to reduce clutter)
+        if (overlayMode !== 'abc') {
+            potentialClients.forEach(tt => {
+                // Robust check for coordinates in various keys, using the enhanced getCoordinate helper
+                const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
+                const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
 
-            const lat = parseCoord(rawLat);
-            let lon = parseCoord(rawLon);
+                const lat = parseCoord(rawLat);
+                let lon = parseCoord(rawLon);
 
-            if (lat !== null && lon !== null) {
-                // FIX: Only shift longitude if it's in the Chukotka/Antimeridian range (< -170)
-                // Do not apply this to normal negative longitudes (Western Hemisphere).
-                if (lon < -170) lon += 360;
+                if (lat !== null && lon !== null) {
+                    if (lon < -170) lon += 360;
 
-                const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
-                const marker = L.circleMarker([lat, lon], {
-                    fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, pane: 'markersPane', renderer: markersRenderer
-                }).bindPopup(popupContent);
-                potentialClientMarkersLayer.current?.addLayer(marker);
-            }
-        });
+                    const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
+                    const marker = L.circleMarker([lat, lon], {
+                        fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, pane: 'markersPane', renderer: markersRenderer
+                    }).bindPopup(popupContent);
+                    potentialClientMarkersLayer.current?.addLayer(marker);
+                }
+            });
+        }
 
-        activeClients.forEach(tt => {
+        // Sort active clients for rendering order (z-index simulation for Canvas)
+        const sortedActiveClients = [...activeClients];
+        if (overlayMode === 'abc') {
+             const priority: Record<string, number> = { 'A': 3, 'B': 2, 'C': 1 };
+             sortedActiveClients.sort((a, b) => {
+                 const pA = priority[a.abcCategory || 'C'] || 1;
+                 const pB = priority[b.abcCategory || 'C'] || 1;
+                 return pA - pB;
+             });
+        }
+
+        sortedActiveClients.forEach(tt => {
             const rawLat = getCoordinate(tt, ['lat', 'latitude']);
             const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude']);
             
@@ -450,14 +493,45 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             let lon = parseCoord(rawLon);
 
             if (lat !== null && lon !== null) {
-                // FIX: Only shift longitude if it's in the Chukotka/Antimeridian range (< -170)
                 if (lon < -170) lon += 360;
                 
                 pointsForBounds.push([lat, lon]);
 
-                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key);
+                const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key, tt.abcCategory);
+                
+                let markerColor = '#10b981'; // Default Green (Sales mode)
+                let markerBorder = '#047857';
+                let markerRadius = 5;
+
+                if (overlayMode === 'abc') {
+                    switch (tt.abcCategory) {
+                        case 'A':
+                            markerColor = '#f59e0b'; // Amber
+                            markerBorder = '#b45309';
+                            markerRadius = 7;
+                            break;
+                        case 'B':
+                            markerColor = '#10b981'; // Emerald
+                            markerBorder = '#047857';
+                            markerRadius = 5;
+                            break;
+                        default: // C
+                            markerColor = '#9ca3af'; // Gray
+                            markerBorder = '#4b5563';
+                            markerRadius = 3;
+                            break;
+                    }
+                }
+
                 const marker = L.circleMarker([lat, lon], {
-                    fillColor: '#10b981', color: '#047857', weight: 1, opacity: 1, fillOpacity: 0.8, radius: 5, pane: 'markersPane', renderer: markersRenderer
+                    fillColor: markerColor, 
+                    color: markerBorder, 
+                    weight: 1, 
+                    opacity: 1, 
+                    fillOpacity: 0.8, 
+                    radius: markerRadius, 
+                    pane: 'markersPane', 
+                    renderer: markersRenderer
                 }).bindPopup(popupContent);
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
@@ -465,13 +539,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             }
         });
 
-        potentialClientMarkersLayer.current.addTo(map);
+        if (overlayMode !== 'abc') potentialClientMarkersLayer.current.addTo(map);
         activeClientMarkersLayer.current.addTo(map);
-        layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-400 font-bold">●</span> Потенциал (ОКБ)');
+        
+        if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-400 font-bold">●</span> Потенциал (ОКБ)');
         layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-400 font-bold">●</span> Активные ТТ');
 
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients]); // Re-run when data changes
+    }, [potentialClients, activeClients, overlayMode]); // Re-run when data or mode changes
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
@@ -538,9 +613,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
             <div className="absolute bottom-8 left-24 z-[400] flex gap-2">
                 <div className="bg-gray-900/90 backdrop-blur-md p-1 rounded-xl border border-white/10 shadow-xl flex">
-                    {(['sales', 'pets', 'competitors', 'age'] as OverlayMode[]).map(mode => (
+                    {(['sales', 'pets', 'competitors', 'age', 'abc'] as OverlayMode[]).map(mode => (
                         <button key={mode} onClick={() => setOverlayMode(mode)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${overlayMode === mode ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
-                            {mode === 'sales' ? 'Продажи' : mode === 'pets' ? 'Питомцы' : mode === 'competitors' ? 'Конкуренты' : 'Возраст'}
+                            {mode === 'sales' ? 'Продажи' : mode === 'pets' ? 'Питомцы' : mode === 'competitors' ? 'Конкуренты' : mode === 'age' ? 'Возраст' : 'ABC'}
                         </button>
                     ))}
                 </div>
