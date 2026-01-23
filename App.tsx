@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -27,10 +26,8 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
-// Максимальный размер JSON-файла в байтах (850 КБ)
-const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
-
-// Интервал авто-обновления (в миллисекундах)
+// CONSTANT: Fixed number of groups per chunk to ensure stability.
+const GROUPS_PER_CHUNK = 150; 
 const POLLING_INTERVAL_MS = 15000;
 
 const App: React.FC = () => {
@@ -63,15 +60,15 @@ const App: React.FC = () => {
     const manualUpdateTimestamps = useRef<Map<string, number>>(new Map());
     const workerRef = useRef<Worker | null>(null);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isSavingRef = useRef(false); // Lock for save operation
+    const isSavingRef = useRef(false); 
     
-    // SMART SAVE: Cache for the content of the last saved/loaded chunks
-    // Key: Chunk Index, Value: Stringified JSON content
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
-
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+
+    // --- NEW: AUTH STATE ---
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
     // Sync refs
     useEffect(() => { allDataRef.current = allData; }, [allData]);
@@ -93,17 +90,14 @@ const App: React.FC = () => {
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
         const syncData = async () => {
-            // Only sync if we have data loaded
             if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return; // Don't sync while heavy processing
-
+            if (processingState.isProcessing) return;
             try {
-                // 1. Fetch latest cache from server
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                if (res.status === 401) return; // Silent fail on polling auth error
                 if (!res.ok) return;
                 const cacheData: CoordsCache = await res.json();
-
-                // 2. Flatten cache for O(1) lookup
+                
                 const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
                 Object.values(cacheData).flat().forEach((item: any) => {
                     if (item.address && !item.isDeleted && item.lat && item.lon) {
@@ -112,28 +106,19 @@ const App: React.FC = () => {
                 });
 
                 let hasChanges = false;
-
-                // 3. Update All Data (Active Clients)
                 const newAllData = allDataRef.current.map(row => {
                     let rowChanged = false;
                     const newClients = row.clients.map(client => {
                         const normAddr = normalizeAddress(client.address);
-                        
-                        // RACE CONDITION FIX: Ignore cache if user updated this client recently (< 2 mins)
                         const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
                         if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
                             return client;
                         }
-
                         const cached = cacheMap.get(normAddr);
-                        
-                        // Check if we have new data that is different from current
                         if (cached) {
                             const latDiff = Math.abs((client.lat || 0) - cached.lat);
                             const lonDiff = Math.abs((client.lon || 0) - cached.lon);
                             const commentDiff = (client.comment || '') !== (cached.comment || '');
-                            
-                            // If significant change (> 0.0001 deg or comment changed)
                             if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
                                 rowChanged = true;
                                 hasChanges = true;
@@ -142,26 +127,21 @@ const App: React.FC = () => {
                         }
                         return client;
                     });
-                    
                     if (rowChanged) return { ...row, clients: newClients };
                     return row;
                 });
-
                 if (hasChanges) {
                     setAllData(newAllData);
                 }
-
             } catch (e) {
                 console.error("Auto-sync failed", e);
             }
         };
-
         const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
         return () => clearInterval(intervalId);
     }, [processingState.isProcessing]);
 
-
-    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
+    // --- NORMALIZATION ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -181,7 +161,6 @@ const App: React.FC = () => {
             if (!row) return;
             const brandRaw = String(row.brand || '').trim();
             const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
-
             const generateStableKey = (base: any, suffix: string | number) => {
                 const baseStr = base.key || base.address || `idx_${index}`;
                 return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
@@ -190,17 +169,9 @@ const App: React.FC = () => {
             const normalizeClient = (c: any, cIdx: number) => {
                 const clientObj = { ...c };
                 const original = c.originalRow || {}; 
-
-                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
-                if (c.lng !== undefined) {
-                    clientObj.lon = safeFloat(c.lng);
-                }
-                // Also ensure 'lat' is picked up directly
-                if (c.lat !== undefined) {
-                    clientObj.lat = safeFloat(c.lat);
-                }
-
-                // 2. Fallback checks if still invalid
+                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
+                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
+                
                 if (!isValidCoord(clientObj.lat)) {
                     clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
                                     safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
@@ -209,10 +180,7 @@ const App: React.FC = () => {
                     clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
                                     safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
                 }
-                
-                if (!clientObj.key) {
-                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
-                }
+                if (!clientObj.key) clientObj.key = generateStableKey(row, `cli_${cIdx}`);
                 return clientObj;
             };
 
@@ -236,15 +204,11 @@ const App: React.FC = () => {
                 }
             }
             
-            // Handle rows without 'clients' array (flat structure from snapshot)
-            // If row.clients is missing, treat the row itself as the client source
             let clientSource = row.clients;
             if (!Array.isArray(clientSource) || clientSource.length === 0) {
                  clientSource = [row];
             }
-
             const normalizedClients = clientSource.map(normalizeClient);
-
             result.push({
                 ...row,
                 key: row.key || generateStableKey(row, 'm'),
@@ -254,110 +218,98 @@ const App: React.FC = () => {
         return result;
     }, []);
 
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
+    // --- GENERATE CHUNKS ---
+    const generateChunks = (rowsData: AggregatedDataRow[]): string[] => {
+        const chunks: string[] = [];
+        for (let i = 0; i < rowsData.length; i += GROUPS_PER_CHUNK) {
+            const slice = rowsData.slice(i, i + GROUPS_PER_CHUNK);
+            const chunkObj = { chunkIndex: chunks.length, rows: slice };
+            chunks.push(JSON.stringify(chunkObj));
+        }
+        return chunks;
+    };
+
+    // --- SAVE SNAPSHOT (CLOUD) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         if (isSavingRef.current) {
             console.warn("Save already in progress, skipping.");
             return;
         }
         isSavingRef.current = true;
-
         try {
             console.log('Начало умного сохранения...');
             
-            // 1. Get file slots first
+            // 1. Get slots
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            
+            // --- NEW: AUTH CHECK ---
+            if (listRes.status === 401) {
+                setIsAuthModalOpen(true); // Open modal if auth needed
+                throw new Error("Требуется авторизация Google");
+            }
+            // -----------------------
+
             let availableSlots: { id: string, name: string }[] = [];
             if (listRes.ok) {
                 availableSlots = await listRes.json();
             }
 
-            const encoder = new TextEncoder();
-            const getByteSize = (str: string) => encoder.encode(str).length;
+            // 2. Generate chunks
+            const chunks = generateChunks(currentData);
             
-            // 2. Generate chunks locally
-            const chunks: string[] = [];
-            let currentChunkObj: any = {
-                chunkIndex: 0,
-                // CRITICAL FIX: Removed volatile 'versionHash' from individual chunks to allow meaningful diffing.
-                // The main version is tracked in the Meta file.
-                rows: [],
-            };
-            
-            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
-            
-            for (const row of currentData) {
-                const rowStr = JSON.stringify(row);
-                const rowSize = getByteSize(rowStr) + 2; 
-                
-                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
-                    currentChunkObj = {
-                        chunkIndex: chunks.length,
-                        rows: []
-                    };
-                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
-                }
-                currentChunkObj.rows.push(row);
-                currentSize += rowSize;
-            }
-            chunks.push(JSON.stringify(currentChunkObj));
-            
-            // 3. Diffing Strategy: Identify ONLY changed chunks
+            // 3. Diffing
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                // String comparison now works because 'versionHash' is gone
                 if (prevContent !== chunkContent) {
-                    // Map to existing file ID if available (by index)
-                    // The backend list is sorted, so index 0 = file 1, index 1 = file 2...
-                    // NOTE: backend `get-snapshot-list` returns chunk files in order.
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    
-                    chunksToUpload.push({ 
-                        index: idx, 
-                        content: chunkContent, 
-                        targetFileId 
-                    });
+                    chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
                 }
             });
 
             if (chunksToUpload.length === 0) {
-                console.log("No data chunks changed. Skipping large upload.");
+                console.log("No data chunks changed.");
             } else {
                 console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
                 
-                // Concurrency Control
-                const CONCURRENCY = 4;
-                for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
-                    const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
-                        const queryParams = item.targetFileId 
-                            ? `action=save-chunk&targetFileId=${item.targetFileId}` 
-                            : `action=save-chunk&chunkIndex=${item.index}`; // Fallback for creation
+                // Serial Upload
+                for (const item of chunksToUpload) {
+                    const queryParams = item.targetFileId 
+                        ? `action=save-chunk&targetFileId=${item.targetFileId}` 
+                        : `action=save-chunk&chunkIndex=${item.index}`;
 
-                        return fetch(`/api/get-full-cache?${queryParams}`, {
+                    try {
+                        const res = await fetch(`/api/get-full-cache?${queryParams}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ chunk: item.content }) 
-                        }).then(async res => {
-                            if (!res.ok) {
-                                const txt = await res.text();
-                                throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
-                            }
-                            // Update cache ONLY on success
-                            lastSavedChunksRef.current.set(item.index, item.content);
                         });
-                    });
-                    
-                    await Promise.all(batch);
+                        
+                        // --- NEW: AUTH CHECK INSIDE LOOP ---
+                        if (res.status === 401) {
+                            setIsAuthModalOpen(true);
+                            throw new Error("Авторизация истекла во время сохранения");
+                        }
+                        // -----------------------------------
+
+                        if (!res.ok) {
+                            const txt = await res.text();
+                            console.error(`Upload failed for chunk ${item.index}:`, txt);
+                            continue;
+                        }
+                        
+                        lastSavedChunksRef.current.set(item.index, item.content);
+                    } catch (err) {
+                        // Re-throw if it's our auth error, otherwise log
+                        if (err instanceof Error && err.message.includes("Авторизация")) throw err;
+                        console.error(`Network error for chunk ${item.index}`, err);
+                    }
                 }
             }
             
-            // 4. Always save Meta to update timestamp/versionHash
-            // This is fast and tells other clients about the update
+            // 4. Save Meta
             const newVersionHash = `edit_${Date.now()}`;
-            await fetch('/api/get-full-cache?action=save-meta', {
+            const metaRes = await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -370,27 +322,43 @@ const App: React.FC = () => {
                     timestamp: Date.now()
                 })
             });
+
+            // --- NEW: AUTH CHECK META ---
+            if (metaRes.status === 401) {
+                setIsAuthModalOpen(true);
+                throw new Error("Требуется авторизация для сохранения мета-данных");
+            }
+            // ----------------------------
             
             addNotification('Изменения сохранены', 'success');
-        } catch (e) {
+        } catch (e: any) {
             console.error("Cloud Save Error:", e);
-            addNotification('Ошибка сохранения в облако', 'warning');
+            // Don't show generic error if it's just auth needed (modal will show)
+            if (!e.message?.includes("Авторизация")) {
+                 addNotification('Ошибка сохранения в облако', 'warning');
+            }
         } finally {
             isSavingRef.current = false;
         }
     };
 
-    // --- ЗАГРУЗКА СНИМКА (JSON) ---
+    // --- LOAD SNAPSHOT ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            // Check auth on load too
+            if (listRes.status === 401) {
+                setIsAuthModalOpen(true);
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Требуется вход' }));
+                return false;
+            }
+
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
             
             let fileList = await listRes.json();
             if (!Array.isArray(fileList) || fileList.length === 0) return false;
-
             fileList.sort((a: any, b: any) => {
                 const nameA = a.name || '';
                 const nameB = b.name || '';
@@ -404,41 +372,32 @@ const App: React.FC = () => {
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
             
-            // Clear cache before fresh load
             lastSavedChunksRef.current.clear();
-
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 const text = await res.text();
-
-                // CACHE POPULATION & NORMALIZATION
                 try {
                     const parsed = JSON.parse(text);
-                    // We must strip 'versionHash' from loaded chunks if present to align with local save format.
-                    // This ensures the FIRST save after load isn't a full upload.
-                    if (parsed.versionHash) delete parsed.versionHash;
-                    
-                    // Store the normalized (stripped) version in cache
-                    lastSavedChunksRef.current.set(i, JSON.stringify(parsed));
-                    
                     let newRows: any[] = Array.isArray(parsed.rows) ? parsed.rows : (Array.isArray(parsed.aggregatedData) ? parsed.aggregatedData : []);
                     if (newRows.length > 0) {
                         accumulatedRows.push(...normalize(newRows));
                     }
                     if (parsed.meta) loadedMeta = parsed.meta;
-
                 } catch (e) {
-                    console.warn("Error parsing loaded chunk, skipping normalization", e);
+                    console.warn("Error parsing loaded chunk", e);
                 }
-                
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
                 setAllData(accumulatedRows);
+                const baselineChunks = generateChunks(accumulatedRows);
+                baselineChunks.forEach((content, idx) => {
+                    lastSavedChunksRef.current.set(idx, content);
+                });
                 
                 const safeMeta = loadedMeta || {};
                 setUnidentifiedRows(safeMeta.unidentifiedRows || []);
@@ -466,14 +425,17 @@ const App: React.FC = () => {
         return false;
     }, [normalize, addNotification]);
 
-    // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
+    // --- FORCE UPDATE ---
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
-        
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
-        
         try {
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.status === 401) {
+                setIsAuthModalOpen(true);
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Нужен вход' }));
+                return;
+            }
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash) {
@@ -498,11 +460,19 @@ const App: React.FC = () => {
             if (local?.allData?.length > 0) {
                 const validatedLocal = normalize(local.allData);
                 setAllData(validatedLocal);
+                const baselineChunks = generateChunks(validatedLocal);
+                baselineChunks.forEach((content, idx) => {
+                    lastSavedChunksRef.current.set(idx, content);
+                });
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
             }
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.status === 401) {
+                // Not blocking init, but user will need to login to save/load new
+                return; 
+            }
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
@@ -514,12 +484,11 @@ const App: React.FC = () => {
         init();
     }, [handleDownloadSnapshot, normalize]);
 
-    // --- DATA UPDATE HANDLER (DEBOUNCED) ---
+    // --- DATA UPDATE HANDLER ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
-        // RACE CONDITION PROTECTION: Mark this address as manually updated
         if (newPoint.address) {
             const normAddr = normalizeAddress(newPoint.address);
             manualUpdateTimestamps.current.set(normAddr, Date.now());
@@ -548,7 +517,6 @@ const App: React.FC = () => {
         } else {
             let found = false;
             newData = newData.map(group => {
-                // IMPORTANT: Search for the specific client by key
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
@@ -558,12 +526,8 @@ const App: React.FC = () => {
                 }
                 return group;
             });
-            
-            if (!found) {
-                console.warn(`Could not find client with key: ${oldKey} to update.`);
-            }
+            if (!found) console.warn(`Could not find client with key: ${oldKey} to update.`);
         }
-
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
@@ -573,7 +537,6 @@ const App: React.FC = () => {
                 console.error("Auto-save failed:", err);
             });
         }, 2000);
-
     }, [okbRegionCounts]); 
 
     // --- FILTERED DATA ---
@@ -607,7 +570,7 @@ const App: React.FC = () => {
         return applyFilters(smart, filters);
     }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
 
-    // --- ACTIVE CLIENTS ---
+    // --- ACTIVE & POTENTIAL CLIENTS ---
     const allActiveClients = useMemo(() => {
         const clientsMap = new Map<string, MapPoint>();
         filtered.forEach(row => {
@@ -618,7 +581,6 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
-    // --- POTENTIAL CLIENTS ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
         const coordsOnly = okbData.filter(r => {
@@ -693,7 +655,6 @@ const App: React.FC = () => {
                             onEndDateChange={setFilterEndDate}     
                         />
                     )}
-
                     {activeModule === 'amp' && (
                         <div className="space-y-6">
                             <InteractiveRegionMap data={filtered} activeClients={allActiveClients} potentialClients={mapPotentialClients} onEditClient={setEditingClient} selectedRegions={filters.region} flyToClientKey={null} />
@@ -712,11 +673,9 @@ const App: React.FC = () => {
                             />
                         </div>
                     )}
-
                     {activeModule === 'dashboard' && (
                         <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
                     )}
-
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
@@ -734,6 +693,40 @@ const App: React.FC = () => {
             
             {editingClient && (
                 <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
+            )}
+
+            {/* --- GOOGLE LOGIN MODAL --- */}
+            {isAuthModalOpen && (
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                    <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl shadow-2xl max-w-md w-full text-center relative overflow-hidden">
+                        {/* Decorative glow */}
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-indigo-500 blur-[20px]"></div>
+                        
+                        <div className="w-16 h-16 bg-gray-800 rounded-2xl flex items-center justify-center mx-auto mb-6 border border-gray-700">
+                             <span className="text-3xl">📂</span>
+                        </div>
+                        
+                        <h3 className="text-2xl font-bold mb-3 text-white">Требуется Google Диск</h3>
+                        <p className="mb-8 text-gray-400 leading-relaxed">
+                            Для сохранения данных и работы с облаком необходимо авторизоваться и предоставить доступ к Google Диску.
+                        </p>
+                        
+                        <div className="flex flex-col gap-3">
+                            <a 
+                                href="/api/auth/google"
+                                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-500 hover:to-purple-500 font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2"
+                            >
+                                Войти через Google
+                            </a>
+                            <button 
+                                onClick={() => setIsAuthModalOpen(false)}
+                                className="w-full py-3.5 bg-gray-800 text-gray-400 rounded-xl hover:bg-gray-750 hover:text-white font-medium transition-colors"
+                            >
+                                Отмена
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
