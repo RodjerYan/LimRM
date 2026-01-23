@@ -111,7 +111,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
         pollIntervalRef.current = setInterval(async () => {
             attempts++;
             try {
-                // Ensure RM is properly encoded, avoiding empty string if possible
+                // Ensure RM is properly encoded
                 const rmParam = encodeURIComponent(rm || 'Unknown_RM');
                 const addrParam = encodeURIComponent(address);
                 const res = await fetch(`/api/get-cached-address?rmName=${rmParam}&address=${addrParam}&t=${Date.now()}`);
@@ -186,11 +186,16 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
             
             const result = await res.json();
 
-            if (result.lat && result.lon) {
-                finalizeUpdate(result);
-            } else if (manualLat && manualLon) {
+            // If manual coords were provided, use them immediately
+            if (manualLat && manualLon) {
                  finalizeUpdate({ ...result, lat: manualLat, lon: manualLon });
-            } else {
+            } 
+            // If result returned valid coords immediately (rare but possible if cached)
+            else if (result.lat && result.lon) {
+                finalizeUpdate(result);
+            } 
+            // Otherwise start polling
+            else {
                 setPollingTarget({ rm: rmName, address: address });
             }
 
@@ -228,29 +233,31 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
     const originalAddr = isUnidentified ? (findValueInRow(data.rowData, ['адрес']) || '') : data.address;
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={isUnidentified ? 'Исправление адреса' : 'Редактирование клиента'} maxWidth="max-w-2xl" zIndex="z-[1200]">
-            <div className="space-y-6 p-1">
-                <div className="flex items-center justify-between">
+        <Modal isOpen={isOpen} onClose={onClose} title={isUnidentified ? 'Исправление адреса' : 'Редактирование клиента'} maxWidth="max-w-xl" zIndex="z-[1200]">
+            <div className="space-y-5">
+                {/* Header Actions */}
+                <div className="flex items-center justify-between border-b border-gray-700 pb-2 mb-2">
                     <button onClick={onBack} className="text-gray-400 hover:text-white flex items-center gap-2 text-sm transition-colors">
                         <ArrowLeftIcon small /> Назад
                     </button>
                     {!isUnidentified && (
                         <button onClick={handleDelete} className="text-red-400 hover:text-red-300 flex items-center gap-2 text-sm transition-colors">
-                            <TrashIcon small /> Удалить из базы
+                            <TrashIcon small /> Удалить
                         </button>
                     )}
                 </div>
 
-                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 space-y-4">
+                {/* Form Content - Simpler Layout */}
+                <div className="space-y-4">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Исходный адрес</label>
-                        <div className="text-gray-300 text-sm bg-gray-900/50 p-2 rounded border border-gray-700/50">
+                        <div className="text-gray-300 text-sm p-2 bg-black/20 rounded border border-gray-700/50">
                             {originalAddr || '(пусто)'}
                         </div>
                     </div>
                     
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Фактический адрес (для поиска)</label>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Новый адрес (для поиска)</label>
                         <div className="relative">
                             <input 
                                 type="text" 
@@ -261,9 +268,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                             />
                             <div className="absolute left-3 top-3.5 text-gray-500"><SearchIcon small/></div>
                         </div>
-                        <p className="text-[10px] text-gray-500 mt-1">
-                            Измените адрес, если он содержит ошибки или опечатки. Это запустит поиск координат.
-                        </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -274,7 +278,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                 value={lat}
                                 onChange={(e) => setLat(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-white font-mono text-sm focus:ring-1 focus:ring-indigo-500"
-                                placeholder="55.123456"
+                                placeholder="Auto"
                             />
                         </div>
                         <div>
@@ -284,7 +288,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                                 value={lon}
                                 onChange={(e) => setLon(e.target.value)}
                                 className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-white font-mono text-sm focus:ring-1 focus:ring-indigo-500"
-                                placeholder="37.123456"
+                                placeholder="Auto"
                             />
                         </div>
                     </div>
@@ -295,25 +299,26 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                             value={comment}
                             onChange={(e) => setComment(e.target.value)}
                             className="w-full bg-gray-900 border border-gray-600 rounded-lg p-3 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none h-20 resize-none"
-                            placeholder="Например: ТЦ, вход со двора..."
+                            placeholder="Дополнительная информация..."
                         />
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2">
-                    <div className="flex-grow">
+                {/* Footer Status & Button */}
+                <div className="flex flex-col gap-3 pt-2">
+                    <div className="min-h-[24px]">
                         {status === 'saving' && <span className="text-indigo-400 text-sm flex items-center gap-2"><LoaderIcon small /> Сохранение...</span>}
-                        {status === 'polling' && <span className="text-cyan-400 text-sm flex items-center gap-2"><LoaderIcon small /> Поиск координат...</span>}
-                        {status === 'success' && <span className="text-emerald-400 text-sm flex items-center gap-2"><CheckIcon small /> Успешно обновлено!</span>}
+                        {status === 'polling' && <span className="text-cyan-400 text-sm flex items-center gap-2"><LoaderIcon small /> Ожидание координат (до 60сек)...</span>}
+                        {status === 'success' && <span className="text-emerald-400 text-sm flex items-center gap-2"><CheckIcon small /> Успешно!</span>}
                         {error && <span className="text-red-400 text-sm flex items-center gap-2"><ErrorIcon small /> {error}</span>}
                     </div>
                     <button 
                         onClick={handleSave}
                         disabled={status === 'saving' || status === 'polling' || !address}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-all shadow-lg shadow-indigo-900/30 flex items-center gap-2"
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold py-3 rounded-lg transition-all shadow-lg shadow-indigo-900/30 flex items-center justify-center gap-2"
                     >
                         <SaveIcon small />
-                        Сохранить
+                        Сохранить и найти
                     </button>
                 </div>
             </div>
