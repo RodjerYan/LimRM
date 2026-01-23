@@ -48,7 +48,9 @@ const sortKeys = (obj: any): any => {
 const sanitizeRowForSave = (row: AggregatedDataRow): any => {
     return {
         ...row,
-        key: undefined, // Don't save runtime grouping keys to cloud/diff
+        // FIX #3: Remove 'key' from saved data. It is a runtime UI concept derived from data.
+        // Saving it causes diff noise if generation logic changes or order shifts slightly.
+        key: undefined, 
         clients: row.clients.map((client) => {
             // Destructure to remove volatile fields that shouldn't trigger a diff/save
             const { key, isGeocoding, coordStatus, lastUpdated, ...persistentData } = client;
@@ -57,7 +59,7 @@ const sanitizeRowForSave = (row: AggregatedDataRow): any => {
     };
 };
 
-// --- Helper for Unique IDs ---
+// --- Helper for Unique IDs (Only for CREATION) ---
 const generateRowId = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
         return crypto.randomUUID();
@@ -194,6 +196,7 @@ const App: React.FC = () => {
 
 
     // --- STRICT NORMALIZE (Pure Function) ---
+    // FIX #1: normalize NEVER generates IDs. It enforces them.
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
         if (!Array.isArray(rows)) return [];
         const result: AggregatedDataRow[] = [];
@@ -212,10 +215,10 @@ const App: React.FC = () => {
         rows.forEach((row, index) => {
             if (!row) return;
             
-            // CRITICAL: Ensure __rowId exists. Normalize must NOT generate IDs.
-            // If ID is missing, it's a violation of data integrity for 'normalized' data.
+            // CRITICAL FIX: Ensure __rowId exists. Normalize must NOT generate IDs from Date.now() or Math.random().
+            // If ID is missing here, it means migration failed upstream. We throw or force a deterministic fallback based on data (not time).
             if (!row.__rowId) {
-                throw new Error('Invariant violated: __rowId missing during normalize');
+                throw new Error(`Invariant violated: __rowId missing during normalize at index ${index}`);
             }
             const stableRowId = row.__rowId;
 
@@ -258,6 +261,7 @@ const App: React.FC = () => {
                         const safeBrandSuffix = brandPart.toLowerCase().replace(/[^a-zа-я0-9]/g, '_');
                         result.push({
                             ...row,
+                            // Derived ID for split rows must be deterministic based on parent ID + brand
                             __rowId: `${stableRowId}_split_${safeBrandSuffix}`, 
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
@@ -291,14 +295,18 @@ const App: React.FC = () => {
 
     // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
+        // NOTE: We do NOT return if isSavingRef is true.
+        // We might want to debounce or queue, but for "Smart Save" we allow latest state to win or handle concurrency elsewhere.
+        // For strict safety as per prompt requirement "isSavingRef blocks new saves", we keep it but warn.
+        // Ideally, we'd use a queue, but let's stick to the prompt's request for determinism fixes first.
         if (isSavingRef.current) {
-            console.warn("Save already in progress, skipping.");
+            console.warn("Save in progress. Skipping to prevent race conditions.");
             return;
         }
         isSavingRef.current = true;
 
         try {
-            console.log('Начало умного сохранения...');
+            console.log('Начало умного сохранения (Smart Save)...');
             
             // 1. Get file slots first
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
@@ -311,6 +319,7 @@ const App: React.FC = () => {
             
             // 2. Generate chunks locally with DETERMINISTIC SERIALIZATION & STABLE ROW ID SORTING
             
+            // Sort by __rowId (UUID or legacy_X). Since these don't change, order is stable.
             const sortedData = [...currentData].sort((a, b) => 
                 (a.__rowId || '').localeCompare(b.__rowId || '')
             );
@@ -324,9 +333,9 @@ const App: React.FC = () => {
             for (const row of sortedData) {
                 // IMPORTANT: Sanitize row (remove volatile UI fields AND keys) before serialization
                 const cleanRow = sanitizeRowForSave(row);
+                // Sort object keys to ensure {a:1, b:2} stringifies same as {b:2, a:1}
                 const sortedRow = sortKeys(cleanRow);
                 
-                // Chunk-by-Count Strategy:
                 if (currentChunkObj.rows.length >= ROWS_PER_CHUNK) {
                     chunks.push(JSON.stringify(sortKeys(currentChunkObj))); 
                     currentChunkObj = {
@@ -346,22 +355,21 @@ const App: React.FC = () => {
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
+                // EXACT STRING MATCH CHECK
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    if (targetFileId) {
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
-                    } else {
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
-                    }
+                    // Even if no targetFileId (new chunk), we push it. API handles creation if ID missing/invalid usually,
+                    // or we might need specific logic. Here we assume we pass empty string if new.
+                    chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: targetFileId || '' });
                 }
             });
 
             if (chunksToUpload.length === 0) {
-                console.log("No data chunks changed. Skipping large upload.");
+                console.log("Smart Save: No data chunks changed. Skipping upload.");
             } else {
-                console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
+                console.log(`Smart Save: Uploading ${chunksToUpload.length} dirty chunk(s)...`);
                 
-                // Concurrency Control
+                // Upload sequentially or with limited concurrency to ensure consistency
                 const CONCURRENCY = 4;
                 for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
                     const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
@@ -378,6 +386,7 @@ const App: React.FC = () => {
                                 const txt = await res.text();
                                 throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
                             }
+                            // Update local cache ONLY after successful upload
                             lastSavedChunksRef.current.set(item.index, item.content);
                         });
                     });
@@ -385,7 +394,7 @@ const App: React.FC = () => {
                 }
             }
             
-            // 4. Always save Meta
+            // 4. Always save Meta to update timestamp/version
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -400,7 +409,7 @@ const App: React.FC = () => {
                 })
             });
 
-            // 5. Cleanup old chunks (tail) on server
+            // 5. Cleanup old chunks (tail) if array shrank
             if (chunks.length < availableSlots.length) {
                 console.log(`Cleaning up ${availableSlots.length - chunks.length} old chunks...`);
                 await fetch(`/api/get-full-cache?action=cleanup-chunks&keepCount=${chunks.length}`, {
@@ -456,15 +465,17 @@ const App: React.FC = () => {
                 
                 const chunkData = JSON.parse(text);
                 const chunkIndex = typeof chunkData.chunkIndex === 'number' ? chunkData.chunkIndex : i;
+                // Cache the EXACT text we loaded for future diffing
                 lastSavedChunksRef.current.set(chunkIndex, text);
 
                 let rawRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
                 if (rawRows.length > 0) {
-                    // MIGRATION LAYER: Deterministic ID generation based on index
-                    // If __rowId is missing, generate a STABLE one: legacy_0, legacy_1, etc.
-                    // This ensures all clients generate the SAME ID for the same legacy data.
-                    const migratedRows = rawRows.map((r, idx) => r.__rowId ? r : { ...r, __rowId: `legacy_${idx}` });
+                    // FIX #2: Migration Layer.
+                    // If __rowId is missing, generate a DETERMINISTIC ID based on index.
+                    // This ensures that if 10 clients load this file, they all generate "legacy_0", "legacy_1", etc.
+                    // instead of random UUIDs which would cause 100% diffs.
+                    const migratedRows = rawRows.map((r, idx) => r.__rowId ? r : { ...r, __rowId: `legacy_${chunkIndex}_${idx}` });
                     accumulatedRows.push(...normalize(migratedRows));
                 }
                 if (chunkData.meta) loadedMeta = chunkData.meta;
@@ -553,8 +564,8 @@ const App: React.FC = () => {
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
                 // MIGRATION LAYER: Local DB
-                // Same deterministic logic: if ID missing, use index.
-                const readyRows = local.allData.map((r: any, idx: number) => r.__rowId ? r : { ...r, __rowId: `legacy_${idx}` });
+                // Same deterministic logic: if ID missing, use legacy_index.
+                const readyRows = local.allData.map((r: any, idx: number) => r.__rowId ? r : { ...r, __rowId: `legacy_local_${idx}` });
                 const validatedLocal = normalize(readyRows);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
@@ -575,6 +586,7 @@ const App: React.FC = () => {
 
     // --- DATA UPDATE HANDLER (DEBOUNCED) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
+        // Create shallow copy for React update
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         
@@ -591,28 +603,36 @@ const App: React.FC = () => {
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
             if (existingGroupIndex !== -1) {
+                // Update existing row (preserve its ID)
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
                     fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
                     clients: [...newData[existingGroupIndex].clients, newPoint]
                 };
             } else {
+                // CREATE NEW ROW: This is the ONLY place where generateRowId is allowed
+                // because this is a brand new entity being created by user action.
                 newData.push({
-                    __rowId: generateRowId(), // NEW ROW -> Generate ID (Allowed here, this is creation)
+                    __rowId: generateRowId(), 
                     key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging,
                     clientName: `${newPoint.region}: ${newPoint.brand}`, fact: newPoint.fact || 0,
                     potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint]
                 });
             }
         } else {
+            // Updating existing client in existing row
             let found = false;
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
+                    // Copy group to avoid mutation
+                    const updatedGroup = { ...group };
                     const updatedClients = [...group.clients];
                     updatedClients[clientIndex] = newPoint;
-                    return { ...group, clients: updatedClients };
+                    updatedGroup.clients = updatedClients;
+                    // Note: __rowId is preserved from 'group' spread
+                    return updatedGroup;
                 }
                 return group;
             });
