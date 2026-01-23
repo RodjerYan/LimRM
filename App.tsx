@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, Dispatch, SetStateAction } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
@@ -443,7 +444,6 @@ const App: React.FC = () => {
                 setOkbRegionCounts(safeMeta.okbRegionCounts || {});
                 totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
                 
-                // ИСПРАВЛЕНО: Заполняем объект для saveAnalyticsState
                 await saveAnalyticsState({
                     allData: accumulatedRows,
                     unidentifiedRows: safeMeta.unidentifiedRows || [],
@@ -642,10 +642,8 @@ const App: React.FC = () => {
     return (
         <div className="h-screen w-screen bg-gray-900 text-white flex flex-col overflow-hidden">
             <Navigation 
-                onModuleChange={setActiveModule}
-                // TODO: TypeScript ругается, что проп 'activeModule' не существует в твоем компоненте Navigation.
-                // Возможно, он называется по-другому (например, 'module'?). Раскомментируй и исправь имя пропа.
-                // activeModule={activeModule}
+                activeTab={activeModule}
+                onTabChange={(tab) => setActiveModule(tab)}
             />
             <main className="flex-grow flex overflow-hidden">
                 <div className="flex-grow flex flex-col">
@@ -669,7 +667,7 @@ const App: React.FC = () => {
                                 activeClientsCount={allActiveClients.length}
                                 uploadedData={filtered}
                                 dbStatus={dbStatus}
-                                onStartEdit={setEditingClient}
+                                onStartEdit={(c) => setEditingClient(c)}
                                 startDate={filterStartDate}
                                 endDate={filterEndDate}    
                                 onStartDateChange={setFilterStartDate}
@@ -691,18 +689,19 @@ const App: React.FC = () => {
                         {activeModule === 'dashboard' && (
                             <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
                         )}
-                        {activeModule === 'prophet' && null}
-                        {activeModule === 'agile' && null}
-                        {activeModule === 'roi-genome' && null}
+                        {activeModule === 'prophet' && <Prophet data={filtered} />}
+                        {activeModule === 'agile' && <AgileLearning data={filtered} />}
+                        {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
                     </div>
                 </div>
                 <div className="w-1/3 min-w-[400px] max-w-[600px] border-l border-gray-700 h-full overflow-hidden flex flex-col">
                     <InteractiveRegionMap 
+                        data={filtered}
+                        selectedRegions={filters.region}
                         activeClients={allActiveClients} 
                         potentialClients={mapPotentialClients} 
-                        // TODO: TypeScript ругается, что проп 'onSelectClient' не существует в твоем компоненте InteractiveRegionMap.
-                        // Возможно, он называется по-другому (например, 'onClientSelect'?). Раскомментируй и исправь имя пропа.
-                        // onSelectClient={setEditingClient}
+                        flyToClientKey={null}
+                        onEditClient={(c) => setEditingClient(c)}
                     />
                 </div>
             </main>
@@ -712,8 +711,8 @@ const App: React.FC = () => {
                 ))}
             </div>
             <Suspense fallback={<div>Loading...</div>}>
-                {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={setEditingClient} />}
-                {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={setEditingClient} />}
+                {selectedDetailsRow && <DetailsModal isOpen={!!selectedDetailsRow} onClose={() => setSelectedDetailsRow(null)} data={selectedDetailsRow} okbStatus={okbStatus} onStartEdit={(c) => setEditingClient(c)} />}
+                {isUnidentifiedModalOpen && <UnidentifiedRowsModal isOpen={isUnidentifiedModalOpen} onClose={() => setIsUnidentifiedModalOpen(false)} rows={unidentifiedRows} onStartEdit={(c) => setEditingClient(c)} />}
             </Suspense>
             {editingClient && (
                 <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
