@@ -493,7 +493,7 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
 
         // CRITICAL FIX: If coordinates exist, imply 'confirmed' status even if cell says 'pending'
         let coordStatus = String(foundRow[5] || '').trim();
-        if (lat !== undefined && lon !== undefined && coordStatus !== 'invalid') {
+        if (lat !== undefined && lon !== undefined && coordStatus !== 'invalid' && lat !== 0 && lon !== 0) {
             coordStatus = 'confirmed';
         }
 
