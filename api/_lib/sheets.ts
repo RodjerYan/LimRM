@@ -491,13 +491,19 @@ export async function getAddressFromCache(rmName: string, address: string): Prom
         const lat = (!isInvalid && latStr && latStr.toLowerCase() !== 'lat') ? parseFloat(latStr.replace(',', '.')) : undefined;
         const lon = (!isInvalid && lonStr && lonStr.toLowerCase() !== 'lon') ? parseFloat(lonStr.replace(',', '.')) : undefined;
 
+        // CRITICAL FIX: If coordinates exist, imply 'confirmed' status even if cell says 'pending'
+        let coordStatus = String(foundRow[5] || '').trim();
+        if (lat !== undefined && lon !== undefined && coordStatus !== 'invalid') {
+            coordStatus = 'confirmed';
+        }
+
         return {
             address: String(foundRow[0]),
             lat,
             lon,
             history: foundRow[3], 
             comment: foundRow[4], 
-            coordStatus: foundRow[5], // Read status
+            coordStatus, // Returned implied confirmed status
             isInvalid
         };
     }
