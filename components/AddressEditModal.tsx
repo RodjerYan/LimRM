@@ -87,7 +87,6 @@ const SinglePointMap: React.FC<{
     
     // Cleanup Refs
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const mapResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -107,17 +106,28 @@ const SinglePointMap: React.FC<{
 
         mapRef.current = map;
         L.control.zoom({ position: 'topleft' }).addTo(map);
-        tileLayerRef.current = L.tileLayer(darkUrl, { attribution: '&copy; CARTO' }).addTo(map);
+        tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
+
+        // Force invalidation to ensure map renders correctly in modal
+        setTimeout(() => map.invalidateSize(), 100);
+        setTimeout(() => map.invalidateSize(), 500);
+
+        // ResizeObserver for robust responsiveness
+        const resizeObserver = new ResizeObserver(() => {
+            map.invalidateSize();
+        });
+        resizeObserver.observe(mapContainerRef.current);
 
         return () => {
+            resizeObserver.disconnect();
             map.remove();
             mapRef.current = null;
             markerRef.current = null;
             tileLayerRef.current = null;
         };
-    }, []);
+    }, []); // Run once on mount
 
-    // 2. Handle Theme
+    // 2. Handle Theme Updates
     useEffect(() => {
         if (!tileLayerRef.current) return;
         tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
@@ -153,21 +163,23 @@ const SinglePointMap: React.FC<{
             const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
             
-            map.setView(latLng, isExpanded ? 17 : 14);
+            // Set view only if significant movement or first load
+            const currentCenter = map.getCenter();
+            const dist = currentCenter.distanceTo(latLng);
+            if (dist > 100) {
+                map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
+            }
         } else {
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
+            // Default view if no coords
+            map.setView([55.75, 37.61], 5);
         }
         
-        if (mapResizeTimeoutRef.current) clearTimeout(mapResizeTimeoutRef.current);
-        mapResizeTimeoutRef.current = setTimeout(() => map.invalidateSize(), 200);
-
-        return () => {
-            if (mapResizeTimeoutRef.current) clearTimeout(mapResizeTimeoutRef.current);
-        };
-    }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]); 
+        map.invalidateSize();
+    }, [lat, lon, isSuccess, isExpanded, address]); // Removed onCoordinatesChange from dep array to avoid loops
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
@@ -388,12 +400,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         if (data) {
                             const originalRow = getSafeOriginalRow(data);
                             const originalIndex = (data as UnidentifiedRow).originalIndex;
-                            // PRESERVE OLD KEY if available to ensure App.tsx finds and replaces it correctly
                             const oldKey = (data as MapPoint).key || normalizeAddress(pollingTarget.address);
                             const rm = getRmName(data);
                             
                             const newPoint: MapPoint = {
-                                key: oldKey, // Keep the same key so map updates correctly in place
+                                key: oldKey, 
                                 lat: result.lat,
                                 lon: result.lon,
                                 status: 'match',
@@ -470,7 +481,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const originalIndex = (data as UnidentifiedRow).originalIndex;
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const currentComment = (data as MapPoint).comment || '';
-        // CRITICAL: Use existing key if available to ensure stable identity for map updates
         const oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
 
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
@@ -490,7 +500,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         setStatus('saving'); setError(null);
 
-        // Helper for fetch with timeout
         const fetchWithTimeout = async (url: string, options: RequestInit, timeout = 15000) => {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeout);
@@ -559,7 +568,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const parsed = parseRussianAddress(editedAddress, distributor);
 
             const tempNewPoint: MapPoint = {
-                key: oldKey, // KEEP OLD KEY so App.tsx can find and replace the existing item
+                key: oldKey, 
                 lat: currentLat, lon: currentLon, status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
@@ -578,11 +587,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             console.error("Save Error:", e);
             const isTimeout = e.name === 'AbortError';
             if (isTimeout) {
-                // If timed out, still try to update UI optimistically as backend might have succeeded
                 setStatus('success'); 
                 addNotification('Сохранение заняло много времени, но данные обновлены локально.', 'warning');
                 
-                // Fallback update same as success block
                 if (manualCoords) {
                      const tempNewPoint = {
                         ...(data as MapPoint),
@@ -600,7 +607,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         }
     };
 
-    // Helper for notification (mocking App.tsx function)
     const addNotification = (msg: string, type: string) => console.log(`[${type}] ${msg}`);
 
     const handleDelete = async () => {
@@ -652,6 +658,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     if (isCoordsChanged) saveButtonText = "Сохранить новые координаты";
     if (isAddressChanged && isCoordsChanged) saveButtonText = "Сохранить адрес и координаты";
     if (isCommentChanged && !isAddressChanged && !isCoordsChanged) saveButtonText = "Сохранить комментарий";
+
+    // Stable callback for map updates
+    const handleCoordinatesChange = useCallback((lat: number, lon: number) => {
+        setManualCoords({ lat, lon });
+    }, []);
 
     const customFooter = (
         <div className="flex justify-between items-center p-4 bg-gray-900/80 rounded-b-2xl border-t border-gray-700 flex-shrink-0 backdrop-blur-md">
@@ -707,7 +718,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                          <SinglePointMap 
                             lat={displayLat} lon={displayLon} address={editedAddress} 
                             isSuccess={isMapSuccess}
-                            onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
+                            onCoordinatesChange={handleCoordinatesChange}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onExpand={() => setIsMapExpanded(true)} isExpanded={false}
                          />
@@ -809,7 +820,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         <SinglePointMap 
                             lat={displayLat} lon={displayLon} address={editedAddress} 
                             isSuccess={isMapSuccess}
-                            onCoordinatesChange={(lat, lon) => setManualCoords({ lat, lon })}
+                            onCoordinatesChange={handleCoordinatesChange}
                             theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
                             onCollapse={() => setIsMapExpanded(false)} isExpanded={true}
                         />

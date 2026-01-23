@@ -63,6 +63,11 @@ const App: React.FC = () => {
     const manualUpdateTimestamps = useRef<Map<string, number>>(new Map());
     const workerRef = useRef<Worker | null>(null);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const isSavingRef = useRef(false); // Lock for save operation
+    
+    // SMART SAVE: Cache for the content of the last saved/loaded chunks
+    // Key: Chunk Index, Value: Stringified JSON content
+    const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
 
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
@@ -249,25 +254,41 @@ const App: React.FC = () => {
         return result;
     }, []);
 
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ) ---
+    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
+        if (isSavingRef.current) {
+            console.warn("Save already in progress, skipping.");
+            return;
+        }
+        isSavingRef.current = true;
+
         try {
-            console.log('Начало сохранения в облако...', currentData.length);
+            console.log('Начало умного сохранения...');
             
+            // 1. Get file slots first
+            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            let availableSlots: { id: string, name: string }[] = [];
+            if (listRes.ok) {
+                availableSlots = await listRes.json();
+            }
+
             const newVersionHash = `edit_${Date.now()}`;
-            const chunks: string[] = [];
+            const encoder = new TextEncoder();
+            const getByteSize = (str: string) => encoder.encode(str).length;
             
+            // 2. Generate chunks locally
+            const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
                 versionHash: newVersionHash,
                 rows: [],
             };
             
-            let currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
+            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
             
             for (const row of currentData) {
                 const rowStr = JSON.stringify(row);
-                const rowSize = new Blob([rowStr]).size + 2; 
+                const rowSize = getByteSize(rowStr) + 2; 
                 
                 if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
                     chunks.push(JSON.stringify(currentChunkObj)); 
@@ -276,24 +297,66 @@ const App: React.FC = () => {
                         versionHash: newVersionHash,
                         rows: []
                     };
-                    currentSize = new Blob([JSON.stringify(currentChunkObj)]).size;
+                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
                 }
                 currentChunkObj.rows.push(row);
                 currentSize += rowSize;
             }
             chunks.push(JSON.stringify(currentChunkObj));
             
-            const totalChunks = chunks.length;
+            // 3. Diffing Strategy: Identify ONLY changed chunks
+            const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
+            
+            chunks.forEach((chunkContent, idx) => {
+                const prevContent = lastSavedChunksRef.current.get(idx);
+                // Simple string comparison is very fast
+                if (prevContent !== chunkContent) {
+                    const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
+                    if (targetFileId) {
+                        chunksToUpload.push({ 
+                            index: idx, 
+                            content: chunkContent, 
+                            targetFileId 
+                        });
+                    } else {
+                        // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
+                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
+                    }
+                }
+            });
 
-            for (let i = 0; i < totalChunks; i++) {
-                const res = await fetch(`/api/get-full-cache?action=save-chunk&chunkIndex=${i}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chunk: chunks[i] }) 
-                });
-                if (!res.ok) throw new Error(`Upload failed for chunk ${i}`);
+            if (chunksToUpload.length === 0) {
+                console.log("No data chunks changed. Skipping large upload.");
+            } else {
+                console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
+                
+                // Concurrency Control
+                const CONCURRENCY = 4;
+                for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
+                    const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
+                        const queryParams = item.targetFileId 
+                            ? `action=save-chunk&targetFileId=${item.targetFileId}` 
+                            : `action=save-chunk&chunkIndex=${item.index}`;
+
+                        return fetch(`/api/get-full-cache?${queryParams}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ chunk: item.content }) 
+                        }).then(async res => {
+                            if (!res.ok) {
+                                const txt = await res.text();
+                                throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
+                            }
+                            // Update cache ONLY on success
+                            lastSavedChunksRef.current.set(item.index, item.content);
+                        });
+                    });
+                    
+                    await Promise.all(batch);
+                }
             }
             
+            // 4. Always save Meta to update timestamp/versionHash
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -302,16 +365,18 @@ const App: React.FC = () => {
                     okbRegionCounts: okbRegionCounts,
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: newVersionHash,
-                    chunkCount: totalChunks,
+                    chunkCount: chunks.length,
                     totalRows: totalRowsProcessedRef.current,
                     timestamp: Date.now()
                 })
             });
             
-            addNotification('Автосохранение завершено', 'success');
+            addNotification('Изменения сохранены', 'success');
         } catch (e) {
             console.error("Cloud Save Error:", e);
             addNotification('Ошибка сохранения в облако', 'warning');
+        } finally {
+            isSavingRef.current = false;
         }
     };
 
@@ -338,11 +403,20 @@ const App: React.FC = () => {
             const total = fileList.length;
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = null;
+            
+            // Clear cache before fresh load
+            lastSavedChunksRef.current.clear();
 
-            for (const file of fileList) {
+            // Load files sequentially or in small parallel batches
+            for (let i = 0; i < total; i++) {
+                const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 const text = await res.text();
+
+                // CACHE POPULATION: Store the exact text we received
+                // This assumes files are returned in chunk index order (0, 1, 2...)
+                lastSavedChunksRef.current.set(i, text);
 
                 if (text.length >= 1048576) {
                     addNotification('Снимок поврежден (лимит размера)', 'warning');

@@ -90,11 +90,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             
             // Snapshot Operations
             if (action === 'save-chunk') {
-                const sortedFiles = await getSortedFiles(drive);
-                if (sortedFiles[chunkIndex + 1]) {
+                let targetFileId = req.query.targetFileId as string;
+
+                // Fallback to legacy index-based search if ID not provided
+                if (!targetFileId) {
+                    const sortedFiles = await getSortedFiles(drive);
+                    // sortedFiles[0] is meta, so index + 1
+                    if (sortedFiles[chunkIndex + 1]) {
+                        targetFileId = sortedFiles[chunkIndex + 1].id;
+                    }
+                }
+
+                if (targetFileId) {
                     const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
                     await drive.files.update({ 
-                        fileId: sortedFiles[chunkIndex + 1].id, 
+                        fileId: targetFileId, 
                         media: { mimeType: 'application/json', body: content }, 
                         supportsAllDrives: true 
                     });
