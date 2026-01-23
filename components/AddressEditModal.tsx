@@ -54,6 +54,17 @@ const getSafeOriginalRow = (data: EditableData | null): any => {
     return (rawRow && typeof rawRow === 'object') ? rawRow : {};
 };
 
+// --- Helper to reliably get RM Name ---
+const getRmName = (data: EditableData | null): string => {
+    if (!data) return '';
+    // 1. Priority: Existing processed RM property
+    if ('rm' in data && data.rm) return data.rm;
+    
+    // 2. Fallback: Try to find in original row with multiple keywords
+    const row = getSafeOriginalRow(data);
+    return findValueInRow(row, ['рм', 'региональный менеджер', 'менеджер', 'manager', 'ответственный']) || '';
+};
+
 // --- Subcomponent: SinglePointMap ---
 const SinglePointMap: React.FC<{ 
     lat?: number; 
@@ -324,6 +335,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setPollingTarget(null);
             attemptsRef.current = 0;
 
+            const rm = getRmName(data);
+
             // 3. Set Status (Initial)
             const pt = data as MapPoint;
             if (pt.geocodingError) {
@@ -333,9 +346,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 setStatus('geocoding');
                 setError(null);
                 // Resume polling if it was geocoding
-                const rm = findValueInRow(originalRow, ['рм']);
                 if (rm && currentAddress) {
-                    setPollingTarget({ rm: rm || 'Unknown_RM', address: currentAddress });
+                    setPollingTarget({ rm, address: currentAddress });
                 }
             } else {
                 setStatus('idle');
@@ -349,7 +361,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             }
 
             // 4. Fetch History
-            const rm = findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
             if (rm && currentAddress) {
                 const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
                 if (!isRecent) {
@@ -409,7 +420,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                             const originalRow = getSafeOriginalRow(data);
                             const originalIndex = (data as UnidentifiedRow).originalIndex;
                             const oldKey = (data as MapPoint).key || normalizeAddress(pollingTarget.address);
-                            const rm = findValueInRow(originalRow, ['рм']);
+                            const rm = getRmName(data);
                             
                             const newPoint: MapPoint = {
                                 key: normalizeAddress(pollingTarget.address),
@@ -503,10 +514,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             setStatus('error_saving'); setError('Нет изменений для сохранения.'); return;
         }
 
-        setStatus('saving'); setError(null);
+        const rm = getRmName(data);
+        if (!rm) {
+            setStatus('error_saving'); 
+            setError('Не удалось определить имя РМ. Проверьте исходные данные.'); 
+            return;
+        }
 
-        // FIX: Ensure RM is never empty/undefined to prevent 500 errors
-        const rm = findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
+        setStatus('saving'); setError(null);
 
         try {
             // 1. API Call: Update Address/Comment
@@ -549,7 +564,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const isGeocodingState = isAddressChanged && !manualCoords;
             
             if (isGeocodingState) {
-                // START POLLING - Triggers the useEffect above
                 setPollingTarget({ rm, address: editedAddress });
             } else {
                 if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
@@ -589,7 +603,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         if (!data) return;
         const originalRow = getSafeOriginalRow(data);
         const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
-        const rm = findValueInRow(originalRow, ['рм']) || 'Unknown_RM';
+        const rm = getRmName(data);
+        
+        if (!rm) {
+            setStatus('error_deleting'); 
+            setError('Не удалось определить имя РМ. Удаление невозможно.'); 
+            return;
+        }
+
         setStatus('deleting'); setError(null);
         try {
             const res = await fetch('/api/delete-address', {
