@@ -1,7 +1,9 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 import { Buffer } from 'buffer';
+import { parseCookies } from 'nookies'; // ВАЖНО: npm install nookies
+
+// Импорты ваших библиотек оставляем как есть
 import { 
     getFullCoordsCache, 
     getAddressFromCache, 
@@ -13,12 +15,14 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-// FIXED: Correct Folder ID from the URL provided by user
-const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
+// Настройка клиента OAuth (берем из переменных окружения Vercel)
+const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+);
 
-// CRITICAL FIX: Changed scope from 'drive.file' to 'drive' (full access)
-const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
-
+// Помощник для чтения тела запроса
 async function getRawBody(req: VercelRequest): Promise<any> {
     const buffers = [];
     for await (const chunk of req) { buffers.push(chunk); }
@@ -26,45 +30,49 @@ async function getRawBody(req: VercelRequest): Promise<any> {
     try { return JSON.parse(data); } catch (e) { return { chunk: data }; }
 }
 
-async function getDriveClient() {
-    const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY missing');
-    const credentials = JSON.parse(serviceAccountKey);
-    if (credentials.private_key) credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
-    const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
-    return google.drive({ version: 'v3', auth });
+// --- НОВАЯ ЛОГИКА ПАПОК ---
+// Ищет или создает папку "LimRM_Snapshots" на диске пользователя
+async function getAppFolderId(drive: any) {
+    try {
+        const q = "mimeType = 'application/vnd.google-apps.folder' and name = 'LimRM_Snapshots' and trashed = false";
+        const res = await drive.files.list({ q, fields: 'files(id)' });
+        
+        if (res.data.files && res.data.files.length > 0) {
+            return res.data.files[0].id;
+        }
+        
+        // Если папки нет — создаем
+        const newFolder = await drive.files.create({
+            requestBody: {
+                name: 'LimRM_Snapshots',
+                mimeType: 'application/vnd.google-apps.folder'
+            },
+            fields: 'id'
+        });
+        return newFolder.data.id;
+    } catch (e) {
+        console.error("Error finding/creating folder:", e);
+        throw e;
+    }
 }
 
-async function getSortedFiles(drive: any) {
-    // 1. Log Auth Info
-    try {
-        const authInfo = await drive.about.get({ fields: 'user' });
-        console.log(`[AUTH] Bot email: ${authInfo.data.user.emailAddress}`);
-    } catch (e) {
-        console.log("[AUTH] Failed to get bot email");
-    }
-
-    // 2. List ALL files in folder (avoiding 'name contains' filter to bypass index lag)
-    const q = `'${FOLDER_ID}' in parents and trashed = false`;
+async function getSortedFiles(drive: any, folderId: string) {
+    // Ищем файлы ТОЛЬКО в нашей папке
+    const q = `'${folderId}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
         q, 
         fields: "files(id, name, mimeType)", 
-        supportsAllDrives: true, 
-        includeItemsFromAllDrives: true,
         pageSize: 1000 
     });
     
     const allFiles = res.data.files || [];
-    console.log(`[DEBUG] Total objects in folder: ${allFiles.length}`);
-
-    // 3. Filter in memory
+    
+    // Фильтрация
     const filteredFiles = allFiles.filter((f: any) => 
         f.name && f.name.toLowerCase().includes('snapshot') && 
         f.mimeType !== 'application/vnd.google-apps.folder'
     );
-
-    console.log(`[FILTER] Snapshot files found: ${filteredFiles.length}`);
 
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
@@ -73,29 +81,42 @@ async function getSortedFiles(drive: any) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    // Return objects with id and name instead of just ID strings
     return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name }));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Cache-Control', 'public, s-maxage=5, stale-while-revalidate=5');
-    const action = req.query.action as string;
-    const chunkIndex = req.query.chunkIndex ? parseInt(req.query.chunkIndex as string, 10) : -1;
+    
+    // --- 1. ПРОВЕРКА АВТОРИЗАЦИИ ---
+    const cookies = parseCookies({ req });
+    const storedTokens = cookies.google_tokens;
+
+    if (!storedTokens) {
+        // Возвращаем 401, чтобы фронтенд показал окно входа
+        return res.status(401).json({ error: 'Auth required', needLogin: true });
+    }
 
     try {
-        const drive = await getDriveClient();
+        // Восстанавливаем доступ
+        oauth2Client.setCredentials(JSON.parse(storedTokens));
+        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+        // Получаем ID папки пользователя (или создаем новую)
+        const FOLDER_ID = await getAppFolderId(drive);
+
+        const action = req.query.action as string;
+        const chunkIndex = req.query.chunkIndex ? parseInt(req.query.chunkIndex as string, 10) : -1;
 
         if (req.method === 'POST') {
             const body = await getRawBody(req);
             
-            // Snapshot Operations
+            // --- SAVE CHUNK ---
             if (action === 'save-chunk') {
                 let targetFileId = req.query.targetFileId as string;
-
-                // Fallback to legacy index-based search if ID not provided
+                
+                // Fallback: ищем файл по индексу, если ID не передан
                 if (!targetFileId && chunkIndex !== -1) {
-                    const sortedFiles = await getSortedFiles(drive);
-                    // sortedFiles[0] is meta, so index + 1
+                    const sortedFiles = await getSortedFiles(drive, FOLDER_ID);
                     if (sortedFiles[chunkIndex + 1]) {
                         targetFileId = sortedFiles[chunkIndex + 1].id;
                     }
@@ -104,47 +125,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
 
                 if (targetFileId) {
-                    // Update existing
+                    // Обновление
                     await drive.files.update({ 
                         fileId: targetFileId, 
-                        media: { mimeType: 'application/json', body: content }, 
-                        supportsAllDrives: true 
+                        media: { mimeType: 'application/json', body: content }
                     });
                     return res.status(200).json({ status: 'saved' });
                 } else if (chunkIndex !== -1) {
-                    // Create new chunk file
+                    // Создание нового
                     const newFileName = `snapshot_chunk_${chunkIndex}.json`;
                     await drive.files.create({ 
                         requestBody: { name: newFileName, parents: [FOLDER_ID] }, 
-                        media: { mimeType: 'application/json', body: content }, 
-                        supportsAllDrives: true 
+                        media: { mimeType: 'application/json', body: content }
                     });
                     return res.status(200).json({ status: 'created', fileName: newFileName });
                 }
                 
-                return res.status(400).json({ error: 'Missing targetFileId or chunkIndex for creation.' });
-            }
-            if (action === 'save-meta') {
-                const sortedFiles = await getSortedFiles(drive);
-                if (sortedFiles[0]) {
-                    await drive.files.update({ 
-                        fileId: sortedFiles[0].id, 
-                        media: { mimeType: 'application/json', body: JSON.stringify(body) }, 
-                        supportsAllDrives: true 
-                    });
-                    return res.status(200).json({ status: 'meta_saved' });
-                }
-                return res.status(404).json({ error: 'Meta file slot not found.' });
+                return res.status(400).json({ error: 'Missing targetFileId or chunkIndex.' });
             }
 
-            // Legacy Cache Operations
-            if (action === 'add-to-cache') { const { rmName, rows } = body; await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); return res.json({success:true}); }
+            // --- SAVE META ---
+            if (action === 'save-meta') {
+                const sortedFiles = await getSortedFiles(drive, FOLDER_ID);
+                
+                // Если мета-файл есть (он всегда первый при сортировке)
+                if (sortedFiles[0] && (sortedFiles[0].name.includes('snapshot.json') || sortedFiles[0].name.includes('meta'))) {
+                    await drive.files.update({ 
+                        fileId: sortedFiles[0].id, 
+                        media: { mimeType: 'application/json', body: JSON.stringify(body) }
+                    });
+                    return res.status(200).json({ status: 'meta_saved' });
+                } else {
+                    // Создаем мета-файл, если его нет
+                    await drive.files.create({
+                        requestBody: { name: 'snapshot.json', parents: [FOLDER_ID] },
+                        media: { mimeType: 'application/json', body: JSON.stringify(body) }
+                    });
+                    return res.status(200).json({ status: 'meta_created' });
+                }
+            }
+
+            // Legacy Cache Operations (для обратной совместимости)
+            if (action === 'add-to-cache') { 
+                const { rmName, rows } = body; 
+                await appendToCache(rmName, rows.map((r: any) => [r.address, r.lat||'', r.lon||''])); 
+                return res.json({success:true}); 
+            }
             
             if (action === 'update-address') { 
-                if (!body.rmName) {
-                    return res.status(400).json({ error: 'RM Name is missing' });
-                }
-                // Enhanced update: returns the actual written state
+                if (!body.rmName) return res.status(400).json({ error: 'RM Name is missing' });
                 const result = await updateAddressInCache(body.rmName, body.oldAddress, body.newAddress, body.comment, body.lat, body.lon); 
                 return res.json(result); 
             }
@@ -154,18 +183,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'GET') {
-            // Snapshot Operations
+            // --- GET META ---
             if (action === 'get-snapshot-meta') {
-                const sortedFiles = await getSortedFiles(drive);
+                const sortedFiles = await getSortedFiles(drive, FOLDER_ID);
                 if (sortedFiles.length === 0) return res.json({ versionHash: 'none' });
-                if (sortedFiles[0].id === FOLDER_ID) return res.json({ versionHash: 'none', error: 'Misconfiguration' });
                 
                 try {
-                    console.log(`[get-snapshot-meta] Downloading meta ID: ${sortedFiles[0].id}`);
-                    const response = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                    const response = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media' }, { responseType: 'arraybuffer' });
                     const content = JSON.parse(Buffer.from(response.data as any).toString('utf-8'));
                     
-                    // Auto-correct chunkCount
                     const actualChunksFound = Math.max(0, sortedFiles.length - 1);
                     content.chunkCount = actualChunksFound;
                     
@@ -175,28 +201,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     return res.json({ versionHash: 'none', error: e.message });
                 }
             }
-            if (action === 'get-snapshot-list') {
-                const sortedFiles = await getSortedFiles(drive);
-                if (sortedFiles.length === 0) return res.json([]);
 
-                try {
-                    const metaRes = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                    const meta = JSON.parse(Buffer.from(metaRes.data as any).toString('utf-8'));
-                    const activeChunkCount = meta.chunkCount || (sortedFiles.length - 1);
-                    
-                    // Get specifically required chunks
-                    const chunkFiles = sortedFiles.slice(1, activeChunkCount + 1);
-                    // Now returning full objects with {id, name} so frontend can sort
-                    return res.json(chunkFiles);
-                } catch (e) {
-                    // Fallback
-                    const chunkFiles = sortedFiles.slice(1);
-                    return res.json(chunkFiles);
-                }
+            // --- GET LIST ---
+            if (action === 'get-snapshot-list') {
+                const sortedFiles = await getSortedFiles(drive, FOLDER_ID);
+                if (sortedFiles.length === 0) return res.json([]);
+                
+                // Возвращаем все файлы кроме первого (мета-файла)
+                // Или если мета-файла нет, возвращаем как есть
+                const chunkFiles = sortedFiles.slice(1);
+                return res.json(chunkFiles);
             }
+
+            // --- GET CONTENT ---
             if (action === 'get-file-content') {
                 const fileId = String(req.query.fileId);
-                const file = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
+                const file = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
                 file.data.pipe(res);
                 return;
             }
@@ -212,9 +232,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         
         return res.status(400).json({ error: 'Invalid action' });
+
     } catch (error: any) {
         console.error("API Error:", error);
-        if (action === 'get-snapshot-meta') return res.status(200).json({ versionHash: 'none' });
+        
+        // Если ошибка аутентификации (токен протух)
+        if (error.code === 401 || error.message?.includes('invalid_grant')) {
+             return res.status(401).json({ error: 'Auth expired', needLogin: true });
+        }
+
+        if (req.query.action === 'get-snapshot-meta') return res.status(200).json({ versionHash: 'none' });
         return res.status(500).json({ error: error.message, details: error.stack });
     }
 }
