@@ -272,7 +272,6 @@ const App: React.FC = () => {
                 availableSlots = await listRes.json();
             }
 
-            const newVersionHash = `edit_${Date.now()}`;
             const encoder = new TextEncoder();
             const getByteSize = (str: string) => encoder.encode(str).length;
             
@@ -280,7 +279,8 @@ const App: React.FC = () => {
             const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
-                versionHash: newVersionHash,
+                // CRITICAL FIX: Removed volatile 'versionHash' from individual chunks to allow meaningful diffing.
+                // The main version is tracked in the Meta file.
                 rows: [],
             };
             
@@ -294,7 +294,6 @@ const App: React.FC = () => {
                     chunks.push(JSON.stringify(currentChunkObj)); 
                     currentChunkObj = {
                         chunkIndex: chunks.length,
-                        versionHash: newVersionHash,
                         rows: []
                     };
                     currentSize = getByteSize(JSON.stringify(currentChunkObj));
@@ -309,19 +308,18 @@ const App: React.FC = () => {
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                // Simple string comparison is very fast
+                // String comparison now works because 'versionHash' is gone
                 if (prevContent !== chunkContent) {
+                    // Map to existing file ID if available (by index)
+                    // The backend list is sorted, so index 0 = file 1, index 1 = file 2...
+                    // NOTE: backend `get-snapshot-list` returns chunk files in order.
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    if (targetFileId) {
-                        chunksToUpload.push({ 
-                            index: idx, 
-                            content: chunkContent, 
-                            targetFileId 
-                        });
-                    } else {
-                        // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
-                    }
+                    
+                    chunksToUpload.push({ 
+                        index: idx, 
+                        content: chunkContent, 
+                        targetFileId 
+                    });
                 }
             });
 
@@ -336,7 +334,7 @@ const App: React.FC = () => {
                     const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
                         const queryParams = item.targetFileId 
                             ? `action=save-chunk&targetFileId=${item.targetFileId}` 
-                            : `action=save-chunk&chunkIndex=${item.index}`;
+                            : `action=save-chunk&chunkIndex=${item.index}`; // Fallback for creation
 
                         return fetch(`/api/get-full-cache?${queryParams}`, {
                             method: 'POST',
@@ -357,6 +355,8 @@ const App: React.FC = () => {
             }
             
             // 4. Always save Meta to update timestamp/versionHash
+            // This is fast and tells other clients about the update
+            const newVersionHash = `edit_${Date.now()}`;
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -407,29 +407,31 @@ const App: React.FC = () => {
             // Clear cache before fresh load
             lastSavedChunksRef.current.clear();
 
-            // Load files sequentially or in small parallel batches
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
                 const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 const text = await res.text();
 
-                // CACHE POPULATION: Store the exact text we received
-                // This assumes files are returned in chunk index order (0, 1, 2...)
-                lastSavedChunksRef.current.set(i, text);
+                // CACHE POPULATION & NORMALIZATION
+                try {
+                    const parsed = JSON.parse(text);
+                    // We must strip 'versionHash' from loaded chunks if present to align with local save format.
+                    // This ensures the FIRST save after load isn't a full upload.
+                    if (parsed.versionHash) delete parsed.versionHash;
+                    
+                    // Store the normalized (stripped) version in cache
+                    lastSavedChunksRef.current.set(i, JSON.stringify(parsed));
+                    
+                    let newRows: any[] = Array.isArray(parsed.rows) ? parsed.rows : (Array.isArray(parsed.aggregatedData) ? parsed.aggregatedData : []);
+                    if (newRows.length > 0) {
+                        accumulatedRows.push(...normalize(newRows));
+                    }
+                    if (parsed.meta) loadedMeta = parsed.meta;
 
-                if (text.length >= 1048576) {
-                    addNotification('Снимок поврежден (лимит размера)', 'warning');
-                    return false;
+                } catch (e) {
+                    console.warn("Error parsing loaded chunk, skipping normalization", e);
                 }
-                
-                const chunkData = JSON.parse(text);
-                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                
-                if (newRows.length > 0) {
-                    accumulatedRows.push(...normalize(newRows));
-                }
-                if (chunkData.meta) loadedMeta = chunkData.meta;
                 
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));

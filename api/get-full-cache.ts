@@ -93,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 let targetFileId = req.query.targetFileId as string;
 
                 // Fallback to legacy index-based search if ID not provided
-                if (!targetFileId) {
+                if (!targetFileId && chunkIndex !== -1) {
                     const sortedFiles = await getSortedFiles(drive);
                     // sortedFiles[0] is meta, so index + 1
                     if (sortedFiles[chunkIndex + 1]) {
@@ -101,16 +101,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     }
                 }
 
+                const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
+
                 if (targetFileId) {
-                    const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
+                    // Update existing
                     await drive.files.update({ 
                         fileId: targetFileId, 
                         media: { mimeType: 'application/json', body: content }, 
                         supportsAllDrives: true 
                     });
                     return res.status(200).json({ status: 'saved' });
+                } else if (chunkIndex !== -1) {
+                    // Create new chunk file
+                    const newFileName = `snapshot_chunk_${chunkIndex}.json`;
+                    await drive.files.create({ 
+                        requestBody: { name: newFileName, parents: [FOLDER_ID] }, 
+                        media: { mimeType: 'application/json', body: content }, 
+                        supportsAllDrives: true 
+                    });
+                    return res.status(200).json({ status: 'created', fileName: newFileName });
                 }
-                return res.status(404).json({ error: 'Chunk file slot not found.' });
+                
+                return res.status(400).json({ error: 'Missing targetFileId or chunkIndex for creation.' });
             }
             if (action === 'save-meta') {
                 const sortedFiles = await getSortedFiles(drive);
