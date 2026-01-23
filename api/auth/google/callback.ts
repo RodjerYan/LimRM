@@ -1,6 +1,8 @@
 import { google } from 'googleapis';
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { setCookie } from 'nookies';
+
+// Убрали nookies
+// import { setCookie } from 'nookies';
 
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -18,13 +20,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { tokens } = await oauth2Client.getToken(code);
     
-    // Сохраняем токены в безопасную Cookie
-    setCookie({ res }, 'google_tokens', JSON.stringify(tokens), {
-      maxAge: 30 * 24 * 60 * 60, // 30 дней
-      path: '/',
-      httpOnly: true, // Скрипты на фронте не смогут прочитать это (безопасность)
-      secure: process.env.NODE_ENV === 'production',
-    });
+    // Ручная установка куки (Native Node.js approach)
+    // Кодируем JSON, чтобы спецсимволы не сломали заголовок
+    const cookieVal = encodeURIComponent(JSON.stringify(tokens));
+    const maxAge = 30 * 24 * 60 * 60; // 30 дней
+    const isProd = process.env.NODE_ENV === 'production';
+    
+    // Формируем заголовок Set-Cookie вручную
+    res.setHeader('Set-Cookie', `google_tokens=${cookieVal}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${isProd ? '; Secure' : ''}`);
 
     // Возвращаем пользователя на главную страницу
     res.redirect('/'); 
