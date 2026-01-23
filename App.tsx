@@ -33,6 +33,17 @@ const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 // Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
 
+// --- Helper for Deterministic Serialization ---
+// Recursively sorts object keys to ensure JSON.stringify produces identical strings for identical data
+const sortKeys = (obj: any): any => {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(sortKeys);
+    return Object.keys(obj).sort().reduce((res: any, key) => {
+        res[key] = sortKeys(obj[key]);
+        return res;
+    }, {});
+};
+
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
@@ -276,40 +287,47 @@ const App: React.FC = () => {
             const encoder = new TextEncoder();
             const getByteSize = (str: string) => encoder.encode(str).length;
             
-            // 2. Generate chunks locally
+            // 2. Generate chunks locally with DETERMINISTIC SERIALIZATION
             const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
-                versionHash: newVersionHash,
                 rows: [],
             };
             
-            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
+            // Initialize size with the empty container (keys sorted)
+            let currentSize = getByteSize(JSON.stringify(sortKeys(currentChunkObj)));
             
             for (const row of currentData) {
-                const rowStr = JSON.stringify(row);
-                const rowSize = getByteSize(rowStr) + 2; 
+                // Determine stable string for the row by sorting keys
+                const sortedRow = sortKeys(row);
+                const rowStr = JSON.stringify(sortedRow);
+                const rowSize = getByteSize(rowStr) + 2; // +2 for comma overhead approx
                 
                 if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
+                    // Finalize current chunk: sort its keys to ensure stability
+                    chunks.push(JSON.stringify(sortKeys(currentChunkObj))); 
+                    
                     currentChunkObj = {
                         chunkIndex: chunks.length,
-                        versionHash: newVersionHash,
                         rows: []
                     };
-                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
+                    currentSize = getByteSize(JSON.stringify(sortKeys(currentChunkObj)));
                 }
-                currentChunkObj.rows.push(row);
+                currentChunkObj.rows.push(sortedRow);
                 currentSize += rowSize;
             }
-            chunks.push(JSON.stringify(currentChunkObj));
+            
+            // Push the last partial chunk if it has data or if chunks is empty
+            if (currentChunkObj.rows.length > 0 || chunks.length === 0) {
+                chunks.push(JSON.stringify(sortKeys(currentChunkObj)));
+            }
             
             // 3. Diffing Strategy: Identify ONLY changed chunks
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
-                // Simple string comparison is very fast
+                // Simple string comparison is now SAFE because of sortKeys
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     if (targetFileId) {
@@ -319,7 +337,7 @@ const App: React.FC = () => {
                             targetFileId 
                         });
                     } else {
-                        // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
+                        // New chunk needed
                         chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
                     }
                 }
@@ -414,16 +432,17 @@ const App: React.FC = () => {
                 if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
                 const text = await res.text();
 
-                // CACHE POPULATION: Store the exact text we received
-                // This assumes files are returned in chunk index order (0, 1, 2...)
-                lastSavedChunksRef.current.set(i, text);
-
                 if (text.length >= 1048576) {
                     addNotification('Снимок поврежден (лимит размера)', 'warning');
                     return false;
                 }
                 
                 const chunkData = JSON.parse(text);
+                
+                // CACHE POPULATION: Use the REAL chunkIndex from the file content, or fallback to 'i'
+                const chunkIndex = typeof chunkData.chunkIndex === 'number' ? chunkData.chunkIndex : i;
+                lastSavedChunksRef.current.set(chunkIndex, text);
+
                 let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
                 if (newRows.length > 0) {
