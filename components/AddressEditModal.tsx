@@ -111,6 +111,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
         pollIntervalRef.current = setInterval(async () => {
             attempts++;
             try {
+                // Ensure RM is properly encoded, avoiding empty string if possible
                 const rmParam = encodeURIComponent(rm || 'Unknown_RM');
                 const addrParam = encodeURIComponent(address);
                 const res = await fetch(`/api/get-cached-address?rmName=${rmParam}&address=${addrParam}&t=${Date.now()}`);
@@ -118,6 +119,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({
                 if (res.ok) {
                     const result = await res.json();
                     
+                    // CRITICAL FIX: Strict coord validation. 
+                    // Accept if we have valid numbers. The explicit 'confirmed' status check is removed
+                    // because the external geocoder might not update the status column.
                     const hasValidCoords = typeof result.lat === 'number' && typeof result.lon === 'number';
 
                     if (hasValidCoords) {
