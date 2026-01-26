@@ -425,7 +425,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 <div className="flex items-center gap-4">
                     {/* GLOBAL EXPORT BUTTON */}
                     <button 
-                        onClick={handleGlobalExport}
+                        onClick={handleGlobalExportUncovered}
                         disabled={!okbData || okbData.length === 0}
                         className="flex items-center gap-2 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-bold rounded-xl border border-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full"
                         title="Скачать полный список непокрытых точек по всей компании"
