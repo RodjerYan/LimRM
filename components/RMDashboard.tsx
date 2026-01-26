@@ -512,22 +512,54 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                 <td className="px-4 py-3 text-center flex justify-center gap-2">
                                                     <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-700 rounded text-indigo-400 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
-                                                        const activeClients = data.filter(d => d.rm === rm.rmName && d.region === reg.name).flatMap(d => d.clients); 
+                                                        const normRm = normalizeRmNameForMatching(rm.rmName);
+                                                        const activeClients = data.filter(d => 
+                                                            normalizeRmNameForMatching(d.rm) === normRm && 
+                                                            d.region === reg.name
+                                                        ).flatMap(d => d.clients); 
                                                         
-                                                        // IMPROVED FILTER OKB DATA TO FIND POTENTIAL CLIENTS
-                                                        // Loose matching to handle city vs region name mismatches (e.g. "St. Petersburg" city vs region)
-                                                        const targetRegionLower = reg.name.toLowerCase().replace(/(г\.|город|область|край|республика)/g, '').trim();
+                                                        const cleanRegionName = (str: string) => str.toLowerCase()
+                                                            .replace(/\b(область|обл|край|республика|респ|автономный округ|ао|г|город)\.?\b/gi, '')
+                                                            .replace(/[.,()]/g, ' ')
+                                                            .replace(/\s+/g, ' ')
+                                                            .trim();
+
+                                                        const targetRegionClean = cleanRegionName(reg.name);
                                                         
+                                                        // 1. Create a Set of Active Coordinates for precise matching
+                                                        const activeCoordSet = new Set<string>();
+                                                        const activeAddressSet = new Set<string>();
+                                                        
+                                                        activeClients.forEach(c => {
+                                                            if (c.lat && c.lon) {
+                                                                // Round to 4 decimal places (~11m precision) to handle micro-differences
+                                                                activeCoordSet.add(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`);
+                                                            }
+                                                            if (c.address) {
+                                                                activeAddressSet.add(normalizeAddress(c.address));
+                                                            }
+                                                        });
+
                                                         const regionOkb = okbData.filter(row => {
-                                                            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область'])?.toLowerCase() || '';
-                                                            const rowCity = findValueInRow(row, ['город', 'населенный пункт'])?.toLowerCase() || '';
-                                                            return rowRegion.includes(targetRegionLower) || rowCity.includes(targetRegionLower);
+                                                            const rowRegionRaw = findValueInRow(row, ['субъект', 'регион', 'область']) || '';
+                                                            const rowCityRaw = findValueInRow(row, ['город', 'населенный пункт']) || '';
+                                                            
+                                                            const rowRegionClean = cleanRegionName(rowRegionRaw);
+                                                            const rowCityClean = cleanRegionName(rowCityRaw);
+
+                                                            return (rowRegionClean && rowRegionClean.includes(targetRegionClean)) || 
+                                                                   (rowCityClean && rowCityClean.includes(targetRegionClean));
                                                         });
                                                         
-                                                        // 2. Exclude Active Clients (Uncovered Potential)
-                                                        const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
-                                                        
+                                                        // 2. Filter Potential Clients: Exclude if Coords match OR Address matches
                                                         const potentialClients: PotentialClient[] = regionOkb.filter(row => {
+                                                            // Check Coordinates First (Primary Key)
+                                                            if (row.lat && row.lon) {
+                                                                const key = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
+                                                                if (activeCoordSet.has(key)) return false; // Already covered
+                                                            }
+
+                                                            // Fallback to Address Matching
                                                             const addr = findAddressInRow(row);
                                                             if (!addr) return false;
                                                             return !activeAddressSet.has(normalizeAddress(addr));
