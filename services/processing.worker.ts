@@ -393,6 +393,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
         
+        // RE-CALCULATE ABC BEFORE CHECKPOINT
+        performIncrementalAbc();
+
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -416,6 +419,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
         
+        // RE-CALCULATE ABC BEFORE PARTIAL UPDATE
+        performIncrementalAbc();
+
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,

@@ -1,5 +1,5 @@
 
-import { AggregatedDataRow } from '../types';
+import { AggregatedDataRow, MapPoint } from '../types';
 
 /**
  * Calculates the mean (average) of an array of numbers.
@@ -52,6 +52,45 @@ export const detectOutliers = (
     });
 
     return outliers.sort((a, b) => b.zScore - a.zScore);
+};
+
+/**
+ * Recalculates ABC Categories for all clients in the dataset.
+ * A: Top 80% of volume
+ * B: Next 15% of volume
+ * C: Bottom 5% of volume
+ */
+export const enrichWithAbcCategories = (data: AggregatedDataRow[]): AggregatedDataRow[] => {
+    // 1. Collect all individual clients from the aggregated rows
+    const allClients: MapPoint[] = [];
+    data.forEach(row => {
+        if (Array.isArray(row.clients)) {
+            allClients.push(...row.clients);
+        }
+    });
+
+    // 2. Sort by Sales Volume (Fact) Descending
+    allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
+
+    // 3. Calculate Total Volume
+    const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+    let runningSum = 0;
+
+    // 4. Assign Categories
+    allClients.forEach(client => {
+        runningSum += (client.fact || 0);
+        const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
+
+        if (pct <= 80) {
+            client.abcCategory = 'A';
+        } else if (pct <= 95) {
+            client.abcCategory = 'B';
+        } else {
+            client.abcCategory = 'C';
+        }
+    });
+
+    return data;
 };
 
 /**

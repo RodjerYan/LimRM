@@ -21,6 +21,7 @@ import {
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
+import { enrichWithAbcCategories } from './utils/analytics';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -436,6 +437,9 @@ const App: React.FC = () => {
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
+                // FORCE RECALCULATION OF ABC CATEGORIES ON LOAD
+                enrichWithAbcCategories(accumulatedRows);
+                
                 setAllData(accumulatedRows);
                 
                 const safeMeta = loadedMeta || {};
@@ -495,6 +499,9 @@ const App: React.FC = () => {
             const local = await loadAnalyticsState();
             if (local?.allData?.length > 0) {
                 const validatedLocal = normalize(local.allData);
+                // FORCE RECALCULATION OF ABC ON INIT
+                enrichWithAbcCategories(validatedLocal);
+                
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
@@ -562,6 +569,9 @@ const App: React.FC = () => {
                 console.warn(`Could not find client with key: ${oldKey} to update.`);
             }
         }
+
+        // RECALCULATE ABC ON UPDATE
+        enrichWithAbcCategories(newData);
 
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
