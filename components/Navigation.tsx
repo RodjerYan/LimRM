@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './components/icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -15,7 +15,6 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
         { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
         { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
         { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
-        // FIX: Added 'presentation' module to navigation
         { id: 'presentation', label: 'Презентация', icon: <AnalyticsIcon small /> },
     ];
 

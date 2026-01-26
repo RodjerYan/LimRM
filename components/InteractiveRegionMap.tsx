@@ -1,10 +1,9 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-// FIX: Added import for ReactDOM to resolve UMD global error.
 import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AggregatedDataRow, OkbDataRow, MapPoint } from '../../types';
+import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
 import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
@@ -258,7 +257,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
         if (!geoJsonData || !geoJsonData.features) return [];
-        return geoJsonData.features.map((f: any) => ({
+        return geoJsonData.features.map((f: any): SearchableLocation => ({
             name: f.properties?.name || 'Unknown',
             type: 'region'
         })).sort((a,b) => a.name.localeCompare(b.name));
@@ -271,7 +270,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         } else { setSearchResults([]); }
     }, [searchTerm, searchableLocations]);
 
-    // FIX: Replaced stubbed-out function with a full implementation that returns the correct L.PathOptions type.
     const getStyleForRegion = useCallback((feature: any): L.PathOptions => {
         const regionName = feature.properties.name;
         const isSelected = selectedRegions.includes(regionName);
@@ -316,7 +314,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         return baseStyle;
     }, [selectedRegions, localTheme, overlayMode]);
     
-    // FIX: Implemented stubbed-out functions for map highlighting and selection logic.
     const resetHighlight = useCallback((e?: L.LeafletEvent) => {
         if (highlightedLayer.current && geoJsonLayer.current) {
             // Type assertion to access resetStyle
@@ -387,9 +384,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            // --- NATIVE LEAFLET EVENT HANDLING FOR POPUP BUTTONS ---
-            // FIX: Changed event type from L.LeafletMouseEvent to generic Event for DOM event handling and corrected target access.
-            const onPopupClick = (e: Event) => {
+            const onPopupClick = (e: MouseEvent) => {
                 const target = e.target as HTMLElement;
                 const button = target.closest('.leaflet-popup-edit-button');
                 if (!button) return;
@@ -408,16 +403,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.on('popupopen', (e) => {
                 const popupNode = e.popup.getElement();
                 if (popupNode) {
-                    // FIX: Corrected event handling for Leaflet DOM events.
-                    L.DomEvent.on(popupNode, 'click', onPopupClick as L.LeafletEventHandlerFn);
+                    L.DomEvent.on(popupNode, 'click', onPopupClick);
                 }
             });
 
             map.on('popupclose', (e) => {
                 const popupNode = e.popup.getElement();
                 if (popupNode) {
-                    // FIX: Corrected event handling for Leaflet DOM events.
-                    L.DomEvent.off(popupNode, 'click', onPopupClick as L.LeafletEventHandlerFn);
+                    L.DomEvent.off(popupNode, 'click', onPopupClick);
                 }
             });
         }
@@ -428,7 +421,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         if (legendContainerRef.current) {
              const rootEl = document.createElement('div');
              legendContainerRef.current.appendChild(rootEl);
-             // FIX: Corrected createRoot call by using the imported ReactDOM.
              const root = ReactDOM.createRoot(rootEl);
              root.render(<MapLegend mode={overlayMode} />);
              return () => { root.unmount(); if(legendContainerRef.current) legendContainerRef.current.innerHTML = ''; };
@@ -509,7 +501,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
              sortedActiveClients.sort((a, b) => {
                  const pA = priority[a.abcCategory || 'C'] || 1;
                  const pB = priority[b.abcCategory || 'C'] || 1;
-                 return pA - pB;
+                 return pB - pA; // Sort descending
              });
         }
 
@@ -549,14 +541,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
-            // FIX: Corrected style property to conform to Leaflet's GeoJSON options.
             geoJsonLayer.current = L.geoJSON(geoJsonData as any, { 
                 style: getStyleForRegion, 
                 onEachFeature: (feature, layer) => { 
                     layer.on({ 
                         click: (e) => { 
                             L.DomEvent.stopPropagation(e); 
-                            mapInstance.current?.fitBounds((e.target as L.Path).getBounds()); 
+                            mapInstance.current?.fitBounds((e.target as L.Polygon).getBounds()); 
                             highlightRegion(layer); 
                         } 
                     }); 
@@ -568,7 +559,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 pane: 'regionsPane' 
             }).addTo(mapInstance.current);
         } else if (geoJsonLayer.current) {
-            // FIX: Corrected setStyle call to conform to Leaflet's API.
             geoJsonLayer.current.setStyle(getStyleForRegion);
         }
     }, [geoJsonData, selectedRegions, localTheme, overlayMode, getStyleForRegion, highlightRegion]);
