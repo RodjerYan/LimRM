@@ -213,6 +213,19 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     );
 };
 
+// React component for the popup button to ensure stable event handling
+const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => void }> = ({ client, onEdit }) => {
+    return (
+        <button
+            onClick={() => onEdit(client)}
+            className="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
+        >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            Редактировать данные
+        </button>
+    );
+};
+
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
@@ -223,6 +236,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
+    const popupRootRef = useRef<any>(null); // To hold the ReactDOM root for unmounting
     
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
@@ -383,20 +397,37 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
+            // --- REFACTORED POPUP LOGIC ---
             map.on('popupopen', (e) => {
                 const popupNode = e.popup.getElement();
-                if (popupNode) {
-                    const editBtn = popupNode.querySelector('.edit-location-btn');
-                    if (editBtn) {
-                        editBtn.addEventListener('click', (event) => {
-                            event.stopPropagation();
-                            const key = editBtn.getAttribute('data-key');
-                            if (key) {
-                                const client = activeClientsDataRef.current.find(c => c.key === key);
-                                if (client) { setIsFullscreen(false); onEditClientRef.current(client); }
-                            }
-                        });
+                if (!popupNode) return;
+
+                const placeholder = popupNode.querySelector('#popup-edit-placeholder');
+                const key = placeholder?.getAttribute('data-key');
+
+                if (placeholder && key) {
+                    const client = activeClientsDataRef.current.find(c => c.key === key);
+                    if (client) {
+                        if (popupRootRef.current) popupRootRef.current.unmount();
+                        
+                        const root = ReactDOM.createRoot(placeholder);
+                        popupRootRef.current = root;
+                        root.render(
+                            <React.StrictMode>
+                                <PopupButton client={client} onEdit={(c) => {
+                                    setIsFullscreen(false);
+                                    onEditClientRef.current(c);
+                                }} />
+                            </React.StrictMode>
+                        );
                     }
+                }
+            });
+
+            map.on('popupclose', () => {
+                if (popupRootRef.current) {
+                    popupRootRef.current.unmount();
+                    popupRootRef.current = null;
                 }
             });
         }
@@ -430,10 +461,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
             ${address}<br><small>${type || 'н/д'}</small>
             ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-            <button class="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2" data-key="${key}">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                Редактировать данные
-            </button>
+            <div id="popup-edit-placeholder" data-key="${key}"></div>
         </div>
     `;
     };
