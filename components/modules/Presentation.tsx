@@ -2,6 +2,15 @@
 import React, { useState } from 'react';
 import { Doughnut, Pie } from 'react-chartjs-2';
 import { TargetIcon, BrainIcon, TrendingUpIcon, UsersIcon, DataIcon, CheckIcon, WarningIcon } from '../icons';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
+
+// Required registration for Chart.js
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 interface Slide {
     id: string;
@@ -407,8 +416,9 @@ const Presentation: React.FC = () => {
                         <h3 className="text-3xl font-black text-white uppercase">Limkorm Group — Производитель №1 в РФ</h3>
                         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-8">
                             {['Одно Мясо', 'AJO', 'Sirius', 'Наш Рацион', 'Happy Lappi'].map((b, i) => (
-                                <div key={i} className="bg-white p-4 rounded-xl flex items-center justify-center h-32 shadow-lg transform hover:scale-105 transition-transform duration-300">
-                                    <span className="text-black font-bold text-lg">{b}</span>
+                                <div key={i} className="bg-white p-4 rounded-xl flex items-center justify-center h-32 shadow-lg transform hover:scale-105 transition-transform duration-300 relative overflow-hidden">
+                                    <div className="absolute inset-0 bg-gradient-to-br from-white to-gray-200"></div>
+                                    <span className="relative z-10 text-black font-bold text-lg">{b}</span>
                                 </div>
                             ))}
                         </div>

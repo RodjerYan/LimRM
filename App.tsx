@@ -4,7 +4,8 @@ import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
 import AgileLearning from './components/modules/AgileLearning';
-import RoiGenome from './components/modules/RoiGenome'; 
+import RoiGenome from './components/modules/RoiGenome';
+import Presentation from './components/modules/Presentation'; 
 import InteractiveRegionMap from './components/InteractiveRegionMap';
 import Filters from './components/Filters';
 import PotentialChart from './components/PotentialChart';
@@ -333,6 +334,11 @@ const App: React.FC = () => {
 
             if (chunksToUpload.length === 0) {
                 console.log("No data chunks changed. Skipping large upload.");
+                // FIXED: Update the cache ref even if no upload needed, to ensure local state is perfectly synced
+                // This handles cases where data was restored from IDB but not yet fully in `lastSavedChunksRef`
+                chunks.forEach((content, idx) => {
+                    lastSavedChunksRef.current.set(idx, content);
+                });
             } else {
                 console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
                 
@@ -744,6 +750,9 @@ const App: React.FC = () => {
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
+                    
+                    {/* Presentation Module */}
+                    {activeModule === 'presentation' && <Presentation />}
                 </div>
             </main>
 
