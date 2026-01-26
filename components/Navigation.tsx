@@ -15,7 +15,6 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
         { id: 'prophet', label: 'PROPHET (Прогноз)', icon: <ProphetIcon small /> },
         { id: 'agile', label: 'AGILE LEARNING', icon: <LabIcon small /> },
         { id: 'roi-genome', label: 'ROI GENOME', icon: <BrainIcon small /> },
-        { id: 'presentation', label: 'Презентация', icon: <AnalyticsIcon small /> },
     ];
 
     return (

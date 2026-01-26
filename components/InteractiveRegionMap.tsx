@@ -231,6 +231,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
+    const [isMapReady, setIsMapReady] = useState(false); // New state to track map initialization
 
     useEffect(() => {
         const fetchGeoData = async () => {
@@ -384,14 +385,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            // FIX: Changed event handler signature from LeafletMouseEvent to a standard DOM Event.
-            // L.DomEvent.on attaches a listener to a DOM element, which receives a standard
-            // Event, not a Leaflet-specific one. This resolves the type error.
             const onPopupClick = (e: Event) => {
-                // Stop the map from closing the popup when we click inside
                 L.DomEvent.stopPropagation(e);
-
-                // FIX: Changed e.originalEvent.target to e.target, as 'e' is now the direct DOM event.
                 const target = e.target as HTMLElement;
                 const button = target.closest('.leaflet-popup-edit-button');
                 if (!button) return;
@@ -420,6 +415,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     L.DomEvent.off(popupNode, 'click', onPopupClick);
                 }
             });
+
+            setIsMapReady(true); // Signal that the map instance is created
         }
         return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
     }, []); 
@@ -547,7 +544,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [potentialClients, activeClients, overlayMode]);
 
     useEffect(() => {
-        if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
+        if (geoJsonData && isMapReady && mapInstance.current && geoJsonLayer.current === null) {
             geoJsonLayer.current = L.geoJSON(geoJsonData as any, { 
                 style: getStyleForRegion, 
                 onEachFeature: (feature, layer) => { 
@@ -568,7 +565,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
         }
-    }, [geoJsonData, selectedRegions, localTheme, overlayMode, getStyleForRegion, highlightRegion]);
+    }, [geoJsonData, isMapReady, selectedRegions, localTheme, overlayMode, getStyleForRegion, highlightRegion]);
 
     useEffect(() => {
         if (flyToClientKey && mapInstance.current && activeClientMarkersRef.current.has(flyToClientKey)) {
