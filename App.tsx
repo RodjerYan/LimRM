@@ -286,7 +286,7 @@ const App: React.FC = () => {
             const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
-                versionHash: newVersionHash,
+                // versionHash removed to ensure stable diffs
                 rows: [],
             };
             
@@ -300,7 +300,7 @@ const App: React.FC = () => {
                     chunks.push(JSON.stringify(currentChunkObj)); 
                     currentChunkObj = {
                         chunkIndex: chunks.length,
-                        versionHash: newVersionHash,
+                        // versionHash removed
                         rows: []
                     };
                     currentSize = getByteSize(JSON.stringify(currentChunkObj));
