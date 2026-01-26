@@ -1,8 +1,9 @@
 
 import React, { useState, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 import Modal from './Modal';
 import { MapPoint, PotentialClient } from '../types';
-import { SearchIcon, FactIcon, PotentialIcon } from './icons';
+import { SearchIcon, FactIcon, PotentialIcon, ExportIcon } from './icons';
 
 interface RegionDetailsModalProps {
     isOpen: boolean;
@@ -21,7 +22,8 @@ const ClientTable: React.FC<{
     count: number;
     totalVolume?: number; 
     onRowClick?: (item: any) => void;
-}> = ({ data, type, title, count, totalVolume, onRowClick }) => {
+    onExport?: () => void;
+}> = ({ data, type, title, count, totalVolume, onRowClick, onExport }) => {
     const [search, setSearch] = useState('');
 
     const filteredData = useMemo(() => {
@@ -46,9 +48,20 @@ const ClientTable: React.FC<{
                         {isGreen ? <FactIcon small /> : <PotentialIcon small />}
                         {title}
                     </h3>
-                    <span className="text-xs font-mono bg-gray-900 px-2 py-1 rounded text-gray-300">
-                        {count} ТТ
-                    </span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono bg-gray-900 px-2 py-1 rounded text-gray-300">
+                            {count} ТТ
+                        </span>
+                        {onExport && (
+                            <button 
+                                onClick={onExport} 
+                                className="p-1.5 bg-gray-900 rounded-lg text-gray-400 hover:text-white transition-colors border border-gray-700 hover:border-gray-500"
+                                title="Скачать список (XLSX)"
+                            >
+                                <ExportIcon small />
+                            </button>
+                        )}
+                    </div>
                 </div>
                 {isGreen && totalVolume !== undefined && (
                     <div className="text-sm text-gray-400 mb-3">
@@ -124,14 +137,53 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
     // Sort potential by Name
     const sortedPotential = [...potentialClients].sort((a, b) => a.name.localeCompare(b.name));
 
+    const totalUniverse = sortedActive.length + sortedPotential.length;
+    const coveragePct = totalUniverse > 0 ? (sortedActive.length / totalUniverse) * 100 : 0;
+
+    const handleExport = (data: any[], filenamePrefix: string) => {
+        const exportData = data.map(item => ({
+            'Наименование': item.name,
+            'Адрес': item.address,
+            'Тип/Канал': item.type,
+            'Факт (кг)': item.fact || 0,
+            'Регион': regionName,
+            'Менеджер': rmName
+        }));
+        
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Data");
+        XLSX.writeFile(wb, `${filenamePrefix}_${regionName}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
     return (
         <Modal 
             isOpen={isOpen} 
             onClose={onClose} 
             title={
-                <div className="flex flex-col">
-                    <span className="text-xl font-bold">Детализация: {regionName}</span>
-                    <span className="text-sm text-indigo-400 font-normal mt-1">Менеджер: {rmName}</span>
+                <div className="flex flex-col w-full pr-12">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <span className="text-xl font-bold">Детализация: {regionName}</span>
+                            <span className="text-sm text-indigo-400 font-normal mt-1 block">Менеджер: {rmName}</span>
+                        </div>
+                        {/* Coverage Badge */}
+                        <div className="text-right">
+                            <div className="text-xs text-gray-500 uppercase font-bold tracking-wider">Покрытие</div>
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl font-mono font-bold text-white">{coveragePct.toFixed(1)}%</span>
+                                <div className="text-[10px] text-gray-400 flex flex-col items-end leading-tight">
+                                    <span>{sortedActive.length} из {totalUniverse}</span>
+                                    <span>точек</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {/* Visual Progress Bar */}
+                    <div className="w-full h-1.5 bg-gray-800 rounded-full mt-3 overflow-hidden flex">
+                        <div className="bg-emerald-500 h-full" style={{ width: `${coveragePct}%` }} title="Активные"></div>
+                        <div className="bg-blue-500/50 h-full" style={{ width: `${100 - coveragePct}%` }} title="Свободный потенциал"></div>
+                    </div>
                 </div>
             }
             maxWidth="max-w-[96vw]"
@@ -139,17 +191,19 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[70vh]">
                 <ClientTable 
                     type="active" 
-                    title="Активные Клиенты" 
+                    title="Активные Клиенты (АКБ)" 
                     data={sortedActive} 
                     count={sortedActive.length}
                     totalVolume={totalActiveVolume}
                     onRowClick={onEditClient ? (item) => onEditClient(item as MapPoint) : undefined}
+                    onExport={() => handleExport(sortedActive, "Active_Clients")}
                 />
                 <ClientTable 
                     type="potential" 
                     title="Свободный Потенциал (ОКБ)" 
                     data={sortedPotential} 
                     count={sortedPotential.length}
+                    onExport={() => handleExport(sortedPotential, "Uncovered_Potential")}
                 />
             </div>
         </Modal>

@@ -289,7 +289,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             const rmName = row.rm || 'Не указан'; const normRm = normalizeRmNameForMatching(rmName); const regionKey = row.region || 'Регион не определен';
             if (!rmBuckets.has(normRm)) rmBuckets.set(normRm, { originalName: rmName, regions: new Map(), totalFact: 0, countA: 0, countB: 0, countC: 0, factA: 0, factB: 0, factC: 0, uniqueClientKeys: new Set(), totalListings: 0 });
             const rmBucket = rmBuckets.get(normRm)!; rmBucket.totalFact += row.fact; rmBucket.totalListings += row.clients.length;
-            if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
+            if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
             if (!rmBucket.regions.has(regionKey)) rmBucket.regions.set(regionKey, { fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map<string, number>(), brandClientCounts: new Map<string, number>(), brandRows: new Map<string, AggregatedDataRow[]>(), originalRegionName: row.region, regionListings: 0 });
             const regBucket = rmBucket.regions.get(regionKey)!; regBucket.fact += row.fact; regBucket.potential += row.potential || 0; regBucket.regionListings += row.clients.length;
             if (row.clients) row.clients.forEach(c => { regBucket.activeClients.add(c.key); let isMatch = false; if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) { if (globalOkbCoordSet.has(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`)) isMatch = true; } if (!isMatch && globalOkbAddressSet.has(normalizeAddress(c.address))) isMatch = true; if (isMatch) regBucket.matchedOkbCoords.add(c.key); });
@@ -442,9 +442,32 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                     <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-700 rounded text-indigo-400 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
                                                         const activeClients = data.filter(d => d.rm === rm.rmName && d.region === reg.name).flatMap(d => d.clients); 
-                                                        setSelectedRegionDetails({ rmName: rm.rmName, regionName: reg.name, activeClients, potentialClients: [] });
+                                                        
+                                                        // FILTER OKB DATA TO FIND POTENTIAL CLIENTS FOR THIS REGION
+                                                        // 1. Filter by Region Name
+                                                        const regionOkb = okbData.filter(row => {
+                                                            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область']);
+                                                            return rowRegion && rowRegion.toLowerCase().includes(reg.name.toLowerCase());
+                                                        });
+                                                        
+                                                        // 2. Exclude Active Clients (Uncovered Potential)
+                                                        const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
+                                                        
+                                                        const potentialClients: PotentialClient[] = regionOkb.filter(row => {
+                                                            const addr = findAddressInRow(row);
+                                                            if (!addr) return false;
+                                                            return !activeAddressSet.has(normalizeAddress(addr));
+                                                        }).map(row => ({
+                                                            name: findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+                                                            address: findAddressInRow(row) || '',
+                                                            type: findValueInRow(row, ['тип', 'канал']) || 'Не указан',
+                                                            lat: row.lat,
+                                                            lon: row.lon
+                                                        }));
+
+                                                        setSelectedRegionDetails({ rmName: rm.rmName, regionName: reg.name, activeClients, potentialClients });
                                                         setIsRegionModalOpen(true); 
-                                                    }} className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Список клиентов"><SearchIcon small /></button>
+                                                    }} className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Список клиентов (Активные/Потенциал)"><SearchIcon small /></button>
                                                     <div className="relative group/brands">
                                                         <button className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Бренды"><ChartBarIcon small /></button>
                                                         <div className="absolute right-0 top-full mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 hidden group-hover/brands:block p-2"><div className="text-[10px] uppercase text-gray-500 font-bold mb-2 px-2">Бренды в регионе</div>
