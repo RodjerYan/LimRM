@@ -65,6 +65,7 @@ const App: React.FC = () => {
     const workerRef = useRef<Worker | null>(null);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const isSavingRef = useRef(false); // Lock for save operation
+    const saveQueuedRef = useRef(false); // Queue flag for handling race conditions
     
     // SMART SAVE: Cache for the content of the last saved/loaded chunks
     // Key: Chunk Index, Value: Stringified JSON content
@@ -256,11 +257,15 @@ const App: React.FC = () => {
     }, []);
 
     // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
+    // UPDATED: Now supports queuing mechanism to prevent data loss on concurrent saves
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
+        // 1. If save is already in progress, queue the next one
         if (isSavingRef.current) {
-            console.warn("Save already in progress, skipping.");
+            console.log("Save in progress. Queuing next run.");
+            saveQueuedRef.current = true;
             return;
         }
+        
         isSavingRef.current = true;
 
         try {
@@ -376,8 +381,18 @@ const App: React.FC = () => {
         } catch (e) {
             console.error("Cloud Save Error:", e);
             addNotification('Ошибка сохранения в облако', 'warning');
+            // If failed, queue a retry to ensure data eventually persists
+            saveQueuedRef.current = true;
         } finally {
             isSavingRef.current = false;
+            
+            // 2. Check Queue: If updates happened during save, run again
+            if (saveQueuedRef.current) {
+                console.log("Executing queued save...");
+                saveQueuedRef.current = false;
+                // Important: Use current refs to get the LATEST state
+                saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
+            }
         }
     };
 

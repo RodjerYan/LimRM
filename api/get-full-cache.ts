@@ -91,6 +91,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Snapshot Operations
             if (action === 'save-chunk') {
                 let targetFileId = req.query.targetFileId as string;
+                const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
 
                 // Fallback to legacy index-based search if ID not provided
                 if (!targetFileId) {
@@ -102,27 +103,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
 
                 if (targetFileId) {
-                    const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
+                    // UPDATE existing file
                     await drive.files.update({ 
                         fileId: targetFileId, 
                         media: { mimeType: 'application/json', body: content }, 
                         supportsAllDrives: true 
                     });
-                    return res.status(200).json({ status: 'saved' });
+                    return res.status(200).json({ status: 'saved', fileId: targetFileId });
+                } else {
+                    // CREATE new file if not found
+                    if (chunkIndex === -1) {
+                        return res.status(400).json({ error: 'Chunk index required for creating new file' });
+                    }
+                    
+                    const fileName = `snapshot_chunk_${chunkIndex}.json`;
+                    const createRes = await drive.files.create({
+                        requestBody: {
+                            name: fileName,
+                            parents: [FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media: {
+                            mimeType: 'application/json',
+                            body: content
+                        },
+                        supportsAllDrives: true
+                    });
+                    return res.status(200).json({ status: 'created', fileId: createRes.data.id });
                 }
-                return res.status(404).json({ error: 'Chunk file slot not found.' });
             }
             if (action === 'save-meta') {
                 const sortedFiles = await getSortedFiles(drive);
-                if (sortedFiles[0]) {
+                let metaFileId = sortedFiles[0]?.id;
+                const content = JSON.stringify(body);
+
+                if (metaFileId) {
                     await drive.files.update({ 
-                        fileId: sortedFiles[0].id, 
-                        media: { mimeType: 'application/json', body: JSON.stringify(body) }, 
+                        fileId: metaFileId, 
+                        media: { mimeType: 'application/json', body: content }, 
                         supportsAllDrives: true 
                     });
-                    return res.status(200).json({ status: 'meta_saved' });
+                    return res.status(200).json({ status: 'meta_saved', fileId: metaFileId });
+                } else {
+                    // Create Meta file if missing
+                    const createRes = await drive.files.create({
+                        requestBody: {
+                            name: 'system_analytics_snapshot_meta.json', // Special name for sorting first
+                            parents: [FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media: { mimeType: 'application/json', body: content },
+                        supportsAllDrives: true
+                    });
+                    return res.status(200).json({ status: 'meta_created', fileId: createRes.data.id });
                 }
-                return res.status(404).json({ error: 'Meta file slot not found.' });
             }
             
             // NEW: Cleanup old/unused chunks
@@ -138,11 +172,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     const filesToDelete = sortedFiles.slice(1).filter((f: any) => {
                          const match = f.name.match(/\d+/);
                          const idx = match ? parseInt(match[0], 10) : -1;
-                         // Chunk 0 corresponds to file index 0 (if mapped 1:1), but here we assume chunks are 0,1,2...
-                         // and filename usually contains index. 
-                         // If file list is [meta, chunk_0, chunk_1 ... chunk_89]
-                         // And keepCount is 80.
-                         // We want to delete chunk_80, chunk_81...
                          return idx >= keepCount;
                     });
                     
