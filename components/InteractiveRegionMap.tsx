@@ -384,7 +384,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            const onPopupClick = (e: MouseEvent) => {
+            // FIX: Changed event handler signature from LeafletMouseEvent to a standard DOM Event.
+            // L.DomEvent.on attaches a listener to a DOM element, which receives a standard
+            // Event, not a Leaflet-specific one. This resolves the type error.
+            const onPopupClick = (e: Event) => {
+                // Stop the map from closing the popup when we click inside
+                L.DomEvent.stopPropagation(e);
+
+                // FIX: Changed e.originalEvent.target to e.target, as 'e' is now the direct DOM event.
                 const target = e.target as HTMLElement;
                 const button = target.closest('.leaflet-popup-edit-button');
                 if (!button) return;
