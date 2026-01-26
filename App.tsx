@@ -538,6 +538,7 @@ const App: React.FC = () => {
                 };
             } else {
                 newData.push({
+                    __rowId: `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     key: groupKey, rm: newPoint.rm, region: newPoint.region, city: newPoint.city, brand: newPoint.brand, packaging: newPoint.packaging,
                     clientName: `${newPoint.region}: ${newPoint.brand}`, fact: newPoint.fact || 0,
                     potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint]
