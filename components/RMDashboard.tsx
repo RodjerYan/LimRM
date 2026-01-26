@@ -355,20 +355,47 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     };
 
     // --- GLOBAL EXPORT FUNCTION FOR UNCOVERED POTENTIAL ---
+    const handleGlobalExportUncovered = () => {
+        if (!okbData || okbData.length === 0) {
+            alert("Нет данных ОКБ для экспорта");
+            return;
+        }
+        
+        const allActiveClients = data.flatMap(d => d.clients);
+        const activeAddressSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
+        
+        const uncoveredClients = okbData.filter(row => {
+            const addr = findAddressInRow(row);
+            if (!addr) return false;
+            return !activeAddressSet.has(normalizeAddress(addr));
+        }).map(row => ({
+            'Наименование': findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            'Адрес': findAddressInRow(row) || '',
+            'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
+            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан'
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(uncoveredClients);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Global_Uncovered");
+        XLSX.writeFile(wb, `Global_Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
+    };
+
+    // --- PER-RM EXPORT FUNCTION ---
     const handleExportUncovered = (rmMetrics: RMMetrics) => {
         const activeClients = data.filter(d => d.rm === rmMetrics.rmName).flatMap(d => d.clients);
         const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
         
         // Find regions managed by this RM to filter the OKB data
-        const rmRegions = new Set(rmMetrics.regions.map(r => r.name.toLowerCase()));
+        const rmRegions = new Set(rmMetrics.regions.map(r => r.name.toLowerCase().replace(/(г\.|город|область|край|республика)/g, '').trim()));
         
         const uncoveredClients = okbData.filter(row => {
-            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область']) || '';
-            const rowCity = findValueInRow(row, ['город', 'населенный пункт']) || '';
+            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область'])?.toLowerCase() || '';
+            const rowCity = findValueInRow(row, ['город', 'населенный пункт'])?.toLowerCase() || '';
             
             // Loose matching: check if region OR city matches any of the RM's regions
             const matchesRegion = Array.from(rmRegions).some(rmReg => 
-                rowRegion.toLowerCase().includes(rmReg) || rowCity.toLowerCase().includes(rmReg)
+                rowRegion.includes(rmReg) || rowCity.includes(rmReg)
             );
             
             if (!matchesRegion) return false;
@@ -394,7 +421,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         <div className="space-y-6">
             <div className="bg-gray-900/80 backdrop-blur-md p-6 rounded-2xl border border-gray-700 shadow-xl flex flex-col md:flex-row justify-between items-center gap-6">
                 <div><h3 className="text-xl font-bold text-white mb-1">Управление Целями</h3><p className="text-sm text-gray-400">Настройка базового сценария роста для всей компании. Влияет на расчет индивидуальных планов.</p></div>
-                <div className="bg-gray-800/60 p-4 rounded-xl border border-gray-600 flex items-center gap-6 w-full md:w-auto"><div className="flex-grow"><label className="block text-xs font-bold text-gray-400 uppercase mb-2">Базовый рост (ставка)</label><input type="range" min="0" max="50" step="1" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" /><div className="flex justify-between text-[10px] text-gray-500 mt-1"><span>0%</span><span>25%</span><span>50%</span></div></div><div className="text-center w-24"><div className="text-3xl font-mono font-bold text-indigo-400">+{baseRate}%</div><div className="text-[10px] text-gray-400 uppercase font-bold">Цель {nextYear}</div></div></div>
+                
+                <div className="flex items-center gap-4">
+                    {/* GLOBAL EXPORT BUTTON */}
+                    <button 
+                        onClick={handleGlobalExport}
+                        disabled={!okbData || okbData.length === 0}
+                        className="flex items-center gap-2 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-bold rounded-xl border border-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full"
+                        title="Скачать полный список непокрытых точек по всей компании"
+                    >
+                        <ExportIcon small /> Выгрузить весь потенциал (ОКБ)
+                    </button>
+
+                    <div className="bg-gray-800/60 p-4 rounded-xl border border-gray-600 flex items-center gap-6 w-full md:w-auto"><div className="flex-grow"><label className="block text-xs font-bold text-gray-400 uppercase mb-2">Базовый рост (ставка)</label><input type="range" min="0" max="50" step="1" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" /><div className="flex justify-between text-[10px] text-gray-500 mt-1"><span>0%</span><span>25%</span><span>50%</span></div></div><div className="text-center w-24"><div className="text-3xl font-mono font-bold text-indigo-400">+{baseRate}%</div><div className="text-[10px] text-gray-400 uppercase font-bold">Цель {nextYear}</div></div></div>
+                </div>
             </div>
             <div className="grid grid-cols-1 gap-6">
                 {metricsData.map((rm, idx) => (
@@ -415,7 +455,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         {expandedRM === rm.rmName && (
                             <div className="border-t border-gray-700 bg-black/20 p-6 animate-fade-in-down">
-                                {/* NEW: Export Button for Uncovered Potential */}
+                                {/* PER-RM Export Button */}
                                 <div className="flex justify-end mb-4">
                                     <button 
                                         onClick={() => handleExportUncovered(rm)}

@@ -141,14 +141,31 @@ const RegionDetailsModal: React.FC<RegionDetailsModalProps> = ({ isOpen, onClose
     const coveragePct = totalUniverse > 0 ? (sortedActive.length / totalUniverse) * 100 : 0;
 
     const handleExport = (data: any[], filenamePrefix: string) => {
-        const exportData = data.map(item => ({
-            'Наименование': item.name,
-            'Адрес': item.address,
-            'Тип/Канал': item.type,
-            'Факт (кг)': item.fact || 0,
-            'Регион': regionName,
-            'Менеджер': rmName
-        }));
+        // Определяем, являются ли данные списком потенциальных клиентов
+        const isPotential = filenamePrefix.includes("Uncovered");
+
+        let exportData;
+
+        if (isPotential) {
+            // Для потенциальных клиентов убираем колонку с фактом
+            exportData = data.map(item => ({
+                'Наименование': item.name,
+                'Адрес': item.address,
+                'Тип/Канал': item.type,
+                'Регион': regionName,
+                'Менеджер': rmName
+            }));
+        } else {
+            // Для активных клиентов оставляем все как есть
+            exportData = data.map(item => ({
+                'Наименование': item.name,
+                'Адрес': item.address,
+                'Тип/Канал': item.type,
+                'Факт (кг)': item.fact || 0,
+                'Регион': regionName,
+                'Менеджер': rmName
+            }));
+        }
         
         const ws = XLSX.utils.json_to_sheet(exportData);
         const wb = XLSX.utils.book_new();
