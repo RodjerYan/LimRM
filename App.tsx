@@ -23,6 +23,7 @@ import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 import { enrichWithAbcCategories } from './utils/analytics';
+import { LoaderIcon, CheckIcon, SaveIcon } from './components/icons';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -40,6 +41,7 @@ const App: React.FC = () => {
 
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
+    const [isCloudSaving, setIsCloudSaving] = useState(false); // New visual state
     
     // --- DATE FILTER STATE ---
     const [filterStartDate, setFilterStartDate] = useState<string>('');
@@ -262,28 +264,32 @@ const App: React.FC = () => {
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         // 1. If save is already in progress, queue the next one
         if (isSavingRef.current) {
-            console.log("Save in progress. Queuing next run.");
+            console.log("%c[Save] Save in progress. Queuing next run.", "color: orange");
             saveQueuedRef.current = true;
             return;
         }
         
         isSavingRef.current = true;
+        setIsCloudSaving(true); // Visual Indicator ON
+
+        console.groupCollapsed(`%c[Cloud Save] Started at ${new Date().toLocaleTimeString()}`, 'color: #818cf8; font-weight: bold;');
 
         try {
-            console.log('Начало умного сохранения...');
-            
             // 1. Get file slots first
+            console.time('fetch-slots');
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             let availableSlots: { id: string, name: string }[] = [];
             if (listRes.ok) {
                 availableSlots = await listRes.json();
             }
+            console.timeEnd('fetch-slots');
 
             const newVersionHash = `edit_${Date.now()}`;
             const encoder = new TextEncoder();
             const getByteSize = (str: string) => encoder.encode(str).length;
             
             // 2. Generate chunks locally
+            console.time('chunk-generation');
             const chunks: string[] = [];
             let currentChunkObj: any = {
                 chunkIndex: 0,
@@ -310,6 +316,8 @@ const App: React.FC = () => {
                 currentSize += rowSize;
             }
             chunks.push(JSON.stringify(currentChunkObj));
+            console.timeEnd('chunk-generation');
+            console.info(`Generated ${chunks.length} chunks from ${currentData.length} rows.`);
             
             // 3. Diffing Strategy: Identify ONLY changed chunks
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
@@ -318,6 +326,7 @@ const App: React.FC = () => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
                 // Simple string comparison is very fast
                 if (prevContent !== chunkContent) {
+                    // console.debug(`[Diff] Chunk ${idx} changed. (Old size: ${prevContent?.length || 0}, New: ${chunkContent.length})`);
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     if (targetFileId) {
                         chunksToUpload.push({ 
@@ -329,18 +338,20 @@ const App: React.FC = () => {
                         // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
                         chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
                     }
+                } else {
+                    // console.debug(`[Diff] Chunk ${idx} unchanged.`);
                 }
             });
 
             if (chunksToUpload.length === 0) {
-                console.log("No data chunks changed. Skipping large upload.");
+                console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
                 // FIXED: Update the cache ref even if no upload needed, to ensure local state is perfectly synced
                 // This handles cases where data was restored from IDB but not yet fully in `lastSavedChunksRef`
                 chunks.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
                 });
             } else {
-                console.log(`Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`);
+                console.log(`%c[Cloud Save] Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`, "color: #f59e0b");
                 
                 // Concurrency Control
                 const CONCURRENCY = 4;
@@ -350,15 +361,18 @@ const App: React.FC = () => {
                             ? `action=save-chunk&targetFileId=${item.targetFileId}` 
                             : `action=save-chunk&chunkIndex=${item.index}`;
 
+                        console.time(`upload-chunk-${item.index}`);
                         return fetch(`/api/get-full-cache?${queryParams}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ chunk: item.content }) 
                         }).then(async res => {
+                            console.timeEnd(`upload-chunk-${item.index}`);
                             if (!res.ok) {
                                 const txt = await res.text();
                                 throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
                             }
+                            console.info(`✅ Chunk ${item.index} saved.`);
                             // Update cache ONLY on success
                             lastSavedChunksRef.current.set(item.index, item.content);
                         });
@@ -369,6 +383,7 @@ const App: React.FC = () => {
             }
             
             // 4. Always save Meta to update timestamp/versionHash
+            console.time('save-meta');
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -382,6 +397,7 @@ const App: React.FC = () => {
                     timestamp: Date.now()
                 })
             });
+            console.timeEnd('save-meta');
             
             addNotification('Изменения сохранены', 'success');
         } catch (e) {
@@ -390,14 +406,17 @@ const App: React.FC = () => {
             // If failed, queue a retry to ensure data eventually persists
             saveQueuedRef.current = true;
         } finally {
+            console.groupEnd();
             isSavingRef.current = false;
             
             // 2. Check Queue: If updates happened during save, run again
             if (saveQueuedRef.current) {
-                console.log("Executing queued save...");
+                console.log("%c[Queue] Executing queued save...", "color: cyan");
                 saveQueuedRef.current = false;
                 // Important: Use current refs to get the LATEST state
                 saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
+            } else {
+                setIsCloudSaving(false); // Visual Indicator OFF only when queue is empty
             }
         }
     };
@@ -684,7 +703,13 @@ const App: React.FC = () => {
                             </div>
                             <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Ready' : 'Syncing...'}</span>
                         </div>
-                        {processingState.isProcessing && (
+                        {isCloudSaving && (
+                            <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30 text-xs font-bold animate-pulse">
+                                <LoaderIcon className="w-3 h-3" />
+                                <span>Сохранение в облако...</span>
+                            </div>
+                        )}
+                        {!isCloudSaving && processingState.isProcessing && (
                             <div className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-bold text-indigo-300 animate-pulse">
                                 {processingState.message} {Math.round(processingState.progress)}%
                             </div>

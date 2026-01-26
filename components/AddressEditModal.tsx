@@ -426,11 +426,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     headers: { 'Cache-Control': 'no-cache, no-store' }
                 });
                 
+                // Show explicit log for 404
+                if (res.status === 404) {
+                    console.log(`%c[Polling] Address "${pollingTarget.address}" not yet geocoded (404). Retrying in 5s...`, 'color: orange');
+                    return;
+                }
+
                 if (res.ok) {
                     const result = await res.json();
                     const hasValidCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
 
                     if (hasValidCoords) {
+                        console.info(`%c[Polling] Success! Coordinates found for "${pollingTarget.address}"`, 'color: #10b981');
                         if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
                         setPollingTarget(null);
                         setManualCoords({ lat: result.lat, lon: result.lon });
@@ -466,7 +473,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     }
                 }
             } catch (e) {
-                console.warn("Polling error (will retry):", e);
+                // Silently fail on network errors during polling to avoid console spam
+                // console.warn("Polling error (will retry):", e);
             }
 
             if (attemptsRef.current >= maxAttempts) {
