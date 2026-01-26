@@ -370,9 +370,10 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             return !activeAddressSet.has(normalizeAddress(addr));
         }).map(row => ({
             'Наименование': findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан',
+            'Город': findValueInRow(row, ['город', 'населенный пункт']) || 'Не указан',
             'Адрес': findAddressInRow(row) || '',
             'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
-            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан'
         }));
 
         const ws = XLSX.utils.json_to_sheet(uncoveredClients);
@@ -405,9 +406,10 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             return !activeAddressSet.has(normalizeAddress(addr));
         }).map(row => ({
             'Наименование': findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан',
+            'Город': findValueInRow(row, ['город', 'населенный пункт']) || 'Не указан',
             'Адрес': findAddressInRow(row) || '',
             'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
-            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан',
             'Менеджер': rmMetrics.rmName
         }));
 
