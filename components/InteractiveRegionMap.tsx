@@ -53,6 +53,7 @@ const parseCoord = (val: any): number | null => {
 const getCoordinate = (item: any, keys: string[]) => {
     if (!item) return null;
     
+    // Helper to check validity (non-zero number or non-empty string that isn't "0")
     const isValid = (val: any) => {
         if (val === undefined || val === null || val === '') return false;
         if (typeof val === 'number') return val !== 0;
@@ -60,21 +61,27 @@ const getCoordinate = (item: any, keys: string[]) => {
         return true;
     };
 
+    // 1. Check top-level properties (lat, lon, latitude, etc.)
     for (const key of keys) {
         if (isValid(item[key])) return item[key];
+        
+        // Case-insensitive check
         const lowerKey = key.toLowerCase();
         const foundKey = Object.keys(item).find(k => k.toLowerCase() === lowerKey);
         if (foundKey && isValid(item[foundKey])) return item[foundKey];
     }
 
+    // 2. Check originalRow if available (Deep Lookup)
     const original = item.originalRow || item.rowData;
     if (original && typeof original === 'object') {
         for (const key of keys) {
+            // Case-insensitive check inside originalRow
             const lowerKey = key.toLowerCase();
             const foundKey = Object.keys(original).find(k => k.toLowerCase() === lowerKey);
             if (foundKey && isValid(original[foundKey])) return original[foundKey];
         }
     }
+
     return null;
 };
 
@@ -206,6 +213,19 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
     );
 };
 
+// React component for the popup button to ensure stable event handling
+const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => void }> = ({ client, onEdit }) => {
+    return (
+        <button
+            onClick={() => onEdit(client)}
+            className="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
+        >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            Редактировать данные
+        </button>
+    );
+};
+
 const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
@@ -216,6 +236,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
+    const popupRootRef = useRef<any>(null); // To hold the ReactDOM root for unmounting
     
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
@@ -227,28 +248,59 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
     const [geoJsonData, setGeoJsonData] = useState<FeatureCollection | null>(null);
     const [isLoadingGeo, setIsLoadingGeo] = useState(true);
+    const [isFromCache, setIsFromCache] = useState(false);
     
     const [localTheme, setLocalTheme] = useState<Theme>(theme);
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [overlayMode, setOverlayMode] = useState<OverlayMode>('sales');
-    const [isMapReady, setIsMapReady] = useState(false); // New state to track map initialization
 
     useEffect(() => {
         const fetchGeoData = async () => {
-             setIsLoadingGeo(true);
+            const CACHE_NAME = 'limkorm-geo-v2';
+            const RUSSIA_URL = 'https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/russia.geojson';
+            const WORLD_URL = 'https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_50m_admin_0_countries.geojson';
+
             try {
-                let features = MANUAL_BOUNDARIES.map((feature: any) => {
-                    if (feature.properties.name === "Чукотский автономный округ") {
-                        return fixChukotkaGeoJSON(feature);
-                    }
-                    return feature;
-                });
-                setGeoJsonData({ type: 'FeatureCollection', features } as FeatureCollection);
-            } catch (error) {
-                console.error("Error processing GeoJSON data:", error);
-            } finally {
-                setIsLoadingGeo(false);
-            }
+                setIsLoadingGeo(true);
+                let russiaData: any = null, worldData: any = null;
+                if ('caches' in window) {
+                    try {
+                        const cache = await caches.open(CACHE_NAME);
+                        const [russiaRes, worldRes] = await Promise.all([cache.match(RUSSIA_URL), cache.match(WORLD_URL)]);
+                        if (russiaRes && worldRes) {
+                            russiaData = await russiaRes.json(); worldData = await worldRes.json();
+                            setIsFromCache(true);
+                        } else {
+                            const [rNetwork, wNetwork] = await Promise.all([fetch(RUSSIA_URL), fetch(WORLD_URL)]);
+                            if (rNetwork.ok && wNetwork.ok) {
+                                cache.put(RUSSIA_URL, rNetwork.clone()); cache.put(WORLD_URL, wNetwork.clone());
+                                russiaData = await rNetwork.json(); worldData = await wNetwork.json();
+                            }
+                        }
+                    } catch (e) { console.warn('Cache API error:', e); }
+                }
+                if (!russiaData || !worldData) {
+                    const [rRes, wRes] = await Promise.all([fetch(RUSSIA_URL), fetch(WORLD_URL)]);
+                    russiaData = await rRes.json(); worldData = await wRes.json();
+                }
+                const finalFeatures = [];
+                // Push manual boundaries first (if any)
+                if (MANUAL_BOUNDARIES && MANUAL_BOUNDARIES.length > 0) {
+                     finalFeatures.push(...MANUAL_BOUNDARIES);
+                }
+                
+                const manualNames = new Set(MANUAL_BOUNDARIES.map(f => f.properties.name));
+                if (russiaData && russiaData.features) {
+                    const fixedRussia = russiaData.features.filter((f: any) => !manualNames.has(f.properties.name)).map((f: any) => f.properties?.name === 'Чукотский автономный округ' ? fixChukotkaGeoJSON(f) : f);
+                    finalFeatures.push(...fixedRussia);
+                }
+                if (worldData && worldData.features) {
+                    const cisCountriesMap: Record<string, string> = { 'Belarus': 'Республика Беларусь', 'Kazakhstan': 'Республика Казахстан', 'Kyrgyzstan': 'Кыргызская Республика', 'Uzbekistan': 'Республика Узбекистан', 'Tajikistan': 'Республика Таджикистан', 'Turkmenistan': 'Туркменистан', 'Armenia': 'Армения', 'Azerbaijan': 'Азербайджан', 'Georgia': 'Грузия', 'Moldova': 'Республика Молдова' };
+                    const cisFeatures = worldData.features.filter((f: any) => cisCountriesMap[f.properties.name]).map((f: any) => { f.properties.name = cisCountriesMap[f.properties.name]; return f; });
+                    finalFeatures.push(...cisFeatures);
+                }
+                setGeoJsonData({ type: 'FeatureCollection', features: finalFeatures });
+            } catch (error) { console.error("Error fetching map geometry:", error); } finally { setIsLoadingGeo(false); }
         };
         fetchGeoData();
     }, []);
@@ -257,106 +309,65 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     useEffect(() => { onEditClientRef.current = onEditClient; }, [onEditClient]);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
-        if (!geoJsonData || !geoJsonData.features) return [];
-        return geoJsonData.features.map((f: any): SearchableLocation => ({
-            name: f.properties?.name || 'Unknown',
-            type: 'region'
-        })).sort((a,b) => a.name.localeCompare(b.name));
+        if (!geoJsonData) return [];
+        const locations: SearchableLocation[] = []; const addedNames = new Set<string>();
+        geoJsonData.features.forEach((feature: any) => { const name = feature.properties?.name; if (name && !addedNames.has(name)) { locations.push({ name, type: 'region' }); addedNames.add(name); } });
+        return locations.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
     }, [geoJsonData]);
 
     useEffect(() => {
         if (searchTerm.trim().length > 1) {
-            const lower = searchTerm.toLowerCase();
-            setSearchResults(searchableLocations.filter(loc => loc.name.toLowerCase().includes(lower)));
+            const lowerSearchTerm = searchTerm.toLowerCase();
+            const results = searchableLocations.filter(loc => loc.name.toLowerCase().includes(lowerSearchTerm)).slice(0, 7);
+            setSearchResults(results);
         } else { setSearchResults([]); }
     }, [searchTerm, searchableLocations]);
 
-    const getStyleForRegion = useCallback((feature: any): L.PathOptions => {
-        const regionName = feature.properties.name;
+    const getStyleForRegion = (feature: any) => {
+        const regionName = feature.properties?.name;
+        const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
-
-        const baseStyle: L.PathOptions = {
-            weight: isSelected ? 2.5 : 1,
-            color: isSelected ? (localTheme === 'dark' ? '#f59e0b' : '#d97706') : (localTheme === 'dark' ? '#4f46e5' : '#6366f1'),
-            opacity: isSelected ? 1.0 : 0.6,
-            fillOpacity: 0.1,
-            fillColor: isSelected ? '#f59e0b' : '#4f46e5',
-        };
-
-        if (overlayMode !== 'sales' && overlayMode !== 'abc') {
-            const marketData = getMarketData(regionName);
-            let overlayColor = '#6b7280'; // default gray
-            let fillOpacity = 0.3;
-
-            switch (overlayMode) {
-                case 'pets':
-                    if (marketData.petDensityIndex > 80) { overlayColor = '#10b981'; fillOpacity = 0.7; }
-                    else if (marketData.petDensityIndex > 50) { overlayColor = '#f59e0b'; fillOpacity = 0.5; }
-                    break;
-                case 'competitors':
-                    if (marketData.competitorDensityIndex > 80) { overlayColor = '#ef4444'; fillOpacity = 0.7; }
-                    else if (marketData.competitorDensityIndex > 50) { overlayColor = '#f97316'; fillOpacity = 0.5; }
-                    else { overlayColor = '#3b82f6'; }
-                    break;
-                case 'age':
-                    if (marketData.avgOwnerAge < 35) { overlayColor = '#10b981'; fillOpacity = 0.7; }
-                    else if (marketData.avgOwnerAge < 45) { overlayColor = '#f59e0b'; fillOpacity = 0.5; }
-                    else { overlayColor = '#8b5cf6'; fillOpacity = 0.5; }
-                    break;
-            }
-
-            baseStyle.fillColor = overlayColor;
-            baseStyle.fillOpacity = isSelected ? fillOpacity + 0.2 : fillOpacity;
-            baseStyle.color = isSelected ? '#ffffff' : overlayColor;
-            baseStyle.weight = isSelected ? 2 : 0.5;
-            baseStyle.opacity = isSelected ? 1 : 0.8;
+        const baseBorder = { weight: isSelected ? 2 : 1, opacity: 1, color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), fillColor: 'transparent', fillOpacity: 0, className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon', pane: 'regionsPane' };
+        if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#818cf8' : '#111827', fillOpacity: isSelected ? 0.3 : 0.2, interactive: true }; }
+        if (overlayMode === 'pets') {
+            const density = marketData.petDensityIndex; let fillColor = '#6b7280'; let fillOpacity = 0.3;
+            if (density > 80) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (density > 50) { fillColor = '#f59e0b'; fillOpacity = 0.5; }
+            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
+        } 
+        if (overlayMode === 'competitors') {
+            const comp = marketData.competitorDensityIndex; let fillColor = '#3b82f6'; let fillOpacity = 0.3;
+            if (comp > 80) { fillColor = '#ef4444'; fillOpacity = 0.6; } else if (comp > 50) { fillColor = '#f97316'; fillOpacity = 0.5; }
+            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
         }
+        if (overlayMode === 'age') {
+            const age = marketData.avgOwnerAge; let fillColor = '#6b7280'; let fillOpacity = 0.3;
+            if (age < 35) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (age < 45) { fillColor = '#f59e0b'; fillOpacity = 0.5; } else { fillColor = '#8b5cf6'; fillOpacity = 0.5; }
+            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
+        }
+        return baseBorder;
+    };
 
-        return baseStyle;
-    }, [selectedRegions, localTheme, overlayMode]);
-    
-    const resetHighlight = useCallback((e?: L.LeafletEvent) => {
+    const resetHighlight = useCallback(() => {
         if (highlightedLayer.current && geoJsonLayer.current) {
-            // Type assertion to access resetStyle
-            (geoJsonLayer.current as any).resetStyle(highlightedLayer.current);
-            highlightedLayer.current = null;
+            geoJsonLayer.current.resetStyle(highlightedLayer.current as L.Path);
         }
+        highlightedLayer.current = null;
     }, []); 
 
     const highlightRegion = useCallback((layer: L.Layer) => {
-        if (highlightedLayer.current) {
-            resetHighlight();
-        }
-        const targetLayer = layer as L.Path;
-        if (targetLayer && targetLayer.setStyle) {
-            targetLayer.setStyle({
-                weight: 3,
-                color: '#ffffff',
-                dashArray: '',
-                fillOpacity: 0.4
-            });
-            if (!L.Browser.ie) {
-                targetLayer.bringToFront();
-            }
-            highlightedLayer.current = targetLayer;
+        resetHighlight();
+        if (layer instanceof L.Path) {
+             layer.setStyle({ weight: 2, color: '#fbbf24', opacity: 1, fillOpacity: 0.2, dashArray: '' }).bringToFront();
+             highlightedLayer.current = layer;
         }
     }, [resetHighlight]);
 
     const handleLocationSelect = useCallback((location: SearchableLocation) => {
-        setSearchTerm('');
-        setSearchResults([]);
-        if (geoJsonLayer.current && mapInstance.current) {
-            let targetLayer: any = null;
-            geoJsonLayer.current.eachLayer((layer: any) => {
-                if (layer.feature.properties.name === location.name) {
-                    targetLayer = layer;
-                }
-            });
-            if (targetLayer) {
-                mapInstance.current.fitBounds(targetLayer.getBounds());
-                highlightRegion(targetLayer);
-            }
-        }
+        const map = mapInstance.current; if (!map) return;
+        setSearchTerm(''); setSearchResults([]);
+        let foundLayer: L.Layer | null = null;
+        if (location.type === 'region') { geoJsonLayer.current?.eachLayer(layer => { if ((layer as any).feature?.properties?.name.toLowerCase() === location.name.toLowerCase()) { foundLayer = layer; } }); }
+        if (foundLayer) { map.fitBounds((foundLayer as L.Polygon).getBounds()); highlightRegion(foundLayer); }
     }, [highlightRegion]);
 
     useEffect(() => {
@@ -371,6 +382,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             
             map.createPane('regionsPane');
             map.getPane('regionsPane')!.style.zIndex = '400';
+            
             map.createPane('markersPane');
             map.getPane('markersPane')!.style.zIndex = '600'; 
 
@@ -385,50 +397,45 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            const onPopupClick = (e: Event) => {
-                L.DomEvent.stopPropagation(e);
-                const target = e.target as HTMLElement;
-                const button = target.closest('.leaflet-popup-edit-button');
-                if (!button) return;
-
-                const key = button.getAttribute('data-key');
-                if (key) {
-                    const client = activeClientsDataRef.current.find(c => c.key === key);
-                    if (client) {
-                        map.closePopup();
-                        setIsFullscreen(false);
-                        onEditClientRef.current(client);
-                    }
-                }
-            };
-            
+            // --- REFACTORED POPUP LOGIC ---
             map.on('popupopen', (e) => {
                 const popupNode = e.popup.getElement();
-                if (popupNode) {
-                    L.DomEvent.on(popupNode, 'click', onPopupClick);
+                if (!popupNode) return;
+
+                const placeholder = popupNode.querySelector('#popup-edit-placeholder');
+                const key = placeholder?.getAttribute('data-key');
+
+                if (placeholder && key) {
+                    const client = activeClientsDataRef.current.find(c => c.key === key);
+                    if (client) {
+                        if (popupRootRef.current) popupRootRef.current.unmount();
+                        
+                        const root = ReactDOM.createRoot(placeholder);
+                        popupRootRef.current = root;
+                        root.render(
+                            <React.StrictMode>
+                                <PopupButton client={client} onEdit={(c) => {
+                                    setIsFullscreen(false);
+                                    onEditClientRef.current(c);
+                                }} />
+                            </React.StrictMode>
+                        );
+                    }
                 }
             });
 
-            map.on('popupclose', (e) => {
-                const popupNode = e.popup.getElement();
-                if (popupNode) {
-                    L.DomEvent.off(popupNode, 'click', onPopupClick);
+            map.on('popupclose', () => {
+                if (popupRootRef.current) {
+                    popupRootRef.current.unmount();
+                    popupRootRef.current = null;
                 }
             });
-
-            setIsMapReady(true); // Signal that the map instance is created
         }
         return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
     }, []); 
 
     useEffect(() => {
-        if (legendContainerRef.current) {
-             const rootEl = document.createElement('div');
-             legendContainerRef.current.appendChild(rootEl);
-             const root = ReactDOM.createRoot(rootEl);
-             root.render(<MapLegend mode={overlayMode} />);
-             return () => { root.unmount(); if(legendContainerRef.current) legendContainerRef.current.innerHTML = ''; };
-        }
+        if (legendContainerRef.current) { const root = (ReactDOM as any).createRoot(legendContainerRef.current); root.render(<MapLegend mode={overlayMode} />); }
     }, [overlayMode]);
 
     useEffect(() => {
@@ -449,30 +456,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         else if (abcCategory === 'B') badge = '<span class="px-2 py-0.5 rounded bg-emerald-500 text-white font-bold text-xs ml-2">B</span>';
         else if (abcCategory === 'C') badge = '<span class="px-2 py-0.5 rounded bg-gray-500 text-white font-bold text-xs ml-2">C</span>';
 
-        const buttonHtml = `
-            <button
-                data-key="${key}"
-                class="leaflet-popup-edit-button mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
-            >
-                <svg class="w-3 h-3 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
-                <span class="pointer-events-none">Редактировать данные</span>
-            </button>
-        `;
-
         return `
-            <div class="popup-inner-content">
-                <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
-                ${address}<br><small>${type || 'н/д'}</small>
-                ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-                ${buttonHtml}
-            </div>
-        `;
+        <div class="popup-inner-content">
+            <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
+            ${address}<br><small>${type || 'н/д'}</small>
+            ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
+            <div id="popup-edit-placeholder" data-key="${key}"></div>
+        </div>
+    `;
     };
     
     useEffect(() => {
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
         
+        // Use a dedicated renderer for markersPane to ensure they are drawn on top.
         const markersRenderer = L.canvas({ pane: 'markersPane' });
 
         if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
@@ -482,14 +480,19 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         const pointsForBounds: L.LatLngExpression[] = [];
 
+        // Only show potential clients if NOT in ABC mode (to reduce clutter)
         if (overlayMode !== 'abc') {
             potentialClients.forEach(tt => {
+                // Robust check for coordinates in various keys, using the enhanced getCoordinate helper
                 const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
                 const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+
                 const lat = parseCoord(rawLat);
                 let lon = parseCoord(rawLon);
+
                 if (lat !== null && lon !== null) {
                     if (lon < -170) lon += 360;
+
                     const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
                     const marker = L.circleMarker([lat, lon], {
                         fillColor: '#3b82f6', color: '#1d4ed8', weight: 1, opacity: 0.8, fillOpacity: 0.6, radius: 4, pane: 'markersPane', renderer: markersRenderer
@@ -499,36 +502,66 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
         }
 
+        // Sort active clients for rendering order (z-index simulation for Canvas)
         const sortedActiveClients = [...activeClients];
         if (overlayMode === 'abc') {
              const priority: Record<string, number> = { 'A': 3, 'B': 2, 'C': 1 };
              sortedActiveClients.sort((a, b) => {
                  const pA = priority[a.abcCategory || 'C'] || 1;
                  const pB = priority[b.abcCategory || 'C'] || 1;
-                 return pB - pA; // Sort descending
+                 return pA - pB;
              });
         }
 
         sortedActiveClients.forEach(tt => {
             const rawLat = getCoordinate(tt, ['lat', 'latitude']);
             const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude']);
+            
             const lat = parseCoord(rawLat);
             let lon = parseCoord(rawLon);
+
             if (lat !== null && lon !== null) {
                 if (lon < -170) lon += 360;
+                
                 pointsForBounds.push([lat, lon]);
+
                 const popupContent = createPopupContent(tt.name, tt.address, tt.type, tt.contacts, tt.key, tt.abcCategory);
-                let markerColor = '#10b981'; let markerBorder = '#047857'; let markerRadius = 5;
+                
+                let markerColor = '#10b981'; // Default Green (Sales mode)
+                let markerBorder = '#047857';
+                let markerRadius = 5;
+
                 if (overlayMode === 'abc') {
                     switch (tt.abcCategory) {
-                        case 'A': markerColor = '#f59e0b'; markerBorder = '#b45309'; markerRadius = 7; break;
-                        case 'B': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = 5; break;
-                        default: markerColor = '#9ca3af'; markerBorder = '#4b5563'; markerRadius = 3; break;
+                        case 'A':
+                            markerColor = '#f59e0b'; // Amber
+                            markerBorder = '#b45309';
+                            markerRadius = 7;
+                            break;
+                        case 'B':
+                            markerColor = '#10b981'; // Emerald
+                            markerBorder = '#047857';
+                            markerRadius = 5;
+                            break;
+                        default: // C
+                            markerColor = '#9ca3af'; // Gray
+                            markerBorder = '#4b5563';
+                            markerRadius = 3;
+                            break;
                     }
                 }
+
                 const marker = L.circleMarker([lat, lon], {
-                    fillColor: markerColor, color: markerBorder, weight: 1, opacity: 1, fillOpacity: 0.8, radius: markerRadius, pane: 'markersPane', renderer: markersRenderer
-                }).bindPopup(popupContent, { maxWidth: 300 });
+                    fillColor: markerColor, 
+                    color: markerBorder, 
+                    weight: 1, 
+                    opacity: 1, 
+                    fillOpacity: 0.8, 
+                    radius: markerRadius, 
+                    pane: 'markersPane', 
+                    renderer: markersRenderer
+                }).bindPopup(popupContent);
+                
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
             }
@@ -541,31 +574,31 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-400 font-bold">●</span> Активные ТТ');
 
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients, overlayMode]);
+    }, [potentialClients, activeClients, overlayMode]); // Re-run when data or mode changes
 
     useEffect(() => {
-        if (geoJsonData && isMapReady && mapInstance.current && geoJsonLayer.current === null) {
-            geoJsonLayer.current = L.geoJSON(geoJsonData as any, { 
-                style: getStyleForRegion, 
-                onEachFeature: (feature, layer) => { 
-                    layer.on({ 
-                        click: (e) => { 
-                            L.DomEvent.stopPropagation(e); 
-                            mapInstance.current?.fitBounds((e.target as L.Polygon).getBounds()); 
-                            highlightRegion(layer); 
-                        } 
-                    }); 
-                    if (feature.properties && feature.properties.name) { 
-                        const name = feature.properties.name; 
-                        layer.bindTooltip(name, { permanent: false, direction: 'center', className: 'region-tooltip' }); 
-                    } 
-                }, 
-                pane: 'regionsPane' 
+        if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
+            geoJsonLayer.current = L.geoJSON(geoJsonData as any, {
+                style: getStyleForRegion,
+                onEachFeature: (feature, layer) => {
+                    layer.on({
+                        click: (e) => {
+                            L.DomEvent.stopPropagation(e);
+                            mapInstance.current?.fitBounds(e.target.getBounds());
+                            highlightRegion(layer);
+                        }
+                    });
+                    if (feature.properties && feature.properties.name) {
+                        const name = feature.properties.name;
+                        layer.bindTooltip(name, { permanent: false, direction: 'center', className: 'region-tooltip' });
+                    }
+                },
+                pane: 'regionsPane'
             }).addTo(mapInstance.current);
         } else if (geoJsonLayer.current) {
             geoJsonLayer.current.setStyle(getStyleForRegion);
         }
-    }, [geoJsonData, isMapReady, selectedRegions, localTheme, overlayMode, getStyleForRegion, highlightRegion]);
+    }, [geoJsonData, selectedRegions, localTheme, overlayMode]);
 
     useEffect(() => {
         if (flyToClientKey && mapInstance.current && activeClientMarkersRef.current.has(flyToClientKey)) {
