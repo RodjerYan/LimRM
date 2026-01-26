@@ -33,9 +33,6 @@ const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_
 // Максимальный размер JSON-файла в байтах (850 КБ)
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
 
-// Интервал авто-обновления (в миллисекундах)
-const POLLING_INTERVAL_MS = 15000;
-
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
@@ -94,77 +91,6 @@ const App: React.FC = () => {
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
-
-    // --- LIVE SYNC POLLING ---
-    useEffect(() => {
-        const syncData = async () => {
-            // Only sync if we have data loaded
-            if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return; // Don't sync while heavy processing
-
-            try {
-                // 1. Fetch latest cache from server
-                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                if (!res.ok) return;
-                const cacheData: CoordsCache = await res.json();
-
-                // 2. Flatten cache for O(1) lookup
-                const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
-                Object.values(cacheData).flat().forEach((item: any) => {
-                    if (item.address && !item.isDeleted && item.lat && item.lon) {
-                        cacheMap.set(normalizeAddress(item.address), { lat: item.lat, lon: item.lon, comment: item.comment });
-                    }
-                });
-
-                let hasChanges = false;
-
-                // 3. Update All Data (Active Clients)
-                const newAllData = allDataRef.current.map(row => {
-                    let rowChanged = false;
-                    const newClients = row.clients.map(client => {
-                        const normAddr = normalizeAddress(client.address);
-                        
-                        // RACE CONDITION FIX: Ignore cache if user updated this client recently (< 2 mins)
-                        const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
-                        if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
-                            return client;
-                        }
-
-                        const cached = cacheMap.get(normAddr);
-                        
-                        // Check if we have new data that is different from current
-                        if (cached) {
-                            const latDiff = Math.abs((client.lat || 0) - cached.lat);
-                            const lonDiff = Math.abs((client.lon || 0) - cached.lon);
-                            const commentDiff = (client.comment || '') !== (cached.comment || '');
-                            
-                            // If significant change (> 0.0001 deg or comment changed)
-                            if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
-                                rowChanged = true;
-                                hasChanges = true;
-                                return { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
-                            }
-                        }
-                        return client;
-                    });
-                    
-                    if (rowChanged) return { ...row, clients: newClients };
-                    return row;
-                });
-
-                if (hasChanges) {
-                    setAllData(newAllData);
-                }
-
-            } catch (e) {
-                console.error("Auto-sync failed", e);
-            }
-        };
-
-        const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
-        return () => clearInterval(intervalId);
-    }, [processingState.isProcessing]);
-
 
     // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
@@ -551,13 +477,20 @@ const App: React.FC = () => {
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
                 if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                    addNotification('Обнаружена новая версия данных. Синхронизация...', 'info');
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
+                } else if (!local?.allData?.length) {
+                    // If local is empty but server has data, fetch it
+                    addNotification('Локальная база пуста. Загрузка из облака...', 'info');
                     await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
                     setDbStatus('ready');
                 }
             }
         };
         init();
-    }, [handleDownloadSnapshot, normalize]);
+    }, [handleDownloadSnapshot, normalize, addNotification]);
+
 
     // --- DATA UPDATE HANDLER (DEBOUNCED) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
