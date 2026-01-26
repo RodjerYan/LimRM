@@ -1,8 +1,8 @@
 
-import { AggregatedDataRow, UnidentifiedRow, OkbDataRow, OkbStatus, FilterState } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, OkbDataRow, OkbStatus } from '../types';
 
 const DB_NAME = 'LimkormAnalyticsDB';
-// Increase version to trigger schema upgrade if needed (though we just use object store)
+// Увеличиваем версию, чтобы триггернуть обновление схемы
 const DB_VERSION = 5; 
 const STORE_NAME = 'app_state';
 
@@ -15,7 +15,7 @@ const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
-      // Clean up old cache store if it exists
+      // Очищаем старое хранилище кэша, если оно есть
       if (db.objectStoreNames.contains('okb_cache')) {
         db.deleteObjectStore('okb_cache');
       }
@@ -27,7 +27,7 @@ const initDB = (): Promise<IDBDatabase> => {
 };
 
 /**
- * Saves the analytics state to IndexedDB.
+ * Сохранение состояния аналитики.
  */
 export const saveAnalyticsState = async (state: {
   allData: AggregatedDataRow[];
@@ -37,16 +37,14 @@ export const saveAnalyticsState = async (state: {
   okbStatus: OkbStatus | null;
   dateRange?: string;
   totalRowsProcessed: number;
-  processedFileIds?: string[]; 
+  processedFileIds?: string[]; // NEW
   versionHash: string;
-  filters?: FilterState;
-  lastSync?: number;
 }) => {
   const db = await initDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
   const store = tx.objectStore(STORE_NAME);
   
-  // Exclude heavy data that shouldn't be persisted here or is static
+  // Исключаем "тяжелые" данные из сохранения в IndexedDB
   const { okbData, okbStatus, ...stateToSave } = state; 
   
   store.put(stateToSave, 'current_state');
@@ -58,7 +56,7 @@ export const saveAnalyticsState = async (state: {
 };
 
 /**
- * Loads the saved analytics state.
+ * Загрузка сохраненного состояния.
  */
 export const loadAnalyticsState = async (): Promise<any | null> => {
   const db = await initDB();
@@ -71,8 +69,7 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
       req.onsuccess = () => {
           const result = req.result;
           if (result) {
-              // Return empty okbData to trigger fetch in component if needed, 
-              // or rely on component to re-fetch/re-hydrate
+              // Возвращаем пустые okbData, чтобы спровоцировать fetch в компоненте
               resolve({ 
                   ...result, 
                   okbData: [],
@@ -87,7 +84,7 @@ export const loadAnalyticsState = async (): Promise<any | null> => {
 };
 
 /**
- * Clears the analytics state from DB.
+ * Полная очистка состояния аналитики из БД.
  */
 export const clearAnalyticsState = async () => {
   const db = await initDB();
