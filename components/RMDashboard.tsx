@@ -7,7 +7,7 @@ import ClientsListModal from './ClientsListModal';
 import RegionDetailsModal from './RegionDetailsModal';
 import GrowthExplanationModal from './GrowthExplanationModal';
 import { AggregatedDataRow, RMMetrics, PlanMetric, OkbDataRow, SummaryMetrics, OkbStatus, MapPoint, PotentialClient } from '../types';
-import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon } from './icons';
+import { ExportIcon, SearchIcon, ArrowLeftIcon, CalculatorIcon, BrainIcon, LoaderIcon, ChartBarIcon, TargetIcon, UsersIcon } from './icons';
 import { findValueInRow, findAddressInRow, normalizeRmNameForMatching, normalizeAddress, recoverRegion } from '../utils/dataUtils';
 import { PlanningEngine } from '../services/planning/engine';
 import { streamPackagingInsights } from '../services/aiService';
@@ -263,12 +263,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
     const [isPackagingAnalysisLoading, setIsPackagingAnalysisLoading] = useState(false);
     const [packagingChartData, setPackagingChartData] = useState<{ fact: number; plan: number; growthPct: number } | null>(null);
     const packagingAbortController = useRef<AbortController | null>(null);
-    const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-    const [uncoveredRowsCache, setUncoveredRowsCache] = useState<OkbDataRow[]>([]);
-    const [exportHierarchy, setExportHierarchy] = useState<Record<string, Set<string>>>({});
-    const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
-    const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
-    const [regionSearch, setRegionSearch] = useState('');
     
     const currentYear = new Date().getFullYear();
     const nextYear = currentYear + 1;
@@ -339,6 +333,31 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         return results.sort((a, b) => b.totalFact - a.totalFact);
     }, [data, okbRegionCounts, okbData, baseRate]);
 
+    const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
+        const targetClients: MapPoint[] = [];
+        // Filter rows belonging to this RM
+        data.forEach(row => {
+            if (row.rm === rmName) {
+                row.clients.forEach(c => {
+                    if (c.abcCategory === category) {
+                        targetClients.push(c);
+                    }
+                });
+            }
+        });
+        
+        setAbcClients(targetClients);
+        setAbcModalTitle(
+            <div className="flex flex-col">
+                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-400' : category === 'B' ? 'text-emerald-400' : 'text-gray-400'}`}>
+                    Клиенты Категории {category}
+                </span>
+                <span className="text-sm text-gray-400 mt-1">Менеджер: {rmName}</span>
+            </div>
+        );
+        setIsAbcModalOpen(true);
+    };
+
     const renderContent = () => (
         <div className="space-y-6">
             <div className="bg-gray-900/80 backdrop-blur-md p-6 rounded-2xl border border-gray-700 shadow-xl flex flex-col md:flex-row justify-between items-center gap-6">
@@ -368,11 +387,34 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                     <div className="bg-gray-800/40 p-5 rounded-xl border border-gray-700">
                                         <h4 className="text-sm font-bold text-gray-300 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
                                         <div className="space-y-4">
-                                            <div className="flex justify-between items-center"><span className="text-xs text-amber-400 font-bold">Категория A (80% объема)</span><span className="text-xs text-white">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span></div>
+                                            <div 
+                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
+                                                onClick={() => handleShowAbcClients(rm.rmName, 'A')}
+                                                title="Показать список клиентов категории A"
+                                            >
+                                                <span className="text-xs text-amber-400 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
+                                                <span className="text-xs text-white">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span>
+                                            </div>
                                             <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
-                                            <div className="flex justify-between items-center"><span className="text-xs text-emerald-400 font-bold">Категория B (15% объема)</span><span className="text-xs text-white">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span></div>
+                                            
+                                            <div 
+                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
+                                                onClick={() => handleShowAbcClients(rm.rmName, 'B')}
+                                                title="Показать список клиентов категории B"
+                                            >
+                                                <span className="text-xs text-emerald-400 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
+                                                <span className="text-xs text-white">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span>
+                                            </div>
                                             <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
-                                            <div className="flex justify-between items-center"><span className="text-xs text-gray-400 font-bold">Категория C (5% объема)</span><span className="text-xs text-white">{rm.countC} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factC)} кг</span></div>
+                                            
+                                            <div 
+                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
+                                                onClick={() => handleShowAbcClients(rm.rmName, 'C')}
+                                                title="Показать список клиентов категории C"
+                                            >
+                                                <span className="text-xs text-gray-400 font-bold underline decoration-dotted underline-offset-2">Категория C (5% объема)</span>
+                                                <span className="text-xs text-white">{rm.countC} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factC)} кг</span>
+                                            </div>
                                             <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-gray-400" style={{ width: `${(rm.factC / rm.totalFact) * 100}%` }}></div></div>
                                         </div>
                                     </div>
@@ -400,11 +442,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                     <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-700 rounded text-indigo-400 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
                                                         const activeClients = data.filter(d => d.rm === rm.rmName && d.region === reg.name).flatMap(d => d.clients); 
-                                                        // Filter potential clients from okbData for this region
-                                                        // Since we don't have direct access to region potential list here easily without recalculating, 
-                                                        // we can approximate or pass it down if critical. 
-                                                        // For now, let's assume we pass empty potential or refactor logic to access it.
-                                                        // Simplified: just active for now or mock potential
                                                         setSelectedRegionDetails({ rmName: rm.rmName, regionName: reg.name, activeClients, potentialClients: [] });
                                                         setIsRegionModalOpen(true); 
                                                     }} className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Список клиентов"><SearchIcon small /></button>
@@ -466,6 +503,19 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                     ).finally(() => setIsPackagingAnalysisLoading(false));
                 }} />
                 <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
+                
+                <ClientsListModal 
+                    isOpen={isAbcModalOpen}
+                    onClose={() => setIsAbcModalOpen(false)}
+                    title={abcModalTitle}
+                    clients={abcClients}
+                    onClientSelect={() => {}}
+                    onStartEdit={(client) => {
+                        setIsAbcModalOpen(false);
+                        if (onEditClient) onEditClient(client);
+                    }}
+                    showAbcLegend={true}
+                />
             </div>
         );
     }
@@ -493,6 +543,19 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 ).finally(() => setIsPackagingAnalysisLoading(false));
             }} />
             <PackagingAnalysisModal isOpen={isPackagingAnalysisOpen} onClose={() => setIsPackagingAnalysisOpen(false)} title={packagingAnalysisTitle} content={packagingAnalysisContent} isLoading={isPackagingAnalysisLoading} chartData={packagingChartData} />
+            
+            <ClientsListModal 
+                isOpen={isAbcModalOpen}
+                onClose={() => setIsAbcModalOpen(false)}
+                title={abcModalTitle}
+                clients={abcClients}
+                onClientSelect={() => {}}
+                onStartEdit={(client) => {
+                    setIsAbcModalOpen(false);
+                    if (onEditClient) onEditClient(client);
+                }}
+                showAbcLegend={true}
+            />
         </Modal>
     );
 };
