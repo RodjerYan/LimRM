@@ -289,7 +289,7 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             const rmName = row.rm || 'Не указан'; const normRm = normalizeRmNameForMatching(rmName); const regionKey = row.region || 'Регион не определен';
             if (!rmBuckets.has(normRm)) rmBuckets.set(normRm, { originalName: rmName, regions: new Map(), totalFact: 0, countA: 0, countB: 0, countC: 0, factA: 0, factB: 0, factC: 0, uniqueClientKeys: new Set(), totalListings: 0 });
             const rmBucket = rmBuckets.get(normRm)!; rmBucket.totalFact += row.fact; rmBucket.totalListings += row.clients.length;
-            if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
+            if (row.clients) row.clients.forEach(c => { rmBucket.uniqueClientKeys.add(c.key); const clientFact = c.fact || 0; if (c.abcCategory === 'A') { rmBucket.countA++; rmBucket.factA += clientFact; } else if (c.abcCategory === 'B') { rmBucket.countB++; rmBucket.factB += clientFact; } else { rmBucket.countC++; rmBucket.factC += clientFact; } });
             if (!rmBucket.regions.has(regionKey)) rmBucket.regions.set(regionKey, { fact: 0, potential: 0, activeClients: new Set(), matchedOkbCoords: new Set(), brandFacts: new Map<string, number>(), brandClientCounts: new Map<string, number>(), brandRows: new Map<string, AggregatedDataRow[]>(), originalRegionName: row.region, regionListings: 0 });
             const regBucket = rmBucket.regions.get(regionKey)!; regBucket.fact += row.fact; regBucket.potential += row.potential || 0; regBucket.regionListings += row.clients.length;
             if (row.clients) row.clients.forEach(c => { regBucket.activeClients.add(c.key); let isMatch = false; if (c.lat && c.lon && !isNaN(c.lat) && !isNaN(c.lon)) { if (globalOkbCoordSet.has(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`)) isMatch = true; } if (!isMatch && globalOkbAddressSet.has(normalizeAddress(c.address))) isMatch = true; if (isMatch) regBucket.matchedOkbCoords.add(c.key); });
@@ -335,7 +335,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const handleShowAbcClients = (rmName: string, category: 'A' | 'B' | 'C') => {
         const targetClients: MapPoint[] = [];
-        // Filter rows belonging to this RM
         data.forEach(row => {
             if (row.rm === rmName) {
                 row.clients.forEach(c => {
@@ -345,17 +344,50 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                 });
             }
         });
-        
         setAbcClients(targetClients);
         setAbcModalTitle(
             <div className="flex flex-col">
-                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-400' : category === 'B' ? 'text-emerald-400' : 'text-gray-400'}`}>
-                    Клиенты Категории {category}
-                </span>
+                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-400' : category === 'B' ? 'text-emerald-400' : 'text-gray-400'}`}>Клиенты Категории {category}</span>
                 <span className="text-sm text-gray-400 mt-1">Менеджер: {rmName}</span>
             </div>
         );
         setIsAbcModalOpen(true);
+    };
+
+    // --- GLOBAL EXPORT FUNCTION FOR UNCOVERED POTENTIAL ---
+    const handleExportUncovered = (rmMetrics: RMMetrics) => {
+        const activeClients = data.filter(d => d.rm === rmMetrics.rmName).flatMap(d => d.clients);
+        const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
+        
+        // Find regions managed by this RM to filter the OKB data
+        const rmRegions = new Set(rmMetrics.regions.map(r => r.name.toLowerCase()));
+        
+        const uncoveredClients = okbData.filter(row => {
+            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область']) || '';
+            const rowCity = findValueInRow(row, ['город', 'населенный пункт']) || '';
+            
+            // Loose matching: check if region OR city matches any of the RM's regions
+            const matchesRegion = Array.from(rmRegions).some(rmReg => 
+                rowRegion.toLowerCase().includes(rmReg) || rowCity.toLowerCase().includes(rmReg)
+            );
+            
+            if (!matchesRegion) return false;
+            
+            const addr = findAddressInRow(row);
+            if (!addr) return false;
+            return !activeAddressSet.has(normalizeAddress(addr));
+        }).map(row => ({
+            'Наименование': findValueInRow(row, ['наименование', 'клиент']) || 'ТТ',
+            'Адрес': findAddressInRow(row) || '',
+            'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
+            'Регион': findValueInRow(row, ['субъект', 'регион', 'область']) || 'Не указан',
+            'Менеджер': rmMetrics.rmName
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(uncoveredClients);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Uncovered_Potential");
+        XLSX.writeFile(wb, `Uncovered_Potential_${rmMetrics.rmName.replace(/[^a-zа-я0-9]/gi, '_')}.xlsx`);
     };
 
     const renderContent = () => (
@@ -383,35 +415,34 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                         </div>
                         {expandedRM === rm.rmName && (
                             <div className="border-t border-gray-700 bg-black/20 p-6 animate-fade-in-down">
+                                {/* NEW: Export Button for Uncovered Potential */}
+                                <div className="flex justify-end mb-4">
+                                    <button 
+                                        onClick={() => handleExportUncovered(rm)}
+                                        className="flex items-center gap-2 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-bold rounded-lg border border-blue-500/30 transition-colors"
+                                        title="Скачать список всех непокрытых точек по регионам этого менеджера"
+                                    >
+                                        <ExportIcon small /> Скачать отчет: Непокрытый Потенциал (ОКБ)
+                                    </button>
+                                </div>
+
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
                                     <div className="bg-gray-800/40 p-5 rounded-xl border border-gray-700">
                                         <h4 className="text-sm font-bold text-gray-300 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
                                         <div className="space-y-4">
-                                            <div 
-                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
-                                                onClick={() => handleShowAbcClients(rm.rmName, 'A')}
-                                                title="Показать список клиентов категории A"
-                                            >
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'A')} title="Показать список клиентов категории A">
                                                 <span className="text-xs text-amber-400 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
                                                 <span className="text-xs text-white">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span>
                                             </div>
                                             <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
                                             
-                                            <div 
-                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
-                                                onClick={() => handleShowAbcClients(rm.rmName, 'B')}
-                                                title="Показать список клиентов категории B"
-                                            >
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'B')} title="Показать список клиентов категории B">
                                                 <span className="text-xs text-emerald-400 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
                                                 <span className="text-xs text-white">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span>
                                             </div>
                                             <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
                                             
-                                            <div 
-                                                className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors"
-                                                onClick={() => handleShowAbcClients(rm.rmName, 'C')}
-                                                title="Показать список клиентов категории C"
-                                            >
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'C')} title="Показать список клиентов категории C">
                                                 <span className="text-xs text-gray-400 font-bold underline decoration-dotted underline-offset-2">Категория C (5% объема)</span>
                                                 <span className="text-xs text-white">{rm.countC} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factC)} кг</span>
                                             </div>
@@ -443,11 +474,14 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                     <button onClick={() => { 
                                                         const activeClients = data.filter(d => d.rm === rm.rmName && d.region === reg.name).flatMap(d => d.clients); 
                                                         
-                                                        // FILTER OKB DATA TO FIND POTENTIAL CLIENTS FOR THIS REGION
-                                                        // 1. Filter by Region Name
+                                                        // IMPROVED FILTER OKB DATA TO FIND POTENTIAL CLIENTS
+                                                        // Loose matching to handle city vs region name mismatches (e.g. "St. Petersburg" city vs region)
+                                                        const targetRegionLower = reg.name.toLowerCase().replace(/(г\.|город|область|край|республика)/g, '').trim();
+                                                        
                                                         const regionOkb = okbData.filter(row => {
-                                                            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область']);
-                                                            return rowRegion && rowRegion.toLowerCase().includes(reg.name.toLowerCase());
+                                                            const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область'])?.toLowerCase() || '';
+                                                            const rowCity = findValueInRow(row, ['город', 'населенный пункт'])?.toLowerCase() || '';
+                                                            return rowRegion.includes(targetRegionLower) || rowCity.includes(targetRegionLower);
                                                         });
                                                         
                                                         // 2. Exclude Active Clients (Uncovered Potential)
