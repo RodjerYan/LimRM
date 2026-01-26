@@ -19,7 +19,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress, findAddressInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 import { enrichWithAbcCategories } from './utils/analytics';
@@ -667,16 +667,37 @@ const App: React.FC = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
-    // --- POTENTIAL CLIENTS ---
+    // --- DE-DUPLICATION LOGIC ---
+    const activeClientAddressSet = useMemo(() => {
+        const addressSet = new Set<string>();
+        allActiveClients.forEach(client => {
+            if (client.address) {
+                addressSet.add(normalizeAddress(client.address));
+            }
+        });
+        return addressSet;
+    }, [allActiveClients]);
+
+    // --- POTENTIAL CLIENTS (DE-DUPLICATED) ---
     const mapPotentialClients = useMemo(() => {
         if (!okbData || okbData.length === 0) return [];
+        
         const coordsOnly = okbData.filter(r => {
             const lat = r.lat;
             const lon = r.lon;
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
-        if (filters.region.length === 0) return coordsOnly;
-        return coordsOnly.filter(row => {
+
+        // ** THE FIX **: Filter out potential clients that are already active.
+        const potentialOnly = coordsOnly.filter(r => {
+            const addr = findAddressInRow(r);
+            if (!addr) return true; // Keep if no address to be safe, though unlikely
+            return !activeClientAddressSet.has(normalizeAddress(addr));
+        });
+
+        if (filters.region.length === 0) return potentialOnly;
+        
+        return potentialOnly.filter(row => {
             const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
             if (!rawRegion) return false;
             return filters.region.some(selectedReg => 
@@ -684,7 +705,7 @@ const App: React.FC = () => {
                 selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
             );
         });
-    }, [okbData, filters.region]);
+    }, [okbData, filters.region, activeClientAddressSet]);
 
     const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
     const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
