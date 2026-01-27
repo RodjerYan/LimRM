@@ -411,8 +411,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     headers: { 'Cache-Control': 'no-cache, no-store' }
                 });
                 
-                // Show explicit log for 404
                 if (res.status === 404) {
+                    // This is an expected "Not Found" during polling. We log it for context.
+                    console.info(`[Polling] Coordinates for "${pollingTarget.address}" not ready yet. (Attempt ${attemptsRef.current})`);
                     return;
                 }
 
