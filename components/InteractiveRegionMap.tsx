@@ -236,7 +236,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
-    const popupRootRef = useRef<any>(null); // To hold the ReactDOM root for unmounting
+    // REMOVED: popupRootRef is no longer needed with the new architecture
     
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
@@ -398,36 +398,44 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.on('click', resetHighlight);
 
             // --- REFACTORED POPUP LOGIC ---
+            // 1. One React Root per popup instance (stored on the Leaflet popup object)
+            // 2. No StrictMode to avoid lifecycle conflicts with Leaflet
+            // 3. Using data-attributes for selection
+            
             map.on('popupopen', (e) => {
-                const popupNode = e.popup.getElement();
+                const popup = e.popup as any;
+                const popupNode = popup.getElement();
                 if (!popupNode) return;
 
-                const placeholder = popupNode.querySelector('#popup-edit-placeholder');
-                const key = placeholder?.getAttribute('data-key');
+                // Use data attribute selector
+                const placeholder = popupNode.querySelector('[data-popup-edit]');
+                if (!placeholder) return;
 
-                if (placeholder && key) {
-                    const client = activeClientsDataRef.current.find(c => c.key === key);
-                    if (client) {
-                        if (popupRootRef.current) popupRootRef.current.unmount();
-                        
-                        const root = ReactDOM.createRoot(placeholder);
-                        popupRootRef.current = root;
-                        root.render(
-                            <React.StrictMode>
-                                <PopupButton client={client} onEdit={(c) => {
-                                    setIsFullscreen(false);
-                                    onEditClientRef.current(c);
-                                }} />
-                            </React.StrictMode>
-                        );
-                    }
+                const key = placeholder.getAttribute('data-key');
+                const client = activeClientsDataRef.current.find(c => c.key === key);
+
+                if (!client) return;
+
+                // Create a new root for this specific popup and store it on the popup instance
+                if (!popup.__reactRoot) {
+                    popup.__reactRoot = ReactDOM.createRoot(placeholder);
                 }
+                
+                // Render WITHOUT StrictMode to prevent mounting/unmounting issues in imperative API
+                popup.__reactRoot.render(
+                    <PopupButton client={client} onEdit={(c) => {
+                        setIsFullscreen(false);
+                        onEditClientRef.current(c);
+                    }} />
+                );
             });
 
-            map.on('popupclose', () => {
-                if (popupRootRef.current) {
-                    popupRootRef.current.unmount();
-                    popupRootRef.current = null;
+            map.on('popupclose', (e) => {
+                const popup = e.popup as any;
+                if (popup.__reactRoot) {
+                    // Properly unmount the React root associated with this specific popup
+                    popup.__reactRoot.unmount();
+                    popup.__reactRoot = null;
                 }
             });
         }
@@ -456,12 +464,13 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         else if (abcCategory === 'B') badge = '<span class="px-2 py-0.5 rounded bg-emerald-500 text-white font-bold text-xs ml-2">B</span>';
         else if (abcCategory === 'C') badge = '<span class="px-2 py-0.5 rounded bg-gray-500 text-white font-bold text-xs ml-2">C</span>';
 
+        // UPDATED: Using data attributes instead of ID
         return `
         <div class="popup-inner-content">
             <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
             ${address}<br><small>${type || 'н/д'}</small>
             ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-            <div id="popup-edit-placeholder" data-key="${key}"></div>
+            <div data-popup-edit data-key="${key}"></div>
         </div>
     `;
     };
