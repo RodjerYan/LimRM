@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css'; 
 import Modal from './Modal';
@@ -79,7 +79,6 @@ const SinglePointMap: React.FC<{
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
-    const resizeObserverRef = useRef<ResizeObserver | null>(null);
     
     // --- STATE REFACTORS ---
     const [hasMarker, setHasMarker] = useState(false);
@@ -93,8 +92,8 @@ const SinglePointMap: React.FC<{
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-    // 1. Initialize Map (Corrected Logic)
-    useEffect(() => {
+    // 1. Initialize Map (Corrected Logic with useLayoutEffect)
+    useLayoutEffect(() => {
         if (!mapContainerRef.current || mapRef.current) return;
 
         const map = L.map(mapContainerRef.current, { 
@@ -107,16 +106,13 @@ const SinglePointMap: React.FC<{
         mapRef.current = map;
         L.control.zoom({ position: 'topleft' }).addTo(map);
 
-        resizeObserverRef.current = new ResizeObserver(() => {
-            mapRef.current?.invalidateSize();
+        // CRITICAL FIX: Ensure map resizes after modal animation is complete.
+        requestAnimationFrame(() => {
+            map.invalidateSize();
+            setTimeout(() => map.invalidateSize(), 200); 
         });
-        resizeObserverRef.current.observe(mapContainerRef.current);
-        
-        // Single, reliable invalidation after a short delay to account for modal transitions
-        setTimeout(() => map.invalidateSize(), 150);
 
         return () => {
-            resizeObserverRef.current?.disconnect();
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;
@@ -126,17 +122,15 @@ const SinglePointMap: React.FC<{
         };
     }, []);
 
-    // 2. Handle Theme Updates reliably by recreating the layer (Corrected Logic)
+    // 2. Handle Theme Updates reliably by recreating the layer
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
 
-        // Remove old layer if it exists
         if (tileLayerRef.current) {
             map.removeLayer(tileLayerRef.current);
         }
 
-        // Create and add new layer
         const newUrl = theme === 'dark' ? darkUrl : lightUrl;
         tileLayerRef.current = L.tileLayer(newUrl, { attribution: '&copy; CARTO' }).addTo(map);
         tileLayerRef.current.bringToBack();
@@ -175,16 +169,13 @@ const SinglePointMap: React.FC<{
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
             
             map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
-            map.invalidateSize();
         } else {
             if (markerRef.current) {
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
             setHasMarker(false);
-            // **FIX**: Fallback view to prevent gray screen
             map.setView([55.75, 37.61], 5, { animate: true });
-            map.invalidateSize();
         }
     }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]);
 
@@ -369,7 +360,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const res = await fetch(url);
 
             if (!res.ok) {
-                // This will now catch the 404 and other non-successful responses
                 throw new Error(`API returned ${res.status}: ${res.statusText}`);
             }
 
@@ -383,8 +373,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             }
         } catch (e) {
             console.error("Failed to fetch history for address:", address, e);
-            // We don't need to show an error to the user, just log it.
-            // The map will have its fallback view.
         } finally {
             setIsLoadingHistory(false);
         }
@@ -593,7 +581,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 isSuccess={isMapSuccess}
                                 onCoordinatesChange={handleCoordinatesChange}
                                 theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                                onExpand={() => setIsMapExpanded(true)} isExpanded={false}
+                                onExpand={() => setIsMapExpanded(true)} 
+                                isExpanded={isMapExpanded}
                              />
                         </div>
                         
