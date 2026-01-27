@@ -308,6 +308,12 @@ export interface FileProcessingState {
     startTime: number | null;
     totalRowsProcessed?: number;
 }
+// FIX: Added missing type definition for UpdateJobStatus.
+export interface UpdateJobStatus {
+    status: 'pending' | 'processing' | 'completed' | 'error';
+    message: string;
+    progress: number;
+}
 
 export interface CloudLoadParams {
     year: string;

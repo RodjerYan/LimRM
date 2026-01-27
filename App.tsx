@@ -14,16 +14,18 @@ import { RMDashboard } from './components/RMDashboard';
 import Notification from './components/Notification';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
+import DataUpdateOverlay from './components/DataUpdateOverlay';
 import { 
     AggregatedDataRow, FilterState, NotificationMessage, 
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
-    WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus
+    WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus,
+    UpdateJobStatus
 } from './types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress, findAddressInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 import { enrichWithAbcCategories } from './utils/analytics';
-import { LoaderIcon, CheckIcon, SaveIcon, RetryIcon } from './components/icons';
+import { LoaderIcon, CloudDownloadIcon } from './components/icons';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -48,14 +50,14 @@ const POLLING_INTERVAL_MS = 15000;
 const GEOCODING_POLLING_INTERVAL_MS = 7000;
 const MAX_GEOCODING_ATTEMPTS = 60;
 
-
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
 
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [isCloudSaving, setIsCloudSaving] = useState(false); // New visual state
-    const [rosstatUpdateStatus, setRosstatUpdateStatus] = useState<'idle' | 'loading' | 'success'>('idle'); // State for the new button
+    const [updateJobStatus, setUpdateJobStatus] = useState<UpdateJobStatus | null>(null);
+    const updatePollingInterval = useRef<number | null>(null);
     
     // --- DATE FILTER STATE ---
     const [filterStartDate, setFilterStartDate] = useState<string>('');
@@ -103,6 +105,7 @@ const App: React.FC = () => {
     useEffect(() => {
         return () => {
             if (workerRef.current) workerRef.current.terminate();
+            if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
         };
     }, []);
 
@@ -112,18 +115,43 @@ const App: React.FC = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
-    const handleRosstatUpdate = useCallback(() => {
-        if (rosstatUpdateStatus !== 'idle') return;
-        setRosstatUpdateStatus('loading');
-        addNotification('Проверка обновлений данных Росстата...', 'info');
-        setTimeout(() => {
-            setRosstatUpdateStatus('success');
-            addNotification('База данных Росстата актуальна. Обновление не требуется.', 'success');
-            setTimeout(() => {
-                setRosstatUpdateStatus('idle');
-            }, 3000); // Reset back to idle after 3 seconds
-        }, 2500); // Simulate a 2.5 second check
-    }, [rosstatUpdateStatus, addNotification]);
+    // --- NEW REAL DATA UPDATE HANDLER ---
+    const handleStartDataUpdate = async () => {
+        if (updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error') return;
+
+        try {
+            const res = await fetch('/api/start-data-update', { method: 'POST' });
+            const { jobId } = await res.json();
+            
+            setUpdateJobStatus({ status: 'pending', message: 'Задача поставлена в очередь...', progress: 5 });
+
+            if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
+            
+            updatePollingInterval.current = window.setInterval(async () => {
+                const statusRes = await fetch(`/api/check-update-status?jobId=${jobId}`);
+                if (!statusRes.ok) {
+                    clearInterval(updatePollingInterval.current!);
+                    setUpdateJobStatus({ status: 'error', message: 'Ошибка связи с сервером.', progress: 100 });
+                    return;
+                }
+                const statusData: UpdateJobStatus = await statusRes.json();
+                setUpdateJobStatus(statusData);
+
+                if (statusData.status === 'completed' || statusData.status === 'error') {
+                    clearInterval(updatePollingInterval.current!);
+                    if (statusData.status === 'completed') {
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 2500); // Wait for user to see message
+                    }
+                }
+            }, 3000);
+
+        } catch (error) {
+            setUpdateJobStatus({ status: 'error', message: 'Не удалось запустить обновление.', progress: 100 });
+        }
+    };
+
 
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
@@ -936,16 +964,14 @@ const App: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-4 text-right">
                         {activeModule === 'amp' && (
-                            <button 
-                                onClick={handleRosstatUpdate}
-                                disabled={rosstatUpdateStatus !== 'idle'}
+                             <button 
+                                onClick={handleStartDataUpdate}
+                                disabled={!!updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error'}
                                 className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-medium text-gray-400 hover:text-white transition-all disabled:opacity-50 disabled:cursor-wait"
-                                title="Данные Росстата и рыночные индексы заложены в код приложения и обновляются с выходом новой версии. Эта кнопка имитирует проверку для демонстрации."
+                                title="Запустить фоновый процесс обновления рыночных данных на сервере."
                             >
-                                {rosstatUpdateStatus === 'loading' && <LoaderIcon className="w-3 h-3 text-indigo-400" />}
-                                {rosstatUpdateStatus === 'success' && <CheckIcon className="w-3 h-3 text-emerald-400" />}
-                                {rosstatUpdateStatus === 'idle' && <RetryIcon className="w-3 h-3" />}
-                                <span>Обновить данные Росстата</span>
+                                <CloudDownloadIcon className="w-4 h-4" />
+                                <span>Запустить обновление рыночных данных</span>
                             </button>
                         )}
                         <div className="flex flex-col">
@@ -1012,6 +1038,8 @@ const App: React.FC = () => {
                     {activeModule === 'presentation' && <Presentation />}
                 </div>
             </main>
+
+            <DataUpdateOverlay jobStatus={updateJobStatus} />
 
             <div className="fixed bottom-6 right-6 flex flex-col gap-2 z-[100]">
                 {notifications.map(n => <Notification key={n.id} message={n.message} type={n.type} />)}

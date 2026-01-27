@@ -6,6 +6,14 @@
       "destination": "/api/gemini-proxy"
     },
     {
+      "source": "/api/start-data-update",
+      "destination": "/api/start-data-update"
+    },
+    {
+      "source": "/api/check-update-status",
+      "destination": "/api/check-update-status"
+    },
+    {
       "source": "/api/get-full-cache",
       "destination": "/api/get-full-cache?action=get-full-cache"
     },
