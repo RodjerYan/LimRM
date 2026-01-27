@@ -32,15 +32,12 @@ let state_clientNameHeader: string | undefined = undefined;
 let state_okbCoordIndex: OkbCoordIndex = new Map();
 let state_okbByRegion: Record<string, OkbDataRow[]> = {};
 let state_okbRegionCounts: { [key: string]: number } = {};
-let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string }>();
+let state_cacheAddressMap = new Map<string, { lat?: number; lon?: number; originalAddress?: string; isInvalid?: boolean; comment?: string; isDeleted?: boolean; }>();
 let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Увеличили порог для чекпоинта (сохранения в облако) до 50 000
 const CHECKPOINT_THRESHOLD = 50000; 
-
-// Увеличили порог обновления UI до 20 000
 const UI_UPDATE_THRESHOLD = 20000;
 
 const normalizeHeaderKey = (key: string): string => {
@@ -82,7 +79,6 @@ const parseCleanFloat = (val: any): number => {
 const parseDateKey = (val: any): string | null => {
     if (!val) return null;
     
-    // Excel Serial Date
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
@@ -94,11 +90,9 @@ const parseDateKey = (val: any): string | null => {
 
     const str = String(val).trim();
     
-    // ISO-like YYYY-MM-DD or YYYY.MM.DD
     let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
 
-    // DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
     
@@ -181,9 +175,9 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_cacheAddressMap = new Map();
     if (cacheData) {
         Object.values(cacheData).flat().forEach((item: any) => {
-            if (item.address && !item.isDeleted) {
+            if (item.address) {
                 state_cacheAddressMap.set(normalizeAddress(item.address), { 
-                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment 
+                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment, isDeleted: item.isDeleted
                 });
             }
         });
@@ -277,19 +271,22 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const rawAddr = findAddressInRow(row);
         if (!rawAddr) continue;
 
-        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = 'Не определен';
-
-        // 1. Get raw brand value
-        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
-        // 2. Split by comma, semicolon, pipe, or newline (more aggressive split)
-        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-        
-        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
-
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
+
+        // CORE LOGIC: Skip row if it has been marked as deleted.
+        if (cacheEntry?.isDeleted) {
+            continue;
+        }
+
+        let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
+        if (!channel || channel.length < 2) channel = 'Не определен';
+
+        const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
+        const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+        
+        const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
         
         const isCityFound = parsed.city !== 'Город не определен';
         const reg = getCanonicalRegion(row) || parsed.region;
@@ -302,22 +299,17 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
-        // 3. Divide weight evenly among detected brands
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
         const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
-        // COMPOSITE KEY FIX: Use both address and client name to define uniqueness.
-        // This prevents distinct shops at the same address (e.g. malls) from collapsing into one.
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
-        // Fallback to just address if name is generic 'ТТ' to avoid creating duplicates for identical placeholders
         const uniqueClientKey = (normName.length > 2 && normName !== 'тт') 
             ? `${normAddr}#${normName}` 
             : normAddr;
 
-        // 4. Iterate over each brand and create separate records
         for (const brand of brands) {
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
             
@@ -346,16 +338,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
-                const okb = state_okbCoordIndex.get(normAddr); // Lookup coords by address only
+                const okb = state_okbCoordIndex.get(normAddr);
                 
-                // Enhanced coordinate detection
                 const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
                 const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
                 const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
                 const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
                 
-                // Priority: Excel File > Cache > OKB
-                // FIX: REMOVED RANDOM JITTER. Coordinates are now exact.
                 const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
                 const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
 
@@ -393,7 +382,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
         
-        // RE-CALCULATE ABC BEFORE CHECKPOINT
         performIncrementalAbc();
 
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
@@ -419,7 +407,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
         
-        // RE-CALCULATE ABC BEFORE PARTIAL UPDATE
         performIncrementalAbc();
 
         const partialData = Object.values(state_aggregatedData).map(item => ({
@@ -470,5 +457,4 @@ self.onmessage = async (e) => {
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
-    // Removed PROCESS_FILE to align with JSON-only approach
 };

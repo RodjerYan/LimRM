@@ -413,7 +413,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 
                 // Show explicit log for 404
                 if (res.status === 404) {
-                    // console.log(`%c[Polling] Address "${pollingTarget.address}" not yet geocoded (404). Retrying in 5s...`, 'color: orange');
                     return;
                 }
 
@@ -654,16 +653,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         setStatus('deleting'); setError(null);
         try {
+            // 1. API Call: Delete from cache
             const res = await fetch('/api/delete-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ rmName: rm, address: addressToDelete }),
             });
-            if (!res.ok) { const err = await res.json(); throw new Error(err.details || 'Ошибка при удалении.'); }
-            let keyToDelete = (data as MapPoint).key || normalizeAddress(addressToDelete);
+            if (!res.ok) { 
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.details || err.error || 'Ошибка при удалении.'); 
+            }
+            
+            // 2. Call Parent Callback
             onDelete(rm, addressToDelete); 
             onClose();
-        } catch (e) { setStatus('error_deleting'); setError((e as Error).message); }
+        } catch (e) { 
+            setStatus('error_deleting'); 
+            setError((e as Error).message); 
+        }
     };
 
     if (!data) return null;
@@ -762,9 +769,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 Параметры объекта
                             </h4>
                             {!showDeleteConfirm ? (
-                                <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full" title="Удалить запись"><TrashIcon className="w-4 h-4" /></button>
+                                <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full flex items-center gap-2 group" title="Удалить запись">
+                                    <TrashIcon className="w-4 h-4" />
+                                    <span className="text-[10px] font-bold uppercase hidden group-hover:inline">Удалить</span>
+                                </button>
                             ) : (
-                                <div className="flex items-center gap-3 bg-red-900/30 px-3 py-1.5 rounded-xl border border-red-500/30 animate-fade-in"><span className="text-[10px] font-bold text-red-300 uppercase">Удалить?</span><button onClick={handleDelete} className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all">Нет</button></div>
+                                <div className="flex items-center gap-3 bg-red-900/30 px-3 py-1.5 rounded-xl border border-red-500/30 animate-fade-in"><span className="text-[10px] font-bold text-red-300 uppercase">Удалить из базы?</span><button onClick={handleDelete} className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all">Нет</button></div>
                             )}
                         </div>
                         

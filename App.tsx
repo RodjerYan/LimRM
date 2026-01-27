@@ -625,6 +625,68 @@ const App: React.FC = () => {
 
     }, [okbRegionCounts]); 
 
+    // --- CLIENT DELETION HANDLER ---
+    const handleDeleteClient = useCallback((rmName: string, address: string) => {
+        const normAddress = normalizeAddress(address);
+        let newData = [...allDataRef.current]; 
+        let newUnidentified = [...unidentifiedRowsRef.current];
+        let wasModified = false;
+
+        // 1. Remove from Active Data (Aggregated Rows)
+        newData = newData.map(group => {
+            // Only search in groups belonging to this RM to narrow scope
+            if (group.rm !== rmName) return group;
+
+            const originalClientCount = group.clients.length;
+            const newClients = group.clients.filter(c => normalizeAddress(c.address) !== normAddress);
+            
+            if (newClients.length !== originalClientCount) {
+                wasModified = true;
+                // Recalculate group totals
+                const newFact = newClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+                
+                // If group becomes empty, it will be filtered out later
+                return {
+                    ...group,
+                    clients: newClients,
+                    fact: newFact,
+                    // Recalculate potential using simple heuristic if we lost clients
+                    potential: newFact * 1.15,
+                    growthPotential: 0, // Reset these as they need recalculation usually
+                    growthPercentage: 0
+                };
+            }
+            return group;
+        }).filter(group => group.clients.length > 0); // Remove empty groups
+
+        // 2. Remove from Unidentified Rows
+        const initialUnidentifiedCount = newUnidentified.length;
+        newUnidentified = newUnidentified.filter(row => {
+            const rowAddr = findAddressInRow(row.rowData);
+            return !(row.rm === rmName && normalizeAddress(rowAddr) === normAddress);
+        });
+        
+        if (newUnidentified.length !== initialUnidentifiedCount) wasModified = true;
+
+        if (wasModified) {
+            // Re-run ABC classification
+            enrichWithAbcCategories(newData);
+            
+            setAllData(newData);
+            setUnidentifiedRows(newUnidentified);
+            
+            addNotification('Клиент удален из базы', 'info');
+
+            // Trigger Cloud Save
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = setTimeout(() => {
+                saveSnapshotToCloud(newData, newUnidentified).catch(err => {
+                    console.error("Auto-save failed after delete:", err);
+                });
+            }, 1000);
+        }
+    }, []);
+
     // --- FILTERED DATA ---
     const filtered = useMemo(() => {
         let processedData = allData;
@@ -790,7 +852,7 @@ const App: React.FC = () => {
                     )}
 
                     {activeModule === 'dashboard' && (
-                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} />
+                        <RMDashboard isOpen={true} onClose={() => setActiveModule('amp')} data={filtered} metrics={summaryMetrics} okbRegionCounts={okbRegionCounts} mode="page" okbData={okbData} okbStatus={okbStatus} onEditClient={setEditingClient} />
                     )}
 
                     {activeModule === 'prophet' && <Prophet data={filtered} />}
@@ -812,7 +874,16 @@ const App: React.FC = () => {
             </Suspense>
             
             {editingClient && (
-                <AddressEditModal isOpen={!!editingClient} onClose={() => setEditingClient(null)} onBack={() => setEditingClient(null)} data={editingClient} onDataUpdate={handleDataUpdate} onStartPolling={() => {}} onDelete={() => {}} globalTheme="dark" />
+                <AddressEditModal 
+                    isOpen={!!editingClient} 
+                    onClose={() => setEditingClient(null)} 
+                    onBack={() => setEditingClient(null)} 
+                    data={editingClient} 
+                    onDataUpdate={handleDataUpdate} 
+                    onStartPolling={() => {}} 
+                    onDelete={handleDeleteClient} // Pass the delete handler here
+                    globalTheme="dark" 
+                />
             )}
         </div>
     );
