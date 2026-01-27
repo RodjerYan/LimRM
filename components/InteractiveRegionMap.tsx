@@ -126,21 +126,22 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         );
     }
     if (mode === 'pets') {
+        const tooltip = "Условный индекс (0-100), рассчитанный на основе урбанизации, кол-ва домохозяйств и косвенных данных (объемы продаж, кол-во вет.клиник).";
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
                     Плотность питомцев
                 </h4>
                 <div className="space-y-1">
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
                         <span className="text-xs">Высокая (&gt;80)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
                         <span className="text-xs">Средняя (50-80)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#6b7280', opacity: 0.3}}></span>
                         <span className="text-xs">Низкая (&lt;50)</span>
                     </div>
@@ -149,21 +150,22 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         );
     }
     if (mode === 'competitors') {
+        const tooltip = "Условный индекс (0-100), учитывающий плотность зоо-ритейла, присутствие федеральных сетей и активность крупных игроков.";
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
                     Конкуренция
                 </h4>
                 <div className="space-y-1">
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#ef4444', opacity: 0.7}}></span>
                         <span className="text-xs">Агрессивная (&gt;80)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f97316', opacity: 0.5}}></span>
                         <span className="text-xs">Умеренная (50-80)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#3b82f6', opacity: 0.3}}></span>
                         <span className="text-xs">Слабая (&lt;50)</span>
                     </div>
@@ -172,21 +174,22 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
         );
     }
     if (mode === 'age') {
+        const tooltip = "Средний медианный возраст владельца животного в регионе по данным Росстата и демографической статистики СНГ.";
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
                 <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
                     Возраст владельцев
                 </h4>
                 <div className="space-y-1">
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#10b981', opacity: 0.7}}></span>
                         <span className="text-xs">Молодые (&lt;35)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#f59e0b', opacity: 0.5}}></span>
                         <span className="text-xs">Средний (35-45)</span>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center" title={tooltip}>
                         <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#8b5cf6', opacity: 0.5}}></span>
                         <span className="text-xs">Старший (&gt;45)</span>
                     </div>

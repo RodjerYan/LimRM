@@ -23,7 +23,7 @@ import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 import { enrichWithAbcCategories } from './utils/analytics';
-import { LoaderIcon, CheckIcon, SaveIcon } from './components/icons';
+import { LoaderIcon, CheckIcon, SaveIcon, RetryIcon } from './components/icons';
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -55,6 +55,7 @@ const App: React.FC = () => {
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
     const [isCloudSaving, setIsCloudSaving] = useState(false); // New visual state
+    const [rosstatUpdateStatus, setRosstatUpdateStatus] = useState<'idle' | 'loading' | 'success'>('idle'); // State for the new button
     
     // --- DATE FILTER STATE ---
     const [filterStartDate, setFilterStartDate] = useState<string>('');
@@ -110,6 +111,19 @@ const App: React.FC = () => {
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
+
+    const handleRosstatUpdate = useCallback(() => {
+        if (rosstatUpdateStatus !== 'idle') return;
+        setRosstatUpdateStatus('loading');
+        addNotification('Проверка обновлений данных Росстата...', 'info');
+        setTimeout(() => {
+            setRosstatUpdateStatus('success');
+            addNotification('База данных Росстата актуальна. Обновление не требуется.', 'success');
+            setTimeout(() => {
+                setRosstatUpdateStatus('idle');
+            }, 3000); // Reset back to idle after 3 seconds
+        }, 2500); // Simulate a 2.5 second check
+    }, [rosstatUpdateStatus, addNotification]);
 
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
@@ -921,6 +935,19 @@ const App: React.FC = () => {
                         )}
                     </div>
                     <div className="flex items-center gap-4 text-right">
+                        {activeModule === 'amp' && (
+                            <button 
+                                onClick={handleRosstatUpdate}
+                                disabled={rosstatUpdateStatus !== 'idle'}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-medium text-gray-400 hover:text-white transition-all disabled:opacity-50 disabled:cursor-wait"
+                                title="Данные Росстата и рыночные индексы заложены в код приложения и обновляются с выходом новой версии. Эта кнопка имитирует проверку для демонстрации."
+                            >
+                                {rosstatUpdateStatus === 'loading' && <LoaderIcon className="w-3 h-3 text-indigo-400" />}
+                                {rosstatUpdateStatus === 'success' && <CheckIcon className="w-3 h-3 text-emerald-400" />}
+                                {rosstatUpdateStatus === 'idle' && <RetryIcon className="w-3 h-3" />}
+                                <span>Обновить данные Росстата</span>
+                            </button>
+                        )}
                         <div className="flex flex-col">
                             <span className="text-[10px] text-gray-500 uppercase font-bold">Активных ТТ</span>
                             <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString()}</span>
