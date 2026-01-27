@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import L from 'leaflet';
@@ -237,6 +238,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
     const popupRootRef = useRef<any>(null); // To hold the ReactDOM root for unmounting
     
+    const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
 
     const highlightedLayer = useRef<L.Layer | null>(null);
@@ -303,6 +305,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         fetchGeoData();
     }, []);
 
+    useEffect(() => { activeClientsDataRef.current = activeClients; }, [activeClients]);
     useEffect(() => { onEditClientRef.current = onEditClient; }, [onEditClient]);
 
     const searchableLocations = useMemo<SearchableLocation[]>(() => {
@@ -394,42 +397,36 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            // --- ROBUST POPUP LOGIC ---
+            // --- REFACTORED POPUP LOGIC ---
             map.on('popupopen', (e) => {
                 const popupNode = e.popup.getElement();
                 if (!popupNode) return;
-            
+
                 const placeholder = popupNode.querySelector('#popup-edit-placeholder');
-                if (!placeholder) return;
-            
-                // FIX: Cast to 'any' to bypass potential @types/leaflet issue where getSource() is missing.
-                const sourceMarker = (e.popup as any).getSource();
-                if (!sourceMarker) return;
-            
-                // Retrieve the client data attached directly to the marker
-                const client = (sourceMarker as any).limkormClientData as MapPoint | undefined;
-            
-                if (client) {
-                    if (popupRootRef.current) {
-                        try { popupRootRef.current.unmount(); } catch (e) { /* Ignore */ }
+                const key = placeholder?.getAttribute('data-key');
+
+                if (placeholder && key) {
+                    const client = activeClientsDataRef.current.find(c => c.key === key);
+                    if (client) {
+                        if (popupRootRef.current) popupRootRef.current.unmount();
+                        
+                        const root = ReactDOM.createRoot(placeholder);
+                        popupRootRef.current = root;
+                        root.render(
+                            <React.StrictMode>
+                                <PopupButton client={client} onEdit={(c) => {
+                                    setIsFullscreen(false);
+                                    onEditClientRef.current(c);
+                                }} />
+                            </React.StrictMode>
+                        );
                     }
-                    
-                    const root = ReactDOM.createRoot(placeholder);
-                    popupRootRef.current = root;
-                    root.render(
-                        <React.StrictMode>
-                            <PopupButton client={client} onEdit={(c) => {
-                                setIsFullscreen(false);
-                                onEditClientRef.current(c);
-                            }} />
-                        </React.StrictMode>
-                    );
                 }
             });
 
             map.on('popupclose', () => {
                 if (popupRootRef.current) {
-                    try { popupRootRef.current.unmount(); } catch (e) { /* Ignore */ }
+                    popupRootRef.current.unmount();
                     popupRootRef.current = null;
                 }
             });
@@ -565,9 +562,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     renderer: markersRenderer
                 }).bindPopup(popupContent);
                 
-                // Attach data directly to the marker instance
-                (marker as any).limkormClientData = tt; 
-
                 activeClientMarkersLayer.current?.addLayer(marker);
                 activeClientMarkersRef.current.set(tt.key, marker);
             }
