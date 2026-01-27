@@ -82,6 +82,7 @@ const SinglePointMap: React.FC<{
     const mapRef = useRef<L.Map | null>(null);
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
+    const resizeObserverRef = useRef<ResizeObserver | null>(null);
     
     // Search State
     const [searchQuery, setSearchQuery] = useState('');
@@ -99,57 +100,47 @@ const SinglePointMap: React.FC<{
     useEffect(() => {
         if (!mapContainerRef.current) return;
 
-        // CSS Injection fallback
-        if (!document.getElementById('leaflet-css-fallback')) {
+        // Ensure Leaflet CSS is loaded
+        if (!document.querySelector('link[href*="leaflet.css"]')) {
             const link = document.createElement('link');
-            link.id = 'leaflet-css-fallback';
             link.rel = 'stylesheet';
             link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
             document.head.appendChild(link);
         }
 
-        // Delay initialization slightly to allow modal animation to start/frame to settle
-        const timer = setTimeout(() => {
-            if (!mapContainerRef.current) return;
-            if (mapRef.current) return; // Already initialized
+        if (mapRef.current) return; // Already initialized
 
-            const map = L.map(mapContainerRef.current, { 
-                scrollWheelZoom: true,
-                zoomControl: false,
-                center: [55.75, 37.61],
-                zoom: 5,
-                attributionControl: false
-            });
+        // Initialize map
+        const map = L.map(mapContainerRef.current, { 
+            scrollWheelZoom: true,
+            zoomControl: false,
+            center: [55.75, 37.61],
+            zoom: 5,
+            attributionControl: false,
+            preferCanvas: true
+        });
 
-            mapRef.current = map;
-            L.control.zoom({ position: 'topleft' }).addTo(map);
-            tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
+        mapRef.current = map;
+        L.control.zoom({ position: 'topleft' }).addTo(map);
+        tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
 
-            // Force multiple invalidations to handle modal transition
-            setTimeout(() => map.invalidateSize(), 10);
-            setTimeout(() => map.invalidateSize(), 200);
-            setTimeout(() => map.invalidateSize(), 500);
-            setTimeout(() => map.invalidateSize(), 1000);
+        // Setup ResizeObserver to handle modal animations/resizing automatically
+        resizeObserverRef.current = new ResizeObserver(() => {
+            if (mapRef.current) {
+                mapRef.current.invalidateSize();
+            }
+        });
+        resizeObserverRef.current.observe(mapContainerRef.current);
 
-            // ResizeObserver for robust responsiveness
-            const resizeObserver = new ResizeObserver(() => {
-                if (mapRef.current) {
-                    mapRef.current.invalidateSize();
-                }
-            });
-            resizeObserver.observe(mapContainerRef.current);
-
-            // Cleanup function for this specific map instance
-            // We attach it to the map instance or handle it in the parent cleanup, 
-            // but since we are in a timeout, we need to be careful.
-            (mapContainerRef.current as any)._resizeObserver = resizeObserver;
-
-        }, 100);
+        // Initial invalidation sequence for modal transition
+        const timeouts = [100, 300, 500, 1000].map(delay => 
+            setTimeout(() => map.invalidateSize(), delay)
+        );
 
         return () => {
-            clearTimeout(timer);
-            if (mapContainerRef.current && (mapContainerRef.current as any)._resizeObserver) {
-                (mapContainerRef.current as any)._resizeObserver.disconnect();
+            timeouts.forEach(clearTimeout);
+            if (resizeObserverRef.current) {
+                resizeObserverRef.current.disconnect();
             }
             if (mapRef.current) {
                 mapRef.current.remove();
@@ -168,56 +159,49 @@ const SinglePointMap: React.FC<{
 
     // 3. Handle Markers & View (Strict Coordinate Check)
     useEffect(() => {
-        // We need to wait for map to be initialized if it's pending in the timeout
-        const interval = setInterval(() => {
-            const map = mapRef.current;
-            if (!map) return;
-            clearInterval(interval);
+        const map = mapRef.current;
+        if (!map) return;
 
-            const hasCoords = typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0;
+        const hasCoords = typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0;
 
-            if (hasCoords) {
-                const latLng = L.latLng(lat, lon);
-                const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
+        if (hasCoords) {
+            const latLng = L.latLng(lat!, lon!);
+            const iconToUse = isSuccess ? greenIcon : new L.Icon.Default();
 
-                if (!markerRef.current) {
-                    const marker = L.marker(latLng, { 
-                        icon: iconToUse,
-                        draggable: true,
-                        autoPan: true
-                    }).addTo(map);
+            if (!markerRef.current) {
+                const marker = L.marker(latLng, { 
+                    icon: iconToUse,
+                    draggable: true,
+                    autoPan: true
+                }).addTo(map);
 
-                    marker.on('dragend', (e) => {
-                        const { lat: newLat, lng: newLon } = e.target.getLatLng();
-                        onCoordinatesChange(newLat, newLon);
-                    });
-                    markerRef.current = marker;
-                } else {
-                    markerRef.current.setLatLng(latLng).setIcon(iconToUse);
-                }
-
-                const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
-                markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
-                
-                // Set view only if significant movement or first load
-                const currentCenter = map.getCenter();
-                const dist = currentCenter.distanceTo(latLng);
-                if (dist > 100 || map.getZoom() < 10) {
-                    map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
-                }
+                marker.on('dragend', (e) => {
+                    const { lat: newLat, lng: newLon } = e.target.getLatLng();
+                    onCoordinatesChange(newLat, newLon);
+                });
+                markerRef.current = marker;
             } else {
-                if (markerRef.current) {
-                    map.removeLayer(markerRef.current);
-                    markerRef.current = null;
-                }
-                // Default view if no coords
-                map.setView([55.75, 37.61], 5);
+                markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             }
-            
-            map.invalidateSize();
-        }, 100);
 
-        return () => clearInterval(interval);
+            const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
+            markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
+            
+            // Force view update and invalidate size to ensure map is rendered correctly
+            map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
+            map.invalidateSize();
+        } else {
+            if (markerRef.current) {
+                map.removeLayer(markerRef.current);
+                markerRef.current = null;
+            }
+            // Default view if no coords
+            if (!map.getCenter().equals([55.75, 37.61])) {
+                 map.setView([55.75, 37.61], 5);
+            }
+            map.invalidateSize();
+        }
+        
     }, [lat, lon, isSuccess, isExpanded, address]); 
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -269,14 +253,15 @@ const SinglePointMap: React.FC<{
     const btnClass = "flex items-center justify-center w-10 h-10 bg-card-bg/90 hover:bg-gray-600 text-text-main rounded-lg shadow-lg border border-gray-600 transition-all transform active:scale-95 backdrop-blur-sm";
 
     return (
-        <div className="relative h-full w-full group isolate">
+        <div className="relative h-full w-full group">
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div 
                 ref={mapContainerRef} 
                 className={`h-full w-full rounded-lg bg-gray-800 z-0 ${markerRef.current ? 'cursor-move' : 'cursor-default'}`} 
+                style={{ minHeight: '100%' }}
             />
             
-            <div className="absolute top-3 left-14 z-[1000] w-[calc(100%-8rem)] md:w-80 pointer-events-none">
+            <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-4rem)] md:w-80 pointer-events-none">
                 <div className="relative pointer-events-auto shadow-lg rounded-lg">
                     <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400">
                         {isSearching ? <LoaderIcon className="w-4 h-4" /> : <SearchIcon className="w-4 h-4" />}
@@ -428,7 +413,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 
                 // Show explicit log for 404
                 if (res.status === 404) {
-                    console.log(`%c[Polling] Address "${pollingTarget.address}" not yet geocoded (404). Retrying in 5s...`, 'color: orange');
+                    // console.log(`%c[Polling] Address "${pollingTarget.address}" not yet geocoded (404). Retrying in 5s...`, 'color: orange');
                     return;
                 }
 
@@ -474,7 +459,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 }
             } catch (e) {
                 // Silently fail on network errors during polling to avoid console spam
-                // console.warn("Polling error (will retry):", e);
             }
 
             if (attemptsRef.current >= maxAttempts) {
