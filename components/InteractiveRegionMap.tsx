@@ -401,40 +401,57 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // 2. No StrictMode to avoid lifecycle conflicts with Leaflet
             // 3. Using data-attributes for selection
             // 4. Strict Key Comparison & Safer Root Management
+            // 5. Handling 'contentupdate' event for string-based popups
             
             map.on('popupopen', (e) => {
                 const popup = e.popup as any;
-                const popupNode = popup.getElement();
-                if (!popupNode) return;
 
-                // Use data attribute selector
-                const placeholder = popupNode.querySelector('[data-popup-edit]');
-                if (!placeholder) return;
+                const renderButton = () => {
+                    const popupNode = popup.getElement();
+                    if (!popupNode) return;
 
-                const key = placeholder.getAttribute('data-key');
+                    // Try to find the placeholder
+                    const placeholder = popupNode.querySelector('[data-popup-edit]');
+                    if (!placeholder) return;
+
+                    const key = placeholder.getAttribute('data-key');
+                    
+                    // CRITICAL FIX: Strict String comparison for reliability
+                    const client = activeClientsDataRef.current.find(
+                        c => String(c.key) === String(key)
+                    );
+
+                    if (!client) return;
+
+                    // CRITICAL FIX: Always unmount old root to avoid stale roots on Leaflet DOM updates
+                    if (popup.__reactRoot) {
+                        popup.__reactRoot.unmount();
+                    }
+                    
+                    // Create fresh root
+                    popup.__reactRoot = ReactDOM.createRoot(placeholder);
+                    
+                    // Render WITHOUT StrictMode to prevent mounting/unmounting issues in imperative API
+                    popup.__reactRoot.render(
+                        <PopupButton client={client} onEdit={(c) => {
+                            setIsFullscreen(false);
+                            onEditClientRef.current(c);
+                        }} />
+                    );
+                };
+
+                // CRITICAL FIX for Race Condition with preferCanvas / string popups:
+                // Leaflet might fire 'popupopen' before the HTML is actually inserted into the DOM.
+                // We use 'contentupdate' which fires after content is set, and a fallback RAF.
                 
-                // CRITICAL FIX: Strict String comparison for reliability
-                const client = activeClientsDataRef.current.find(
-                    c => String(c.key) === String(key)
-                );
+                // 1. Try immediately (if content is already there)
+                renderButton();
 
-                if (!client) return;
+                // 2. Listen for content updates (crucial for string binding)
+                popup.once('contentupdate', renderButton);
 
-                // CRITICAL FIX: Always unmount old root to avoid stale roots on Leaflet DOM updates
-                if (popup.__reactRoot) {
-                    popup.__reactRoot.unmount();
-                }
-                
-                // Create fresh root
-                popup.__reactRoot = ReactDOM.createRoot(placeholder);
-                
-                // Render WITHOUT StrictMode to prevent mounting/unmounting issues in imperative API
-                popup.__reactRoot.render(
-                    <PopupButton client={client} onEdit={(c) => {
-                        setIsFullscreen(false);
-                        onEditClientRef.current(c);
-                    }} />
-                );
+                // 3. Fallback check on next frame just in case
+                requestAnimationFrame(renderButton);
             });
 
             map.on('popupclose', (e) => {
