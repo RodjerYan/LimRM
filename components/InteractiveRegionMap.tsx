@@ -414,7 +414,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     const placeholder = popupNode.querySelector('[data-popup-edit]');
                     if (!placeholder) return;
 
-                    const key = placeholder.getAttribute('data-key');
+                    const rawKey = placeholder.getAttribute('data-key');
+                    if (!rawKey) return;
+
+                    // FIX: Decode the key to handle special characters (quotes, etc.) safely
+                    const key = decodeURIComponent(rawKey);
                     
                     // CRITICAL FIX: Strict String comparison for reliability
                     const client = activeClientsDataRef.current.find(
@@ -488,13 +492,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         else if (abcCategory === 'B') badge = '<span class="px-2 py-0.5 rounded bg-emerald-500 text-white font-bold text-xs ml-2">B</span>';
         else if (abcCategory === 'C') badge = '<span class="px-2 py-0.5 rounded bg-gray-500 text-white font-bold text-xs ml-2">C</span>';
 
-        // UPDATED: Using data attributes instead of ID
+        // UPDATED: Using data attributes instead of ID.
+        // FIX: Encoded key using encodeURIComponent to prevent HTML attribute breakage.
         return `
         <div class="popup-inner-content">
             <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
             ${address}<br><small>${type || 'н/д'}</small>
             ${contacts ? `<hr style="margin: 5px 0;"/><small>Контакты: ${contacts}</small>` : ''}
-            <div data-popup-edit data-key="${key}"></div>
+            <div data-popup-edit data-key="${encodeURIComponent(String(key))}"></div>
         </div>
     `;
     };
