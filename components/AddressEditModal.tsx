@@ -182,9 +182,8 @@ const SinglePointMap: React.FC<{
                 markerRef.current = null;
             }
             setHasMarker(false);
-            if (!map.getCenter().equals([55.75, 37.61])) {
-                 map.setView([55.75, 37.61], 5);
-            }
+            // **FIX**: Fallback view to prevent gray screen
+            map.setView([55.75, 37.61], 5, { animate: true });
             map.invalidateSize();
         }
     }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]);
@@ -361,24 +360,31 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         };
     }, []);
 
-    // --- Fetch History ---
+    // --- Fetch History with Improved Error Handling ---
     const fetchHistory = useCallback(async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
         setHistory([]);
         try {
-            const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`);
-            if (res.ok) {
-                const result = await res.json();
-                if (result.history) {
-                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
-                    setHistory(historyArray);
-                }
-                if (result.comment && !comment && !isCommentTouched.current) {
-                    setComment(result.comment);
-                }
+            const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
+            const res = await fetch(url);
+
+            if (!res.ok) {
+                // This will now catch the 404 and other non-successful responses
+                throw new Error(`API returned ${res.status}: ${res.statusText}`);
+            }
+
+            const result = await res.json();
+            if (result.history) {
+                const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
+                setHistory(historyArray);
+            }
+            if (result.comment && !comment && !isCommentTouched.current) {
+                setComment(result.comment);
             }
         } catch (e) {
-            console.error("Failed to fetch history", e);
+            console.error("Failed to fetch history for address:", address, e);
+            // We don't need to show an error to the user, just log it.
+            // The map will have its fallback view.
         } finally {
             setIsLoadingHistory(false);
         }
