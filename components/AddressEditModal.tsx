@@ -562,146 +562,148 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     );
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Левая колонка */}
-                <div className="flex flex-col gap-6">
-                    <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar shadow-inner">
-                        <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-400">Исходные данные строки</h4>
-                        <table className="w-full text-sm">
-                            <tbody className="divide-y divide-gray-800">
-                                {detailsToShow.map(({ key, value }, index) => (
-                                    <tr key={index} className="group">
-                                        <td className="py-2.5 pr-4 text-gray-500 font-medium align-top w-1/3 group-hover:text-gray-400 transition-colors">{key}</td>
-                                        <td className="py-2.5 text-gray-300 break-words leading-relaxed">{value}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 flex-grow flex flex-col shadow-inner">
-                        <div className="flex justify-between items-center mb-4">
-                            <h4 className="font-bold text-xs uppercase tracking-widest text-gray-400 flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}</h4>
-                            <span className="text-[10px] font-bold text-gray-500 bg-gray-800 px-2 py-1 rounded-md border border-gray-700 uppercase">Всего: {history.length}</span>
-                        </div>
-                        <div className="flex-grow overflow-y-auto custom-scrollbar rounded-xl bg-black/20 p-2 border border-white/5 min-h-[140px]">
-                            {history.length > 0 ? (
-                                <ul className="space-y-3">
-                                    {history.map((item, idx) => (
-                                        <li key={idx} className="p-3 bg-gray-800/40 rounded-lg border border-gray-700/50 text-sm text-gray-400 flex flex-col gap-1.5 hover:bg-gray-800 transition-colors group">
-                                            <div className="flex items-center gap-2 text-indigo-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:animate-ping"></span><span>Событие #{history.length - idx}</span></div>
-                                            <span className="pl-3 border-l border-gray-700 text-gray-300 break-words whitespace-pre-wrap leading-relaxed">{item}</span>
-                                        </li>
+        <>
+            <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Левая колонка */}
+                    <div className="flex flex-col gap-6">
+                        <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar shadow-inner">
+                            <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-400">Исходные данные строки</h4>
+                            <table className="w-full text-sm">
+                                <tbody className="divide-y divide-gray-800">
+                                    {detailsToShow.map(({ key, value }, index) => (
+                                        <tr key={index} className="group">
+                                            <td className="py-2.5 pr-4 text-gray-500 font-medium align-top w-1/3 group-hover:text-gray-400 transition-colors">{key}</td>
+                                            <td className="py-2.5 text-gray-300 break-words leading-relaxed">{value}</td>
+                                        </tr>
                                     ))}
-                                </ul>
-                            ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-gray-600 text-sm p-8 opacity-40"><InfoIcon className="w-10 h-10 mb-2" /><span>История изменений пуста</span></div>
-                            )}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 flex-grow flex flex-col shadow-inner">
+                            <div className="flex justify-between items-center mb-4">
+                                <h4 className="font-bold text-xs uppercase tracking-widest text-gray-400 flex items-center gap-2">История изменений {isLoadingHistory && <LoaderIcon className="w-3 h-3" />}</h4>
+                                <span className="text-[10px] font-bold text-gray-500 bg-gray-800 px-2 py-1 rounded-md border border-gray-700 uppercase">Всего: {history.length}</span>
+                            </div>
+                            <div className="flex-grow overflow-y-auto custom-scrollbar rounded-xl bg-black/20 p-2 border border-white/5 min-h-[140px]">
+                                {history.length > 0 ? (
+                                    <ul className="space-y-3">
+                                        {history.map((item, idx) => (
+                                            <li key={idx} className="p-3 bg-gray-800/40 rounded-lg border border-gray-700/50 text-sm text-gray-400 flex flex-col gap-1.5 hover:bg-gray-800 transition-colors group">
+                                                <div className="flex items-center gap-2 text-indigo-400 text-[10px] font-bold uppercase tracking-tighter"><span className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:animate-ping"></span><span>Событие #{history.length - idx}</span></div>
+                                                <span className="pl-3 border-l border-gray-700 text-gray-300 break-words whitespace-pre-wrap leading-relaxed">{item}</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <div className="h-full flex flex-col items-center justify-center text-gray-600 text-sm p-8 opacity-40"><InfoIcon className="w-10 h-10 mb-2" /><span>История изменений пуста</span></div>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* Правая колонка */}
-                <div className="flex flex-col gap-6">
-                    <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
-                         <SinglePointMap 
-                            lat={displayLat} lon={displayLon} address={editedAddress} 
-                            isSuccess={isMapSuccess}
-                            onCoordinatesChange={handleCoordinatesChange}
-                            theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
-                            onExpand={() => setIsMapExpanded(true)} isExpanded={false}
-                         />
-                    </div>
-                    
-                    <div className="bg-gray-900/60 p-6 rounded-2xl border border-gray-700 shadow-xl relative flex flex-col gap-5">
-                        <div className="flex justify-between items-center">
-                            <h4 className="font-bold text-xs uppercase tracking-widest text-indigo-300 flex items-center gap-2">
-                                <SaveIcon className="w-4 h-4" />
-                                Параметры объекта
-                            </h4>
-                            {!showDeleteConfirm ? (
-                                <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full flex items-center gap-2 group" title="Удалить запись">
-                                    <TrashIcon className="w-4 h-4" />
-                                    <span className="text-[10px] font-bold uppercase hidden group-hover:inline">Удалить</span>
-                                </button>
-                            ) : (
-                                <div className="flex items-center gap-3 bg-red-900/30 px-3 py-1.5 rounded-xl border border-red-500/30 animate-fade-in"><span className="text-[10px] font-bold text-red-300 uppercase">Удалить из базы?</span><button onClick={handleDelete} className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all">Нет</button></div>
-                            )}
+                    {/* Правая колонка */}
+                    <div className="flex flex-col gap-6">
+                        <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
+                             <SinglePointMap 
+                                lat={displayLat} lon={displayLon} address={editedAddress} 
+                                isSuccess={isMapSuccess}
+                                onCoordinatesChange={handleCoordinatesChange}
+                                theme={mapTheme} onToggleTheme={() => setMapTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+                                onExpand={() => setIsMapExpanded(true)} isExpanded={false}
+                             />
                         </div>
                         
-                        <div className="space-y-4">
-                            <div className="relative">
-                                <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Адрес ТТ LimKorm</label>
-                                <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${status === 'success' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
-                                {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
-                            </div>
-
-                            <div className="relative">
-                                <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
-                                <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
-                            </div>
-
-                            {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
-                            
-                            <div className="pt-2">
-                                {status === 'idle' && !error && (
-                                    <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
-                                        <SaveIcon className="w-5 h-5" /> {saveButtonText}
+                        <div className="bg-gray-900/60 p-6 rounded-2xl border border-gray-700 shadow-xl relative flex flex-col gap-5">
+                            <div className="flex justify-between items-center">
+                                <h4 className="font-bold text-xs uppercase tracking-widest text-indigo-300 flex items-center gap-2">
+                                    <SaveIcon className="w-4 h-4" />
+                                    Параметры объекта
+                                </h4>
+                                {!showDeleteConfirm ? (
+                                    <button onClick={() => setShowDeleteConfirm(true)} className="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-full flex items-center gap-2 group" title="Удалить запись">
+                                        <TrashIcon className="w-4 h-4" />
+                                        <span className="text-[10px] font-bold uppercase hidden group-hover:inline">Удалить</span>
                                     </button>
+                                ) : (
+                                    <div className="flex items-center gap-3 bg-red-900/30 px-3 py-1.5 rounded-xl border border-red-500/30 animate-fade-in"><span className="text-[10px] font-bold text-red-300 uppercase">Удалить из базы?</span><button onClick={handleDelete} className="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all shadow-md">Да</button><button onClick={() => setShowDeleteConfirm(false)} className="text-[10px] bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded-lg font-bold uppercase transition-all">Нет</button></div>
                                 )}
-                                
-                                {status === 'success' && (
-                                    <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
-                                        <CheckIcon className="w-6 h-6" /> Сохранено успешно!
-                                    </div>
-                                )}
-                                
-                                {status === 'saving' && (
-                                    <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
-                                        <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
-                                    </div>
-                                )}
-                                
-                                {status === 'deleting' && (
-                                    <div className="w-full bg-red-900/10 py-4 rounded-xl border border-red-900/30 text-center text-red-500 flex items-center justify-center gap-3 font-bold animate-pulse">
-                                        <LoaderIcon className="w-5 h-5" /> Удаление объекта...
-                                    </div>
-                                )}
-                                
-                                {status === 'geocoding' && (
-                                    <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
-                                        <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
-                                            <LoaderIcon className="w-4 h-4" />
-                                            <span>Геокодирование запущено...</span>
-                                        </div>
-                                        <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
-                                            Процесс идет в фоновом режиме. Вы можете закрыть это окно, точка появится на карте автоматически.
-                                        </p>
-                                    </div>
-                                )}
+                            </div>
+                            
+                            <div className="space-y-4">
+                                <div className="relative">
+                                    <label htmlFor="address-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Адрес ТТ LimKorm</label>
+                                    <textarea id="address-input" rows={2} value={editedAddress} onChange={e => setEditedAddress(e.target.value)} disabled={isProcessing || status === 'geocoding' || status === 'success'} className={`w-full p-4 bg-black/40 border rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none ${status === 'success' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : (error ? 'border-red-500 ring-2 ring-red-500/20' : 'border-gray-700 hover:border-gray-600')}`} />
+                                    {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
+                                </div>
 
-                                {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
-                                    <div className="text-center space-y-4 animate-fade-in">
-                                        <div className="flex items-center justify-center gap-3 text-red-400 text-xs bg-red-900/20 p-3 rounded-xl border border-red-500/20 shadow-inner">
-                                            <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
+                                <div className="relative">
+                                    <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
+                                    <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
+                                </div>
+
+                                {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
+                                
+                                <div className="pt-2">
+                                    {status === 'idle' && !error && (
+                                        <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
+                                            <SaveIcon className="w-5 h-5" /> {saveButtonText}
+                                        </button>
+                                    )}
+                                    
+                                    {status === 'success' && (
+                                        <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
+                                            <CheckIcon className="w-6 h-6" /> Сохранено успешно!
                                         </div>
-                                        {status !== 'error_deleting' && (
-                                            <button onClick={handleSave} className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-all">
-                                                <RetryIcon className="w-4 h-4" /> Повторить попытку
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
+                                    )}
+                                    
+                                    {status === 'saving' && (
+                                        <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
+                                            <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
+                                        </div>
+                                    )}
+                                    
+                                    {status === 'deleting' && (
+                                        <div className="w-full bg-red-900/10 py-4 rounded-xl border border-red-900/30 text-center text-red-500 flex items-center justify-center gap-3 font-bold animate-pulse">
+                                            <LoaderIcon className="w-5 h-5" /> Удаление объекта...
+                                        </div>
+                                    )}
+                                    
+                                    {status === 'geocoding' && (
+                                        <div className="flex flex-col gap-4 p-5 bg-indigo-900/20 rounded-2xl border border-indigo-500/30 animate-pulse shadow-inner">
+                                            <div className="text-center text-indigo-300 flex items-center justify-center gap-3 font-bold text-sm">
+                                                <LoaderIcon className="w-4 h-4" />
+                                                <span>Геокодирование запущено...</span>
+                                            </div>
+                                            <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
+                                                Процесс идет в фоновом режиме. Вы можете закрыть это окно, точка появится на карте автоматически.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {(status === 'error_saving' || status === 'error_deleting' || status === 'error_geocoding') && (
+                                        <div className="text-center space-y-4 animate-fade-in">
+                                            <div className="flex items-center justify-center gap-3 text-red-400 text-xs bg-red-900/20 p-3 rounded-xl border border-red-500/20 shadow-inner">
+                                                <ErrorIcon className="w-4 h-4" /> {error || 'Сбой соединения'}
+                                            </div>
+                                            {status !== 'error_deleting' && (
+                                                <button onClick={handleSave} className="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-xl flex items-center justify-center gap-2 transition-all">
+                                                    <RetryIcon className="w-4 h-4" /> Повторить попытку
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            </div>
+            </Modal>
             
             {/* Modal Map Expanded */}
             {isMapExpanded && (
-                <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col animate-fade-in">
+                <div className="fixed inset-0 z-[10000] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-gray-900 border-b border-gray-800 backdrop-blur-md">
                         <div className="flex flex-col">
                             <h3 className="text-lg font-bold text-white uppercase tracking-wider">Уточнение координат</h3>
@@ -727,7 +729,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     </div>
                 </div>
             )}
-        </Modal>
+        </>
     );
 };
 
