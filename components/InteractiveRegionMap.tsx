@@ -236,7 +236,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
-    // REMOVED: popupRootRef is no longer needed with the new architecture
     
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
@@ -401,6 +400,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // 1. One React Root per popup instance (stored on the Leaflet popup object)
             // 2. No StrictMode to avoid lifecycle conflicts with Leaflet
             // 3. Using data-attributes for selection
+            // 4. Strict Key Comparison & Safer Root Management
             
             map.on('popupopen', (e) => {
                 const popup = e.popup as any;
@@ -412,14 +412,21 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 if (!placeholder) return;
 
                 const key = placeholder.getAttribute('data-key');
-                const client = activeClientsDataRef.current.find(c => c.key === key);
+                
+                // CRITICAL FIX: Strict String comparison for reliability
+                const client = activeClientsDataRef.current.find(
+                    c => String(c.key) === String(key)
+                );
 
                 if (!client) return;
 
-                // Create a new root for this specific popup and store it on the popup instance
-                if (!popup.__reactRoot) {
-                    popup.__reactRoot = ReactDOM.createRoot(placeholder);
+                // CRITICAL FIX: Always unmount old root to avoid stale roots on Leaflet DOM updates
+                if (popup.__reactRoot) {
+                    popup.__reactRoot.unmount();
                 }
+                
+                // Create fresh root
+                popup.__reactRoot = ReactDOM.createRoot(placeholder);
                 
                 // Render WITHOUT StrictMode to prevent mounting/unmounting issues in imperative API
                 popup.__reactRoot.render(
