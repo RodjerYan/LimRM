@@ -30,11 +30,24 @@ const UnidentifiedRowsModal = React.lazy(() => import('./components/Unidentified
 
 const isApiKeySet = import.meta.env.VITE_GEMINI_API_KEY && import.meta.env.VITE_GEMINI_API_KEY !== '';
 
+// --- TYPES FOR POLLING ---
+interface PendingGeocodingItem {
+    rm: string;
+    address: string;
+    oldKey: string;
+    basePoint: MapPoint;
+    originalIndex?: number;
+    attempts: number;
+}
+
 // Максимальный размер JSON-файла в байтах (850 КБ)
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
 
 // Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
+const GEOCODING_POLLING_INTERVAL_MS = 7000;
+const MAX_GEOCODING_ATTEMPTS = 60;
+
 
 const App: React.FC = () => {
     if (!isApiKeySet) return <ApiKeyErrorDisplay />;
@@ -49,6 +62,9 @@ const App: React.FC = () => {
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
     
+    // --- BACKGROUND POLLING STATE ---
+    const [pendingGeocoding, setPendingGeocoding] = useState<PendingGeocodingItem[]>([]);
+
     // Shared State for Adapta
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
@@ -165,6 +181,56 @@ const App: React.FC = () => {
         return () => clearInterval(intervalId);
     }, [processingState.isProcessing]);
 
+    // --- BACKGROUND GEOCODING POLLING ---
+    useEffect(() => {
+        const poll = async () => {
+            if (pendingGeocoding.length === 0) return;
+
+            const updatedPending: PendingGeocodingItem[] = [];
+            const completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[] = [];
+
+            for (const item of pendingGeocoding) {
+                if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
+                    addNotification(`Тайм-аут геокодинга для: ${item.address}`, 'warning');
+                    const errorPoint = { ...item.basePoint, isGeocoding: false, geocodingError: 'Превышено время ожидания.' };
+                    completedItems.push({ oldKey: item.oldKey, point: errorPoint, originalIndex: item.originalIndex });
+                    continue;
+                }
+
+                try {
+                    const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(item.rm)}&address=${encodeURIComponent(item.address)}&_t=${Date.now()}`, {
+                        headers: { 'Cache-Control': 'no-cache' }
+                    });
+
+                    if (res.ok) {
+                        const result = await res.json();
+                        const hasCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
+
+                        if (hasCoords) {
+                            const successPoint = { ...item.basePoint, lat: result.lat, lon: result.lon, isGeocoding: false, comment: result.comment || item.basePoint.comment };
+                            completedItems.push({ oldKey: item.oldKey, point: successPoint, originalIndex: item.originalIndex });
+                            addNotification(`Координаты для "${item.address.substring(0, 30)}..." найдены`, 'success');
+                        } else {
+                            updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                        }
+                    } else {
+                        updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                    }
+                } catch (e) {
+                    updatedPending.push({ ...item, attempts: item.attempts + 1 }); // Retry on network error
+                }
+            }
+            
+            // Update state in one go
+            if (completedItems.length > 0) {
+                handleBatchDataUpdate(completedItems);
+            }
+            setPendingGeocoding(updatedPending);
+        };
+
+        const intervalId = setInterval(poll, GEOCODING_POLLING_INTERVAL_MS);
+        return () => clearInterval(intervalId);
+    }, [pendingGeocoding]);
 
     // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
@@ -625,6 +691,62 @@ const App: React.FC = () => {
 
     }, [okbRegionCounts]); 
 
+    // Batch update for performance when multiple polling results arrive
+    const handleBatchDataUpdate = useCallback((completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[]) => {
+        let currentAllData = allDataRef.current;
+        let currentUnidentified = unidentifiedRowsRef.current;
+
+        completedItems.forEach(item => {
+            const { oldKey, point, originalIndex } = item;
+            
+            if (point.address) {
+                manualUpdateTimestamps.current.set(normalizeAddress(point.address), Date.now());
+            }
+
+            if (typeof originalIndex === 'number') {
+                const rowIndex = currentUnidentified.findIndex(r => r.originalIndex === originalIndex);
+                if (rowIndex !== -1) currentUnidentified.splice(rowIndex, 1);
+                
+                const groupKey = `${point.region}-${point.rm}-${point.brand}-${point.packaging}`.toLowerCase();
+                const existingGroupIndex = currentAllData.findIndex(g => g.key === groupKey);
+                
+                if (existingGroupIndex !== -1) {
+                    currentAllData[existingGroupIndex] = { ...currentAllData[existingGroupIndex], clients: [...currentAllData[existingGroupIndex].clients, point] };
+                } else {
+                    currentAllData.push({ __rowId: `row_${Date.now()}`, key: groupKey, rm: point.rm, region: point.region, city: point.city, brand: point.brand, packaging: point.packaging, clientName: `${point.region}: ${point.brand}`, fact: point.fact || 0, potential: (point.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [point] });
+                }
+            } else {
+                currentAllData = currentAllData.map(group => {
+                    const clientIndex = group.clients.findIndex(c => c.key === oldKey);
+                    if (clientIndex !== -1) {
+                        const updatedClients = [...group.clients];
+                        updatedClients[clientIndex] = point;
+                        return { ...group, clients: updatedClients };
+                    }
+                    return group;
+                });
+            }
+        });
+        
+        enrichWithAbcCategories(currentAllData);
+        setAllData([...currentAllData]);
+        setUnidentifiedRows([...currentUnidentified]);
+
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => saveSnapshotToCloud(currentAllData, currentUnidentified), 2000);
+
+    }, []);
+
+    // New handler to start the polling process
+    const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
+        addNotification(`Адрес "${address.substring(0, 30)}..." отправлен на геокодинг`, 'info');
+        // Optimistic update
+        handleDataUpdate(oldKey, basePoint, originalIndex);
+        // Add to polling queue
+        setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
+    }, [handleDataUpdate, addNotification]);
+
+
     // --- CLIENT DELETION HANDLER ---
     const handleDeleteClient = useCallback((rmName: string, address: string) => {
         const normAddress = normalizeAddress(address);
@@ -880,7 +1002,7 @@ const App: React.FC = () => {
                     onBack={() => setEditingClient(null)} 
                     data={editingClient} 
                     onDataUpdate={handleDataUpdate} 
-                    onStartPolling={() => {}} 
+                    onStartPolling={handleStartPolling} 
                     onDelete={handleDeleteClient} // Pass the delete handler here
                     globalTheme="dark" 
                 />
