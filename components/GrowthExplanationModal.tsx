@@ -45,13 +45,21 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                 return "Стандартный план по привлечению новых клиентов.";
         }
     };
+    
+    const tooltips = {
+        total: "Итоговая цель роста (%) — это сумма базовой ставки (по умолчанию 15%) и всех этих поправочных коэффициентов. А План в килограммах — это результат применения итогового процента роста к текущему факту продаж.",
+        marketShare: "Система оценивает, какую долю потенциальных клиентов (из базы ОКБ) в регионе вы уже обслуживаете. Если доля низкая, потенциал роста высокий, и план будет более агрессивным. Если доля высокая, рост замедляется.",
+        skuWidth: "Алгоритм сравнивает среднее количество ваших товарных позиций (SKU) на одну торговую точку в регионе со средним показателем по всей компании. Если у вас в точках меньше SKU, чем в среднем, система видит потенциал роста за счет расширения ассортимента и увеличивает план.",
+        velocity: "Сравниваются средние продажи на одну SKU (оборачиваемость) в регионе со средним по компании. Если продажи ниже, это сигнал о проблемах с выкладкой или стоком, но также и точка роста, что закладывается в план.",
+        acquisition: "Этот фактор применяется, когда в регионе еще нет продаж. План на 'вход в регион' рассчитывается на основе общей эффективности менеджера и размера потенциального рынка."
+    };
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Аргументация плана: ${name}`} maxWidth="max-w-5xl" zIndex={zIndex}>
             <div className="space-y-8">
                 
                 {/* 1. EXECUTIVE SUMMARY */}
-                <div className="bg-gray-900 p-6 rounded-2xl border border-indigo-500/30 flex flex-col md:flex-row justify-between items-center gap-6">
+                <div className="bg-gray-900 p-6 rounded-2xl border border-indigo-500/30 flex flex-col md:flex-row justify-between items-center gap-6" title={tooltips.total}>
                     <div className="flex items-center gap-6">
                         {/* Increased size to w-32 h-32 and adjusted font size */}
                         <div className={`w-32 h-32 rounded-full flex items-center justify-center text-xl font-bold shadow-lg border-4 flex-shrink-0 ${isHighGrowth ? 'bg-emerald-900/50 border-emerald-500 text-emerald-400' : 'bg-indigo-900/50 border-indigo-500 text-indigo-400'}`}>
@@ -76,7 +84,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     
                     {/* 2. MARKET SHARE FACTOR */}
-                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.share)}`}>
+                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.share)}`} title={tooltips.marketShare}>
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-2">
                                 <div className="p-2 bg-gray-900/50 rounded-lg text-indigo-400"><UsersIcon small /></div>
@@ -110,7 +118,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                     </div>
 
                     {/* 3. ACQUISITION FACTOR */}
-                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.acquisition)}`}>
+                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.acquisition)}`} title={tooltips.acquisition}>
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-2">
                                 <div className="p-2 bg-gray-900/50 rounded-lg text-indigo-400"><TargetIcon small /></div>
@@ -133,7 +141,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                     </div>
 
                     {/* 4. WIDTH (SKU) FACTOR */}
-                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.width)}`}>
+                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.width)}`} title={tooltips.skuWidth}>
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-2">
                                 <div className="p-2 bg-gray-900/50 rounded-lg text-indigo-400"><DataIcon small /></div>
@@ -167,7 +175,7 @@ const GrowthExplanationModal: React.FC<GrowthExplanationModalProps> = ({ isOpen,
                     </div>
 
                     {/* 5. VELOCITY FACTOR */}
-                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.velocity)}`}>
+                    <div className={`p-5 rounded-xl border flex flex-col ${getBgColor(factors.velocity)}`} title={tooltips.velocity}>
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-2">
                                 <div className="p-2 bg-gray-900/50 rounded-lg text-indigo-400"><TrendingUpIcon small /></div>
