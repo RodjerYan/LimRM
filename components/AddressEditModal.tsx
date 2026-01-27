@@ -1,8 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
-// We keep the import for bundlers, but we'll also add a fallback injection for the CSS
-// because in some cloud environments the CSS import might not resolve via importmap.
 import 'leaflet/dist/leaflet.css'; 
 import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
@@ -10,18 +8,17 @@ import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dat
 import { parseRussianAddress } from '../services/addressParser';
 import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
 
-// --- Fix Leaflet Icons ---
-// This fix is necessary because webpack/bundlers can mess up default icon paths
+// --- Fix Leaflet Icons (Aligned to v1.9.4) ---
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
-    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 });
 
 const greenIcon = new L.Icon({
     iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
     iconSize: [25, 41],
     iconAnchor: [12, 41],
     popupAnchor: [1, -34],
@@ -45,7 +42,6 @@ interface AddressEditModalProps {
     onBack: () => void;
     data: EditableData | null;
     onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
-    // REPURPOSED: This callback now initiates polling in the parent component.
     onStartPolling: (rmName: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => void;
     onDelete: (rm: string, address: string) => void;
     globalTheme?: Theme;
@@ -85,64 +81,42 @@ const SinglePointMap: React.FC<{
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     const resizeObserverRef = useRef<ResizeObserver | null>(null);
     
-    // Search State
+    // --- STATE REFACTORS ---
+    const [hasMarker, setHasMarker] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     
-    // Cleanup Refs
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-    // 1. Initialize Map
+    // 1. Initialize Map (Corrected Logic)
     useEffect(() => {
-        if (!mapContainerRef.current) return;
+        if (!mapContainerRef.current || mapRef.current) return;
 
-        // Ensure Leaflet CSS is loaded
-        if (!document.querySelector('link[href*="leaflet.css"]')) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-            document.head.appendChild(link);
-        }
-
-        if (mapRef.current) return; // Already initialized
-
-        // Initialize map
         const map = L.map(mapContainerRef.current, { 
             scrollWheelZoom: true,
             zoomControl: false,
             center: [55.75, 37.61],
             zoom: 5,
             attributionControl: false,
-            preferCanvas: true
         });
-
         mapRef.current = map;
         L.control.zoom({ position: 'topleft' }).addTo(map);
-        tileLayerRef.current = L.tileLayer(theme === 'dark' ? darkUrl : lightUrl, { attribution: '&copy; CARTO' }).addTo(map);
 
-        // Setup ResizeObserver to handle modal animations/resizing automatically
         resizeObserverRef.current = new ResizeObserver(() => {
-            if (mapRef.current) {
-                mapRef.current.invalidateSize();
-            }
+            mapRef.current?.invalidateSize();
         });
         resizeObserverRef.current.observe(mapContainerRef.current);
-
-        // Initial invalidation sequence for modal transition
-        const timeouts = [100, 300, 500, 1000].map(delay => 
-            setTimeout(() => map.invalidateSize(), delay)
-        );
+        
+        // Single, reliable invalidation after a short delay to account for modal transitions
+        setTimeout(() => map.invalidateSize(), 150);
 
         return () => {
-            timeouts.forEach(clearTimeout);
-            if (resizeObserverRef.current) {
-                resizeObserverRef.current.disconnect();
-            }
+            resizeObserverRef.current?.disconnect();
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;
@@ -150,15 +124,26 @@ const SinglePointMap: React.FC<{
                 tileLayerRef.current = null;
             }
         };
-    }, []); // Run once on mount
+    }, []);
 
-    // 2. Handle Theme Updates
+    // 2. Handle Theme Updates reliably by recreating the layer (Corrected Logic)
     useEffect(() => {
-        if (!tileLayerRef.current) return;
-        tileLayerRef.current.setUrl(theme === 'dark' ? darkUrl : lightUrl);
+        const map = mapRef.current;
+        if (!map) return;
+
+        // Remove old layer if it exists
+        if (tileLayerRef.current) {
+            map.removeLayer(tileLayerRef.current);
+        }
+
+        // Create and add new layer
+        const newUrl = theme === 'dark' ? darkUrl : lightUrl;
+        tileLayerRef.current = L.tileLayer(newUrl, { attribution: '&copy; CARTO' }).addTo(map);
+        tileLayerRef.current.bringToBack();
+        
     }, [theme]);
 
-    // 3. Handle Markers & View (Strict Coordinate Check)
+    // 3. Handle Markers & View
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
@@ -184,11 +169,11 @@ const SinglePointMap: React.FC<{
             } else {
                 markerRef.current.setLatLng(latLng).setIcon(iconToUse);
             }
+            setHasMarker(true);
 
             const popupContent = `<b>${address}</b><br><span style="font-size:10px; color: #9ca3af">Перетащите маркер для уточнения</span>`;
             markerRef.current.bindPopup(popupContent, { maxWidth: 350 });
             
-            // Force view update and invalidate size to ensure map is rendered correctly
             map.setView(latLng, isExpanded ? 17 : 14, { animate: true });
             map.invalidateSize();
         } else {
@@ -196,14 +181,13 @@ const SinglePointMap: React.FC<{
                 map.removeLayer(markerRef.current);
                 markerRef.current = null;
             }
-            // Default view if no coords
+            setHasMarker(false);
             if (!map.getCenter().equals([55.75, 37.61])) {
                  map.setView([55.75, 37.61], 5);
             }
             map.invalidateSize();
         }
-        
-    }, [lat, lon, isSuccess, isExpanded, address]); 
+    }, [lat, lon, isSuccess, isExpanded, address, onCoordinatesChange]);
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         const q = e.target.value;
@@ -258,7 +242,7 @@ const SinglePointMap: React.FC<{
             <style>{`.leaflet-control-attribution { display: none !important; }`}</style>
             <div 
                 ref={mapContainerRef} 
-                className={`h-full w-full rounded-lg bg-gray-800 z-0 ${markerRef.current ? 'cursor-move' : 'cursor-default'}`} 
+                className={`h-full w-full rounded-lg bg-gray-800 z-0 ${hasMarker ? 'cursor-move' : 'cursor-default'}`} 
                 style={{ minHeight: '100%' }}
             />
             
@@ -430,7 +414,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setStatus('saving'); setError(null);
 
         try {
-            // API Call: Update address, comment, and potentially new manual coordinates
             const res = await fetch('/api/update-address', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -469,20 +452,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             };
             
             if (needsGeocoding) {
-                // Delegate polling to parent
                 onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
-                // Set modal state to geocoding, modal stays open
                 setStatus('geocoding');
             } else {
-                // Update parent directly
                 const finalPoint = { ...baseNewPoint, lat: manualCoords?.lat || baseNewPoint.lat, lon: manualCoords?.lon || baseNewPoint.lon };
                 onDataUpdate(oldKey, finalPoint, originalIndex);
                 
-                // Show success in modal
                 setStatus('success');
                 if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
                 successTimeoutRef.current = setTimeout(() => {
-                    // Revert to idle only if status hasn't changed by another user action
                     setStatus(currentStatus => (currentStatus === 'success' ? 'idle' : currentStatus));
                 }, 2000);
             }
@@ -539,17 +517,15 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     
     const isMapSuccess = typeof displayLat === 'number' && typeof displayLon === 'number' && displayLat !== 0 && displayLon !== 0 && status !== 'geocoding';
 
+    let saveButtonText = "Сохранить изменения";
     const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== ((data as MapPoint).address || '').toLowerCase();
     const isCoordsChanged = manualCoords !== null;
     const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
-
-    let saveButtonText = "Сохранить изменения";
     if (isAddressChanged) saveButtonText = "Сохранить новый адрес";
     if (isCoordsChanged) saveButtonText = "Сохранить новые координаты";
     if (isAddressChanged && isCoordsChanged) saveButtonText = "Сохранить адрес и координаты";
     if (isCommentChanged && !isAddressChanged && !isCoordsChanged) saveButtonText = "Сохранить комментарий";
 
-    // Stable callback for map updates
     const handleCoordinatesChange = useCallback((lat: number, lon: number) => {
         setManualCoords({ lat, lon });
     }, []);
@@ -565,7 +541,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         <>
             <Modal isOpen={isOpen} onClose={onClose} title={modalTitle} footer={customFooter} maxWidth="max-w-7xl" zIndex="z-[9999]">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    {/* Левая колонка */}
+                    {/* Left Column */}
                     <div className="flex flex-col gap-6">
                         <div className="bg-gray-900/60 p-5 rounded-2xl border border-gray-700 max-h-[40vh] overflow-y-auto custom-scrollbar shadow-inner">
                             <h4 className="font-bold text-xs uppercase tracking-widest mb-4 text-indigo-400">Исходные данные строки</h4>
@@ -603,7 +579,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         </div>
                     </div>
 
-                    {/* Правая колонка */}
+                    {/* Right Column */}
                     <div className="flex flex-col gap-6">
                         <div className="h-72 shadow-2xl rounded-2xl overflow-hidden border border-gray-700 bg-gray-900">
                              <SinglePointMap 
@@ -646,16 +622,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                 {lastUpdatedStr && <div className="text-[10px] text-gray-500 text-right italic -mt-1 uppercase tracking-tighter">Обновлено: {lastUpdatedStr}</div>}
                                 
                                 <div className="pt-2">
-                                    {status === 'idle' && !error && (
-                                        <button onClick={handleSave} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98]">
-                                            <SaveIcon className="w-5 h-5" /> {saveButtonText}
+                                    {(status === 'idle' || status === 'success') && !error && (
+                                        <button onClick={handleSave} disabled={status === 'success'} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-indigo-900/40 active:scale-[0.98] disabled:bg-emerald-600 disabled:shadow-emerald-900/40 disabled:cursor-not-allowed">
+                                            {status === 'success' ? <><CheckIcon className="w-6 h-6" /> Сохранено!</> : <><SaveIcon className="w-5 h-5" /> {saveButtonText}</>}
                                         </button>
-                                    )}
-                                    
-                                    {status === 'success' && (
-                                        <div className="w-full bg-emerald-600 text-white font-bold py-4 px-6 rounded-xl flex items-center justify-center gap-3 transition-all shadow-lg shadow-emerald-900/40 animate-pulse">
-                                            <CheckIcon className="w-6 h-6" /> Сохранено успешно!
-                                        </div>
                                     )}
                                     
                                     {status === 'saving' && (
@@ -701,7 +671,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 </div>
             </Modal>
             
-            {/* Modal Map Expanded */}
             {isMapExpanded && (
                 <div className="fixed inset-0 z-[10000] bg-black/95 flex flex-col animate-fade-in">
                     <div className="flex justify-between items-center p-4 bg-gray-900 border-b border-gray-800 backdrop-blur-md">
