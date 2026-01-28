@@ -111,7 +111,6 @@ const App: React.FC = () => {
         saveSnapshotToCloud, 
         handleDownloadSnapshot, 
         handleForceUpdate, 
-        checkForUpdates, // Imported polling function
         isCloudSaving 
     } = useCloudSync({
         allDataRef,
@@ -125,21 +124,6 @@ const App: React.FC = () => {
         addNotification,
         setDbStatus
     });
-
-    // --- NEW: CHUNK POLLING INTERVAL ---
-    useEffect(() => {
-        // Only run polling if we have data loaded and not currently processing/saving
-        const shouldPoll = dbStatus === 'ready' && !processingState.isProcessing;
-        
-        if (shouldPoll) {
-            const intervalId = setInterval(() => {
-                checkForUpdates();
-            }, POLLING_INTERVAL_MS);
-            
-            return () => clearInterval(intervalId);
-        }
-    }, [dbStatus, processingState.isProcessing, checkForUpdates]);
-
 
     // --- NEW REAL DATA UPDATE HANDLER ---
     const handleStartDataUpdate = async () => {
@@ -179,7 +163,7 @@ const App: React.FC = () => {
     };
 
 
-    // --- LIVE SYNC POLLING (CACHE/GEOCODING) ---
+    // --- LIVE SYNC POLLING ---
     useEffect(() => {
         const syncData = async () => {
             // Only sync if we have data loaded
