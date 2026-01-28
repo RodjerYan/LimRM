@@ -111,6 +111,7 @@ const App: React.FC = () => {
         saveSnapshotToCloud, 
         handleDownloadSnapshot, 
         handleForceUpdate, 
+        checkForUpdates,
         isCloudSaving 
     } = useCloudSync({
         allDataRef,
@@ -165,84 +166,9 @@ const App: React.FC = () => {
 
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
-        const syncData = async () => {
-            // Only sync if we have data loaded
-            if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return; // Don't sync while heavy processing
-
-            try {
-                // 1. Fetch latest cache from server
-                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                if (!res.ok) return;
-                const cacheData: CoordsCache = await res.json();
-
-                // 2. Flatten cache for O(1) lookup
-                const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
-                Object.values(cacheData).flat().forEach((item: any) => {
-                    if (item.address && !item.isDeleted && item.lat && item.lon) {
-                        cacheMap.set(normalizeAddress(item.address), { lat: item.lat, lon: item.lon, comment: item.comment });
-                    }
-                });
-
-                let hasChanges = false;
-                let updatedEditingClient: MapPoint | null = null;
-
-                // 3. Update All Data (Active Clients)
-                const newAllData = allDataRef.current.map(row => {
-                    let rowChanged = false;
-                    const newClients = row.clients.map(client => {
-                        const normAddr = normalizeAddress(client.address);
-                        
-                        // RACE CONDITION FIX: Ignore cache if user updated this client recently (< 2 mins)
-                        const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
-                        if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
-                            return client;
-                        }
-
-                        const cached = cacheMap.get(normAddr);
-                        
-                        // Check if we have new data that is different from current
-                        if (cached) {
-                            const latDiff = Math.abs((client.lat || 0) - cached.lat);
-                            const lonDiff = Math.abs((client.lon || 0) - cached.lon);
-                            const commentDiff = (client.comment || '') !== (cached.comment || '');
-                            
-                            // If significant change (> 0.0001 deg or comment changed)
-                            if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
-                                rowChanged = true;
-                                hasChanges = true;
-                                const updatedClient = { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
-                                
-                                // FIX: Update editing client if it matches
-                                if (editingClient && (editingClient as MapPoint).key === client.key) {
-                                    updatedEditingClient = updatedClient;
-                                }
-                                return updatedClient;
-                            }
-                        }
-                        return client;
-                    });
-                    
-                    if (rowChanged) return { ...row, clients: newClients };
-                    return row;
-                });
-
-                if (hasChanges) {
-                    setAllData(newAllData);
-                    if (updatedEditingClient) {
-                        setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
-                        addNotification('Данные открытого клиента обновлены', 'info');
-                    }
-                }
-
-            } catch (e) {
-                console.error("Auto-sync failed", e);
-            }
-        };
-
-        const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
+        const intervalId = setInterval(checkForUpdates, POLLING_INTERVAL_MS);
         return () => clearInterval(intervalId);
-    }, [processingState.isProcessing, editingClient]);
+    }, [checkForUpdates]);
 
     // --- BACKGROUND GEOCODING POLLING ---
     useEffect(() => {
@@ -357,7 +283,6 @@ const App: React.FC = () => {
         } else {
             let found = false;
             newData = newData.map(group => {
-                // IMPORTANT: Search for the specific client by key
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
                     found = true;
@@ -378,7 +303,6 @@ const App: React.FC = () => {
             setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null);
         }
 
-        // RECALCULATE ABC ON UPDATE
         enrichWithAbcCategories(newData);
 
         setAllData(newData);
@@ -391,7 +315,7 @@ const App: React.FC = () => {
             });
         }, 2000);
 
-    }, [okbRegionCounts, editingClient]); // Added editingClient to dependency
+    }, [okbRegionCounts, editingClient]); 
 
     // Batch update for performance when multiple polling results arrive
     const handleBatchDataUpdate = useCallback((completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[]) => {
@@ -440,7 +364,6 @@ const App: React.FC = () => {
         setAllData([...currentAllData]);
         setUnidentifiedRows([...currentUnidentified]);
 
-        // FIX: Update modal if needed
         if (updatedEditingClient) {
             setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
         }
@@ -448,16 +371,18 @@ const App: React.FC = () => {
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => saveSnapshotToCloud(currentAllData, currentUnidentified), 2000);
 
-    }, [editingClient]); // Added editingClient to dependency
+    }, [editingClient]);
 
     // New handler to start the polling process
     const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
         addNotification(`Адрес "${address.substring(0, 30)}..." отправлен на геокодинг`, 'info');
-        // Optimistic update
-        handleDataUpdate(oldKey, basePoint, originalIndex);
+        
+        // CRITICAL FIX: Removed optimistic update to prevent double-save loop and twitching.
+        // The UI will wait until coordinates are found by polling.
+        
         // Add to polling queue
         setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
-    }, [handleDataUpdate, addNotification]);
+    }, [addNotification]);
 
 
     // --- CLIENT DELETION HANDLER ---
@@ -467,9 +392,8 @@ const App: React.FC = () => {
         let newUnidentified = [...unidentifiedRowsRef.current];
         let wasModified = false;
 
-        // 1. Remove from Active Data (Aggregated Rows)
+        // 1. Remove from Active Data
         newData = newData.map(group => {
-            // Only search in groups belonging to this RM to narrow scope
             if (group.rm !== rmName) return group;
 
             const originalClientCount = group.clients.length;
@@ -477,22 +401,18 @@ const App: React.FC = () => {
             
             if (newClients.length !== originalClientCount) {
                 wasModified = true;
-                // Recalculate group totals
                 const newFact = newClients.reduce((sum, c) => sum + (c.fact || 0), 0);
-                
-                // If group becomes empty, it will be filtered out later
                 return {
                     ...group,
                     clients: newClients,
                     fact: newFact,
-                    // Recalculate potential using simple heuristic if we lost clients
                     potential: newFact * 1.15,
-                    growthPotential: 0, // Reset these as they need recalculation usually
+                    growthPotential: 0,
                     growthPercentage: 0
                 };
             }
             return group;
-        }).filter(group => group.clients.length > 0); // Remove empty groups
+        }).filter(group => group.clients.length > 0); 
 
         // 2. Remove from Unidentified Rows
         const initialUnidentifiedCount = newUnidentified.length;
@@ -504,15 +424,11 @@ const App: React.FC = () => {
         if (newUnidentified.length !== initialUnidentifiedCount) wasModified = true;
 
         if (wasModified) {
-            // Re-run ABC classification
             enrichWithAbcCategories(newData);
-            
             setAllData(newData);
             setUnidentifiedRows(newUnidentified);
-            
             addNotification('Клиент удален из базы', 'info');
 
-            // Trigger Cloud Save
             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = setTimeout(() => {
                 saveSnapshotToCloud(newData, newUnidentified).catch(err => {
@@ -585,10 +501,9 @@ const App: React.FC = () => {
             return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
         });
 
-        // ** THE FIX **: Filter out potential clients that are already active.
         const potentialOnly = coordsOnly.filter(r => {
             const addr = findAddressInRow(r);
-            if (!addr) return true; // Keep if no address to be safe, though unlikely
+            if (!addr) return true;
             return !activeClientAddressSet.has(normalizeAddress(addr));
         });
 
@@ -674,7 +589,6 @@ const App: React.FC = () => {
                     {activeModule === 'agile' && <AgileLearning data={filtered} />}
                     {activeModule === 'roi-genome' && <RoiGenome data={filtered} />}
                     
-                    {/* Presentation Module */}
                     {activeModule === 'presentation' && <Presentation />}
                 </div>
             </main>
@@ -698,7 +612,7 @@ const App: React.FC = () => {
                     data={editingClient} 
                     onDataUpdate={handleDataUpdate} 
                     onStartPolling={handleStartPolling} 
-                    onDelete={handleDeleteClient} // Pass the delete handler here
+                    onDelete={handleDeleteClient} 
                     globalTheme="dark" 
                 />
             )}
