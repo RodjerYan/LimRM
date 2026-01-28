@@ -183,7 +183,9 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                     <tbody>
                          {paginatedData.map((row: any) => (
                             <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
-                                <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">{row.clientName}</th>
+                                <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">
+                                    {row.clientName || `${row.region || '?'}: ${row.brand || '?'}`}
+                                </th>
                                 <td className="px-4 py-3">{row.rm}</td>
                                 <td className="px-4 py-3">{row.region}</td>
                                 <td className="px-4 py-3 text-accent cursor-pointer hover:text-white hover:underline transition-colors font-medium" onClick={(e) => { if (onPlanClick) { e.stopPropagation(); onPlanClick(row); } }} title="Нажмите, чтобы увидеть расчет плана">{row.brand}</td>

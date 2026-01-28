@@ -334,11 +334,12 @@ const App: React.FC = () => {
                 if (parts.length > 1) {
                     const splitFactor = 1 / parts.length;
                     parts.forEach((brandPart, idx) => {
+                        const regionName = row.region || 'Неизвестный регион';
                         result.push({
                             ...row,
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
-                            clientName: `${row.region}: ${brandPart}`,
+                            clientName: `${regionName}: ${brandPart}`,
                             fact: (row.fact || 0) * splitFactor,
                             potential: (row.potential || 0) * splitFactor,
                             growthPotential: (row.growthPotential || 0) * splitFactor,
@@ -358,9 +359,15 @@ const App: React.FC = () => {
 
             const normalizedClients = clientSource.map(normalizeClient);
 
+            // Ensure clientName is populated. If missing, generate it from Region + Brand.
+            const regionName = row.region || 'Неизвестный регион';
+            const brandName = row.brand || 'Без бренда';
+            const finalClientName = row.clientName || `${regionName}: ${brandName}`;
+
             result.push({
                 ...row,
                 key: row.key || generateStableKey(row, 'm'),
+                clientName: finalClientName,
                 clients: normalizedClients
             });
         });
