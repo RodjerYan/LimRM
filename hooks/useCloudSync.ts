@@ -35,6 +35,7 @@ export const useCloudSync = ({
     const [isCloudSaving, setIsCloudSaving] = useState(false);
     
     const isSavingRef = useRef(false);
+    const isPollingRef = useRef(false); // NEW: Prevent overlapping polls
     const saveQueuedRef = useRef(false);
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
     
@@ -135,7 +136,6 @@ export const useCloudSync = ({
                             ? `action=save-chunk&targetFileId=${item.targetFileId}` 
                             : `action=save-chunk&chunkIndex=${item.index}`;
 
-                        // RESTORED: Detailed start log
                         console.log(`[Cloud Save] Uploading chunk ${item.index} (Size: ${(item.content.length/1024).toFixed(1)}KB)...`);
 
                         return fetch(`/api/get-full-cache?${queryParams}`, {
@@ -150,7 +150,6 @@ export const useCloudSync = ({
                             }
                             const responseJson = await res.json();
                             
-                            // RESTORED: Detailed success log
                             console.log(`[Cloud Save] Chunk ${item.index} saved. Version: ${responseJson.version}`);
 
                             lastSavedChunksRef.current.set(item.index, item.content);
@@ -282,14 +281,23 @@ export const useCloudSync = ({
     }, [addNotification, setAllData, setOkbRegionCounts, setProcessingState, setUnidentifiedRows, totalRowsProcessedRef]);
 
     const checkForUpdates = useCallback(async () => {
-        if (isSavingRef.current || saveQueuedRef.current) return;
+        // Prevent overlap or conflict
+        if (isSavingRef.current || saveQueuedRef.current || isPollingRef.current) return;
+        
+        isPollingRef.current = true;
 
         try {
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) return;
+            if (!listRes.ok) {
+                isPollingRef.current = false;
+                return;
+            }
             
             const fileList = await listRes.json();
-            if (!Array.isArray(fileList)) return;
+            if (!Array.isArray(fileList)) {
+                isPollingRef.current = false;
+                return;
+            }
 
             const chunksToUpdate: { index: number, id: string }[] = [];
 
@@ -301,6 +309,7 @@ export const useCloudSync = ({
 
             fileList.forEach((file: any, index: number) => {
                 const currentVersion = loadedChunkVersionsRef.current.get(index);
+                // Important: Ensure we have a valid string comparison for versions
                 if (currentVersion && file.version && String(currentVersion) !== String(file.version)) {
                     chunksToUpdate.push({ index, id: file.id });
                 }
@@ -313,28 +322,33 @@ export const useCloudSync = ({
                 console.log(`[Polling] Found ${chunksToUpdate.length} updated chunks. Fetching...`);
                 let hasChanges = false;
 
+                // Process sequentially to avoid network congestion
                 for (const chunk of chunksToUpdate) {
-                    const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${chunk.id}`);
-                    if (res.ok) {
-                        const text = await res.text();
-                        lastSavedChunksRef.current.set(chunk.index, text);
-                        
-                        const matchedFile = fileList.find((f: any) => f.id === chunk.id);
-                        if (matchedFile && matchedFile.version) {
-                            loadedChunkVersionsRef.current.set(chunk.index, matchedFile.version);
-                        }
+                    try {
+                        const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${chunk.id}`);
+                        if (res.ok) {
+                            const text = await res.text();
+                            lastSavedChunksRef.current.set(chunk.index, text);
+                            
+                            const matchedFile = fileList.find((f: any) => f.id === chunk.id);
+                            if (matchedFile && matchedFile.version) {
+                                loadedChunkVersionsRef.current.set(chunk.index, matchedFile.version);
+                            }
 
-                        const chunkData = JSON.parse(text);
-                        let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : [];
-                        
-                        const normalizedChunk = normalize(newRows);
-                        chunkDataMapRef.current.set(chunk.index, normalizedChunk);
-                        hasChanges = true;
-                        
-                        if (chunkData.meta) {
-                             if (chunkData.meta.unidentifiedRows) setUnidentifiedRows(chunkData.meta.unidentifiedRows);
-                             if (chunkData.meta.okbRegionCounts) setOkbRegionCounts(chunkData.meta.okbRegionCounts);
+                            const chunkData = JSON.parse(text);
+                            let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : [];
+                            
+                            const normalizedChunk = normalize(newRows);
+                            chunkDataMapRef.current.set(chunk.index, normalizedChunk);
+                            hasChanges = true;
+                            
+                            if (chunkData.meta) {
+                                if (chunkData.meta.unidentifiedRows) setUnidentifiedRows(chunkData.meta.unidentifiedRows);
+                                if (chunkData.meta.okbRegionCounts) setOkbRegionCounts(chunkData.meta.okbRegionCounts);
+                            }
                         }
+                    } catch (fetchErr) {
+                        console.error(`Failed to fetch chunk ${chunk.index}`, fetchErr);
                     }
                 }
 
@@ -348,6 +362,8 @@ export const useCloudSync = ({
 
         } catch (e) {
             console.error("Polling error:", e);
+        } finally {
+            isPollingRef.current = false;
         }
     }, [addNotification, setAllData, setOkbRegionCounts, setUnidentifiedRows]);
 
