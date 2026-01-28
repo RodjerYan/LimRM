@@ -275,8 +275,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
-        // CORE LOGIC: Skip row if it has been marked as deleted.
-        if (cacheEntry?.isDeleted) {
+        // CORE LOGIC: Skip row if it has been marked as deleted in the cache.
+        // This ensures "Soft Deleted" rows from the database don't reappear when raw files are reloaded.
+        if (cacheEntry && cacheEntry.isDeleted) {
             continue;
         }
 

@@ -206,29 +206,22 @@ function normalizeForComparison(str: string): string {
 
 function isAddressInHistory(historyString: string, targetAddressNorm: string): boolean {
     if (!historyString) return false;
-    // Split by || OR newline sequences, robust against messy Excel data
     const entries = historyString.split(/[\r\n]+|\s*\|\|\s*/);
     
     return entries.some(entry => {
-        // Strip timestamps [Date] and prefix "Изменен адрес:"
         let addrPart = entry.replace(/^Изменен адрес:\s*/i, '');
-        // Strip timestamp like [23.01.2026...]
         addrPart = addrPart.split('[')[0];
-        // Clean up trailing punctuation just in case
         const cleanAddr = addrPart.trim().replace(/[,;]+$/, '');
-        
         return normalizeForComparison(cleanAddr) === targetAddressNorm;
     });
 }
 
-// Updated to fetch Column G (isDeleted)
 export async function getFullCoordsCache(): Promise<Record<string, { address: string; lat?: number; lon?: number; history?: string; isDeleted?: boolean; isInvalid?: boolean; comment?: string; coordStatus?: string }[]>> {
     const sheets = await getGoogleSheetsClient();
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getFullCoordsCache-meta') as any;
     const sheetTitles = spreadsheet.data.sheets?.map((s: any) => s.properties?.title).filter(Boolean) as string[] || [];
     if (sheetTitles.length === 0) return {};
     
-    // Range A:G to include isDeleted column
     const ranges = sheetTitles.map((title: string) => `'${title}'!A:G`); 
     const response = await callWithRetry(() => sheets.spreadsheets.values.batchGet({ spreadsheetId: CACHE_SPREADSHEET_ID, ranges }), 'getFullCoordsCache-data') as any;
     
@@ -261,10 +254,8 @@ export async function getFullCoordsCache(): Promise<Record<string, { address: st
     return cache;
 }
 
-// Updated to ensure header includes "Удален"
 async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Promise<string> {
     const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'ensureSheetExists') as any;
-    // Find sheet case-insensitively
     let sheetTitle = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase())?.properties?.title;
     
     if (!sheetTitle) {
@@ -272,7 +263,6 @@ async function ensureSheetExists(sheets: sheets_v4.Sheets, rmName: string): Prom
             await callWithRetry(() => sheets.spreadsheets.batchUpdate({ spreadsheetId: CACHE_SPREADSHEET_ID, requestBody: { requests: [{ addSheet: { properties: { title: rmName } } }] } }), 'addSheet');
             sheetTitle = rmName;
         } catch (e: any) {
-            // Handle race condition where sheet might be created between check and add
             if (e.message && e.message.includes('already exists')) {
                 sheetTitle = rmName;
             } else {
@@ -311,9 +301,7 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
         if (!row[0]) return false;
         const normAddr = normalizeForComparison(String(row[0]));
         const existingEntry = existingAddresses.get(normAddr);
-        // Do not add if it exists and is marked as deleted.
         if (existingEntry && existingEntry.isDeleted) return false;
-        // Do not add if it exists at all (avoids duplicates from re-processing)
         if (existingEntry) return false;
         return true;
     }).map(row => {
@@ -325,7 +313,6 @@ export async function appendToCache(rmName: string, rowsToAppend: (string | numb
     await callWithRetry(() => sheets.spreadsheets.values.append({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${actualSheetTitle}'!A1`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', requestBody: { values: enrichedRows } }), 'appendRows');
 }
 
-// Updated to write 'confirmed' status
 export async function updateCacheCoords(rmName: string, updates: { address: string; lat: number; lon: number }[]): Promise<void> {
     if (updates.length === 0) return;
     const sheets = await getGoogleSheetsClient();
@@ -337,7 +324,6 @@ export async function updateCacheCoords(rmName: string, updates: { address: stri
     const data = updates.map(update => {
         const rowIndex = addressIndexMap.get(normalizeForComparison(update.address));
         if (!rowIndex) return null;
-        // Update Lat, Lon (B, C), Status (F), and isDeleted (G)
         return [
             { range: `'${actualSheetTitle}'!B${rowIndex}:C${rowIndex}`, values: [[update.lat, update.lon]] },
             { range: `'${actualSheetTitle}'!F${rowIndex}`, values: [['confirmed']] },
@@ -369,6 +355,7 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     let finalHistory = '';
     let finalComment = comment || "";
     let finalStatus = 'confirmed';
+    let keyAddressToSave = newAddress; 
 
     if (rowIndex === -1) {
         let initialHistory = `${oldAddress} [${timestamp}]`;
@@ -393,7 +380,9 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
 
     const row = rows[rowIndex];
     const rowNumber = rowIndex + 1;
-    const currentStoredAddress = String(row[0] || '');
+    const currentStoredAddress = String(row[0] || ''); 
+    keyAddressToSave = currentStoredAddress; 
+
     const currentStoredHistory = String(row[3] || '');
     const currentStoredComment = String(row[4] || '');
     const currentStoredStatus = String(row[5] || '');
@@ -402,25 +391,23 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
     const isCommentChanged = comment !== undefined && comment.trim() !== currentStoredComment.trim();
     
     let eventEntry = '';
-    if (isAddressChanged && isCommentChanged) eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
-    else if (isAddressChanged) eventEntry = `Изменен адрес: ${currentStoredAddress || oldAddress} [${timestamp}]`;
+    if (isAddressChanged && isCommentChanged) eventEntry = `Изменен адрес (визуально): ${newAddress}\nНовый комментарий: "${comment}" [${timestamp}]`;
+    else if (isAddressChanged) eventEntry = `Изменен адрес (визуально): ${newAddress} [${timestamp}]`;
     else if (isCommentChanged) eventEntry = `Комментарий: "${comment}" [${timestamp}]`;
 
     finalHistory = currentStoredHistory;
-    
     if (eventEntry) {
         if (finalHistory && !finalHistory.endsWith('\n')) finalHistory += '\n';
         finalHistory += `|| ${eventEntry}`; 
     }
 
     if (isAddressChanged && lat === undefined) {
-        finalLat = undefined; 
-        finalLon = undefined; 
-        finalStatus = 'pending';
+        finalLat = row[1] ? parseFloat(String(row[1]).replace(',', '.')) : undefined;
+        finalLon = row[2] ? parseFloat(String(row[2]).replace(',', '.')) : undefined;
+        finalStatus = currentStoredStatus;
     } else {
         finalLat = lat !== undefined ? lat : (row[1] ? parseFloat(String(row[1]).replace(',', '.')) : undefined);
         finalLon = lon !== undefined ? lon : (row[2] ? parseFloat(String(row[2]).replace(',', '.')) : undefined);
-        
         if (lat !== undefined) {
              finalStatus = 'confirmed';
         } else {
@@ -435,16 +422,17 @@ export async function updateAddressInCache(rmName: string, oldAddress: string, n
         range: `'${actualSheetTitle}'!A${rowNumber}:G${rowNumber}`, 
         valueInputOption: 'USER_ENTERED', 
         requestBody: { 
-            values: [[ finalAddress, finalLat !== undefined ? finalLat : "", finalLon !== undefined ? finalLon : "", finalHistory, finalComment, finalStatus, 'FALSE' ]] 
+            values: [[ keyAddressToSave, finalLat !== undefined ? finalLat : "", finalLon !== undefined ? finalLon : "", finalHistory, finalComment, finalStatus, 'FALSE' ]] 
         } 
     }), 'updateFullRow');
 
     return { 
         success: true, 
-        data: { address: finalAddress, lat: finalLat, lon: finalLon, comment: finalComment, history: finalHistory, coordStatus: finalStatus, isDeleted: false } 
+        data: { address: newAddress, lat: finalLat, lon: finalLon, comment: finalComment, history: finalHistory, coordStatus: finalStatus, isDeleted: false } 
     };
 }
 
+// Updated Delete Logic: "Upsert" a deleted record if it doesn't exist
 export async function deleteAddressFromCache(rmName: string, address: string): Promise<void> {
     const sheets = await getGoogleSheetsClient();
     const actualSheetTitle = await ensureSheetExists(sheets, rmName);
@@ -453,18 +441,29 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
     const addressList = response.data.values?.flat() || [];
     const rowIndex = addressList.findIndex((a: any) => normalizeForComparison(String(a)) === normalizeForComparison(address));
 
-    if (rowIndex > 0) { // rowIndex > 0 to skip header
+    if (rowIndex > 0) { // Found existing
         const rowNumber = rowIndex + 1;
         await callWithRetry(() => sheets.spreadsheets.values.batchUpdate({
             spreadsheetId: CACHE_SPREADSHEET_ID,
             requestBody: {
                 valueInputOption: 'USER_ENTERED',
                 data: [
-                    { range: `'${actualSheetTitle}'!B${rowNumber}:C${rowNumber}`, values: [['', '']] },
-                    { range: `'${actualSheetTitle}'!G${rowNumber}`, values: [['TRUE']] }
+                    { range: `'${actualSheetTitle}'!B${rowNumber}:C${rowNumber}`, values: [['', '']] }, // Wipe coords
+                    { range: `'${actualSheetTitle}'!G${rowNumber}`, values: [['TRUE']] } // Set Deleted
                 ]
             }
         }), 'markDeleted');
+    } else {
+        // Not found? Create a "Blocked" entry so it's ignored next time
+        await callWithRetry(() => sheets.spreadsheets.values.append({
+            spreadsheetId: CACHE_SPREADSHEET_ID,
+            range: `'${actualSheetTitle}'!A1`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                // A:Address, B:Lat, C:Lon, D:History, E:Comment, F:Status, G:IsDeleted
+                values: [[address, '', '', `Удален пользователем (блокировка) [${new Date().toLocaleString()}]`, '', 'blocked', 'TRUE']]
+            }
+        }), 'appendBlockedEntry');
     }
 }
 
