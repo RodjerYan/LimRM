@@ -138,6 +138,7 @@ export const useAppLogic = () => {
         
         isSavingRef.current = true;
         setIsCloudSaving(true);
+        let hasFatalError = false;
 
         console.groupCollapsed(`%c[Cloud Save] Started at ${new Date().toLocaleTimeString()}`, 'color: #818cf8; font-weight: bold;');
 
@@ -248,19 +249,27 @@ export const useAppLogic = () => {
             console.timeEnd('save-meta');
             
             addNotification('Изменения сохранены', 'success');
-        } catch (e) {
+        } catch (e: any) {
             console.error("Cloud Save Error:", e);
-            addNotification('Ошибка сохранения в облако', 'warning');
-            saveQueuedRef.current = true;
+            const errString = e.toString();
+            if (errString.includes("storage quota") || errString.includes("500")) {
+                 addNotification('Критическая ошибка: Сбой облачного сохранения (500).', 'error');
+                 hasFatalError = true;
+            } else {
+                 addNotification('Ошибка сохранения в облако', 'warning');
+            }
         } finally {
             console.groupEnd();
             isSavingRef.current = false;
             
-            if (saveQueuedRef.current) {
+            // CRITICAL FIX: Only execute queued save if NO fatal error occurred.
+            // If storage is full or API is down, retrying will just cause infinite loop.
+            if (saveQueuedRef.current && !hasFatalError) {
                 console.log("%c[Queue] Executing queued save...", "color: cyan");
                 saveQueuedRef.current = false;
                 saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
             } else {
+                saveQueuedRef.current = false; 
                 setIsCloudSaving(false); 
             }
         }
@@ -481,8 +490,22 @@ export const useAppLogic = () => {
                         headers: { 'Cache-Control': 'no-cache' }
                     });
 
+                    // ERROR 404 FIX: Stop infinite polling if 404
+                    if (res.status === 404) {
+                        console.warn(`Address not found (404), stopping poll: ${item.address}`);
+                        // Add to completed as failure or keep in pending with max attempts to expire it
+                        updatedPending.push({ ...item, attempts: MAX_GEOCODING_ATTEMPTS + 1 });
+                        continue;
+                    }
+
                     if (res.ok) {
                         const result = await res.json();
+                        // Handle explicit "not found" (null) response which is now 200 OK
+                        if (!result) {
+                             updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                             continue;
+                        }
+
                         const hasCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
 
                         if (hasCoords) {

@@ -256,7 +256,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const { rmName, address } = req.query;
                 if (!rmName || !address) return res.status(400).json({ error: 'Missing rmName or address' });
                 const cached = await getAddressFromCache(rmName as string, address as string);
-                return cached ? res.json(cached) : res.status(404).json({ error: 'Not found' });
+                // CHANGE: Return 200 with null if not found, preventing 404 console errors
+                return res.json(cached || null);
             }
         }
         

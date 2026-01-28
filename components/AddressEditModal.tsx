@@ -396,21 +396,22 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
             const res = await fetch(url);
 
-            if (res.status === 404) {
-                return; // Nothing to do, history stays empty
-            }
+            // FIX: Now expecting 200 with null body for "not found"
+            if (res.ok) {
+                const result = await res.json();
+                if (!result) return; // Not found in cache
 
-            if (!res.ok) {
-                throw new Error(`API returned ${res.status}: ${res.statusText}`);
-            }
-
-            const result = await res.json();
-            if (result.history) {
-                const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
-                setHistory(historyArray);
-            }
-            if (result.comment && !comment && !isCommentTouched.current) {
-                setComment(result.comment);
+                if (result.history) {
+                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
+                    setHistory(historyArray);
+                }
+                if (result.comment && !comment && !isCommentTouched.current) {
+                    setComment(result.comment);
+                }
+            } else {
+               // Fallback just in case
+               if (res.status === 404) return;
+               throw new Error(`API returned ${res.status}: ${res.statusText}`);
             }
         } catch (e) {
             console.error("Failed to fetch history for address:", address, e);
@@ -480,7 +481,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 lat: needsGeocoding ? undefined : (data as MapPoint).lat, 
                 lon: needsGeocoding ? undefined : (data as MapPoint).lon,
                 status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
+                name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
                 brand: findValueInRow(originalRow, ['торговая марка']),
                 packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
