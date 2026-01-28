@@ -175,6 +175,7 @@ const App: React.FC = () => {
                 });
 
                 let hasChanges = false;
+                let updatedEditingClient: MapPoint | null = null;
 
                 // 3. Update All Data (Active Clients)
                 const newAllData = allDataRef.current.map(row => {
@@ -200,7 +201,13 @@ const App: React.FC = () => {
                             if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
                                 rowChanged = true;
                                 hasChanges = true;
-                                return { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
+                                const updatedClient = { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
+                                
+                                // FIX: Update editing client if it matches
+                                if (editingClient && (editingClient as MapPoint).key === client.key) {
+                                    updatedEditingClient = updatedClient;
+                                }
+                                return updatedClient;
                             }
                         }
                         return client;
@@ -212,6 +219,10 @@ const App: React.FC = () => {
 
                 if (hasChanges) {
                     setAllData(newAllData);
+                    if (updatedEditingClient) {
+                        setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
+                        addNotification('Данные открытого клиента обновлены', 'info');
+                    }
                 }
 
             } catch (e) {
@@ -221,7 +232,7 @@ const App: React.FC = () => {
 
         const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
         return () => clearInterval(intervalId);
-    }, [processingState.isProcessing]);
+    }, [processingState.isProcessing, editingClient]);
 
     // --- BACKGROUND GEOCODING POLLING ---
     useEffect(() => {
@@ -725,6 +736,11 @@ const App: React.FC = () => {
             }
         }
 
+        // FIX: Also update the editing client state if it's currently open
+        if (editingClient && (editingClient as MapPoint).key === oldKey) {
+            setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null);
+        }
+
         // RECALCULATE ABC ON UPDATE
         enrichWithAbcCategories(newData);
 
@@ -738,18 +754,24 @@ const App: React.FC = () => {
             });
         }, 2000);
 
-    }, [okbRegionCounts]); 
+    }, [okbRegionCounts, editingClient]); // Added editingClient to dependency
 
     // Batch update for performance when multiple polling results arrive
     const handleBatchDataUpdate = useCallback((completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[]) => {
         let currentAllData = allDataRef.current;
         let currentUnidentified = unidentifiedRowsRef.current;
+        let updatedEditingClient: MapPoint | null = null;
 
         completedItems.forEach(item => {
             const { oldKey, point, originalIndex } = item;
             
             if (point.address) {
                 manualUpdateTimestamps.current.set(normalizeAddress(point.address), Date.now());
+            }
+
+            // FIX: Check if this item is currently being edited
+            if (editingClient && (editingClient as MapPoint).key === oldKey) {
+                updatedEditingClient = point;
             }
 
             if (typeof originalIndex === 'number') {
@@ -781,10 +803,15 @@ const App: React.FC = () => {
         setAllData([...currentAllData]);
         setUnidentifiedRows([...currentUnidentified]);
 
+        // FIX: Update modal if needed
+        if (updatedEditingClient) {
+            setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
+        }
+
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => saveSnapshotToCloud(currentAllData, currentUnidentified), 2000);
 
-    }, []);
+    }, [editingClient]); // Added editingClient to dependency
 
     // New handler to start the polling process
     const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
