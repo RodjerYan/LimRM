@@ -47,9 +47,10 @@ async function getSortedFiles(drive: any) {
     // 2. List ALL files in folder (avoiding 'name contains' filter to bypass index lag)
     const q = `'${FOLDER_ID}' in parents and trashed = false`;
     
+    // UPDATED: Added 'version' to fields to support smart polling
     const res = await drive.files.list({ 
         q, 
-        fields: "files(id, name, mimeType)", 
+        fields: "files(id, name, mimeType, version)", 
         supportsAllDrives: true, 
         includeItemsFromAllDrives: true,
         pageSize: 1000 
@@ -73,8 +74,12 @@ async function getSortedFiles(drive: any) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    // Return objects with id and name instead of just ID strings
-    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name }));
+    // Return objects with id, name, and version
+    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ 
+        id: f.id, 
+        name: f.name,
+        version: f.version // Pass version to frontend
+    }));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -165,10 +170,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (!isNaN(keepCount)) {
                     const sortedFiles = await getSortedFiles(drive);
                     // sortedFiles[0] is meta. Chunks start at 1.
-                    // If keepCount is 5, we keep meta + 5 chunks = index 0 to 5.
-                    // Delete files from index (keepCount + 1) onwards.
-                    
-                    // Filter based on logical index in name, not just array position, for safety
                     const filesToDelete = sortedFiles.slice(1).filter((f: any) => {
                          const match = f.name.match(/\d+/);
                          const idx = match ? parseInt(match[0], 10) : -1;
@@ -235,7 +236,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     
                     // Get specifically required chunks
                     const chunkFiles = sortedFiles.slice(1, activeChunkCount + 1);
-                    // Now returning full objects with {id, name} so frontend can sort
+                    // Return chunks with VERSION info
                     return res.json(chunkFiles);
                 } catch (e) {
                     // Fallback

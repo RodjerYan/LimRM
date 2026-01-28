@@ -37,6 +37,11 @@ export const useCloudSync = ({
     const isSavingRef = useRef(false);
     const saveQueuedRef = useRef(false);
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
+    
+    // NEW: Map to store parsed data per chunk index to allow partial updates
+    const chunkDataMapRef = useRef<Map<number, AggregatedDataRow[]>>(new Map());
+    // NEW: Map to store the version ID of loaded chunks from the server
+    const loadedChunkVersionsRef = useRef<Map<number, string>>(new Map());
 
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         if (isSavingRef.current) {
@@ -189,10 +194,11 @@ export const useCloudSync = ({
 
             let loadedCount = 0;
             const total = fileList.length;
-            let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = null;
             
+            // Clear caches before fresh load
             lastSavedChunksRef.current.clear();
+            chunkDataMapRef.current.clear();
+            loadedChunkVersionsRef.current.clear();
 
             for (let i = 0; i < total; i++) {
                 const file = fileList[i];
@@ -201,6 +207,11 @@ export const useCloudSync = ({
                 const text = await res.text();
 
                 lastSavedChunksRef.current.set(i, text);
+                
+                // Store version for later polling
+                if (file.version) {
+                    loadedChunkVersionsRef.current.set(i, file.version);
+                }
 
                 if (text.length >= 1048576) {
                     addNotification('Снимок поврежден (лимит размера)', 'warning');
@@ -210,29 +221,32 @@ export const useCloudSync = ({
                 const chunkData = JSON.parse(text);
                 let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
-                if (newRows.length > 0) {
-                    accumulatedRows.push(...normalize(newRows));
+                // Store separate chunk data
+                const normalizedChunk = normalize(newRows);
+                chunkDataMapRef.current.set(i, normalizedChunk);
+                
+                if (chunkData.meta) {
+                    setUnidentifiedRows(chunkData.meta.unidentifiedRows || []);
+                    setOkbRegionCounts(chunkData.meta.okbRegionCounts || {});
+                    totalRowsProcessedRef.current = chunkData.meta.totalRowsProcessed || 0;
                 }
-                if (chunkData.meta) loadedMeta = chunkData.meta;
                 
                 loadedCount++;
                 setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
             }
 
-            if (accumulatedRows.length > 0 || loadedMeta) {
+            // Reassemble allData from chunks
+            const accumulatedRows = Array.from(chunkDataMapRef.current.values()).flat();
+
+            if (accumulatedRows.length > 0) {
                 enrichWithAbcCategories(accumulatedRows);
                 
                 setAllData(accumulatedRows);
                 
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
-                
                 await saveAnalyticsState({
                     allData: accumulatedRows,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
+                    unidentifiedRows: unidentifiedRowsRef.current,
+                    okbRegionCounts: okbRegionCounts,
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: versionHash,
                     okbData: [], okbStatus: null
@@ -249,6 +263,87 @@ export const useCloudSync = ({
         }
         return false;
     }, [addNotification, setAllData, setOkbRegionCounts, setProcessingState, setUnidentifiedRows, totalRowsProcessedRef]);
+
+    // NEW: Polling Logic
+    const checkForUpdates = useCallback(async () => {
+        // Don't poll if saving or processing initial load
+        if (isSavingRef.current || saveQueuedRef.current) return;
+
+        try {
+            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            if (!listRes.ok) return;
+            
+            const fileList = await listRes.json();
+            if (!Array.isArray(fileList)) return;
+
+            const chunksToUpdate: { index: number, id: string }[] = [];
+
+            // Sort files to match index logic
+            fileList.sort((a: any, b: any) => {
+                const numA = parseInt((a.name || '').match(/\d+/)?.[0] || '0', 10);
+                const numB = parseInt((b.name || '').match(/\d+/)?.[0] || '0', 10);
+                return numA - numB;
+            });
+
+            // Check for version mismatch
+            fileList.forEach((file: any, index: number) => {
+                const currentVersion = loadedChunkVersionsRef.current.get(index);
+                // If we have a record of this chunk, but versions differ
+                if (currentVersion && file.version && String(currentVersion) !== String(file.version)) {
+                    chunksToUpdate.push({ index, id: file.id });
+                }
+                // If we don't have this chunk at all (new chunk added)
+                else if (!chunkDataMapRef.current.has(index)) {
+                    chunksToUpdate.push({ index, id: file.id });
+                }
+            });
+
+            if (chunksToUpdate.length > 0) {
+                console.log(`[Polling] Found ${chunksToUpdate.length} updated chunks. Fetching...`);
+                let hasChanges = false;
+
+                for (const chunk of chunksToUpdate) {
+                    const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${chunk.id}`);
+                    if (res.ok) {
+                        const text = await res.text();
+                        // Update cache
+                        lastSavedChunksRef.current.set(chunk.index, text);
+                        
+                        // Update version tracking
+                        const fileInfo = fileList[chunk.index];
+                        if (fileInfo && fileInfo.version) {
+                            loadedChunkVersionsRef.current.set(chunk.index, fileInfo.version);
+                        }
+
+                        const chunkData = JSON.parse(text);
+                        let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : [];
+                        
+                        // Normalize and update specific chunk map
+                        const normalizedChunk = normalize(newRows);
+                        chunkDataMapRef.current.set(chunk.index, normalizedChunk);
+                        hasChanges = true;
+                        
+                        // If it's a new chunk or updated meta, check for metadata updates
+                        if (chunkData.meta) {
+                             if (chunkData.meta.unidentifiedRows) setUnidentifiedRows(chunkData.meta.unidentifiedRows);
+                             if (chunkData.meta.okbRegionCounts) setOkbRegionCounts(chunkData.meta.okbRegionCounts);
+                        }
+                    }
+                }
+
+                if (hasChanges) {
+                    // Re-flatten
+                    const accumulatedRows = Array.from(chunkDataMapRef.current.values()).flat();
+                    enrichWithAbcCategories(accumulatedRows);
+                    setAllData(accumulatedRows);
+                    addNotification('Данные обновлены из облака', 'info');
+                }
+            }
+
+        } catch (e) {
+            console.error("Polling error:", e);
+        }
+    }, [addNotification, setAllData, setOkbRegionCounts, setUnidentifiedRows]);
 
     const handleForceUpdate = useCallback(async () => {
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
@@ -275,7 +370,8 @@ export const useCloudSync = ({
         saveSnapshotToCloud,
         handleDownloadSnapshot,
         handleForceUpdate,
+        checkForUpdates, // Exported for App.tsx
         isCloudSaving,
-        lastSavedChunksRef // Expose if needed elsewhere, though mainly internal
+        lastSavedChunksRef 
     };
 };
