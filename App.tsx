@@ -47,6 +47,7 @@ const MAX_CHUNK_SIZE_BYTES = 850 * 1024;
 
 // Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
+// CHANGED: Reduced to 3 seconds for faster feedback
 const GEOCODING_POLLING_INTERVAL_MS = 3000;
 const MAX_GEOCODING_ATTEMPTS = 60;
 

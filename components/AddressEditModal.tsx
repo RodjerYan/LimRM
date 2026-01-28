@@ -293,6 +293,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     
     // State to track previous key to distinguish client switch vs update
     const prevKeyRef = useRef<string | number | undefined>(undefined);
+    // Ref to prevent history refetch if we just updated it manually after save
+    const ignoreHistoryFetchRef = useRef(false);
 
     // --- Effect 1: Init Data & Theme ---
     useEffect(() => {
@@ -340,12 +342,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     setLastUpdatedStr(null);
                 }
 
-                const rm = getRmName(data);
-                if (rm && currentAddress) {
-                    const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
-                    if (!isRecent) fetchHistory(rm, currentAddress);
+                // CHECK if we should skip fetching history (because we just saved it)
+                if (ignoreHistoryFetchRef.current) {
+                    ignoreHistoryFetchRef.current = false;
+                    // Keep existing history
                 } else {
-                    setHistory([]);
+                    const rm = getRmName(data);
+                    if (rm && currentAddress) {
+                        fetchHistory(rm, currentAddress);
+                    } else {
+                        setHistory([]);
+                    }
                 }
             } else {
                 // UPDATE FOR SAME CLIENT (e.g. Polling Result)
@@ -465,6 +472,17 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             if (!res.ok) { 
                 const errData = await res.json().catch(() => ({}));
                 throw new Error(errData.error || errData.details || 'Ошибка при сохранении.'); 
+            }
+            
+            // NEW: Parse response to get immediate history update
+            const result = await res.json();
+            
+            // Update local history state immediately to avoid empty history flash
+            if (result.data && result.data.history) {
+                const historyArray = result.data.history.split(/\s*\|\|\s*/).filter(Boolean);
+                setHistory(historyArray);
+                // Flag to prevent useEffect from refetching (and clearing) this history
+                ignoreHistoryFetchRef.current = true;
             }
             
             const needsGeocoding = isAddressChanged && !manualCoords;
