@@ -1,20 +1,23 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import path from 'path';
+import { defineConfig, loadEnv } from 'vite';
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    // This proxy is useful for local development to avoid CORS issues
-    // when the frontend (on Vite's dev server) calls the backend API
-    // (Vercel serverless functions running on a different port).
-    proxy: {
-      '/api': {
-        // The target should be the URL where your Vercel functions are running locally.
-        // `vercel dev` typically runs on port 3000.
-        target: 'http://localhost:3000',
-        changeOrigin: true,
+
+export default defineConfig(({ mode }) => {
+    const env = loadEnv(mode, '.', '');
+    return {
+      server: {
+        port: 3000,
+        host: '0.0.0.0',
       },
-    },
-  },
+      plugins: [],
+      define: {
+        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+      },
+      resolve: {
+        alias: {
+          '@': path.resolve(__dirname, '.'),
+        }
+      }
+    };
 });
