@@ -15,17 +15,18 @@ import Notification from './components/Notification';
 import AddressEditModal from './components/AddressEditModal'; 
 import ApiKeyErrorDisplay from './components/ApiKeyErrorDisplay';
 import DataUpdateOverlay from './components/DataUpdateOverlay';
+import TopBar from './components/TopBar'; // New Component
 import { 
     AggregatedDataRow, FilterState, NotificationMessage, 
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
-    WorkerMessage, WorkerResultPayload, CoordsCache, OkbStatus,
-    UpdateJobStatus
+    CoordsCache, OkbStatus, UpdateJobStatus
 } from './types';
-import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress, findAddressInRow } from './utils/dataUtils';
+import { applyFilters, getFilterOptions, calculateSummaryMetrics, normalizeAddress, findAddressInRow, findValueInRow } from './utils/dataUtils';
 import { enrichDataWithSmartPlan } from './services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from './utils/db';
 import { enrichWithAbcCategories } from './utils/analytics';
-import { LoaderIcon, CloudDownloadIcon } from './components/icons';
+import { normalize } from './utils/normalization'; // New Util
+import { useCloudSync } from './hooks/useCloudSync'; // New Hook
 
 const DetailsModal = React.lazy(() => import('./components/DetailsModal'));
 const UnidentifiedRowsModal = React.lazy(() => import('./components/UnidentifiedRowsModal'));
@@ -42,12 +43,8 @@ interface PendingGeocodingItem {
     attempts: number;
 }
 
-// Максимальный размер JSON-файла в байтах (850 КБ)
-const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
-
 // Интервал авто-обновления (в миллисекундах)
 const POLLING_INTERVAL_MS = 15000;
-// CHANGED: Reduced to 3 seconds for faster feedback
 const GEOCODING_POLLING_INTERVAL_MS = 3000;
 const MAX_GEOCODING_ATTEMPTS = 60;
 
@@ -56,7 +53,6 @@ const App: React.FC = () => {
 
     const [activeModule, setActiveModule] = useState('adapta');
     const [allData, setAllData] = useState<AggregatedDataRow[]>([]);
-    const [isCloudSaving, setIsCloudSaving] = useState(false); // New visual state
     const [updateJobStatus, setUpdateJobStatus] = useState<UpdateJobStatus | null>(null);
     const updatePollingInterval = useRef<number | null>(null);
     
@@ -87,13 +83,7 @@ const App: React.FC = () => {
     const manualUpdateTimestamps = useRef<Map<string, number>>(new Map());
     const workerRef = useRef<Worker | null>(null);
     const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const isSavingRef = useRef(false); // Lock for save operation
-    const saveQueuedRef = useRef(false); // Queue flag for handling race conditions
     
-    // SMART SAVE: Cache for the content of the last saved/loaded chunks
-    // Key: Chunk Index, Value: Stringified JSON content
-    const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
-
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
@@ -115,6 +105,25 @@ const App: React.FC = () => {
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
+
+    // --- HOOK: Cloud Sync Logic ---
+    const { 
+        saveSnapshotToCloud, 
+        handleDownloadSnapshot, 
+        handleForceUpdate, 
+        isCloudSaving 
+    } = useCloudSync({
+        allDataRef,
+        unidentifiedRowsRef,
+        okbRegionCounts,
+        totalRowsProcessedRef,
+        setAllData,
+        setUnidentifiedRows,
+        setOkbRegionCounts,
+        setProcessingState,
+        addNotification,
+        setDbStatus
+    });
 
     // --- NEW REAL DATA UPDATE HANDLER ---
     const handleStartDataUpdate = async () => {
@@ -286,379 +295,6 @@ const App: React.FC = () => {
         return () => clearInterval(intervalId);
     }, [pendingGeocoding]);
 
-    // --- БЕЗОПАСНАЯ НОРМАЛИЗАЦИЯ ---
-    const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
-        if (!Array.isArray(rows)) return [];
-        const result: AggregatedDataRow[] = [];
-        
-        const safeFloat = (v: any) => {
-            if (typeof v === 'number') return v;
-            if (typeof v === 'string') {
-                const f = parseFloat(v.replace(',', '.'));
-                return isNaN(f) ? undefined : f;
-            }
-            return undefined;
-        };
-        
-        const isValidCoord = (n: any) => typeof n === 'number' && !isNaN(n) && n !== 0;
-
-        rows.forEach((row, index) => {
-            if (!row) return;
-            const brandRaw = String(row.brand || '').trim();
-            const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
-
-            const generateStableKey = (base: any, suffix: string | number) => {
-                const baseStr = base.key || base.address || `idx_${index}`;
-                return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
-            };
-
-            const normalizeClient = (c: any, cIdx: number) => {
-                const clientObj = { ...c };
-                const original = c.originalRow || {}; 
-
-                // 1. Explicitly map 'lng' to 'lon' if present (Fix for snapshot JSON format)
-                if (c.lng !== undefined) {
-                    clientObj.lon = safeFloat(c.lng);
-                }
-                // Also ensure 'lat' is picked up directly
-                if (c.lat !== undefined) {
-                    clientObj.lat = safeFloat(c.lat);
-                }
-
-                // 2. Fallback checks if still invalid
-                if (!isValidCoord(clientObj.lat)) {
-                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
-                                    safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
-                }
-                if (!isValidCoord(clientObj.lon)) {
-                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
-                                    safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
-                }
-                
-                if (!clientObj.key) {
-                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
-                }
-                return clientObj;
-            };
-
-            if (hasMultipleBrands) {
-                const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-                if (parts.length > 1) {
-                    const splitFactor = 1 / parts.length;
-                    parts.forEach((brandPart, idx) => {
-                        const regionName = row.region || 'Неизвестный регион';
-                        result.push({
-                            ...row,
-                            key: generateStableKey(row, `spl_${idx}`),
-                            brand: brandPart,
-                            clientName: `${regionName}: ${brandPart}`,
-                            fact: (row.fact || 0) * splitFactor,
-                            potential: (row.potential || 0) * splitFactor,
-                            growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
-                        });
-                    });
-                    return;
-                }
-            }
-            
-            // Handle rows without 'clients' array (flat structure from snapshot)
-            // If row.clients is missing, treat the row itself as the client source
-            let clientSource = row.clients;
-            if (!Array.isArray(clientSource) || clientSource.length === 0) {
-                 clientSource = [row];
-            }
-
-            const normalizedClients = clientSource.map(normalizeClient);
-
-            // Ensure clientName is populated. If missing, generate it from Region + Brand.
-            const regionName = row.region || 'Неизвестный регион';
-            const brandName = row.brand || 'Без бренда';
-            const finalClientName = row.clientName || `${regionName}: ${brandName}`;
-
-            result.push({
-                ...row,
-                key: row.key || generateStableKey(row, 'm'),
-                clientName: finalClientName,
-                clients: normalizedClients
-            });
-        });
-        return result;
-    }, []);
-
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
-    // UPDATED: Now supports queuing mechanism to prevent data loss on concurrent saves
-    const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
-        // 1. If save is already in progress, queue the next one
-        if (isSavingRef.current) {
-            console.log("%c[Save] Save in progress. Queuing next run.", "color: orange");
-            saveQueuedRef.current = true;
-            return;
-        }
-        
-        isSavingRef.current = true;
-        setIsCloudSaving(true); // Visual Indicator ON
-
-        console.groupCollapsed(`%c[Cloud Save] Started at ${new Date().toLocaleTimeString()}`, 'color: #818cf8; font-weight: bold;');
-
-        try {
-            // 1. Get file slots first
-            console.time('fetch-slots');
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            let availableSlots: { id: string, name: string }[] = [];
-            if (listRes.ok) {
-                availableSlots = await listRes.json();
-            }
-            console.timeEnd('fetch-slots');
-
-            const newVersionHash = `edit_${Date.now()}`;
-            const encoder = new TextEncoder();
-            const getByteSize = (str: string) => encoder.encode(str).length;
-            
-            // 2. Generate chunks locally
-            console.time('chunk-generation');
-            const chunks: string[] = [];
-            let currentChunkObj: any = {
-                chunkIndex: 0,
-                // versionHash removed to ensure stable diffs
-                rows: [],
-            };
-            
-            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
-            
-            for (const row of currentData) {
-                const rowStr = JSON.stringify(row);
-                const rowSize = getByteSize(rowStr) + 2; 
-                
-                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
-                    currentChunkObj = {
-                        chunkIndex: chunks.length,
-                        // versionHash removed
-                        rows: []
-                    };
-                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
-                }
-                currentChunkObj.rows.push(row);
-                currentSize += rowSize;
-            }
-            chunks.push(JSON.stringify(currentChunkObj));
-            console.timeEnd('chunk-generation');
-            console.info(`Generated ${chunks.length} chunks from ${currentData.length} rows.`);
-            
-            // 3. Diffing Strategy: Identify ONLY changed chunks
-            const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            
-            chunks.forEach((chunkContent, idx) => {
-                const prevContent = lastSavedChunksRef.current.get(idx);
-                // Simple string comparison is very fast
-                if (prevContent !== chunkContent) {
-                    // console.debug(`[Diff] Chunk ${idx} changed. (Old size: ${prevContent?.length || 0}, New: ${chunkContent.length})`);
-                    const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    if (targetFileId) {
-                        chunksToUpload.push({ 
-                            index: idx, 
-                            content: chunkContent, 
-                            targetFileId 
-                        });
-                    } else {
-                        // If no file ID exists yet (new chunk), we must create it (or use legacy index method)
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
-                    }
-                } else {
-                    // console.debug(`[Diff] Chunk ${idx} unchanged.`);
-                }
-            });
-
-            if (chunksToUpload.length === 0) {
-                console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
-                // FIXED: Update the cache ref even if no upload needed, to ensure local state is perfectly synced
-                // This handles cases where data was restored from IDB but not yet fully in `lastSavedChunksRef`
-                chunks.forEach((content, idx) => {
-                    lastSavedChunksRef.current.set(idx, content);
-                });
-            } else {
-                console.log(`%c[Cloud Save] Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`, "color: #f59e0b");
-                
-                // Concurrency Control
-                const CONCURRENCY = 4;
-                for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
-                    const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
-                        const queryParams = item.targetFileId 
-                            ? `action=save-chunk&targetFileId=${item.targetFileId}` 
-                            : `action=save-chunk&chunkIndex=${item.index}`;
-
-                        console.time(`upload-chunk-${item.index}`);
-                        return fetch(`/api/get-full-cache?${queryParams}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ chunk: item.content }) 
-                        }).then(async res => {
-                            console.timeEnd(`upload-chunk-${item.index}`);
-                            if (!res.ok) {
-                                const txt = await res.text();
-                                throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
-                            }
-                            console.info(`✅ Chunk ${item.index} saved.`);
-                            // Update cache ONLY on success
-                            lastSavedChunksRef.current.set(item.index, item.content);
-                        });
-                    });
-                    
-                    await Promise.all(batch);
-                }
-            }
-            
-            // 4. Always save Meta to update timestamp/versionHash
-            console.time('save-meta');
-            await fetch('/api/get-full-cache?action=save-meta', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    unidentifiedRows: currentUnidentified,
-                    okbRegionCounts: okbRegionCounts,
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: newVersionHash,
-                    chunkCount: chunks.length,
-                    totalRows: totalRowsProcessedRef.current,
-                    timestamp: Date.now()
-                })
-            });
-            console.timeEnd('save-meta');
-            
-            addNotification('Изменения сохранены', 'success');
-        } catch (e) {
-            console.error("Cloud Save Error:", e);
-            addNotification('Ошибка сохранения в облако', 'warning');
-            // If failed, queue a retry to ensure data eventually persists
-            saveQueuedRef.current = true;
-        } finally {
-            console.groupEnd();
-            isSavingRef.current = false;
-            
-            // 2. Check Queue: If updates happened during save, run again
-            if (saveQueuedRef.current) {
-                console.log("%c[Queue] Executing queued save...", "color: cyan");
-                saveQueuedRef.current = false;
-                // Important: Use current refs to get the LATEST state
-                saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
-            } else {
-                setIsCloudSaving(false); // Visual Indicator OFF only when queue is empty
-            }
-        }
-    };
-
-    // --- ЗАГРУЗКА СНИМКА (JSON) ---
-    const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
-        try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
-            
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
-            
-            let fileList = await listRes.json();
-            if (!Array.isArray(fileList) || fileList.length === 0) return false;
-
-            fileList.sort((a: any, b: any) => {
-                const nameA = a.name || '';
-                const nameB = b.name || '';
-                const numA = parseInt(nameA.match(/\d+/)?.[0] || '0', 10);
-                const numB = parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
-                return numA - numB;
-            });
-
-            let loadedCount = 0;
-            const total = fileList.length;
-            let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = null;
-            
-            // Clear cache before fresh load
-            lastSavedChunksRef.current.clear();
-
-            // Load files sequentially or in small parallel batches
-            for (let i = 0; i < total; i++) {
-                const file = fileList[i];
-                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
-                const text = await res.text();
-
-                // CACHE POPULATION: Store the exact text we received
-                // This assumes files are returned in chunk index order (0, 1, 2...)
-                lastSavedChunksRef.current.set(i, text);
-
-                if (text.length >= 1048576) {
-                    addNotification('Снимок поврежден (лимит размера)', 'warning');
-                    return false;
-                }
-                
-                const chunkData = JSON.parse(text);
-                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                
-                if (newRows.length > 0) {
-                    accumulatedRows.push(...normalize(newRows));
-                }
-                if (chunkData.meta) loadedMeta = chunkData.meta;
-                
-                loadedCount++;
-                setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-            }
-
-            if (accumulatedRows.length > 0 || loadedMeta) {
-                // FORCE RECALCULATION OF ABC CATEGORIES ON LOAD
-                enrichWithAbcCategories(accumulatedRows);
-                
-                setAllData(accumulatedRows);
-                
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
-                
-                await saveAnalyticsState({
-                    allData: accumulatedRows,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: versionHash,
-                    okbData: [], okbStatus: null
-                });
-                
-                localStorage.setItem('last_snapshot_version', versionHash);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                return true;
-            }
-            return false;
-        } catch (e) { 
-            console.error("Snapshot error:", e); 
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-        }
-        return false;
-    }, [normalize, addNotification]);
-
-    // --- ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ ---
-    const handleForceUpdate = useCallback(async () => {
-        if (processingState.isProcessing) return;
-        
-        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
-        
-        try {
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
-                } else {
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
-                }
-            } else {
-               throw new Error("Meta fetch failed");
-            }
-        } catch (e) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка соединения' }));
-        }
-    }, [processingState.isProcessing, handleDownloadSnapshot]);
-
     // --- INIT ---
     useEffect(() => {
         const init = async () => {
@@ -684,7 +320,7 @@ const App: React.FC = () => {
             }
         };
         init();
-    }, [handleDownloadSnapshot, normalize]);
+    }, [handleDownloadSnapshot]);
 
     // --- DATA UPDATE HANDLER (DEBOUNCED) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
@@ -976,46 +612,15 @@ const App: React.FC = () => {
             <Navigation activeTab={activeModule} onTabChange={setActiveModule} />
             
             <main className="flex-1 ml-0 lg:ml-64 h-screen overflow-y-auto custom-scrollbar relative">
-                <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
-                    <div className="flex items-center gap-6">
-                        <div className="flex flex-col">
-                            <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${dbStatus === 'ready' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></div>
-                                <span className="text-[10px] uppercase font-bold tracking-widest text-gray-400">Local DB</span>
-                            </div>
-                            <span className="text-xs font-bold text-white">{dbStatus === 'ready' ? 'Ready' : 'Syncing...'}</span>
-                        </div>
-                        {isCloudSaving && (
-                            <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30 text-xs font-bold animate-pulse">
-                                <LoaderIcon className="w-3 h-3" />
-                                <span>Сохранение в облако...</span>
-                            </div>
-                        )}
-                        {!isCloudSaving && processingState.isProcessing && (
-                            <div className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-[10px] font-bold text-indigo-300 animate-pulse">
-                                {processingState.message} {Math.round(processingState.progress)}%
-                            </div>
-                        )}
-                    </div>
-                    <div className="flex items-center gap-4 text-right">
-                        {activeModule === 'amp' && (
-                             <button 
-                                onClick={handleStartDataUpdate}
-                                disabled={!!updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error'}
-                                className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-medium text-gray-400 hover:text-white transition-all disabled:opacity-50 disabled:cursor-wait"
-                                title="Запустить фоновый процесс обновления рыночных данных на сервере."
-                            >
-                                <CloudDownloadIcon className="w-4 h-4" />
-                                <span>Запустить обновление рыночных данных</span>
-                            </button>
-                        )}
-                        <div className="flex flex-col">
-                            <span className="text-[10px] text-gray-500 uppercase font-bold">Активных ТТ</span>
-                            <span className="text-emerald-400 font-mono font-bold text-base">{allActiveClients.length.toLocaleString()}</span>
-                        </div>
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white">L</div>
-                    </div>
-                </div>
+                <TopBar 
+                    dbStatus={dbStatus} 
+                    isCloudSaving={isCloudSaving} 
+                    processingState={processingState}
+                    activeModule={activeModule}
+                    handleStartDataUpdate={handleStartDataUpdate}
+                    updateJobStatus={updateJobStatus}
+                    activeClientsCount={allActiveClients.length}
+                />
 
                 <div className="py-8 px-4 lg:px-8">
                     {activeModule === 'adapta' && (
