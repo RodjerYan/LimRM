@@ -68,6 +68,10 @@ export const useCloudSync = ({
             
             console.time('chunk-generation');
             const chunks: string[] = [];
+            
+            // We also need to prepare data objects to update chunkDataMapRef
+            const chunkDataObjects: AggregatedDataRow[][] = [];
+
             let currentChunkObj: any = {
                 chunkIndex: 0,
                 rows: [],
@@ -80,7 +84,9 @@ export const useCloudSync = ({
                 const rowSize = getByteSize(rowStr) + 2; 
                 
                 if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
+                    chunks.push(JSON.stringify(currentChunkObj));
+                    chunkDataObjects.push(currentChunkObj.rows); // Store rows for local update
+
                     currentChunkObj = {
                         chunkIndex: chunks.length,
                         rows: []
@@ -91,12 +97,18 @@ export const useCloudSync = ({
                 currentSize += rowSize;
             }
             chunks.push(JSON.stringify(currentChunkObj));
+            chunkDataObjects.push(currentChunkObj.rows);
             console.timeEnd('chunk-generation');
             
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
             
             chunks.forEach((chunkContent, idx) => {
                 const prevContent = lastSavedChunksRef.current.get(idx);
+                
+                // Always update local data map to match what we are saving
+                // This ensures that even if we skip upload, our internal state for partial polling is correct
+                chunkDataMapRef.current.set(idx, chunkDataObjects[idx]);
+
                 if (prevContent !== chunkContent) {
                     const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
                     if (targetFileId) {
@@ -135,7 +147,16 @@ export const useCloudSync = ({
                                 const txt = await res.text();
                                 throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
                             }
+                            const responseJson = await res.json();
+                            
+                            // SUCCESS: Update local cache state
                             lastSavedChunksRef.current.set(item.index, item.content);
+                            
+                            // CRITICAL FIX: Update the version ref with the new version returned from server
+                            // This prevents polling from thinking this file is new/changed and re-downloading it
+                            if (responseJson.version) {
+                                loadedChunkVersionsRef.current.set(item.index, responseJson.version);
+                            }
                         });
                     });
                     
@@ -289,6 +310,7 @@ export const useCloudSync = ({
             fileList.forEach((file: any, index: number) => {
                 const currentVersion = loadedChunkVersionsRef.current.get(index);
                 // If we have a record of this chunk, but versions differ
+                // Note: file.version is string from drive API
                 if (currentVersion && file.version && String(currentVersion) !== String(file.version)) {
                     chunksToUpdate.push({ index, id: file.id });
                 }
@@ -309,10 +331,11 @@ export const useCloudSync = ({
                         // Update cache
                         lastSavedChunksRef.current.set(chunk.index, text);
                         
-                        // Update version tracking
-                        const fileInfo = fileList[chunk.index];
-                        if (fileInfo && fileInfo.version) {
-                            loadedChunkVersionsRef.current.set(chunk.index, fileInfo.version);
+                        // Update version tracking to new server version
+                        const fileInfo = fileList[chunk.index]; // Re-find file info from list
+                        const matchedFile = fileList.find((f: any) => f.id === chunk.id);
+                        if (matchedFile && matchedFile.version) {
+                            loadedChunkVersionsRef.current.set(chunk.index, matchedFile.version);
                         }
 
                         const chunkData = JSON.parse(text);
