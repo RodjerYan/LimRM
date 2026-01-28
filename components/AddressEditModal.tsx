@@ -359,6 +359,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
             const res = await fetch(url);
 
+            // FIX: Gracefully handle 404 (New Address)
+            if (res.status === 404) {
+                return; // Nothing to do, history stays empty
+            }
+
             if (!res.ok) {
                 throw new Error(`API returned ${res.status}: ${res.statusText}`);
             }
