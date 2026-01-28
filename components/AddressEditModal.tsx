@@ -80,7 +80,6 @@ const SinglePointMap: React.FC<{
     const markerRef = useRef<L.Marker | null>(null);
     const tileLayerRef = useRef<L.TileLayer | null>(null);
     
-    // --- STATE REFACTORS ---
     const [hasMarker, setHasMarker] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<NominatimResult[]>([]);
@@ -92,7 +91,7 @@ const SinglePointMap: React.FC<{
     const darkUrl = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
-    // 1. Initialize Map (Corrected Logic with useLayoutEffect)
+    // 1. Initialize Map
     useLayoutEffect(() => {
         if (!mapContainerRef.current || mapRef.current) return;
 
@@ -106,7 +105,6 @@ const SinglePointMap: React.FC<{
         mapRef.current = map;
         L.control.zoom({ position: 'topleft' }).addTo(map);
 
-        // CRITICAL FIX: Ensure map resizes after modal animation is complete.
         requestAnimationFrame(() => {
             map.invalidateSize();
             setTimeout(() => map.invalidateSize(), 200); 
@@ -122,7 +120,7 @@ const SinglePointMap: React.FC<{
         };
     }, []);
 
-    // 2. Handle Theme Updates reliably by recreating the layer
+    // 2. Handle Theme Updates
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
@@ -292,6 +290,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     
     const isCommentTouched = useRef(false);
     const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    
+    // State to track previous key to distinguish client switch vs update
+    const prevKeyRef = useRef<string | number | undefined>(undefined);
 
     // --- Effect 1: Init Data & Theme ---
     useEffect(() => {
@@ -318,31 +319,57 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 currentAddress = (data as MapPoint).address;
             }
 
-            setEditedAddress(currentAddress);
-            setComment((data as MapPoint).comment || '');
-            isCommentTouched.current = false;
-            setManualCoords(null);
-            setIsMapExpanded(false);
-            setShowDeleteConfirm(false);
-            setStatus('idle');
-            setError(null);
+            const currentKey = (data as MapPoint).key || (data as UnidentifiedRow).originalIndex;
             
-            const pt = data as MapPoint;
-            if (pt.lastUpdated) {
-                setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
-            } else {
-                setLastUpdatedStr(null);
-            }
+            // Check if we switched to a different client or just updated the current one
+            if (currentKey !== prevKeyRef.current) {
+                // RESET STATE FOR NEW CLIENT
+                setEditedAddress(currentAddress);
+                setComment((data as MapPoint).comment || '');
+                isCommentTouched.current = false;
+                setManualCoords(null);
+                setIsMapExpanded(false);
+                setShowDeleteConfirm(false);
+                setStatus('idle'); // Always start idle for new client
+                setError(null);
+                
+                const pt = data as MapPoint;
+                if (pt.lastUpdated) {
+                    setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
+                } else {
+                    setLastUpdatedStr(null);
+                }
 
-            const rm = getRmName(data);
-            if (rm && currentAddress) {
-                const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
-                if (!isRecent) fetchHistory(rm, currentAddress);
+                const rm = getRmName(data);
+                if (rm && currentAddress) {
+                    const isRecent = pt.lastUpdated && (Date.now() - pt.lastUpdated < 3000);
+                    if (!isRecent) fetchHistory(rm, currentAddress);
+                } else {
+                    setHistory([]);
+                }
             } else {
-                setHistory([]);
+                // UPDATE FOR SAME CLIENT (e.g. Polling Result)
+                // If we were waiting for geocoding, check if we got coords
+                if (status === 'geocoding') {
+                    const hasCoords = (data as MapPoint).lat && (data as MapPoint).lon && (data as MapPoint).lat !== 0;
+                    if (hasCoords) {
+                        setStatus('success_geocoding');
+                        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+                        successTimeoutRef.current = setTimeout(() => {
+                            setStatus('idle');
+                        }, 4000);
+                    }
+                }
+                
+                const pt = data as MapPoint;
+                if (pt.lastUpdated) {
+                    setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
+                }
             }
+            
+            prevKeyRef.current = currentKey;
         }
-    }, [isOpen, data, globalTheme]);
+    }, [isOpen, data, globalTheme]); // Intentionally omitting status to avoid circular dependency/stale closure issues, as status is checked inside.
 
     // Cleanup timeout on unmount
     useEffect(() => {
@@ -359,7 +386,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
             const res = await fetch(url);
 
-            // FIX: Gracefully handle 404 (New Address)
             if (res.status === 404) {
                 return; // Nothing to do, history stays empty
             }
@@ -451,8 +477,10 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             };
             
             if (needsGeocoding) {
-                onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
+                // IMPORTANT: Manually set status to geocoding. 
+                // The useEffect will NOT revert this because key won't change yet.
                 setStatus('geocoding');
+                onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
             } else {
                 const finalPoint = { ...baseNewPoint, lat: manualCoords?.lat || baseNewPoint.lat, lon: manualCoords?.lon || baseNewPoint.lon };
                 onDataUpdate(oldKey, finalPoint, originalIndex);
@@ -649,6 +677,18 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                             <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
                                                 Процесс идет в фоновом режиме. Вы можете закрыть это окно, точка появится на карте автоматически.
                                             </p>
+                                        </div>
+                                    )}
+
+                                    {status === 'success_geocoding' && (
+                                        <div className="w-full bg-emerald-900/20 py-4 rounded-xl border border-emerald-500/30 text-center text-emerald-400 flex flex-col items-center justify-center gap-2 font-bold shadow-sm animate-bounce-in">
+                                            <div className="flex items-center gap-2">
+                                                <CheckIcon className="w-6 h-6" /> 
+                                                <span>Координаты обновлены!</span>
+                                            </div>
+                                            <div className="text-[10px] font-normal text-emerald-200/70 uppercase tracking-widest">
+                                                Точка появилась на карте
+                                            </div>
                                         </div>
                                     )}
 
