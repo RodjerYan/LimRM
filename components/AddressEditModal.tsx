@@ -351,13 +351,23 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 // UPDATE FOR SAME CLIENT (e.g. Polling Result)
                 // If we were waiting for geocoding, check if we got coords
                 if (status === 'geocoding') {
+                    // FIX: Ensure polling has ACTUALLY finished by checking !isGeocoding.
+                    // Optimistic updates set isGeocoding=true, so we must wait until it flips to false.
+                    const isStillGeocoding = (data as MapPoint).isGeocoding;
                     const hasCoords = (data as MapPoint).lat && (data as MapPoint).lon && (data as MapPoint).lat !== 0;
-                    if (hasCoords) {
+                    
+                    if (!isStillGeocoding && hasCoords) {
                         setStatus('success_geocoding');
                         if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
                         successTimeoutRef.current = setTimeout(() => {
                             setStatus('idle');
                         }, 4000);
+                    }
+                    
+                    // Handle polling failure or timeout error
+                    if (!isStillGeocoding && !hasCoords && (data as MapPoint).geocodingError) {
+                         setStatus('error_geocoding');
+                         setError((data as MapPoint).geocodingError || 'Координаты не найдены');
                     }
                 }
                 
@@ -464,7 +474,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
             const baseNewPoint: MapPoint = {
                 key: oldKey, 
-                lat: (data as MapPoint).lat, lon: (data as MapPoint).lon, status: 'match',
+                // FIX: If geocoding is needed, we essentially don't have valid coords yet. 
+                // Clear them to remove the map marker and ensure the UI reflects waiting status.
+                // If we keep old coords, the user might think location is already correct.
+                lat: needsGeocoding ? undefined : (data as MapPoint).lat, 
+                lon: needsGeocoding ? undefined : (data as MapPoint).lon,
+                status: 'match',
                 name: findValueInRow(originalRow, ['наименование клиента', 'контрагент', 'клиент']) || 'N/A',
                 address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
                 brand: findValueInRow(originalRow, ['торговая марка']),
