@@ -352,6 +352,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const reg = getCanonicalRegion(row) || parsed.region;
         const isRegionFound = reg !== 'Регион не определен';
 
+        // Fix: If we have a cache entry (even manual), we consider the row identified/plottable
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
             continue;
@@ -408,15 +409,17 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
                 const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
                 
-                const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
-                const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
+                // CRITICAL FIX: Priority is Cache > Row/File > OKB
+                // Old logic prioritized Row over Cache.
+                const effectiveLat = cacheEntry?.lat ?? ((rowLat && rowLat !== 0) ? rowLat : okb?.lat);
+                const effectiveLon = cacheEntry?.lon ?? ((rowLon && rowLon !== 0) ? rowLon : okb?.lon);
 
                 state_uniquePlottableClients.set(uniqueClientKey, {
                     key: uniqueClientKey,
                     lat: effectiveLat,
                     lon: effectiveLon,
                     status: 'match',
-                    name: clientName, // Use verified clientName
+                    name: clientName, 
                     address: rawAddr, 
                     city: parsed.city, 
                     region: reg, 
@@ -427,7 +430,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     originalRow: row, 
                     fact: 0,
                     monthlyFact: {},
-                    abcCategory: 'C'
+                    abcCategory: 'C',
+                    // Pass comments from cache if available
+                    comment: cacheEntry?.comment
                 });
             }
             

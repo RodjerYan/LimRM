@@ -135,20 +135,23 @@ export const useAppLogic = () => {
                 const normAddr = normalizeAddress(client.address);
                 const cached = cacheMap.get(normAddr);
                 
-                // Skip if manually updated recently in this session
+                // Skip if manually updated recently in this session (to avoid flicker)
                 if (manualUpdateTimestamps.current.get(normAddr) && (Date.now() - manualUpdateTimestamps.current.get(normAddr)! < 120000)) {
                     return client;
                 }
 
                 if (cached) {
-                    const latDiff = Math.abs((client.lat || 0) - cached.lat);
-                    const lonDiff = Math.abs((client.lon || 0) - cached.lon);
-                    const commentDiff = (client.comment || '') !== (cached.comment || '');
-                    
-                    if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
-                        modified = true;
-                        return { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
-                    }
+                    // FIX: Always apply cache if it exists, don't check for diffs.
+                    // This forces the "Verified" coordinate state.
+                    modified = true;
+                    return { 
+                        ...client, 
+                        lat: cached.lat, 
+                        lon: cached.lon, 
+                        comment: cached.comment, 
+                        isGeocoding: false, 
+                        status: 'match' as const 
+                    };
                 }
                 return client;
             });
