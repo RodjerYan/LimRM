@@ -408,18 +408,36 @@ export const useAppLogic = () => {
                 const cacheData: CoordsCache = await res.json();
 
                 const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
+                const deletedSet = new Set<string>(); // NEW: Track explicitly deleted addresses
+
                 Object.values(cacheData).flat().forEach((item: any) => {
-                    if (item.address && !item.isDeleted && item.lat && item.lon) {
-                        cacheMap.set(normalizeAddress(item.address), { lat: item.lat, lon: item.lon, comment: item.comment });
+                    const norm = normalizeAddress(item.address);
+                    if (item.isDeleted) {
+                        deletedSet.add(norm);
+                    } else if (item.address && item.lat && item.lon) {
+                        cacheMap.set(norm, { lat: item.lat, lon: item.lon, comment: item.comment });
                     }
                 });
 
                 let hasChanges = false;
                 let updatedEditingClient: MapPoint | null = null;
 
-                const newAllData = allDataRef.current.map(row => {
-                    let rowChanged = false;
-                    const newClients = row.clients.map(client => {
+                const newAllData = allDataRef.current.map(group => {
+                    let groupModified = false;
+                    
+                    // 1. FILTER DELETED
+                    const filteredClients = group.clients.filter(c => {
+                        const norm = normalizeAddress(c.address);
+                        const isDel = deletedSet.has(norm);
+                        if (isDel) {
+                            groupModified = true;
+                            hasChanges = true;
+                        }
+                        return !isDel;
+                    });
+
+                    // 2. UPDATE REMAINING
+                    const updatedClients = filteredClients.map(client => {
                         const normAddr = normalizeAddress(client.address);
                         
                         const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
@@ -435,7 +453,7 @@ export const useAppLogic = () => {
                             const commentDiff = (client.comment || '') !== (cached.comment || '');
                             
                             if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
-                                rowChanged = true;
+                                groupModified = true;
                                 hasChanges = true;
                                 const updatedClient = { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
                                 
@@ -448,15 +466,33 @@ export const useAppLogic = () => {
                         return client;
                     });
                     
-                    if (rowChanged) return { ...row, clients: newClients };
-                    return row;
-                });
+                    if (groupModified) {
+                        const newFact = updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+                        const newPotential = newFact * 1.15;
+                        
+                        return { 
+                            ...group, 
+                            clients: updatedClients,
+                            fact: newFact,
+                            potential: newPotential,
+                            growthPotential: newPotential - newFact,
+                            growthPercentage: 15
+                        };
+                    }
+                    return group;
+                }).filter(g => g.clients.length > 0); // Remove empty groups
+
+                // Check if groups were removed entirely
+                if (newAllData.length !== allDataRef.current.length) {
+                    hasChanges = true;
+                }
 
                 if (hasChanges) {
+                    enrichWithAbcCategories(newAllData);
                     setAllData(newAllData);
                     if (updatedEditingClient) {
                         setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
-                        addNotification('Данные открытого клиента обновлены', 'info');
+                        addNotification('Данные обновлены (синхронизация)', 'info');
                     }
                 }
 
