@@ -95,15 +95,48 @@ export const useAppLogic = () => {
 
     // --- HELPER: APPLY CACHE TO DATA ---
     const applyCacheToData = useCallback((rows: AggregatedDataRow[], cacheData: CoordsCache) => {
-        const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
+        // Map stores the LATEST valid state for any address (current or historical)
+        const cacheMap = new Map<string, { lat: number; lon: number; comment?: string; address: string }>();
         const deletedSet = new Set<string>();
 
         Object.values(cacheData).flat().forEach((item: any) => {
-            const norm = normalizeAddress(item.address);
+            const currentNorm = normalizeAddress(item.address);
+            
+            // 1. Handle Deletions
             if (item.isDeleted) {
-                deletedSet.add(norm);
-            } else if (item.address && item.lat && item.lon) {
-                cacheMap.set(norm, { lat: item.lat, lon: item.lon, comment: item.comment });
+                deletedSet.add(currentNorm);
+                // Also add historical addresses to deleted set
+                if (item.history) {
+                    const historyItems = String(item.history).split(/\|\||\n/);
+                    historyItems.forEach((h: string) => {
+                        const clean = h.replace(/\[.*?\]/g, '').replace(/Изменен адрес.*?:/i, '').trim();
+                        if (clean.length > 2) deletedSet.add(normalizeAddress(clean));
+                    });
+                }
+                return;
+            } 
+            
+            if (item.address && item.lat && item.lon) {
+                const entry = { lat: item.lat, lon: item.lon, comment: item.comment, address: item.address };
+                
+                // 2. Map Current Address
+                cacheMap.set(currentNorm, entry);
+
+                // 3. Map Historical Addresses (BACKWARD COMPATIBILITY)
+                // If the file has an old address, this ensures we find the new coordinates/address.
+                if (item.history) {
+                    const historyItems = String(item.history).split(/\|\||\n/);
+                    historyItems.forEach((h: string) => {
+                        const clean = h.replace(/\[.*?\]/g, '').replace(/Изменен адрес.*?:/i, '').trim();
+                        if (clean.length > 2) {
+                            const normHist = normalizeAddress(clean);
+                            // Only set if not already present (current address priority)
+                            if (!cacheMap.has(normHist)) {
+                                cacheMap.set(normHist, entry);
+                            }
+                        }
+                    });
+                }
             }
         });
 
@@ -135,19 +168,20 @@ export const useAppLogic = () => {
                 const normAddr = normalizeAddress(client.address);
                 const cached = cacheMap.get(normAddr);
                 
-                // Skip if manually updated recently in this session (to avoid flicker)
+                // Skip if manually updated recently in this session
                 if (manualUpdateTimestamps.current.get(normAddr) && (Date.now() - manualUpdateTimestamps.current.get(normAddr)! < 120000)) {
                     return client;
                 }
 
                 if (cached) {
-                    // FIX: Always apply cache if it exists, don't check for diffs.
-                    // This forces the "Verified" coordinate state.
                     modified = true;
                     return { 
                         ...client, 
+                        // Update coordinates
                         lat: cached.lat, 
                         lon: cached.lon, 
+                        // Update address to the CURRENT one from cache (auto-fix old addresses in UI)
+                        address: cached.address, 
                         comment: cached.comment, 
                         isGeocoding: false, 
                         status: 'match' as const 

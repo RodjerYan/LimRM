@@ -208,9 +208,34 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     if (cacheData) {
         Object.values(cacheData).flat().forEach((item: any) => {
             if (item.address) {
-                state_cacheAddressMap.set(normalizeAddress(item.address), { 
-                    lat: item.lat, lon: item.lon, originalAddress: item.address, isInvalid: item.isInvalid, comment: item.comment, isDeleted: item.isDeleted
-                });
+                const entry = { 
+                    lat: item.lat, 
+                    lon: item.lon, 
+                    originalAddress: item.address, 
+                    isInvalid: item.isInvalid, 
+                    comment: item.comment, 
+                    isDeleted: item.isDeleted
+                };
+                
+                // Map Current Address
+                state_cacheAddressMap.set(normalizeAddress(item.address), entry);
+                
+                // Map Historical Addresses (BACKWARD COMPATIBILITY)
+                // If a row in the new file has the OLD address, we want to match it to this cache entry.
+                if (item.history) {
+                    const historyItems = String(item.history).split(/\|\||\n/);
+                    historyItems.forEach((h: string) => {
+                        // Extract address part: remove timestamp brackets and prefixes
+                        const clean = h.replace(/\[.*?\]/g, '').replace(/Изменен адрес.*?:/i, '').trim();
+                        if (clean.length > 2) {
+                            const normHist = normalizeAddress(clean);
+                            // Only overwrite if not present (priority to current address)
+                            if (!state_cacheAddressMap.has(normHist)) {
+                                state_cacheAddressMap.set(normHist, entry);
+                            }
+                        }
+                    });
+                }
             }
         });
     }
@@ -410,7 +435,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
                 
                 // CRITICAL FIX: Priority is Cache > Row/File > OKB
-                // Old logic prioritized Row over Cache.
                 const effectiveLat = cacheEntry?.lat ?? ((rowLat && rowLat !== 0) ? rowLat : okb?.lat);
                 const effectiveLon = cacheEntry?.lon ?? ((rowLon && rowLon !== 0) ? rowLon : okb?.lon);
 
@@ -420,7 +444,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     lon: effectiveLon,
                     status: 'match',
                     name: clientName, 
-                    address: rawAddr, 
+                    // Use cached address if available (normalized display), otherwise raw
+                    address: cacheEntry?.originalAddress || rawAddr, 
                     city: parsed.city, 
                     region: reg, 
                     rm, 
