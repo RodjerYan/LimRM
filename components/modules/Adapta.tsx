@@ -191,6 +191,30 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return Math.min(100, Math.round((props.activeClientsCount / props.okbStatus.rowCount) * 100));
     }, [props.activeClientsCount, props.okbStatus?.rowCount]);
 
+    // Helper for visual styling of channels
+    const getChannelStyle = (index: number) => {
+        if (index === 0) return { 
+            bgIcon: 'bg-indigo-500/20', text: 'text-indigo-300', 
+            bar: 'bg-gradient-to-r from-indigo-600 to-indigo-400', 
+            border: 'border-indigo-500/30' 
+        };
+        if (index === 1) return { 
+            bgIcon: 'bg-emerald-500/20', text: 'text-emerald-300', 
+            bar: 'bg-gradient-to-r from-emerald-600 to-emerald-400',
+            border: 'border-emerald-500/30'
+        };
+        if (index === 2) return { 
+            bgIcon: 'bg-amber-500/20', text: 'text-amber-300', 
+            bar: 'bg-gradient-to-r from-amber-600 to-amber-400',
+            border: 'border-amber-500/30'
+        };
+        return { 
+            bgIcon: 'bg-gray-700/50', text: 'text-gray-400', 
+            bar: 'bg-gray-600',
+            border: 'border-white/5'
+        };
+    };
+
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="flex justify-between items-end border-b border-gray-800 pb-4">
@@ -313,37 +337,55 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                             </div>
                         </div>
 
+                        {/* Enhanced Channels Grid */}
                         <div className="bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 shadow-xl">
-                            <div className="flex items-center justify-between mb-8 border-b border-gray-800/50 pb-4">
+                            <div className="flex items-center justify-between mb-6 border-b border-gray-800/50 pb-4">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
                                         <ChannelIcon small />
                                     </div>
                                     <div>
-                                        <h3 className="text-base font-bold text-white tracking-tight uppercase">Структура Каналов Продаж (Уник. ТТ)</h3>
-                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Считаются физические адреса магазинов</p>
+                                        <h3 className="text-base font-bold text-white tracking-tight uppercase">Структура Каналов</h3>
+                                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">Физические адреса (Уник. ТТ)</p>
                                     </div>
                                 </div>
                             </div>
                             {channelStats.length > 0 ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
-                                    {channelStats.map((stat, idx) => (
-                                        <div key={idx} className="space-y-2 group cursor-pointer" onClick={() => { setSelectedChannel(stat.name); setChannelSearchTerm(''); }}>
-                                            <div className="flex justify-between items-end">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">{stat.name}</span>
-                                                    <span className="text-[9px] text-indigo-400 font-bold mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {channelStats.map((stat, idx) => {
+                                        const style = getChannelStyle(idx);
+                                        return (
+                                            <div 
+                                                key={idx} 
+                                                className={`relative p-4 rounded-xl bg-gray-800/40 border ${style.border} hover:bg-gray-800/60 transition-all cursor-pointer group overflow-hidden`}
+                                                onClick={() => { setSelectedChannel(stat.name); setChannelSearchTerm(''); }}
+                                            >
+                                                {/* Hover Glow */}
+                                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 transform -skew-x-12 translate-x-[-100%] group-hover:translate-x-[100%]"></div>
+                                                
+                                                <div className="flex justify-between items-start mb-3 relative z-10">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-lg font-black ${style.bgIcon} ${style.text}`}>
+                                                            {stat.name.charAt(0).toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="text-sm font-bold text-white leading-tight group-hover:text-indigo-300 transition-colors">{stat.name}</h4>
+                                                            <div className="text-[10px] text-gray-500 font-mono mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-lg font-bold text-white font-mono leading-none">{stat.count.toLocaleString()}</div>
+                                                        <div className={`text-[10px] font-bold mt-1 ${style.text}`}>{stat.percentage.toFixed(1)}%</div>
+                                                    </div>
                                                 </div>
-                                                <span className="text-xs font-mono text-gray-300">
-                                                    <strong className="text-white">{stat.count.toLocaleString()} ТТ</strong> 
-                                                    <span className="text-gray-500 ml-1">({stat.percentage.toFixed(1)}%)</span>
-                                                </span>
+                                                
+                                                {/* Thick Progress Bar */}
+                                                <div className="w-full bg-gray-900/50 h-1.5 rounded-full overflow-hidden relative z-10">
+                                                    <div className={`h-full ${style.bar} shadow-[0_0_8px_rgba(255,255,255,0.3)] transition-all duration-1000 ease-out`} style={{ width: `${stat.percentage}%` }}></div>
+                                                </div>
                                             </div>
-                                            <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden">
-                                                <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-1000 ease-out group-hover:from-indigo-400 group-hover:to-purple-400" style={{ width: `${stat.percentage}%` }}></div>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             ) : (
                                 <div className="h-40 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded-xl bg-black/10">
