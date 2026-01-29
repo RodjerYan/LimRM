@@ -92,7 +92,7 @@ const SinglePointMap: React.FC<{
     const lightUrl = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
 
     // 1. Initialize Map
-    useLayoutEffect(() => {
+    useEffect(() => {
         if (!mapContainerRef.current || mapRef.current) return;
 
         const map = L.map(mapContainerRef.current, { 
@@ -103,14 +103,27 @@ const SinglePointMap: React.FC<{
             attributionControl: false,
         });
         mapRef.current = map;
-        L.control.zoom({ position: 'topleft' }).addTo(map);
+        
+        // Move zoom control to avoid overlapping with search bar
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        requestAnimationFrame(() => {
+        // Initial Layer Setup (to ensure map is not blank on load)
+        const initialUrl = theme === 'dark' ? darkUrl : lightUrl;
+        tileLayerRef.current = L.tileLayer(initialUrl, { attribution: '&copy; CARTO' }).addTo(map);
+
+        // Robust sizing using ResizeObserver to handle modal animations
+        const resizeObserver = new ResizeObserver(() => {
             map.invalidateSize();
-            setTimeout(() => map.invalidateSize(), 200); 
         });
+        resizeObserver.observe(mapContainerRef.current);
+
+        // Backup invalidation for animations
+        setTimeout(() => map.invalidateSize(), 100);
+        setTimeout(() => map.invalidateSize(), 300);
+        setTimeout(() => map.invalidateSize(), 500);
 
         return () => {
+            resizeObserver.disconnect();
             if (mapRef.current) {
                 mapRef.current.remove();
                 mapRef.current = null;
@@ -118,19 +131,24 @@ const SinglePointMap: React.FC<{
                 tileLayerRef.current = null;
             }
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 2. Handle Theme Updates
+    // 2. Handle Theme Updates (Switches layer dynamically)
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
+
+        const targetUrl = theme === 'dark' ? darkUrl : lightUrl;
+        
+        // Avoid flicker if url is same
+        if (tileLayerRef.current && (tileLayerRef.current as any)._url === targetUrl) return;
 
         if (tileLayerRef.current) {
             map.removeLayer(tileLayerRef.current);
         }
 
-        const newUrl = theme === 'dark' ? darkUrl : lightUrl;
-        tileLayerRef.current = L.tileLayer(newUrl, { attribution: '&copy; CARTO' }).addTo(map);
+        tileLayerRef.current = L.tileLayer(targetUrl, { attribution: '&copy; CARTO' }).addTo(map);
         tileLayerRef.current.bringToBack();
         
     }, [theme]);
