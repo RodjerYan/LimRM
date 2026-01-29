@@ -194,7 +194,8 @@ export const useAppLogic = () => {
         }
     };
 
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И DIFF-ПРОВЕРКОЙ) ---
+    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И STICKY-ГРУППИРОВКОЙ) ---
+    // UPDATED: Now uses "Sticky Chunks" strategy. Rows stay in their original chunks even if data is deleted.
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         if (isSavingRef.current) {
             console.log("%c[Save] Save in progress. Queuing next run.", "color: orange");
@@ -222,50 +223,97 @@ export const useAppLogic = () => {
             const getByteSize = (str: string) => encoder.encode(str).length;
             
             console.time('chunk-generation');
-            const chunks: string[] = [];
-            let currentChunkObj: any = {
-                chunkIndex: 0,
-                rows: [],
-            };
             
-            let currentSize = getByteSize(JSON.stringify(currentChunkObj));
-            
-            for (const row of currentData) {
-                const rowStr = JSON.stringify(row);
-                const rowSize = getByteSize(rowStr) + 2; 
-                
-                if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                    chunks.push(JSON.stringify(currentChunkObj)); 
-                    currentChunkObj = {
-                        chunkIndex: chunks.length,
-                        rows: []
-                    };
-                    currentSize = getByteSize(JSON.stringify(currentChunkObj));
-                }
-                currentChunkObj.rows.push(row);
-                currentSize += rowSize;
-            }
-            chunks.push(JSON.stringify(currentChunkObj));
-            console.timeEnd('chunk-generation');
-            console.info(`Generated ${chunks.length} chunks from ${currentData.length} rows.`);
-            
-            const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            
-            chunks.forEach((chunkContent, idx) => {
-                const prevContent = lastSavedChunksRef.current.get(idx);
-                if (prevContent !== chunkContent) {
-                    const targetFileId = availableSlots[idx] ? availableSlots[idx].id : '';
-                    if (targetFileId) {
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId });
-                    } else {
-                        chunksToUpload.push({ index: idx, content: chunkContent, targetFileId: '' });
+            // --- STICKY CHUNKING LOGIC ---
+            // 1. Organize existing rows into their assigned chunks
+            const stickyChunksMap = new Map<number, AggregatedDataRow[]>();
+            const unassignedRows: AggregatedDataRow[] = [];
+            let maxChunkIndex = -1;
+
+            currentData.forEach(row => {
+                if (row._chunkIndex !== undefined && row._chunkIndex >= 0) {
+                    if (!stickyChunksMap.has(row._chunkIndex)) {
+                        stickyChunksMap.set(row._chunkIndex, []);
                     }
+                    stickyChunksMap.get(row._chunkIndex)!.push(row);
+                    maxChunkIndex = Math.max(maxChunkIndex, row._chunkIndex);
+                } else {
+                    unassignedRows.push(row);
                 }
             });
 
+            // 2. Process Unassigned Rows (pack them into new or last chunks)
+            // If the last chunk has space, we could append, but for simplicity/stability, we can just start new chunks
+            // starting from maxChunkIndex + 1.
+            
+            let currentPackIndex = maxChunkIndex + 1;
+            let currentChunkRows: AggregatedDataRow[] = [];
+            // Dummy start for sizing, we reset for the loop
+            let currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
+
+            // If we have unassigned rows, pack them dynamically
+            if (unassignedRows.length > 0) {
+                for (const row of unassignedRows) {
+                    // Assign the new index permanently to the row object
+                    row._chunkIndex = currentPackIndex;
+                    
+                    const rowStr = JSON.stringify(row);
+                    const rowSize = getByteSize(rowStr) + 2; 
+
+                    if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES && currentChunkRows.length > 0) {
+                        stickyChunksMap.set(currentPackIndex, currentChunkRows);
+                        currentPackIndex++;
+                        currentChunkRows = [];
+                        currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
+                        row._chunkIndex = currentPackIndex; // Re-assign to next chunk
+                    }
+                    
+                    currentChunkRows.push(row);
+                    currentSize += rowSize;
+                }
+                // Push the last partial chunk
+                if (currentChunkRows.length > 0) {
+                    stickyChunksMap.set(currentPackIndex, currentChunkRows);
+                }
+            }
+
+            // 3. Serialize all chunks from the Map
+            // Note: We iterate based on keys to handle potentially empty intermediate chunks if that ever happens
+            // (though in this logic, we only store existing rows).
+            // If a chunk index exists in availableSlots but is NOT in stickyChunksMap (because all rows were deleted),
+            // we should save an empty chunk to clear it on server.
+            
+            const maxSlotIndex = Math.max(maxChunkIndex, availableSlots.length - 1, currentPackIndex);
+            const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
+            const chunksContentCache = new Map<number, string>(); // To update ref later
+
+            for (let i = 0; i <= maxSlotIndex; i++) {
+                // If we have rows for this index, save them. If not, save empty array (clearing the file).
+                // Unless it's beyond the range of known data AND known files, then we stop.
+                
+                const rows = stickyChunksMap.get(i) || [];
+                // Skip if no rows AND no existing file (it's a gap past the end)
+                if (rows.length === 0 && i >= availableSlots.length && i > currentPackIndex) continue;
+
+                const chunkObj = { chunkIndex: i, rows: rows };
+                const content = JSON.stringify(chunkObj);
+                chunksContentCache.set(i, content);
+
+                const prevContent = lastSavedChunksRef.current.get(i);
+                
+                if (prevContent !== content) {
+                    const targetFileId = availableSlots[i] ? availableSlots[i].id : '';
+                    chunksToUpload.push({ index: i, content, targetFileId });
+                }
+            }
+            
+            console.timeEnd('chunk-generation');
+            console.info(`Generated content for ${chunksContentCache.size} chunks. Found ${chunksToUpload.length} changes.`);
+
             if (chunksToUpload.length === 0) {
                 console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
-                chunks.forEach((content, idx) => {
+                // Update cache ref just in case
+                chunksContentCache.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
                 });
             } else {
@@ -307,7 +355,7 @@ export const useAppLogic = () => {
                     okbRegionCounts: okbRegionCounts,
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: newVersionHash,
-                    chunkCount: chunks.length,
+                    chunkCount: chunksContentCache.size,
                     totalRows: totalRowsProcessedRef.current,
                     timestamp: Date.now()
                 })
@@ -328,8 +376,6 @@ export const useAppLogic = () => {
             console.groupEnd();
             isSavingRef.current = false;
             
-            // CRITICAL FIX: Only execute queued save if NO fatal error occurred.
-            // If storage is full or API is down, retrying will just cause infinite loop.
             if (saveQueuedRef.current && !hasFatalError) {
                 console.log("%c[Queue] Executing queued save...", "color: cyan");
                 saveQueuedRef.current = false;
@@ -358,12 +404,19 @@ export const useAppLogic = () => {
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
+            // When moving from Unidentified to Aggregated, we treat it as a "New" row for chunking purposes
+            // It will be assigned a chunk index during the next save.
+            
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
                     fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
                     clients: [...newData[existingGroupIndex].clients, newPoint]
                 };
+                // IMPORTANT: The parent group might already have a _chunkIndex. 
+                // However, we are modifying the *content* of that group.
+                // Since aggregated rows are complex, we rely on the object reference.
+                // If we add a client to an existing group, that group stays in its chunk.
             } else {
                 newData.push({
                     __rowId: `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -400,7 +453,6 @@ export const useAppLogic = () => {
         setUnidentifiedRows(newUnidentified);
         
         // FIX: Prevent saving if the update is just a "start geocoding" trigger.
-        // We will save later when coordinates are resolved.
         if (newPoint.isGeocoding) {
             console.log("Deferring cloud save until geocoding resolves...");
             return; 
@@ -621,6 +673,8 @@ export const useAppLogic = () => {
                         const regionName = row.region || 'Неизвестный регион';
                         result.push({
                             ...row,
+                            // Preserve _chunkIndex if available
+                            _chunkIndex: row._chunkIndex,
                             key: generateStableKey(row, `spl_${idx}`),
                             brand: brandPart,
                             clientName: `${regionName}: ${brandPart}`,
@@ -646,6 +700,8 @@ export const useAppLogic = () => {
 
             result.push({
                 ...row,
+                // Preserve _chunkIndex if available
+                _chunkIndex: row._chunkIndex,
                 key: row.key || generateStableKey(row, 'm'),
                 clientName: finalClientName,
                 clients: normalizedClients
@@ -693,8 +749,14 @@ export const useAppLogic = () => {
                 }
                 
                 const chunkData = JSON.parse(text);
-                let newRows: any[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
+                // IMPORTANT: Restore _chunkIndex based on file sequence
+                // This ensures that when we delete rows, we know exactly which chunk they came from
+                // preventing a full repack.
+                const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
+                newRows.forEach(row => row._chunkIndex = chunkIndex);
+
                 if (newRows.length > 0) {
                     accumulatedRows.push(...normalize(newRows));
                 }
@@ -794,6 +856,7 @@ export const useAppLogic = () => {
                 wasModified = true;
                 const newFact = newClients.reduce((sum, c) => sum + (c.fact || 0), 0);
                 
+                // Keep the chunk index of the group so it stays in the same file
                 return {
                     ...group,
                     clients: newClients,

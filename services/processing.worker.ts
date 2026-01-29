@@ -297,27 +297,48 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
+        const rawAddr = findAddressInRow(row);
+        
+        // --- STRICT DATA QUALITY GATE ---
+        // 1. Must have an address field
+        if (!rawAddr) continue;
+        
+        // 2. Address must be substantial (more than 4 chars)
+        const cleanAddr = String(rawAddr).trim();
+        if (cleanAddr.length < 4) continue;
+        
+        // 3. Address must not be a common placeholder or garbage
+        if (/^[-.,\s0-9]+$/.test(cleanAddr)) continue; // e.g. "0", "-", "...", "123"
+        const lowerAddr = cleanAddr.toLowerCase();
+        if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
+
+        // 4. Client name must exist
+        const clientName = String(row[state_clientNameHeader || ''] || '').trim();
+        if (!clientName || clientName.length < 2) continue;
+
+        // 5. Filter out Summary/Total rows
+        const lowerName = clientName.toLowerCase();
+        if (lowerName.includes('итого') || lowerName.includes('всего') || lowerName.includes('total') || lowerName.includes('grand total')) {
+            continue;
+        }
+
+        // 6. Suspicious duplicate check: If address is identical to client name, it's likely a column shift or bad data
+        if (lowerName === lowerAddr) continue;
+        // --------------------------------
+
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
-
-        const rawAddr = findAddressInRow(row);
-        if (!rawAddr) continue;
 
         const parsed = parseRussianAddress(rawAddr);
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
         // CORE LOGIC: Skip row if it has been marked as deleted in the cache.
-        // This ensures "Soft Deleted" rows from the database don't reappear when raw files are reloaded.
         if (cacheEntry && cacheEntry.isDeleted) {
             continue;
         }
 
-        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
-
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        
-        // AUTO-DETECT CHANNEL if missing or too short
         if (!channel || channel.length < 2) {
             channel = detectChannelByName(clientName);
         }
@@ -338,6 +359,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
+        
+        // 7. Extra check: If weight is 0 AND address is unverified, likely garbage.
+        if (totalWeight === 0 && !cacheEntry && !isCityFound) continue;
+
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
@@ -391,7 +416,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     lat: effectiveLat,
                     lon: effectiveLon,
                     status: 'match',
-                    name: clientName,
+                    name: clientName, // Use verified clientName
                     address: rawAddr, 
                     city: parsed.city, 
                     region: reg, 

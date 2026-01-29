@@ -1,6 +1,7 @@
 
 export interface AggregatedDataRow {
     __rowId: string; // IMMUTABLE ID for stable chunking/diffing
+    _chunkIndex?: number; // STICKY CHUNK ID: Remembers which file this row belongs to
     key: string;
     rm: string;
     clientName: string;
