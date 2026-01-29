@@ -91,6 +91,72 @@ export const useAppLogic = () => {
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
     }, []);
 
+    // --- HELPER: APPLY CACHE TO DATA ---
+    const applyCacheToData = useCallback((rows: AggregatedDataRow[], cacheData: CoordsCache) => {
+        const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
+        const deletedSet = new Set<string>();
+
+        Object.values(cacheData).flat().forEach((item: any) => {
+            const norm = normalizeAddress(item.address);
+            if (item.isDeleted) {
+                deletedSet.add(norm);
+            } else if (item.address && item.lat && item.lon) {
+                cacheMap.set(norm, { lat: item.lat, lon: item.lon, comment: item.comment });
+            }
+        });
+
+        // 1. Filter out deleted clients
+        let cleanData = rows.map(group => {
+            const originalCount = group.clients.length;
+            const activeClients = group.clients.filter(c => !deletedSet.has(normalizeAddress(c.address)));
+            
+            if (activeClients.length !== originalCount) {
+                // Re-calculate metrics if clients were removed
+                const newFact = activeClients.reduce((sum, c) => sum + (c.fact || 0), 0);
+                const newPotential = newFact * 1.15;
+                return { 
+                    ...group, 
+                    clients: activeClients,
+                    fact: newFact,
+                    potential: newPotential,
+                    growthPotential: newPotential - newFact,
+                    growthPercentage: 15
+                };
+            }
+            return group;
+        }).filter(g => g.clients.length > 0);
+
+        // 2. Apply updates
+        cleanData = cleanData.map(group => {
+            let modified = false;
+            const updatedClients = group.clients.map(client => {
+                const normAddr = normalizeAddress(client.address);
+                const cached = cacheMap.get(normAddr);
+                
+                // Skip if manually updated recently in this session
+                if (manualUpdateTimestamps.current.get(normAddr) && (Date.now() - manualUpdateTimestamps.current.get(normAddr)! < 120000)) {
+                    return client;
+                }
+
+                if (cached) {
+                    const latDiff = Math.abs((client.lat || 0) - cached.lat);
+                    const lonDiff = Math.abs((client.lon || 0) - cached.lon);
+                    const commentDiff = (client.comment || '') !== (cached.comment || '');
+                    
+                    if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
+                        modified = true;
+                        return { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
+                    }
+                }
+                return client;
+            });
+            
+            return modified ? { ...group, clients: updatedClients } : group;
+        });
+
+        return cleanData;
+    }, []);
+
     // --- NEW REAL DATA UPDATE HANDLER ---
     const handleStartDataUpdate = async () => {
         if (updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error') return;
@@ -333,6 +399,13 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
+        // FIX: Prevent saving if the update is just a "start geocoding" trigger.
+        // We will save later when coordinates are resolved.
+        if (newPoint.isGeocoding) {
+            console.log("Deferring cloud save until geocoding resolves...");
+            return; 
+        }
+
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => {
             saveSnapshotToCloud(newData, newUnidentified).catch(err => {
@@ -407,93 +480,16 @@ export const useAppLogic = () => {
                 if (!res.ok) return;
                 const cacheData: CoordsCache = await res.json();
 
-                const cacheMap = new Map<string, { lat: number; lon: number; comment?: string }>();
-                const deletedSet = new Set<string>(); // NEW: Track explicitly deleted addresses
+                const freshData = applyCacheToData(allDataRef.current, cacheData);
+                
+                // Compare to see if we actually need to update state
+                const isDifferent = JSON.stringify(freshData.map(r => r.fact)) !== JSON.stringify(allDataRef.current.map(r => r.fact)) || 
+                                    freshData.length !== allDataRef.current.length;
 
-                Object.values(cacheData).flat().forEach((item: any) => {
-                    const norm = normalizeAddress(item.address);
-                    if (item.isDeleted) {
-                        deletedSet.add(norm);
-                    } else if (item.address && item.lat && item.lon) {
-                        cacheMap.set(norm, { lat: item.lat, lon: item.lon, comment: item.comment });
-                    }
-                });
-
-                let hasChanges = false;
-                let updatedEditingClient: MapPoint | null = null;
-
-                const newAllData = allDataRef.current.map(group => {
-                    let groupModified = false;
-                    
-                    // 1. FILTER DELETED
-                    const filteredClients = group.clients.filter(c => {
-                        const norm = normalizeAddress(c.address);
-                        const isDel = deletedSet.has(norm);
-                        if (isDel) {
-                            groupModified = true;
-                            hasChanges = true;
-                        }
-                        return !isDel;
-                    });
-
-                    // 2. UPDATE REMAINING
-                    const updatedClients = filteredClients.map(client => {
-                        const normAddr = normalizeAddress(client.address);
-                        
-                        const lastManualUpdate = manualUpdateTimestamps.current.get(normAddr);
-                        if (lastManualUpdate && (Date.now() - lastManualUpdate < 120000)) {
-                            return client;
-                        }
-
-                        const cached = cacheMap.get(normAddr);
-                        
-                        if (cached) {
-                            const latDiff = Math.abs((client.lat || 0) - cached.lat);
-                            const lonDiff = Math.abs((client.lon || 0) - cached.lon);
-                            const commentDiff = (client.comment || '') !== (cached.comment || '');
-                            
-                            if (latDiff > 0.0001 || lonDiff > 0.0001 || commentDiff) {
-                                groupModified = true;
-                                hasChanges = true;
-                                const updatedClient = { ...client, lat: cached.lat, lon: cached.lon, comment: cached.comment, isGeocoding: false, status: 'match' as const };
-                                
-                                if (editingClient && (editingClient as MapPoint).key === client.key) {
-                                    updatedEditingClient = updatedClient;
-                                }
-                                return updatedClient;
-                            }
-                        }
-                        return client;
-                    });
-                    
-                    if (groupModified) {
-                        const newFact = updatedClients.reduce((sum, c) => sum + (c.fact || 0), 0);
-                        const newPotential = newFact * 1.15;
-                        
-                        return { 
-                            ...group, 
-                            clients: updatedClients,
-                            fact: newFact,
-                            potential: newPotential,
-                            growthPotential: newPotential - newFact,
-                            growthPercentage: 15
-                        };
-                    }
-                    return group;
-                }).filter(g => g.clients.length > 0); // Remove empty groups
-
-                // Check if groups were removed entirely
-                if (newAllData.length !== allDataRef.current.length) {
-                    hasChanges = true;
-                }
-
-                if (hasChanges) {
-                    enrichWithAbcCategories(newAllData);
-                    setAllData(newAllData);
-                    if (updatedEditingClient) {
-                        setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
-                        addNotification('Данные обновлены (синхронизация)', 'info');
-                    }
+                if (isDifferent) {
+                    enrichWithAbcCategories(freshData);
+                    setAllData(freshData);
+                    addNotification('Данные обновлены (синхронизация)', 'info');
                 }
 
             } catch (e) {
@@ -503,7 +499,7 @@ export const useAppLogic = () => {
 
         const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
         return () => clearInterval(intervalId);
-    }, [processingState.isProcessing, editingClient]);
+    }, [processingState.isProcessing, applyCacheToData]);
 
     // --- BACKGROUND GEOCODING POLLING ---
     useEffect(() => {
@@ -709,17 +705,31 @@ export const useAppLogic = () => {
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
-                enrichWithAbcCategories(accumulatedRows);
+                // BLOCKING CACHE SYNC: Apply cache *before* setting state
+                setProcessingState(prev => ({ ...prev, message: 'Проверка удаленных записей...' }));
                 
-                setAllData(accumulatedRows);
+                let finalData = accumulatedRows;
+                try {
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        finalData = applyCacheToData(accumulatedRows, cacheData);
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch cache during load, using snapshot data only:", e);
+                }
+
+                enrichWithAbcCategories(finalData);
+                
+                setAllData(finalData);
                 
                 const safeMeta = loadedMeta || {};
                 setUnidentifiedRows(safeMeta.unidentifiedRows || []);
                 setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || accumulatedRows.length;
+                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
                 
                 await saveAnalyticsState({
-                    allData: accumulatedRows,
+                    allData: finalData,
                     unidentifiedRows: safeMeta.unidentifiedRows || [],
                     okbRegionCounts: safeMeta.okbRegionCounts || {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
@@ -737,7 +747,7 @@ export const useAppLogic = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
         }
         return false;
-    }, [normalize, addNotification]);
+    }, [normalize, addNotification, applyCacheToData]);
 
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
@@ -824,14 +834,28 @@ export const useAppLogic = () => {
         const init = async () => {
             setDbStatus('loading');
             const local = await loadAnalyticsState();
+            
+            // BLOCKING CACHE SYNC FOR LOCAL DATA: Apply cache *before* setting state
             if (local?.allData?.length > 0) {
-                const validatedLocal = normalize(local.allData);
+                let validatedLocal = normalize(local.allData);
+                
+                try {
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        validatedLocal = applyCacheToData(validatedLocal, cacheData);
+                    }
+                } catch (e) {
+                    console.warn("Failed to sync cache on init, using stored data.");
+                }
+
                 enrichWithAbcCategories(validatedLocal);
                 setAllData(validatedLocal);
                 setUnidentifiedRows(local.unidentifiedRows || []);
                 setOkbRegionCounts(local.okbRegionCounts || {});
                 setDbStatus('ready');
             }
+            
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             if (metaRes.ok) {
                 const serverMeta = await metaRes.json();
@@ -842,7 +866,7 @@ export const useAppLogic = () => {
             }
         };
         init();
-    }, [handleDownloadSnapshot, normalize]);
+    }, [handleDownloadSnapshot, normalize, applyCacheToData]);
 
     // --- FILTERED DATA ---
     const filtered = useMemo(() => {
