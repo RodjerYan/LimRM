@@ -469,40 +469,53 @@ export async function deleteAddressFromCache(rmName: string, address: string): P
 
 export async function getAddressFromCache(rmName: string, address: string): Promise<any | null> {
     const sheets = await getGoogleSheetsClient();
-    const spreadsheet = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: CACHE_SPREADSHEET_ID }), 'getSpreadsheet') as any;
-    const existingSheet = spreadsheet.data.sheets?.find((s: any) => s.properties?.title?.toLowerCase() === rmName.toLowerCase());
-    if (!existingSheet) return null;
     
-    const response = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: CACHE_SPREADSHEET_ID, range: `'${existingSheet.properties.title}'!A:G` }), 'getAddrData') as any;
-    const values = response.data.values || [];
-    const addressNorm = normalizeForComparison(address);
-    let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);
-    if (!foundRow) foundRow = values.find((row: any) => isAddressInHistory(String(row[3] || ''), addressNorm));
-    
-    if (foundRow) {
-        const isDeleted = String(foundRow[6] || '').toUpperCase() === 'TRUE';
-        if (isDeleted) return null; // Treat as not found if deleted
-
-        const latStr = String(foundRow[1] || '').trim(); const lonStr = String(foundRow[2] || '').trim();
-        const isInvalid = ['не найдено', 'некорректный адрес'].some(s => latStr.toLowerCase().includes(s));
+    // OPTIMIZATION: Try fetching directly. If sheet doesn't exist, API throws 400, which we catch.
+    // This saves ~1 second by skipping spreadsheet metadata fetch.
+    try {
+        const response = await callWithRetry(() => sheets.spreadsheets.values.get({ 
+            spreadsheetId: CACHE_SPREADSHEET_ID, 
+            range: `'${rmName}'!A:G` 
+        }), 'getAddrData') as any;
         
-        const lat = (!isInvalid && latStr && latStr.toLowerCase() !== 'lat') ? parseFloat(latStr.replace(',', '.')) : undefined;
-        const lon = (!isInvalid && lonStr && lonStr.toLowerCase() !== 'lon') ? parseFloat(lonStr.replace(',', '.')) : undefined;
+        const values = response.data.values || [];
+        const addressNorm = normalizeForComparison(address);
+        
+        let foundRow = values.find((row: any) => normalizeForComparison(row[0]) === addressNorm);
+        if (!foundRow) foundRow = values.find((row: any) => isAddressInHistory(String(row[3] || ''), addressNorm));
+        
+        if (foundRow) {
+            const isDeleted = String(foundRow[6] || '').toUpperCase() === 'TRUE';
+            if (isDeleted) return null; 
 
-        let coordStatus = String(foundRow[5] || '').trim();
-        if (lat !== undefined && lon !== undefined && coordStatus !== 'invalid' && lat !== 0 && lon !== 0) {
-            coordStatus = 'confirmed';
+            const latStr = String(foundRow[1] || '').trim(); const lonStr = String(foundRow[2] || '').trim();
+            const isInvalid = ['не найдено', 'некорректный адрес'].some(s => latStr.toLowerCase().includes(s));
+            
+            const lat = (!isInvalid && latStr && latStr.toLowerCase() !== 'lat') ? parseFloat(latStr.replace(',', '.')) : undefined;
+            const lon = (!isInvalid && lonStr && lonStr.toLowerCase() !== 'lon') ? parseFloat(lonStr.replace(',', '.')) : undefined;
+
+            let coordStatus = String(foundRow[5] || '').trim();
+            if (lat !== undefined && lon !== undefined && coordStatus !== 'invalid' && lat !== 0 && lon !== 0) {
+                coordStatus = 'confirmed';
+            }
+
+            return {
+                address: String(foundRow[0]),
+                lat, lon,
+                history: foundRow[3], 
+                comment: foundRow[4], 
+                coordStatus,
+                isInvalid,
+                isDeleted: false
+            };
         }
-
-        return {
-            address: String(foundRow[0]),
-            lat, lon,
-            history: foundRow[3], 
-            comment: foundRow[4], 
-            coordStatus,
-            isInvalid,
-            isDeleted: false
-        };
+    } catch (e: any) {
+        // Sheet not found or other non-fatal range error
+        if (e.code === 400 || (e.response && e.response.status === 400)) {
+            return null;
+        }
+        console.error(`Error fetching cache for ${rmName}:`, e);
+        throw e;
     }
     return null;
 }

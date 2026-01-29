@@ -44,6 +44,7 @@ interface AddressEditModalProps {
     onDataUpdate: (oldKey: string, newPoint: MapPoint, originalIndex?: number) => void;
     onStartPolling: (rmName: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => void;
     onDelete: (rm: string, address: string) => void;
+    executeSequentially: <T>(task: () => Promise<T>) => Promise<T>;
     globalTheme?: Theme;
 }
 
@@ -275,7 +276,7 @@ const SinglePointMap: React.FC<{
 };
 
 // --- Main Component: AddressEditModal ---
-const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, globalTheme = 'dark' }) => {
+const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, onBack, data, onDataUpdate, onStartPolling, onDelete, executeSequentially, globalTheme = 'dark' }) => {
     const [editedAddress, setEditedAddress] = useState('');
     const [comment, setComment] = useState('');
     const [status, setStatus] = useState<Status>('idle');
@@ -291,10 +292,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const isCommentTouched = useRef(false);
     const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     
-    // State to track previous key to distinguish client switch vs update
     const prevKeyRef = useRef<string | number | undefined>(undefined);
 
-    // --- Effect 1: Init Data & Theme ---
     useEffect(() => {
         if (!isOpen) return;
         setMapTheme(globalTheme);
@@ -321,16 +320,14 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
             const currentKey = (data as MapPoint).key || (data as UnidentifiedRow).originalIndex;
             
-            // Check if we switched to a different client or just updated the current one
             if (currentKey !== prevKeyRef.current) {
-                // RESET STATE FOR NEW CLIENT
                 setEditedAddress(currentAddress);
                 setComment((data as MapPoint).comment || '');
                 isCommentTouched.current = false;
                 setManualCoords(null);
                 setIsMapExpanded(false);
                 setShowDeleteConfirm(false);
-                setStatus('idle'); // Always start idle for new client
+                setStatus('idle'); 
                 setError(null);
                 
                 const pt = data as MapPoint;
@@ -348,11 +345,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     setHistory([]);
                 }
             } else {
-                // UPDATE FOR SAME CLIENT (e.g. Polling Result)
-                // If we were waiting for geocoding, check if we got coords
                 if (status === 'geocoding') {
-                    // FIX: Ensure polling has ACTUALLY finished by checking !isGeocoding.
-                    // Optimistic updates set isGeocoding=true, so we must wait until it flips to false.
                     const isStillGeocoding = (data as MapPoint).isGeocoding;
                     const hasCoords = (data as MapPoint).lat && (data as MapPoint).lon && (data as MapPoint).lat !== 0;
                     
@@ -364,7 +357,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         }, 4000);
                     }
                     
-                    // Handle polling failure or timeout error
                     if (!isStillGeocoding && !hasCoords && (data as MapPoint).geocodingError) {
                          setStatus('error_geocoding');
                          setError((data as MapPoint).geocodingError || 'Координаты не найдены');
@@ -379,46 +371,46 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             prevKeyRef.current = currentKey;
         }
-    }, [isOpen, data, globalTheme]); // Intentionally omitting status to avoid circular dependency/stale closure issues, as status is checked inside.
+    }, [isOpen, data, globalTheme]); 
 
-    // Cleanup timeout on unmount
     useEffect(() => {
         return () => {
             if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
         };
     }, []);
 
-    // --- Fetch History with Improved Error Handling ---
     const fetchHistory = useCallback(async (rmName: string, address: string) => {
         setIsLoadingHistory(true);
         setHistory([]);
         try {
-            const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
-            const res = await fetch(url);
+            // Using executeSequentially for read operations isn't strictly necessary but ensures consistency 
+            // if read depends on previous write completing.
+            await executeSequentially(async () => {
+                const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
+                const res = await fetch(url);
 
-            // FIX: Now expecting 200 with null body for "not found"
-            if (res.ok) {
-                const result = await res.json();
-                if (!result) return; // Not found in cache
+                if (res.ok) {
+                    const result = await res.json();
+                    if (!result) return; 
 
-                if (result.history) {
-                    const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
-                    setHistory(historyArray);
+                    if (result.history) {
+                        const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
+                        setHistory(historyArray);
+                    }
+                    if (result.comment && !comment && !isCommentTouched.current) {
+                        setComment(result.comment);
+                    }
+                } else {
+                   if (res.status === 404) return;
+                   throw new Error(`API returned ${res.status}: ${res.statusText}`);
                 }
-                if (result.comment && !comment && !isCommentTouched.current) {
-                    setComment(result.comment);
-                }
-            } else {
-               // Fallback just in case
-               if (res.status === 404) return;
-               throw new Error(`API returned ${res.status}: ${res.statusText}`);
-            }
+            });
         } catch (e) {
             console.error("Failed to fetch history for address:", address, e);
         } finally {
             setIsLoadingHistory(false);
         }
-    }, [comment]);
+    }, [comment, executeSequentially]);
 
     const handleCommentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setComment(e.target.value);
@@ -443,72 +435,69 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setError(null);
 
         try {
-            const url = `/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(currentAddress)}&t=${Date.now()}`;
-            const res = await fetch(url);
-            
-            if (res.ok) {
-                const result = await res.json();
+            // EXECUTE SEQUENTIALLY
+            await executeSequentially(async () => {
+                const url = `/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(currentAddress)}&t=${Date.now()}`;
+                const res = await fetch(url);
                 
-                if (result && typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0) {
-                    // Check if coordinates differ from currently displayed
-                    const currentDisplayedLat = manualCoords?.lat ?? (data as MapPoint).lat;
-                    const currentDisplayedLon = manualCoords?.lon ?? (data as MapPoint).lon;
+                if (res.ok) {
+                    const result = await res.json();
+                    
+                    if (result && typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0) {
+                        const currentDisplayedLat = manualCoords?.lat ?? (data as MapPoint).lat;
+                        const currentDisplayedLon = manualCoords?.lon ?? (data as MapPoint).lon;
 
-                    const isDifferent = Math.abs(result.lat - (currentDisplayedLat || 0)) > 0.000001 ||
-                                        Math.abs(result.lon - (currentDisplayedLon || 0)) > 0.000001;
+                        const isDifferent = Math.abs(result.lat - (currentDisplayedLat || 0)) > 0.000001 ||
+                                            Math.abs(result.lon - (currentDisplayedLon || 0)) > 0.000001;
 
-                    if (isDifferent) {
-                        setManualCoords({ lat: result.lat, lon: result.lon });
-                        if (result.comment && !isCommentTouched.current) {
-                            setComment(result.comment);
-                        }
-                        
-                        // Construct updated point to trigger save logic
-                        // We must mimic the structure of MapPoint to satisfy onDataUpdate
-                        // Note: If data is UnidentifiedRow, we construct a new MapPoint structure.
-                        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
-                        const parsed = parseRussianAddress(currentAddress, distributor);
-                        
-                        const updatedPoint: MapPoint = {
-                            key: oldKey,
-                            lat: result.lat,
-                            lon: result.lon,
-                            status: 'match',
-                            name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
-                            address: currentAddress,
-                            city: parsed.city,
-                            region: parsed.region,
-                            rm: rm,
-                            brand: findValueInRow(originalRow, ['торговая марка']),
-                            packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-                            type: findValueInRow(originalRow, ['канал продаж']),
-                            contacts: findValueInRow(originalRow, ['контакты']),
-                            originalRow: originalRow,
-                            fact: (data as MapPoint).fact,
-                            abcCategory: (data as MapPoint).abcCategory,
-                            lastUpdated: Date.now(),
-                            comment: result.comment || comment,
-                            isGeocoding: false
-                        };
+                        if (isDifferent) {
+                            setManualCoords({ lat: result.lat, lon: result.lon });
+                            if (result.comment && !isCommentTouched.current) {
+                                setComment(result.comment);
+                            }
+                            
+                            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
+                            const parsed = parseRussianAddress(currentAddress, distributor);
+                            
+                            const updatedPoint: MapPoint = {
+                                key: oldKey,
+                                lat: result.lat,
+                                lon: result.lon,
+                                status: 'match',
+                                name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
+                                address: currentAddress,
+                                city: parsed.city,
+                                region: parsed.region,
+                                rm: rm,
+                                brand: findValueInRow(originalRow, ['торговая марка']),
+                                packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
+                                type: findValueInRow(originalRow, ['канал продаж']),
+                                contacts: findValueInRow(originalRow, ['контакты']),
+                                originalRow: originalRow,
+                                fact: (data as MapPoint).fact,
+                                abcCategory: (data as MapPoint).abcCategory,
+                                lastUpdated: Date.now(),
+                                comment: result.comment || comment,
+                                isGeocoding: false
+                            };
 
-                        // Trigger parent update which handles chunk rewriting
-                        onDataUpdate(oldKey, updatedPoint, originalIndex);
-                        
-                        setStatus('success');
-                        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-                        successTimeoutRef.current = setTimeout(() => {
+                            onDataUpdate(oldKey, updatedPoint, originalIndex);
+                            
+                            setStatus('success');
+                            if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+                            successTimeoutRef.current = setTimeout(() => {
+                                setStatus('idle');
+                            }, 2000);
+                        } else {
                             setStatus('idle');
-                        }, 2000);
+                        }
                     } else {
-                        setStatus('idle');
-                        // Optional: Could show a toast "No changes found"
+                        setStatus('idle'); 
                     }
                 } else {
-                    setStatus('idle'); // No data found in cloud, nothing to sync
+                    throw new Error(`Server returned ${res.status}`);
                 }
-            } else {
-                throw new Error(`Server returned ${res.status}`);
-            }
+            });
         } catch (e: any) {
             console.error("Sync Error:", e);
             setStatus('error_saving');
@@ -541,63 +530,61 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         setStatus('saving'); setError(null);
 
         try {
-            const res = await fetch('/api/update-address', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    rmName: rm, 
-                    oldAddress, 
-                    newAddress: editedAddress, 
-                    comment,
-                    lat: manualCoords?.lat,
-                    lon: manualCoords?.lon
-                }),
-            });
+            // EXECUTE SEQUENTIALLY
+            await executeSequentially(async () => {
+                const res = await fetch('/api/update-address', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        rmName: rm, 
+                        oldAddress, 
+                        newAddress: editedAddress, 
+                        comment,
+                        lat: manualCoords?.lat,
+                        lon: manualCoords?.lon
+                    }),
+                });
 
-            if (!res.ok) { 
-                const errData = await res.json().catch(() => ({}));
-                throw new Error(errData.error || errData.details || 'Ошибка при сохранении.'); 
-            }
-            
-            const needsGeocoding = isAddressChanged && !manualCoords;
-            const updateTimestamp = Date.now();
-            let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
-            const parsed = parseRussianAddress(editedAddress, distributor);
-
-            const baseNewPoint: MapPoint = {
-                key: oldKey, 
-                // FIX: If geocoding is needed, we essentially don't have valid coords yet. 
-                // Clear them to remove the map marker and ensure the UI reflects waiting status.
-                // If we keep old coords, the user might think location is already correct.
-                lat: needsGeocoding ? undefined : (data as MapPoint).lat, 
-                lon: needsGeocoding ? undefined : (data as MapPoint).lon,
-                status: 'match',
-                name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
-                address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
-                brand: findValueInRow(originalRow, ['торговая марка']),
-                packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
-                type: findValueInRow(originalRow, ['канал продаж']),
-                contacts: findValueInRow(originalRow, ['контакты']),
-                originalRow: originalRow, fact: (data as MapPoint).fact,
-                isGeocoding: needsGeocoding, lastUpdated: updateTimestamp, comment,
-                geocodingError: undefined 
-            };
-            
-            if (needsGeocoding) {
-                // IMPORTANT: Manually set status to geocoding. 
-                // The useEffect will NOT revert this because key won't change yet.
-                setStatus('geocoding');
-                onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
-            } else {
-                const finalPoint = { ...baseNewPoint, lat: manualCoords?.lat || baseNewPoint.lat, lon: manualCoords?.lon || baseNewPoint.lon };
-                onDataUpdate(oldKey, finalPoint, originalIndex);
+                if (!res.ok) { 
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || errData.details || 'Ошибка при сохранении.'); 
+                }
                 
-                setStatus('success');
-                if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
-                successTimeoutRef.current = setTimeout(() => {
-                    setStatus(currentStatus => (currentStatus === 'success' ? 'idle' : currentStatus));
-                }, 2000);
-            }
+                const needsGeocoding = isAddressChanged && !manualCoords;
+                const updateTimestamp = Date.now();
+                let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
+                const parsed = parseRussianAddress(editedAddress, distributor);
+
+                const baseNewPoint: MapPoint = {
+                    key: oldKey, 
+                    lat: needsGeocoding ? undefined : (data as MapPoint).lat, 
+                    lon: needsGeocoding ? undefined : (data as MapPoint).lon,
+                    status: 'match',
+                    name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
+                    address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
+                    brand: findValueInRow(originalRow, ['торговая марка']),
+                    packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
+                    type: findValueInRow(originalRow, ['канал продаж']),
+                    contacts: findValueInRow(originalRow, ['контакты']),
+                    originalRow: originalRow, fact: (data as MapPoint).fact,
+                    isGeocoding: needsGeocoding, lastUpdated: updateTimestamp, comment,
+                    geocodingError: undefined 
+                };
+                
+                if (needsGeocoding) {
+                    setStatus('geocoding');
+                    onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
+                } else {
+                    const finalPoint = { ...baseNewPoint, lat: manualCoords?.lat || baseNewPoint.lat, lon: manualCoords?.lon || baseNewPoint.lon };
+                    onDataUpdate(oldKey, finalPoint, originalIndex);
+                    
+                    setStatus('success');
+                    if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+                    successTimeoutRef.current = setTimeout(() => {
+                        setStatus(currentStatus => (currentStatus === 'success' ? 'idle' : currentStatus));
+                    }, 2000);
+                }
+            });
         } catch (e: any) {
             console.error("Save Error:", e);
             setStatus('error_saving'); 
@@ -619,18 +606,21 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         setStatus('deleting'); setError(null);
         try {
-            const res = await fetch('/api/delete-address', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rmName: rm, address: addressToDelete }),
+            // EXECUTE SEQUENTIALLY
+            await executeSequentially(async () => {
+                const res = await fetch('/api/delete-address', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rmName: rm, address: addressToDelete }),
+                });
+                if (!res.ok) { 
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.details || err.error || 'Ошибка при удалении.'); 
+                }
+                
+                onDelete(rm, addressToDelete); 
+                onClose();
             });
-            if (!res.ok) { 
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.details || err.error || 'Ошибка при удалении.'); 
-            }
-            
-            onDelete(rm, addressToDelete); 
-            onClose();
         } catch (e) { 
             setStatus('error_deleting'); 
             setError((e as Error).message); 
@@ -749,7 +739,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
                                 </div>
 
-                                {/* NEW: Explicit Coordinate Fields + SYNC BUTTON */}
                                 <div className="relative pt-1">
                                     <div className="flex justify-between items-center mb-2">
                                         <div className="flex gap-4 w-full">
@@ -774,7 +763,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                         </div>
                                     </div>
                                     
-                                    {/* SYNC BUTTON */}
                                     <button 
                                         onClick={handleCloudSync}
                                         disabled={isProcessing}
