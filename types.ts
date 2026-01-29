@@ -339,3 +339,28 @@ export interface SalesLeagueMember {
     trend: 'up' | 'down' | 'flat';
     badge?: 'champion' | 'rising_star' | 'grinder' | 'risk';
 }
+
+// --- QUEUE ACTION TYPES ---
+export type ActionQueueItem = 
+    | { 
+        type: 'UPDATE_ADDRESS'; 
+        id: string; // Unique ID for queue management
+        payload: { 
+            rmName: string; 
+            oldAddress: string; 
+            newAddress: string; 
+            comment?: string; 
+            lat?: number; 
+            lon?: number; 
+        };
+        retryCount: number;
+      }
+    | { 
+        type: 'DELETE_ADDRESS'; 
+        id: string;
+        payload: { 
+            rmName: string; 
+            address: string; 
+        };
+        retryCount: number;
+      };

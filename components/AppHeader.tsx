@@ -11,6 +11,7 @@ interface AppHeaderProps {
     updateJobStatus: UpdateJobStatus | null;
     onStartDataUpdate: () => void;
     activeClientsCount: number;
+    queueLength?: number; // Added queue feedback
 }
 
 export const AppHeader: React.FC<AppHeaderProps> = ({ 
@@ -20,7 +21,8 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
     activeModule, 
     updateJobStatus, 
     onStartDataUpdate, 
-    activeClientsCount 
+    activeClientsCount,
+    queueLength = 0
 }) => {
     return (
         <div className="sticky top-0 z-30 bg-primary-dark/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
@@ -36,6 +38,12 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                     <div className="flex items-center gap-2 px-3 py-1 bg-blue-500/20 text-blue-400 rounded-full border border-blue-500/30 text-xs font-bold animate-pulse">
                         <LoaderIcon className="w-3 h-3" />
                         <span>Сохранение в облако...</span>
+                    </div>
+                )}
+                {queueLength > 0 && (
+                    <div className="flex items-center gap-2 px-3 py-1 bg-indigo-500/20 text-indigo-400 rounded-full border border-indigo-500/30 text-xs font-bold animate-pulse">
+                        <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+                        <span>Очередь: {queueLength}</span>
                     </div>
                 )}
                 {!isCloudSaving && processingState.isProcessing && (

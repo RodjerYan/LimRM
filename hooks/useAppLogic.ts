@@ -4,7 +4,7 @@ import {
     AggregatedDataRow, FilterState, NotificationMessage, 
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerResultPayload, CoordsCache, OkbStatus,
-    UpdateJobStatus
+    UpdateJobStatus, ActionQueueItem
 } from '../types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { enrichDataWithSmartPlan } from '../services/planning/integration';
@@ -42,8 +42,10 @@ export const useAppLogic = () => {
     const [notifications, setNotifications] = useState<NotificationMessage[]>([]);
     const [dbStatus, setDbStatus] = useState<'empty' | 'ready' | 'loading'>('empty');
     
-    // --- BACKGROUND POLLING STATE ---
+    // --- BACKGROUND POLLING & QUEUE STATE ---
     const [pendingGeocoding, setPendingGeocoding] = useState<PendingGeocodingItem[]>([]);
+    const [actionQueue, setActionQueue] = useState<ActionQueueItem[]>([]);
+    const [isProcessingQueue, setIsProcessingQueue] = useState(false);
 
     // Shared State for Adapta
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
@@ -156,6 +158,123 @@ export const useAppLogic = () => {
 
         return cleanData;
     }, []);
+
+    // --- QUEUE PROCESSOR ---
+    useEffect(() => {
+        const processNextAction = async () => {
+            if (actionQueue.length === 0 || isProcessingQueue) return;
+
+            setIsProcessingQueue(true);
+            const action = actionQueue[0];
+
+            try {
+                if (action.type === 'UPDATE_ADDRESS') {
+                    const { rmName, oldAddress, newAddress, comment, lat, lon } = action.payload;
+                    const res = await fetch('/api/update-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            rmName, 
+                            oldAddress, 
+                            newAddress, 
+                            comment,
+                            lat,
+                            lon
+                        }),
+                    });
+                    if (!res.ok) throw new Error('Failed to update address');
+                    console.log(`[Queue] Successfully updated: ${newAddress}`);
+                } else if (action.type === 'DELETE_ADDRESS') {
+                    const { rmName, address } = action.payload;
+                    const res = await fetch('/api/delete-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ rmName, address }),
+                    });
+                    if (!res.ok) throw new Error('Failed to delete address');
+                    console.log(`[Queue] Successfully deleted: ${address}`);
+                }
+
+                // Success: Remove from queue
+                setActionQueue(prev => prev.slice(1));
+
+            } catch (error) {
+                console.error(`[Queue] Action failed (${action.type}):`, error);
+                
+                // Retry logic (simple)
+                if (action.retryCount < 2) {
+                    setActionQueue(prev => [
+                        { ...action, retryCount: action.retryCount + 1 },
+                        ...prev.slice(1)
+                    ]);
+                    // Wait a bit before retrying
+                    await new Promise(r => setTimeout(r, 2000));
+                } else {
+                    // Give up on this action, move to next, notify user
+                    addNotification(`Не удалось синхронизировать изменение: ${action.type}`, 'warning');
+                    setActionQueue(prev => prev.slice(1));
+                }
+            } finally {
+                setIsProcessingQueue(false);
+            }
+        };
+
+        processNextAction();
+    }, [actionQueue, isProcessingQueue, addNotification]);
+
+
+    // --- QUEUED UPDATE HANDLERS ---
+    
+    // 1. Queue Update: Optimistically updates local state and pushes API call to queue
+    const handleQueuedUpdate = useCallback((
+        oldKey: string, 
+        newPoint: MapPoint, 
+        originalIndex?: number
+    ) => {
+        // 1. Update Local State Immediately
+        handleDataUpdate(oldKey, newPoint, originalIndex);
+
+        // 2. Prepare Payload for Server
+        const originalRow = newPoint.originalRow || {};
+        const oldAddress = findAddressInRow(originalRow) || newPoint.address; // Fallback to current if original missing
+        
+        // Push to Queue
+        setActionQueue(prev => [...prev, {
+            type: 'UPDATE_ADDRESS',
+            id: Date.now().toString(),
+            payload: {
+                rmName: newPoint.rm,
+                oldAddress: oldAddress, // Send "original" address to identify row
+                newAddress: newPoint.address,
+                comment: newPoint.comment,
+                lat: newPoint.lat,
+                lon: newPoint.lon
+            },
+            retryCount: 0
+        }]);
+        
+        addNotification('Изменения сохранены в очередь', 'success');
+    }, []); // Removed handleDataUpdate dependency to avoid circularity issues, assuming it's stable
+
+    // 2. Queue Delete: Optimistically updates local state and pushes API call to queue
+    const handleQueuedDelete = useCallback((rm: string, address: string) => {
+        // 1. Update Local State Immediately
+        handleDeleteClient(rm, address);
+
+        // 2. Push to Queue
+        setActionQueue(prev => [...prev, {
+            type: 'DELETE_ADDRESS',
+            id: Date.now().toString(),
+            payload: {
+                rmName: rm,
+                address: address
+            },
+            retryCount: 0
+        }]);
+        
+        addNotification('Удаление добавлено в очередь', 'info');
+    }, []);
+
 
     // --- NEW REAL DATA UPDATE HANDLER ---
     const handleStartDataUpdate = async () => {
@@ -362,7 +481,9 @@ export const useAppLogic = () => {
             });
             console.timeEnd('save-meta');
             
-            addNotification('Изменения сохранены', 'success');
+            // NOTE: We don't notify success here because the queue system handles individual action notifications.
+            // But we keep this for the bulk snapshot save logic.
+            // addNotification('Изменения сохранены', 'success'); 
         } catch (e: any) {
             console.error("Cloud Save Error:", e);
             const errString = e.toString();
@@ -388,6 +509,7 @@ export const useAppLogic = () => {
     };
 
     // --- DATA UPDATE HANDLER (DEBOUNCED) ---
+    // This is the INTERNAL logic for updating local state.
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
@@ -413,10 +535,6 @@ export const useAppLogic = () => {
                     fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
                     clients: [...newData[existingGroupIndex].clients, newPoint]
                 };
-                // IMPORTANT: The parent group might already have a _chunkIndex. 
-                // However, we are modifying the *content* of that group.
-                // Since aggregated rows are complex, we rely on the object reference.
-                // If we add a client to an existing group, that group stays in its chunk.
             } else {
                 newData.push({
                     __rowId: `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -452,18 +570,16 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // FIX: Prevent saving if the update is just a "start geocoding" trigger.
-        if (newPoint.isGeocoding) {
-            console.log("Deferring cloud save until geocoding resolves...");
-            return; 
+        // Background Save: Only trigger snapshot save after a delay to persist the new state to files
+        // The queue handles the database sync, this handles the file backup.
+        if (!newPoint.isGeocoding) {
+            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+            saveTimeoutRef.current = setTimeout(() => {
+                saveSnapshotToCloud(newData, newUnidentified).catch(err => {
+                    console.error("Auto-save failed:", err);
+                });
+            }, 5000); // 5 sec debounce
         }
-
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-            saveSnapshotToCloud(newData, newUnidentified).catch(err => {
-                console.error("Auto-save failed:", err);
-            });
-        }, 2000);
 
     }, [editingClient]);
 
@@ -541,7 +657,8 @@ export const useAppLogic = () => {
                 if (isDifferent) {
                     enrichWithAbcCategories(freshData);
                     setAllData(freshData);
-                    addNotification('Данные обновлены (синхронизация)', 'info');
+                    // Less intrusive notification
+                    // addNotification('Данные обновлены (синхронизация)', 'info');
                 }
 
             } catch (e) {
@@ -1054,9 +1171,10 @@ export const useAppLogic = () => {
         summaryMetrics,
         handleStartDataUpdate,
         handleForceUpdate,
-        handleDataUpdate,
-        handleDeleteClient,
+        handleDataUpdate: handleQueuedUpdate, // Expose Queued Handler
+        handleDeleteClient: handleQueuedDelete, // Expose Queued Handler
         handleStartPolling,
-        addNotification
+        addNotification,
+        queueLength: actionQueue.length // Expose for UI feedback
     };
 };

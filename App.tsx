@@ -53,7 +53,8 @@ const App: React.FC = () => {
         handleForceUpdate,
         handleDataUpdate,
         handleDeleteClient,
-        handleStartPolling
+        handleStartPolling,
+        queueLength // Get queue info
     } = useAppLogic();
 
     return (
@@ -69,6 +70,7 @@ const App: React.FC = () => {
                     updateJobStatus={updateJobStatus}
                     onStartDataUpdate={handleStartDataUpdate}
                     activeClientsCount={allActiveClients.length}
+                    queueLength={queueLength} // Pass to header
                 />
 
                 <div className="py-8 px-4 lg:px-8">
@@ -144,9 +146,9 @@ const App: React.FC = () => {
                     onClose={() => setEditingClient(null)} 
                     onBack={() => setEditingClient(null)} 
                     data={editingClient} 
-                    onDataUpdate={handleDataUpdate} 
+                    onDataUpdate={handleDataUpdate} // Now handles queue
                     onStartPolling={handleStartPolling} 
-                    onDelete={handleDeleteClient} 
+                    onDelete={handleDeleteClient} // Now handles queue
                     globalTheme="dark" 
                 />
             )}
