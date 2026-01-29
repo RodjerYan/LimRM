@@ -64,6 +64,38 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
     return '';
 };
 
+// --- NEW: Channel Auto-Detection Logic ---
+const detectChannelByName = (name: string): string => {
+    const n = name.toLowerCase();
+    
+    // 1. Internet / Marketplace
+    if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс')) {
+        return 'Интернет-канал';
+    }
+    
+    // 2. Breeder / Kennel
+    if (n.includes('питомник') || n.includes('заводчик') || n.includes('клуб ') || n.includes('п-к') || n.includes('приют') || n.includes('кинолог')) {
+        return 'Бридер канал';
+    }
+
+    // 3. Vet
+    if (n.includes('вет') || n.includes('клиника') || n.includes('госпиталь') || n.includes('врач') || n.includes('аптека')) {
+        return 'Ветеринарный канал';
+    }
+
+    // 4. FMCG / Chains (Major ones)
+    if (n.includes('ашан') || n.includes('лента') || n.includes('магнит') || n.includes('пятерочка') || n.includes('перекресток') || n.includes('окей') || n.includes('метро') || n.includes('гипермаркет') || n.includes('супермаркет')) {
+        return 'FMCG';
+    }
+
+    // 5. Zoo Retail (Default for IP and standard names)
+    if (n.includes('ип ') || n.includes('зоо') || n.includes('магазин') || n.includes('лавка') || n.includes('корм')) {
+        return 'Зоо розница';
+    }
+
+    return 'Не определен';
+};
+
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
@@ -281,8 +313,14 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
+        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
+
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) channel = 'Не определен';
+        
+        // AUTO-DETECT CHANNEL if missing or too short
+        if (!channel || channel.length < 2) {
+            channel = detectChannelByName(clientName);
+        }
 
         const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
@@ -305,7 +343,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
 
-        const clientName = String(row[state_clientNameHeader || ''] || 'ТТ').trim();
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
         const uniqueClientKey = (normName.length > 2 && normName !== 'тт') 
             ? `${normAddr}#${normName}` 

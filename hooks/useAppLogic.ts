@@ -909,6 +909,23 @@ export const useAppLogic = () => {
         return Array.from(clientsMap.values());
     }, [filtered]);
 
+    // --- COMBINED UNIDENTIFIED LIST FOR UI ---
+    // Merges parsing errors (unidentifiedRows) with geocoding failures (missing coords in valid rows)
+    const combinedUnidentifiedRows = useMemo(() => {
+        const parsingFailures = unidentifiedRows;
+        
+        // Find rows that were parsed successfully but have NO coordinates and are NOT pending geocoding
+        const geocodingFailures = allData.flatMap(group => group.clients)
+            .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
+            .map(c => ({
+                rm: c.rm,
+                rowData: c.originalRow || {},
+                originalIndex: typeof c.key === 'string' && c.key.startsWith('row_') ? -1 : 9999 // fallback index
+            } as UnidentifiedRow));
+
+        return [...parsingFailures, ...geocodingFailures];
+    }, [unidentifiedRows, allData]);
+
     const activeClientAddressSet = useMemo(() => {
         const addressSet = new Set<string>();
         allActiveClients.forEach(client => {
@@ -961,7 +978,7 @@ export const useAppLogic = () => {
         okbData, setOkbData,
         okbStatus, setOkbStatus,
         okbRegionCounts,
-        unidentifiedRows,
+        unidentifiedRows: combinedUnidentifiedRows, // Pass combined list to UI
         filters, setFilters,
         processingState, setProcessingState,
         selectedDetailsRow, setSelectedDetailsRow,
