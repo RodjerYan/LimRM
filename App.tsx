@@ -53,8 +53,7 @@ const App: React.FC = () => {
         handleForceUpdate,
         handleDataUpdate,
         handleDeleteClient,
-        handleStartPolling,
-        executeSequentially // Import execution queue
+        handleStartPolling
     } = useAppLogic();
 
     return (
@@ -148,7 +147,6 @@ const App: React.FC = () => {
                     onDataUpdate={handleDataUpdate} 
                     onStartPolling={handleStartPolling} 
                     onDelete={handleDeleteClient} 
-                    executeSequentially={executeSequentially}
                     globalTheme="dark" 
                 />
             )}

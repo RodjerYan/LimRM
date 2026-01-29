@@ -69,11 +69,6 @@ export const useAppLogic = () => {
     // SMART SAVE: Cache for the content of the last saved/loaded chunks
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
 
-    // --- GLOBAL QUEUE SYSTEM ---
-    // Stores functions that return Promises. Executed one by one.
-    const operationQueueRef = useRef<(() => Promise<void>)[]>([]);
-    const isQueueRunningRef = useRef(false);
-
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<AggregatedDataRow | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
@@ -94,44 +89,6 @@ export const useAppLogic = () => {
         const newNotification: NotificationMessage = { id: Date.now(), message, type };
         setNotifications(prev => [...prev, newNotification]);
         setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNotification.id)), 5000);
-    }, []);
-
-    // --- QUEUE PROCESSOR ---
-    const processQueue = async () => {
-        if (isQueueRunningRef.current) return;
-        
-        isQueueRunningRef.current = true;
-
-        while (operationQueueRef.current.length > 0) {
-            const task = operationQueueRef.current.shift();
-            if (task) {
-                try {
-                    await task();
-                } catch (err) {
-                    console.error("Queue task failed:", err);
-                    // We catch here to ensure the queue keeps processing subsequent tasks
-                }
-            }
-        }
-
-        isQueueRunningRef.current = false;
-    };
-
-    // Public method to add task to queue
-    // Returns a Promise that resolves when the specific task is completed
-    const executeSequentially = useCallback(async <T>(task: () => Promise<T>): Promise<T> => {
-        return new Promise<T>((resolve, reject) => {
-            const wrappedTask = async () => {
-                try {
-                    const result = await task();
-                    resolve(result);
-                } catch (e) {
-                    reject(e);
-                }
-            };
-            operationQueueRef.current.push(wrappedTask);
-            processQueue();
-        });
     }, []);
 
     // --- HELPER: APPLY CACHE TO DATA ---
@@ -238,8 +195,7 @@ export const useAppLogic = () => {
     };
 
     // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И STICKY-ГРУППИРОВКОЙ) ---
-    // Modified to use the queue system implicitly if called via timeout, 
-    // but we should wrap the internal logic to respect `isSavingRef`.
+    // UPDATED: Now uses "Sticky Chunks" strategy. Rows stay in their original chunks even if data is deleted.
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         if (isSavingRef.current) {
             console.log("%c[Save] Save in progress. Queuing next run.", "color: orange");
@@ -268,6 +224,8 @@ export const useAppLogic = () => {
             
             console.time('chunk-generation');
             
+            // --- STICKY CHUNKING LOGIC ---
+            // 1. Organize existing rows into their assigned chunks
             const stickyChunksMap = new Map<number, AggregatedDataRow[]>();
             const unassignedRows: AggregatedDataRow[] = [];
             let maxChunkIndex = -1;
@@ -284,12 +242,19 @@ export const useAppLogic = () => {
                 }
             });
 
+            // 2. Process Unassigned Rows (pack them into new or last chunks)
+            // If the last chunk has space, we could append, but for simplicity/stability, we can just start new chunks
+            // starting from maxChunkIndex + 1.
+            
             let currentPackIndex = maxChunkIndex + 1;
             let currentChunkRows: AggregatedDataRow[] = [];
+            // Dummy start for sizing, we reset for the loop
             let currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
 
+            // If we have unassigned rows, pack them dynamically
             if (unassignedRows.length > 0) {
                 for (const row of unassignedRows) {
+                    // Assign the new index permanently to the row object
                     row._chunkIndex = currentPackIndex;
                     
                     const rowStr = JSON.stringify(row);
@@ -300,23 +265,34 @@ export const useAppLogic = () => {
                         currentPackIndex++;
                         currentChunkRows = [];
                         currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
-                        row._chunkIndex = currentPackIndex; 
+                        row._chunkIndex = currentPackIndex; // Re-assign to next chunk
                     }
                     
                     currentChunkRows.push(row);
                     currentSize += rowSize;
                 }
+                // Push the last partial chunk
                 if (currentChunkRows.length > 0) {
                     stickyChunksMap.set(currentPackIndex, currentChunkRows);
                 }
             }
 
+            // 3. Serialize all chunks from the Map
+            // Note: We iterate based on keys to handle potentially empty intermediate chunks if that ever happens
+            // (though in this logic, we only store existing rows).
+            // If a chunk index exists in availableSlots but is NOT in stickyChunksMap (because all rows were deleted),
+            // we should save an empty chunk to clear it on server.
+            
             const maxSlotIndex = Math.max(maxChunkIndex, availableSlots.length - 1, currentPackIndex);
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            const chunksContentCache = new Map<number, string>(); 
+            const chunksContentCache = new Map<number, string>(); // To update ref later
 
             for (let i = 0; i <= maxSlotIndex; i++) {
+                // If we have rows for this index, save them. If not, save empty array (clearing the file).
+                // Unless it's beyond the range of known data AND known files, then we stop.
+                
                 const rows = stickyChunksMap.get(i) || [];
+                // Skip if no rows AND no existing file (it's a gap past the end)
                 if (rows.length === 0 && i >= availableSlots.length && i > currentPackIndex) continue;
 
                 const chunkObj = { chunkIndex: i, rows: rows };
@@ -336,6 +312,7 @@ export const useAppLogic = () => {
 
             if (chunksToUpload.length === 0) {
                 console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
+                // Update cache ref just in case
                 chunksContentCache.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
                 });
@@ -402,8 +379,7 @@ export const useAppLogic = () => {
             if (saveQueuedRef.current && !hasFatalError) {
                 console.log("%c[Queue] Executing queued save...", "color: cyan");
                 saveQueuedRef.current = false;
-                // Add the queued save to the processing queue to maintain order
-                executeSequentially(() => saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current));
+                saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
             } else {
                 saveQueuedRef.current = false; 
                 setIsCloudSaving(false); 
@@ -428,12 +404,19 @@ export const useAppLogic = () => {
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
             
+            // When moving from Unidentified to Aggregated, we treat it as a "New" row for chunking purposes
+            // It will be assigned a chunk index during the next save.
+            
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
                     ...newData[existingGroupIndex],
                     fact: newData[existingGroupIndex].fact + (newPoint.fact || 0),
                     clients: [...newData[existingGroupIndex].clients, newPoint]
                 };
+                // IMPORTANT: The parent group might already have a _chunkIndex. 
+                // However, we are modifying the *content* of that group.
+                // Since aggregated rows are complex, we rely on the object reference.
+                // If we add a client to an existing group, that group stays in its chunk.
             } else {
                 newData.push({
                     __rowId: `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -469,6 +452,7 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
+        // FIX: Prevent saving if the update is just a "start geocoding" trigger.
         if (newPoint.isGeocoding) {
             console.log("Deferring cloud save until geocoding resolves...");
             return; 
@@ -476,13 +460,12 @@ export const useAppLogic = () => {
 
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = setTimeout(() => {
-            // WRAP SAVE IN QUEUE
-            executeSequentially(() => saveSnapshotToCloud(newData, newUnidentified)).catch(err => {
+            saveSnapshotToCloud(newData, newUnidentified).catch(err => {
                 console.error("Auto-save failed:", err);
             });
         }, 2000);
 
-    }, [editingClient, executeSequentially]); // Depend on executeSequentially
+    }, [editingClient]);
 
     const handleBatchDataUpdate = useCallback((completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[]) => {
         let currentAllData = allDataRef.current;
@@ -534,93 +517,328 @@ export const useAppLogic = () => {
         }
 
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => {
-            // WRAP SAVE IN QUEUE
-             executeSequentially(() => saveSnapshotToCloud(currentAllData, currentUnidentified));
-        }, 2000);
+        saveTimeoutRef.current = setTimeout(() => saveSnapshotToCloud(currentAllData, currentUnidentified), 2000);
 
-    }, [editingClient, executeSequentially]);
+    }, [editingClient]);
 
-    // ... (Polling logic remains same)
-    
-    // Extracted Polling Logic from original hook
-    const handleStartPolling = useCallback((rmName: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
-        setPendingGeocoding(prev => [...prev, { rm: rmName, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
-    }, []);
-
+    // --- LIVE SYNC POLLING ---
     useEffect(() => {
-        const interval = setInterval(() => {
+        const syncData = async () => {
+            if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
+            if (processingState.isProcessing) return;
+
+            try {
+                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                if (!res.ok) return;
+                const cacheData: CoordsCache = await res.json();
+
+                const freshData = applyCacheToData(allDataRef.current, cacheData);
+                
+                // Compare to see if we actually need to update state
+                const isDifferent = JSON.stringify(freshData.map(r => r.fact)) !== JSON.stringify(allDataRef.current.map(r => r.fact)) || 
+                                    freshData.length !== allDataRef.current.length;
+
+                if (isDifferent) {
+                    enrichWithAbcCategories(freshData);
+                    setAllData(freshData);
+                    addNotification('Данные обновлены (синхронизация)', 'info');
+                }
+
+            } catch (e) {
+                console.error("Auto-sync failed", e);
+            }
+        };
+
+        const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
+        return () => clearInterval(intervalId);
+    }, [processingState.isProcessing, applyCacheToData]);
+
+    // --- BACKGROUND GEOCODING POLLING ---
+    useEffect(() => {
+        const poll = async () => {
             if (pendingGeocoding.length === 0) return;
 
-            setPendingGeocoding(currentQueue => {
-                const nextQueue: PendingGeocodingItem[] = [];
-                const completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[] = [];
+            const updatedPending: PendingGeocodingItem[] = [];
+            const completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[] = [];
 
-                // Process up to 3 items concurrently to avoid spamming server
-                const batch = currentQueue.slice(0, 3);
-                const remaining = currentQueue.slice(3);
+            for (const item of pendingGeocoding) {
+                if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
+                    addNotification(`Тайм-аут геокодинга для: ${item.address}`, 'warning');
+                    const errorPoint = { ...item.basePoint, isGeocoding: false, geocodingError: 'Превышено время ожидания.' };
+                    completedItems.push({ oldKey: item.oldKey, point: errorPoint, originalIndex: item.originalIndex });
+                    continue;
+                }
 
-                batch.forEach(item => {
-                    if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
-                        // Timeout
-                        completedItems.push({
-                            oldKey: item.oldKey,
-                            point: { ...item.basePoint, isGeocoding: false, coordStatus: 'invalid', geocodingError: 'Timeout' },
-                            originalIndex: item.originalIndex
-                        });
-                        return;
+                try {
+                    const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(item.rm)}&address=${encodeURIComponent(item.address)}&_t=${Date.now()}`, {
+                        headers: { 'Cache-Control': 'no-cache' }
+                    });
+
+                    // ERROR 404 FIX: Stop infinite polling if 404
+                    if (res.status === 404) {
+                        console.warn(`Address not found (404), stopping poll: ${item.address}`);
+                        // Add to completed as failure or keep in pending with max attempts to expire it
+                        updatedPending.push({ ...item, attempts: MAX_GEOCODING_ATTEMPTS + 1 });
+                        continue;
                     }
 
-                    // Check server
-                    fetch(`/api/get-cached-address?rmName=${encodeURIComponent(item.rm)}&address=${encodeURIComponent(item.address)}&t=${Date.now()}`)
-                        .then(res => {
-                            if (res.ok) return res.json();
-                            throw new Error('Network error');
-                        })
-                        .then(data => {
-                            if (data && typeof data.lat === 'number') {
-                                // Success
-                                const newPoint: MapPoint = {
-                                    ...item.basePoint,
-                                    lat: data.lat,
-                                    lon: data.lon,
-                                    isGeocoding: false,
-                                    coordStatus: 'confirmed',
-                                    comment: data.comment || item.basePoint.comment
-                                };
-                                handleBatchDataUpdate([{ oldKey: item.oldKey, point: newPoint, originalIndex: item.originalIndex }]);
-                            } else {
-                                // Still pending
-                                setPendingGeocoding(prev => {
-                                    // Check if still in queue (wasn't cancelled)
-                                    if (!prev.find(p => p.oldKey === item.oldKey)) return prev;
-                                    // Update attempts
-                                    return prev.map(p => p.oldKey === item.oldKey ? { ...p, attempts: p.attempts + 1 } : p);
-                                });
-                            }
-                        })
-                        .catch(err => {
-                            console.error("Polling check failed", err);
-                             setPendingGeocoding(prev => {
-                                if (!prev.find(p => p.oldKey === item.oldKey)) return prev;
-                                return prev.map(p => p.oldKey === item.oldKey ? { ...p, attempts: p.attempts + 1 } : p);
-                            });
-                        });
-                });
+                    if (res.ok) {
+                        const result = await res.json();
+                        // Handle explicit "not found" (null) response which is now 200 OK
+                        if (!result) {
+                             updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                             continue;
+                        }
+
+                        const hasCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
+
+                        if (hasCoords) {
+                            const successPoint = { ...item.basePoint, lat: result.lat, lon: result.lon, isGeocoding: false, comment: result.comment || item.basePoint.comment };
+                            completedItems.push({ oldKey: item.oldKey, point: successPoint, originalIndex: item.originalIndex });
+                            addNotification(`Координаты для "${item.address.substring(0, 30)}..." найдены`, 'success');
+                        } else {
+                            updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                        }
+                    } else {
+                        updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                    }
+                } catch (e) {
+                    updatedPending.push({ ...item, attempts: item.attempts + 1 });
+                }
+            }
+            
+            if (completedItems.length > 0) {
+                handleBatchDataUpdate(completedItems);
+            }
+            setPendingGeocoding(updatedPending);
+        };
+
+        const intervalId = setInterval(poll, GEOCODING_POLLING_INTERVAL_MS);
+        return () => clearInterval(intervalId);
+    }, [pendingGeocoding]);
+
+    // --- NORMALIZE HELPER ---
+    const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
+        if (!Array.isArray(rows)) return [];
+        const result: AggregatedDataRow[] = [];
+        
+        const safeFloat = (v: any) => {
+            if (typeof v === 'number') return v;
+            if (typeof v === 'string') {
+                const f = parseFloat(v.replace(',', '.'));
+                return isNaN(f) ? undefined : f;
+            }
+            return undefined;
+        };
+        
+        const isValidCoord = (n: any) => typeof n === 'number' && !isNaN(n) && n !== 0;
+
+        rows.forEach((row, index) => {
+            if (!row) return;
+            const brandRaw = String(row.brand || '').trim();
+            const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
+
+            const generateStableKey = (base: any, suffix: string | number) => {
+                const baseStr = base.key || base.address || `idx_${index}`;
+                return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
+            };
+
+            const normalizeClient = (c: any, cIdx: number) => {
+                const clientObj = { ...c };
+                const original = c.originalRow || {}; 
+
+                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
+                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
+
+                if (!isValidCoord(clientObj.lat)) {
+                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
+                                    safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
+                }
+                if (!isValidCoord(clientObj.lon)) {
+                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
+                                    safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
+                }
                 
-                // Return everything; the promises will update state later.
-                // We actually don't want to remove them from state here, only update them via the promises.
-                // But this `setPendingGeocoding` logic is tricky inside interval. 
-                // Better approach: Just iterate over the ref or current state without modifying it directly inside the loop,
-                // and let the promise callbacks update the state (remove item on success).
-                return currentQueue; 
+                if (!clientObj.key) {
+                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
+                }
+                return clientObj;
+            };
+
+            if (hasMultipleBrands) {
+                const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
+                if (parts.length > 1) {
+                    const splitFactor = 1 / parts.length;
+                    parts.forEach((brandPart, idx) => {
+                        const regionName = row.region || 'Неизвестный регион';
+                        result.push({
+                            ...row,
+                            // Preserve _chunkIndex if available
+                            _chunkIndex: row._chunkIndex,
+                            key: generateStableKey(row, `spl_${idx}`),
+                            brand: brandPart,
+                            clientName: `${regionName}: ${brandPart}`,
+                            fact: (row.fact || 0) * splitFactor,
+                            potential: (row.potential || 0) * splitFactor,
+                            growthPotential: (row.growthPotential || 0) * splitFactor,
+                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
+                        });
+                    });
+                    return;
+                }
+            }
+            
+            let clientSource = row.clients;
+            if (!Array.isArray(clientSource) || clientSource.length === 0) {
+                 clientSource = [row];
+            }
+
+            const normalizedClients = clientSource.map(normalizeClient);
+            const regionName = row.region || 'Неизвестный регион';
+            const brandName = row.brand || 'Без бренда';
+            const finalClientName = row.clientName || `${regionName}: ${brandName}`;
+
+            result.push({
+                ...row,
+                // Preserve _chunkIndex if available
+                _chunkIndex: row._chunkIndex,
+                key: row.key || generateStableKey(row, 'm'),
+                clientName: finalClientName,
+                clients: normalizedClients
+            });
+        });
+        return result;
+    }, []);
+
+    const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
+        try {
+            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
+            
+            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
+            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
+            
+            let fileList = await listRes.json();
+            if (!Array.isArray(fileList) || fileList.length === 0) return false;
+
+            fileList.sort((a: any, b: any) => {
+                const nameA = a.name || '';
+                const nameB = b.name || '';
+                const numA = parseInt(nameA.match(/\d+/)?.[0] || '0', 10);
+                const numB = parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
+                return numA - numB;
             });
 
-        }, GEOCODING_POLLING_INTERVAL_MS);
+            let loadedCount = 0;
+            const total = fileList.length;
+            let accumulatedRows: AggregatedDataRow[] = [];
+            let loadedMeta: any = null;
+            
+            lastSavedChunksRef.current.clear();
 
-        return () => clearInterval(interval);
-    }, [pendingGeocoding, handleBatchDataUpdate]);
+            for (let i = 0; i < total; i++) {
+                const file = fileList[i];
+                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
+                if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
+                const text = await res.text();
 
+                lastSavedChunksRef.current.set(i, text);
+
+                if (text.length >= 1048576) {
+                    addNotification('Снимок поврежден (лимит размера)', 'warning');
+                    return false;
+                }
+                
+                const chunkData = JSON.parse(text);
+                let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                
+                // IMPORTANT: Restore _chunkIndex based on file sequence
+                // This ensures that when we delete rows, we know exactly which chunk they came from
+                // preventing a full repack.
+                const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
+                newRows.forEach(row => row._chunkIndex = chunkIndex);
+
+                if (newRows.length > 0) {
+                    accumulatedRows.push(...normalize(newRows));
+                }
+                if (chunkData.meta) loadedMeta = chunkData.meta;
+                
+                loadedCount++;
+                setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
+            }
+
+            if (accumulatedRows.length > 0 || loadedMeta) {
+                // BLOCKING CACHE SYNC: Apply cache *before* setting state
+                setProcessingState(prev => ({ ...prev, message: 'Проверка удаленных записей...' }));
+                
+                let finalData = accumulatedRows;
+                try {
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        finalData = applyCacheToData(accumulatedRows, cacheData);
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch cache during load, using snapshot data only:", e);
+                }
+
+                enrichWithAbcCategories(finalData);
+                
+                setAllData(finalData);
+                
+                const safeMeta = loadedMeta || {};
+                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
+                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
+                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
+                
+                await saveAnalyticsState({
+                    allData: finalData,
+                    unidentifiedRows: safeMeta.unidentifiedRows || [],
+                    okbRegionCounts: safeMeta.okbRegionCounts || {},
+                    totalRowsProcessed: totalRowsProcessedRef.current,
+                    versionHash: versionHash,
+                    okbData: [], okbStatus: null
+                });
+                
+                localStorage.setItem('last_snapshot_version', versionHash);
+                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
+                return true;
+            }
+            return false;
+        } catch (e) { 
+            console.error("Snapshot error:", e); 
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
+        }
+        return false;
+    }, [normalize, addNotification, applyCacheToData]);
+
+    const handleForceUpdate = useCallback(async () => {
+        if (processingState.isProcessing) return;
+        
+        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
+        
+        try {
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.ok) {
+                const serverMeta = await metaRes.json();
+                if (serverMeta?.versionHash) {
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
+                } else {
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
+                }
+            } else {
+               throw new Error("Meta fetch failed");
+            }
+        } catch (e) {
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка соединения' }));
+        }
+    }, [processingState.isProcessing, handleDownloadSnapshot]);
+
+    const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
+        addNotification(`Адрес "${address.substring(0, 30)}..." отправлен на геокодинг`, 'info');
+        handleDataUpdate(oldKey, basePoint, originalIndex);
+        setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
+    }, [handleDataUpdate, addNotification]);
 
     const handleDeleteClient = useCallback((rmName: string, address: string) => {
         const normAddress = normalizeAddress(address);
@@ -638,6 +856,7 @@ export const useAppLogic = () => {
                 wasModified = true;
                 const newFact = newClients.reduce((sum, c) => sum + (c.fact || 0), 0);
                 
+                // Keep the chunk index of the group so it stays in the same file
                 return {
                     ...group,
                     clients: newClients,
@@ -666,17 +885,149 @@ export const useAppLogic = () => {
 
             if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
             saveTimeoutRef.current = setTimeout(() => {
-                // WRAP SAVE IN QUEUE
-                executeSequentially(() => saveSnapshotToCloud(newData, newUnidentified)).catch(err => {
+                saveSnapshotToCloud(newData, newUnidentified).catch(err => {
                     console.error("Auto-save failed after delete:", err);
                 });
             }, 1000);
         }
-    }, [executeSequentially]);
+    }, []);
 
-    // ... (Init logic remains same) ...
-    // Placeholder for init logic
-    const handleForceUpdate = useCallback(() => { /* ... */ }, []);
+    // --- INIT ---
+    useEffect(() => {
+        const init = async () => {
+            setDbStatus('loading');
+            const local = await loadAnalyticsState();
+            
+            // BLOCKING CACHE SYNC FOR LOCAL DATA: Apply cache *before* setting state
+            if (local?.allData?.length > 0) {
+                let validatedLocal = normalize(local.allData);
+                
+                try {
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        validatedLocal = applyCacheToData(validatedLocal, cacheData);
+                    }
+                } catch (e) {
+                    console.warn("Failed to sync cache on init, using stored data.");
+                }
+
+                enrichWithAbcCategories(validatedLocal);
+                setAllData(validatedLocal);
+                setUnidentifiedRows(local.unidentifiedRows || []);
+                setOkbRegionCounts(local.okbRegionCounts || {});
+                setDbStatus('ready');
+            }
+            
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            if (metaRes.ok) {
+                const serverMeta = await metaRes.json();
+                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    setDbStatus('ready');
+                }
+            }
+        };
+        init();
+    }, [handleDownloadSnapshot, normalize, applyCacheToData]);
+
+    // --- FILTERED DATA ---
+    const filtered = useMemo(() => {
+        let processedData = allData;
+        if (filterStartDate || filterEndDate) {
+            processedData = allData.map(row => {
+                if (!row.monthlyFact || Object.keys(row.monthlyFact).length === 0) return row; 
+                let newRowFact = 0;
+                Object.entries(row.monthlyFact).forEach(([dateKey, val]) => {
+                    if (dateKey === 'unknown') return; 
+                    if (filterStartDate && dateKey < filterStartDate) return;
+                    if (filterEndDate && dateKey > filterEndDate) return;
+                    newRowFact += val;
+                });
+                const activeClients = row.clients.map(client => {
+                    if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client; 
+                    let clientSum = 0;
+                    Object.entries(client.monthlyFact).forEach(([d, v]) => {
+                        if (d === 'unknown') return;
+                        if (filterStartDate && d < filterStartDate) return;
+                        if (filterEndDate && d > filterEndDate) return;
+                        clientSum += v;
+                    });
+                    return { ...client, fact: clientSum };
+                }).filter(c => (c.fact || 0) > 0);
+                return { ...row, fact: newRowFact, clients: activeClients };
+            }).filter(r => r.fact > 0); 
+        }
+        const smart = enrichDataWithSmartPlan(processedData, okbRegionCounts, 15, new Set());
+        return applyFilters(smart, filters);
+    }, [allData, filters, okbRegionCounts, filterStartDate, filterEndDate]);
+
+    const allActiveClients = useMemo(() => {
+        const clientsMap = new Map<string, MapPoint>();
+        filtered.forEach(row => {
+            if (row && Array.isArray(row.clients)) {
+                row.clients.forEach(c => { if (c && c.key) clientsMap.set(c.key, c); });
+            }
+        });
+        return Array.from(clientsMap.values());
+    }, [filtered]);
+
+    // --- COMBINED UNIDENTIFIED LIST FOR UI ---
+    // Merges parsing errors (unidentifiedRows) with geocoding failures (missing coords in valid rows)
+    const combinedUnidentifiedRows = useMemo(() => {
+        const parsingFailures = unidentifiedRows;
+        
+        // Find rows that were parsed successfully but have NO coordinates and are NOT pending geocoding
+        const geocodingFailures = allData.flatMap(group => group.clients)
+            .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
+            .map(c => ({
+                rm: c.rm,
+                rowData: c.originalRow || {},
+                originalIndex: typeof c.key === 'string' && c.key.startsWith('row_') ? -1 : 9999 // fallback index
+            } as UnidentifiedRow));
+
+        return [...parsingFailures, ...geocodingFailures];
+    }, [unidentifiedRows, allData]);
+
+    const activeClientAddressSet = useMemo(() => {
+        const addressSet = new Set<string>();
+        allActiveClients.forEach(client => {
+            if (client.address) {
+                addressSet.add(normalizeAddress(client.address));
+            }
+        });
+        return addressSet;
+    }, [allActiveClients]);
+
+    const mapPotentialClients = useMemo(() => {
+        if (!okbData || okbData.length === 0) return [];
+        
+        const coordsOnly = okbData.filter(r => {
+            const lat = r.lat;
+            const lon = r.lon;
+            return lat && lon && !isNaN(Number(lat)) && !isNaN(Number(lon)) && Number(lat) !== 0;
+        });
+
+        const potentialOnly = coordsOnly.filter(r => {
+            const addr = findAddressInRow(r);
+            if (!addr) return true; 
+            return !activeClientAddressSet.has(normalizeAddress(addr));
+        });
+
+        if (filters.region.length === 0) return potentialOnly;
+        
+        return potentialOnly.filter(row => {
+            const rawRegion = findValueInRow(row, ['регион', 'субъект', 'область']);
+            if (!rawRegion) return false;
+            return filters.region.some(selectedReg => 
+                rawRegion.toLowerCase().includes(selectedReg.toLowerCase()) || 
+                selectedReg.toLowerCase().includes(rawRegion.toLowerCase())
+            );
+        });
+    }, [okbData, filters.region, activeClientAddressSet]);
+
+    const filterOptions = useMemo(() => getFilterOptions(allData), [allData]);
+    const summaryMetrics = useMemo(() => calculateSummaryMetrics(filtered), [filtered]);
 
     return {
         activeModule, setActiveModule,
@@ -690,33 +1041,22 @@ export const useAppLogic = () => {
         okbData, setOkbData,
         okbStatus, setOkbStatus,
         okbRegionCounts,
-        unidentifiedRows: unidentifiedRows,
+        unidentifiedRows: combinedUnidentifiedRows, // Pass combined list to UI
         filters, setFilters,
         processingState, setProcessingState,
         selectedDetailsRow, setSelectedDetailsRow,
         isUnidentifiedModalOpen, setIsUnidentifiedModalOpen,
         editingClient, setEditingClient,
-        filtered: useMemo(() => applyFilters(allData, filters), [allData, filters]),
-        allActiveClients: useMemo(() => applyFilters(allData, filters).flatMap(d => d.clients), [allData, filters]),
-        mapPotentialClients: useMemo(() => {
-             // Only show potential clients for selected regions to improve performance
-             if (filters.region.length === 0) return [];
-             const activeSet = new Set(allData.flatMap(d => d.clients).map(c => normalizeAddress(c.address)));
-             return okbData.filter(row => {
-                 const region = findValueInRow(row, ['регион', 'субъект']);
-                 if (!filters.region.includes(region)) return false;
-                 const addr = findAddressInRow(row);
-                 return addr && !activeSet.has(normalizeAddress(addr));
-             });
-        }, [okbData, allData, filters.region]),
-        filterOptions: useMemo(() => getFilterOptions(allData), [allData]),
-        summaryMetrics: useMemo(() => calculateSummaryMetrics(applyFilters(allData, filters)), [allData, filters]),
+        filtered,
+        allActiveClients,
+        mapPotentialClients,
+        filterOptions,
+        summaryMetrics,
         handleStartDataUpdate,
         handleForceUpdate,
         handleDataUpdate,
         handleDeleteClient,
         handleStartPolling,
-        addNotification,
-        executeSequentially, // Export for components
+        addNotification
     };
 };
