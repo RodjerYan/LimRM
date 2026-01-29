@@ -658,6 +658,28 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
                                 </div>
 
+                                {/* NEW: Explicit Coordinate Fields */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Широта (Lat)</label>
+                                        <input 
+                                            type="text" 
+                                            readOnly
+                                            value={displayLat ? displayLat.toFixed(6) : '—'} 
+                                            className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Долгота (Lon)</label>
+                                        <input 
+                                            type="text" 
+                                            readOnly
+                                            value={displayLon ? displayLon.toFixed(6) : '—'} 
+                                            className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
+                                        />
+                                    </div>
+                                </div>
+
                                 <div className="relative">
                                     <label htmlFor="comment-input" className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Заметка менеджера</label>
                                     <textarea id="comment-input" rows={2} value={comment} onChange={handleCommentChange} disabled={isProcessing || status === 'geocoding' || status === 'success'} placeholder="Добавьте важный комментарий..." className="w-full p-4 bg-black/40 border border-gray-700 hover:border-gray-600 rounded-xl focus:ring-2 focus:ring-indigo-500/50 disabled:opacity-50 transition-all duration-300 text-sm text-gray-100 shadow-inner resize-none" />
