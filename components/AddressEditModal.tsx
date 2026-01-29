@@ -6,7 +6,7 @@ import Modal from './Modal';
 import { MapPoint, UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow, normalizeAddress } from '../utils/dataUtils';
 import { parseRussianAddress } from '../services/addressParser';
-import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon } from './icons';
+import { LoaderIcon, SaveIcon, ErrorIcon, RetryIcon, ArrowLeftIcon, TrashIcon, CheckIcon, InfoIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, SearchIcon, SyncIcon } from './icons';
 
 // --- Fix Leaflet Icons (Aligned to v1.9.4) ---
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -27,7 +27,7 @@ const greenIcon = new L.Icon({
 
 // --- Types ---
 type EditableData = MapPoint | UnidentifiedRow;
-type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding';
+type Status = 'idle' | 'saving' | 'success' | 'geocoding' | 'deleting' | 'error_saving' | 'error_geocoding' | 'error_deleting' | 'success_geocoding' | 'syncing';
 type Theme = 'dark' | 'light';
 
 interface NominatimResult {
@@ -425,6 +425,97 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         isCommentTouched.current = true;
     };
 
+    const handleCloudSync = async () => {
+        if (!data) return;
+        const originalRow = getSafeOriginalRow(data);
+        const originalIndex = (data as UnidentifiedRow).originalIndex;
+        const currentAddress = editedAddress || (data as MapPoint).address || findAddressInRow(originalRow) || '';
+        const oldKey = (data as MapPoint).key || normalizeAddress(currentAddress);
+        const rm = getRmName(data);
+
+        if (!rm) {
+            setStatus('error_saving');
+            setError('Не удалось определить имя РМ. Синхронизация невозможна.');
+            return;
+        }
+
+        setStatus('syncing');
+        setError(null);
+
+        try {
+            const url = `/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(currentAddress)}&t=${Date.now()}`;
+            const res = await fetch(url);
+            
+            if (res.ok) {
+                const result = await res.json();
+                
+                if (result && typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0) {
+                    // Check if coordinates differ from currently displayed
+                    const currentDisplayedLat = manualCoords?.lat ?? (data as MapPoint).lat;
+                    const currentDisplayedLon = manualCoords?.lon ?? (data as MapPoint).lon;
+
+                    const isDifferent = Math.abs(result.lat - (currentDisplayedLat || 0)) > 0.000001 ||
+                                        Math.abs(result.lon - (currentDisplayedLon || 0)) > 0.000001;
+
+                    if (isDifferent) {
+                        setManualCoords({ lat: result.lat, lon: result.lon });
+                        if (result.comment && !isCommentTouched.current) {
+                            setComment(result.comment);
+                        }
+                        
+                        // Construct updated point to trigger save logic
+                        // We must mimic the structure of MapPoint to satisfy onDataUpdate
+                        // Note: If data is UnidentifiedRow, we construct a new MapPoint structure.
+                        let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
+                        const parsed = parseRussianAddress(currentAddress, distributor);
+                        
+                        const updatedPoint: MapPoint = {
+                            key: oldKey,
+                            lat: result.lat,
+                            lon: result.lon,
+                            status: 'match',
+                            name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
+                            address: currentAddress,
+                            city: parsed.city,
+                            region: parsed.region,
+                            rm: rm,
+                            brand: findValueInRow(originalRow, ['торговая марка']),
+                            packaging: findValueInRow(originalRow, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана',
+                            type: findValueInRow(originalRow, ['канал продаж']),
+                            contacts: findValueInRow(originalRow, ['контакты']),
+                            originalRow: originalRow,
+                            fact: (data as MapPoint).fact,
+                            abcCategory: (data as MapPoint).abcCategory,
+                            lastUpdated: Date.now(),
+                            comment: result.comment || comment,
+                            isGeocoding: false
+                        };
+
+                        // Trigger parent update which handles chunk rewriting
+                        onDataUpdate(oldKey, updatedPoint, originalIndex);
+                        
+                        setStatus('success');
+                        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+                        successTimeoutRef.current = setTimeout(() => {
+                            setStatus('idle');
+                        }, 2000);
+                    } else {
+                        setStatus('idle');
+                        // Optional: Could show a toast "No changes found"
+                    }
+                } else {
+                    setStatus('idle'); // No data found in cloud, nothing to sync
+                }
+            } else {
+                throw new Error(`Server returned ${res.status}`);
+            }
+        } catch (e: any) {
+            console.error("Sync Error:", e);
+            setStatus('error_saving');
+            setError(`Ошибка синхронизации: ${e.message}`);
+        }
+    };
+
     const handleSave = async () => {
         if (!data) return;
         const originalRow = getSafeOriginalRow(data);
@@ -553,7 +644,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
     const currentLon = (data as MapPoint).lon;
     const detailsToShow = Object.entries(getSafeOriginalRow(data)).map(([key, value]) => ({ key: String(key).trim(), value: String(value).trim() })).filter(item => item.value && item.value !== 'null' && item.key !== '__rowNum__');
     const modalTitle = `Редактирование: ${clientName || 'Неизвестный клиент'}`;
-    const isProcessing = status === 'saving' || status === 'deleting';
+    const isProcessing = status === 'saving' || status === 'deleting' || status === 'syncing';
     
     const displayLat = manualCoords ? manualCoords.lat : currentLat;
     const displayLon = manualCoords ? manualCoords.lon : currentLon;
@@ -658,26 +749,41 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {status === 'success' && <CheckIcon className="absolute right-4 top-10 text-emerald-400 animate-bounce w-6 h-6" />}
                                 </div>
 
-                                {/* NEW: Explicit Coordinate Fields */}
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Широта (Lat)</label>
-                                        <input 
-                                            type="text" 
-                                            readOnly
-                                            value={displayLat ? displayLat.toFixed(6) : '—'} 
-                                            className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
-                                        />
+                                {/* NEW: Explicit Coordinate Fields + SYNC BUTTON */}
+                                <div className="relative pt-1">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <div className="flex gap-4 w-full">
+                                            <div className="w-1/2">
+                                                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1 ml-1">Широта (Lat)</label>
+                                                <input 
+                                                    type="text" 
+                                                    readOnly
+                                                    value={displayLat ? displayLat.toFixed(6) : '—'} 
+                                                    className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
+                                                />
+                                            </div>
+                                            <div className="w-1/2">
+                                                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1 ml-1">Долгота (Lon)</label>
+                                                <input 
+                                                    type="text" 
+                                                    readOnly
+                                                    value={displayLon ? displayLon.toFixed(6) : '—'} 
+                                                    className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
+                                                />
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Долгота (Lon)</label>
-                                        <input 
-                                            type="text" 
-                                            readOnly
-                                            value={displayLon ? displayLon.toFixed(6) : '—'} 
-                                            className="w-full p-2 bg-black/40 border border-gray-700 rounded-lg text-sm font-mono text-gray-300 text-center"
-                                        />
-                                    </div>
+                                    
+                                    {/* SYNC BUTTON */}
+                                    <button 
+                                        onClick={handleCloudSync}
+                                        disabled={isProcessing}
+                                        className="w-full mt-2 py-2 px-3 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/30 rounded-lg text-xs font-bold text-blue-300 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                                        title="Проверить координаты в Google Таблице и обновить, если они отличаются"
+                                    >
+                                        <SyncIcon small />
+                                        Синхронизировать с Google (Проверка координат)
+                                    </button>
                                 </div>
 
                                 <div className="relative">
@@ -697,6 +803,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                     {status === 'saving' && (
                                         <div className="w-full bg-gray-800/80 py-4 rounded-xl border border-gray-700 text-center text-indigo-400 flex items-center justify-center gap-3 font-bold shadow-sm">
                                             <LoaderIcon className="w-5 h-5 animate-spin" /> Сохранение...
+                                        </div>
+                                    )}
+
+                                    {status === 'syncing' && (
+                                        <div className="w-full bg-blue-900/20 py-4 rounded-xl border border-blue-500/30 text-center text-blue-400 flex items-center justify-center gap-3 font-bold animate-pulse shadow-sm">
+                                            <LoaderIcon className="w-5 h-5 animate-spin" /> Проверка в Google...
                                         </div>
                                     )}
                                     
