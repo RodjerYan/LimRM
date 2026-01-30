@@ -37,9 +37,9 @@ async function getDriveClient() {
 }
 
 async function getSortedFiles(drive: any, folderId: string = FOLDER_ID) {
-    // 1. List ALL files in folder
     const q = `'${folderId}' in parents and trashed = false`;
     
+    // Request 'size' field from Google Drive to enable filtering
     const res = await drive.files.list({ 
         q, 
         fields: "files(id, name, mimeType, size)", 
@@ -62,7 +62,11 @@ async function getSortedFiles(drive: any, folderId: string = FOLDER_ID) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name, size: f.size }));
+    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ 
+        id: f.id, 
+        name: f.name, 
+        size: f.size ? parseInt(f.size, 10) : 0 
+    }));
 }
 
 // Concurrency Limiter Helper
@@ -89,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'POST') {
             const body = await getRawBody(req);
             
-            // --- NEW: Save Delta Logic ---
+            // --- Save Delta Logic ---
             if (action === 'save-delta') {
                 const deltaItem = body; // Expecting { type: 'update'|'delete', key, payload... }
                 if (!deltaItem) return res.status(400).json({ error: 'Missing delta payload' });
@@ -107,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     nextIndex = currentIndex;
 
                     // Optimization: Check size metadata first to avoid downloading large files
-                    const fileSize = lastFile.size ? parseInt(lastFile.size, 10) : 0;
+                    const fileSize = lastFile.size;
                     
                     // Rule: If file > 100KB, rotate to next immediately without download
                     if (fileSize > 100 * 1024) {
@@ -293,8 +297,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 
                 // RESTORED: Process ALL files. 
                 // Previously limited to 15 to avoid timeouts, but this causes data loss for older deltas not yet squashed.
-                // The concurrency limiter (8) below should help manage the load.
-                const filesToProcess = savepointsFiles; 
+                // Added size filter to skip empty files (> 50 bytes)
+                const filesToProcess = savepointsFiles.filter((f: any) => f.size > 50);
                 
                 if (filesToProcess.length > 20) {
                     console.warn(`[Performance] High delta count: ${filesToProcess.length}. Squash recommended.`);
@@ -349,20 +353,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const sortedFiles = await getSortedFiles(drive);
                 if (sortedFiles.length === 0) return res.json([]);
 
-                try {
-                    const metaRes = await drive.files.get({ fileId: sortedFiles[0].id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                    const meta = JSON.parse(Buffer.from(metaRes.data as any).toString('utf-8'));
-                    const activeChunkCount = meta.chunkCount || (sortedFiles.length - 1);
-                    
-                    // Get specifically required chunks
-                    const chunkFiles = sortedFiles.slice(1, activeChunkCount + 1);
-                    // Now returning full objects with {id, name} so frontend can sort
-                    return res.json(chunkFiles);
-                } catch (e) {
-                    // Fallback
-                    const chunkFiles = sortedFiles.slice(1);
-                    return res.json(chunkFiles);
-                }
+                // OPTIMIZATION: Filter out tiny files (< 2KB)
+                // The first file (index 0) is Meta, we always keep it.
+                // Snapshot chunks usually start at ~200KB. An empty chunk is < 100 bytes.
+                const relevantFiles = sortedFiles.filter((f: any, index: number) => {
+                    if (index === 0) return true; // Meta file
+                    return f.size > 2048; // > 2KB rule
+                });
+
+                return res.json(relevantFiles);
             }
             if (action === 'get-file-content') {
                 const fileId = String(req.query.fileId);
