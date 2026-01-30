@@ -281,7 +281,7 @@ export const useAppLogic = () => {
                     
                     if (serverMeta?.versionHash && (!hasLocalData || isNewVersion)) {
                         console.log("Starting cloud snapshot download...", { hasLocalData, isNewVersion, hash: serverMeta.versionHash });
-                        await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                        await handleDownloadSnapshot(serverMeta); // Pass full meta
                     }
                     setDbStatus('ready');
                 }
@@ -316,7 +316,8 @@ export const useAppLogic = () => {
                     console.log("Snapshot found, downloading...", serverMeta);
                     setProcessingState(prev => ({ ...prev, message: 'Загрузка снимка (JSON)...' }));
                     
-                    const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    // PASS THE FULL META OBJECT to handle cases where chunks might be empty but metadata exists
+                    const success = await handleDownloadSnapshot(serverMeta);
                     
                     if (success) {
                         setDbStatus('ready');

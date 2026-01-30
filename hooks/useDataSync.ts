@@ -134,9 +134,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 const chunkObj = { chunkIndex: i, rows: rows };
                 const content = JSON.stringify(chunkObj);
                 
-                // Compare with cache to avoid unnecessary uploads (if squash wasn't forced)
-                // But for full squash we typically want to ensure consistency. 
-                // We'll rely on the cache check to be efficient.
                 const prevContent = lastSavedChunksRef.current.get(i);
                 
                 if (prevContent !== content) {
@@ -242,128 +239,18 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         return cleanData;
     }, []);
 
-    // --- FULL RE-SYNC FROM SOURCE ---
-    const runFullSync = useCallback(async (okbData: OkbDataRow[], okbCache: CoordsCache) => {
-        if (processingState.isProcessing) return;
-        
-        setProcessingState({
-            isProcessing: true,
-            progress: 0,
-            message: 'Инициализация процессора...',
-            startTime: Date.now(),
-            fileName: null,
-            backgroundMessage: null,
-            totalRowsProcessed: 0
-        });
-
-        try {
-            // Import Worker
-            const ProcessingWorker = (await import('../services/processing.worker?worker')).default;
-            const worker = new ProcessingWorker();
-
-            worker.onmessage = async (e: MessageEvent<WorkerMessage>) => {
-                const { type, payload } = e.data;
-                
-                if (type === 'progress') {
-                    setProcessingState(prev => ({
-                        ...prev,
-                        progress: payload.percentage,
-                        message: payload.message,
-                        totalRowsProcessed: payload.totalProcessed
-                    }));
-                }
-                else if (type === 'result_finished') {
-                    // Success!
-                    const { aggregatedData, unidentifiedRows: unID, okbRegionCounts: okbCounts, totalRowsProcessed } = payload as any;
-                    
-                    enrichWithAbcCategories(aggregatedData);
-                    setAllData(aggregatedData);
-                    setUnidentifiedRows(unID);
-                    setOkbRegionCounts(okbCounts);
-                    
-                    // Save Snapshot immediately
-                    setProcessingState(prev => ({ ...prev, message: 'Сохранение снимка...' }));
-                    await saveSnapshotToCloud(aggregatedData, unID);
-                    
-                    // Cleanup
-                    worker.terminate();
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизация завершена', progress: 100 }));
-                    addNotification(`Обработано ${totalRowsProcessed} строк`, 'success');
-                }
-                else if (type === 'error') {
-                    console.error("Worker Error:", payload);
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка обработки' }));
-                    addNotification('Ошибка в процессе обработки', 'error');
-                    worker.terminate();
-                }
-            };
-
-            // Init
-            worker.postMessage({ 
-                type: 'INIT_STREAM', 
-                payload: { okbData, cacheData: okbCache } 
-            });
-
-            // Fetch Files
-            setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
-            const listRes = await fetch('/api/get-akb?mode=list&year=2025'); // Default to 2025
-            if (!listRes.ok) throw new Error("Failed to list files");
-            const files = await listRes.json();
-
-            if (!files || files.length === 0) {
-                throw new Error("Файлы продаж не найдены");
-            }
-
-            // Iterate Files
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const CHUNK_SIZE = 5000;
-                let offset = 0;
-                let hasMore = true;
-
-                setProcessingState(prev => ({ ...prev, message: `Загрузка: ${file.name}`, fileName: file.name }));
-
-                while (hasMore) {
-                    const chunkRes = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
-                    if (!chunkRes.ok) throw new Error(`Ошибка загрузки файла ${file.name}`);
-                    
-                    const chunkData = await chunkRes.json();
-                    const rows = chunkData.rows || [];
-                    
-                    if (rows.length > 0) {
-                        worker.postMessage({
-                            type: 'PROCESS_CHUNK',
-                            payload: { 
-                                rawData: rows, 
-                                isFirstChunk: (i === 0 && offset === 0),
-                                fileName: file.name
-                            }
-                        });
-                        offset += rows.length;
-                    }
-                    
-                    hasMore = chunkData.hasMore;
-                }
-            }
-
-            worker.postMessage({ type: 'FINALIZE_STREAM' });
-
-        } catch (e: any) {
-            console.error("Sync Error:", e);
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: `Сбой: ${e.message}` }));
-            addNotification('Сбой синхронизации', 'error');
-        }
-    }, [processingState.isProcessing, addNotification, saveSnapshotToCloud]);
-
     // --- LOAD SNAPSHOT + DELTAS ---
-    const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
+    const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
-            // 1. Load Chunks
+            // 1. Load Chunks List
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
+            
             let fileList = await listRes.json();
+            
+            // Sort by logical index (snapshot1, snapshot2...)
             fileList.sort((a: any, b: any) => {
                 const numA = parseInt((a.name || '').match(/\d+/)?.[0] || '0', 10);
                 const numB = parseInt((b.name || '').match(/\d+/)?.[0] || '0', 10);
@@ -371,27 +258,66 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             });
 
             let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = null;
+            let loadedMeta: any = serverMeta || null;
             lastSavedChunksRef.current.clear();
 
+            // Iterate through files
             for (let i = 0; i < fileList.length; i++) {
                 const file = fileList[i];
-                const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                if (!res.ok) throw new Error(`Failed to load chunk ${file.id}`);
-                const text = await res.text();
-                lastSavedChunksRef.current.set(i, text);
                 
-                const chunkData = JSON.parse(text);
-                let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
-                newRows.forEach(row => row._chunkIndex = chunkIndex);
+                try {
+                    const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
+                    if (!res.ok) {
+                        console.warn(`Failed to load chunk ${file.name} (${file.id}), skipping...`);
+                        continue; // Skip failed download, don't crash
+                    }
+                    
+                    const text = await res.text();
+                    
+                    // 1. Check for empty file
+                    if (!text || text.trim() === '') {
+                        console.warn(`File ${file.name} is empty, skipping.`);
+                        continue;
+                    }
 
-                if (newRows.length > 0) accumulatedRows.push(...normalize(newRows));
-                if (chunkData.meta) loadedMeta = chunkData.meta;
+                    // 2. Parse JSON
+                    const chunkData = JSON.parse(text);
+                    lastSavedChunksRef.current.set(i, text);
+
+                    let newRows: AggregatedDataRow[] = [];
+                    if (Array.isArray(chunkData.rows)) {
+                        newRows = chunkData.rows;
+                    } else if (Array.isArray(chunkData.aggregatedData)) {
+                        newRows = chunkData.aggregatedData;
+                    } else if (Array.isArray(chunkData)) {
+                        newRows = chunkData; // Direct array support
+                    }
+
+                    const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
+                    newRows.forEach(row => row._chunkIndex = chunkIndex);
+
+                    if (newRows.length > 0) {
+                        accumulatedRows.push(...normalize(newRows));
+                    }
+                    
+                    // If chunk contains embedded meta (legacy), prefer it if serverMeta wasn't passed
+                    if (chunkData.meta && !loadedMeta) {
+                        loadedMeta = chunkData.meta;
+                    }
+                } catch (parseError) {
+                    console.warn(`Error parsing chunk ${file.name}:`, parseError);
+                    // Do NOT throw. Continue to next chunk.
+                }
+                
                 setProcessingState(prev => ({ ...prev, progress: Math.round(((i+1)/fileList.length)*100) }));
             }
 
-            if (accumulatedRows.length > 0 || loadedMeta) {
+            // RELAXED SUCCESS CONDITION:
+            // If we have loaded *any* meta (passed or found) OR we iterated the file list successfully (even if data is empty/0 rows)
+            // we treat this as a success. This supports "empty" initial snapshots.
+            const isSuccess = accumulatedRows.length > 0 || !!loadedMeta || fileList.length > 0;
+
+            if (isSuccess) {
                 // 2. Apply Legacy Cache
                 let finalData = accumulatedRows;
                 try {
@@ -410,7 +336,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         const deltas: DeltaItem[] = await deltaRes.json();
                         deltas.sort((a, b) => a.timestamp - b.timestamp);
                         
-                        // Check if we need to squash (e.g., > 1000 deltas)
                         const shouldSquash = deltas.length > 1000;
 
                         finalData = finalData.map(group => {
@@ -438,7 +363,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
 
                         if (shouldSquash) {
                             addNotification('Авто-оптимизация базы (Squash)...', 'info');
-                            // Trigger squash immediately in background (Fire and forget)
                             saveSnapshotToCloud(finalData, loadedMeta?.unidentifiedRows || [])
                                 .catch(err => console.error("Background squash failed", err));
                         }
@@ -453,21 +377,24 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 setOkbRegionCounts(safeMeta.okbRegionCounts || {});
                 totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
 
-                // Sync to Local IndexedDB
                 await saveAnalyticsState({
                     allData: finalData,
                     unidentifiedRows: safeMeta.unidentifiedRows || [],
                     okbRegionCounts: safeMeta.okbRegionCounts || {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: versionHash,
+                    versionHash: serverMeta?.versionHash || 'unknown',
                     okbData: [], okbStatus: null
                 });
                 
-                localStorage.setItem('last_snapshot_version', versionHash);
+                localStorage.setItem('last_snapshot_version', serverMeta?.versionHash || 'unknown');
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
                 return true;
             }
+            
+            console.error("Snapshot download failed: List loaded but no valid data found.");
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка данных' }));
             return false;
+
         } catch (e) {
             console.error("Snapshot Load Error:", e);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
@@ -487,6 +414,5 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         saveSnapshotToCloud,
         handleDownloadSnapshot,
         applyCacheToData,
-        runFullSync // Expose new function
     };
 };
