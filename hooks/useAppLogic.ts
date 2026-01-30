@@ -298,27 +298,52 @@ export const useAppLogic = () => {
         };
     }, [handleDownloadSnapshot, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
 
-    // --- MANUAL FORCE UPDATE (Full Resync) ---
-    // Called when user clicks "Synchronize"
+    // --- MANUAL FORCE UPDATE (Synchronize Button) ---
+    // PRIORITY: 1. Try to download latest Snapshot. 2. Only if fails, process Google Sheets.
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
         
-        // 1. Load OKB and Cache first (needed for processing)
-        let currentOkb = okbData;
-        let currentCache = {};
+        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 5, message: 'Проверка облачного снимка...' }));
 
         try {
+            // 1. Try to get Snapshot Metadata first
+            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+            
+            if (metaRes.ok) {
+                const serverMeta = await metaRes.json();
+                
+                // If snapshot exists and is valid
+                if (serverMeta?.versionHash && serverMeta.versionHash !== 'none') {
+                    console.log("Snapshot found, downloading...", serverMeta);
+                    setProcessingState(prev => ({ ...prev, message: 'Загрузка снимка (JSON)...' }));
+                    
+                    const success = await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    
+                    if (success) {
+                        setDbStatus('ready');
+                        return; // SUCCESS! Exit without touching raw sheets.
+                    }
+                }
+            }
+
+            // 2. Fallback to Full Sync (Google Sheets) ONLY if snapshot fails or doesn't exist
+            console.warn("Snapshot not found or failed. Falling back to Google Sheets processing.");
+            addNotification("Снимок не найден. Запуск полной обработки таблиц...", "info");
+            
+            // Load OKB if needed
+            let currentOkb = okbData;
             if (currentOkb.length === 0) {
-                setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 5, message: 'Загрузка справочника ОКБ...' }));
+                setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 10, message: 'Загрузка справочника ОКБ...' }));
                 const okbRes = await fetch('/api/get-akb?mode=okb_data');
                 if (okbRes.ok) currentOkb = await okbRes.json();
             }
 
+            // Load Cache if needed
             const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+            let currentCache = {};
             if (cacheRes.ok) currentCache = await cacheRes.json();
 
-            // 2. Run Full Sync Pipeline (Source -> Worker -> Snapshot)
-            // This pulls fresh rows from the Google Sheet chunks
+            // Run Worker to process raw sheets
             await runFullSync(currentOkb, currentCache);
             
             setDbStatus('ready');
@@ -328,7 +353,7 @@ export const useAppLogic = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка обновления' }));
             addNotification('Не удалось обновить данные с сервера', 'error');
         }
-    }, [processingState.isProcessing, okbData, runFullSync, addNotification, setProcessingState]);
+    }, [processingState.isProcessing, okbData, handleDownloadSnapshot, runFullSync, addNotification, setProcessingState]);
 
     const handleStartDataUpdate = async () => {
         // Fallback or specific backend job trigger
