@@ -15,6 +15,8 @@ export const config = { maxDuration: 60, api: { bodyParser: false } };
 
 // FIXED: Correct Folder ID from the URL provided by user
 const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
+// NEW: Dedicated folder for Delta Updates (LimRM_save points_data)
+const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P';
 
 // CRITICAL FIX: Changed scope from 'drive.file' to 'drive' (full access)
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
@@ -35,17 +37,9 @@ async function getDriveClient() {
     return google.drive({ version: 'v3', auth });
 }
 
-async function getSortedFiles(drive: any) {
-    // 1. Log Auth Info
-    try {
-        const authInfo = await drive.about.get({ fields: 'user' });
-        console.log(`[AUTH] Bot email: ${authInfo.data.user.emailAddress}`);
-    } catch (e) {
-        console.log("[AUTH] Failed to get bot email");
-    }
-
-    // 2. List ALL files in folder (avoiding 'name contains' filter to bypass index lag)
-    const q = `'${FOLDER_ID}' in parents and trashed = false`;
+async function getSortedFiles(drive: any, folderId: string = FOLDER_ID) {
+    // 1. List ALL files in folder
+    const q = `'${folderId}' in parents and trashed = false`;
     
     const res = await drive.files.list({ 
         q, 
@@ -56,15 +50,11 @@ async function getSortedFiles(drive: any) {
     });
     
     const allFiles = res.data.files || [];
-    console.log(`[DEBUG] Total objects in folder: ${allFiles.length}`);
-
-    // 3. Filter in memory
+    
     const filteredFiles = allFiles.filter((f: any) => 
-        f.name && f.name.toLowerCase().includes('snapshot') && 
+        f.name && (f.name.toLowerCase().includes('snapshot') || f.name.toLowerCase().includes('savepoints')) && 
         f.mimeType !== 'application/vnd.google-apps.folder'
     );
-
-    console.log(`[FILTER] Snapshot files found: ${filteredFiles.length}`);
 
     const sortKey = (f: any) => {
         const name = f.name.toLowerCase();
@@ -73,7 +63,6 @@ async function getSortedFiles(drive: any) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    // Return objects with id and name instead of just ID strings
     return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name }));
 }
 
@@ -88,6 +77,72 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (req.method === 'POST') {
             const body = await getRawBody(req);
             
+            // --- NEW: Save Delta Logic ---
+            if (action === 'save-delta') {
+                const deltaItem = body; // Expecting { type: 'update'|'delete', key, payload... }
+                if (!deltaItem) return res.status(400).json({ error: 'Missing delta payload' });
+
+                // 1. Get existing savepoints files
+                const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
+                let targetFile = null;
+                let fileContent = { deltas: [] as any[] };
+                let nextIndex = 1;
+
+                if (savepointsFiles.length > 0) {
+                    const lastFile = savepointsFiles[savepointsFiles.length - 1];
+                    const match = lastFile.name.match(/savepoints(\d+)\.json/i);
+                    const currentIndex = match ? parseInt(match[1], 10) : 1;
+                    nextIndex = currentIndex;
+
+                    // Download to check size
+                    try {
+                        const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                        const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
+                        
+                        // Rule: If file > 100KB, rotate to next
+                        if (contentStr.length > 100 * 1024) {
+                            nextIndex = currentIndex + 1;
+                            targetFile = null; // Create new
+                        } else {
+                            targetFile = lastFile;
+                            try { fileContent = JSON.parse(contentStr); } catch (e) { /* ignore corrupt, start fresh */ }
+                        }
+                    } catch (e) {
+                        // Error reading? Start new file.
+                        nextIndex = currentIndex + 1;
+                        targetFile = null; 
+                    }
+                }
+
+                // 2. Append Delta
+                if (!fileContent.deltas) fileContent.deltas = [];
+                fileContent.deltas.push(deltaItem);
+                
+                const newContentStr = JSON.stringify(fileContent);
+                const fileName = `savepoints${nextIndex}.json`;
+
+                // 3. Write Back
+                if (targetFile) {
+                    await drive.files.update({
+                        fileId: targetFile.id,
+                        media: { mimeType: 'application/json', body: newContentStr },
+                        supportsAllDrives: true
+                    });
+                    return res.json({ status: 'appended', file: fileName });
+                } else {
+                    const createRes = await drive.files.create({
+                        requestBody: {
+                            name: fileName,
+                            parents: [DELTA_FOLDER_ID],
+                            mimeType: 'application/json'
+                        },
+                        media: { mimeType: 'application/json', body: newContentStr },
+                        supportsAllDrives: true
+                    });
+                    return res.json({ status: 'created', file: fileName });
+                }
+            }
+
             // Snapshot Operations
             if (action === 'save-chunk') {
                 let targetFileId = req.query.targetFileId as string;
@@ -203,6 +258,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (req.method === 'GET') {
+            
+            // --- NEW: Load Deltas ---
+            if (action === 'get-deltas') {
+                const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
+                const allDeltas: any[] = [];
+                
+                // Read all savepoint files
+                for (const file of savepointsFiles) {
+                    try {
+                        const fileRes = await drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                        const content = JSON.parse(Buffer.from(fileRes.data as any).toString('utf-8'));
+                        if (content.deltas && Array.isArray(content.deltas)) {
+                            allDeltas.push(...content.deltas);
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to read delta file ${file.name}`, e);
+                    }
+                }
+                
+                return res.json(allDeltas);
+            }
+
             // Snapshot Operations
             if (action === 'get-snapshot-meta') {
                 const sortedFiles = await getSortedFiles(drive);

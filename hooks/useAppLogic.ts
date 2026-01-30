@@ -4,7 +4,7 @@ import {
     AggregatedDataRow, FilterState, NotificationMessage, 
     OkbDataRow, MapPoint, UnidentifiedRow, FileProcessingState,
     WorkerResultPayload, CoordsCache, OkbStatus,
-    UpdateJobStatus, ActionQueueItem
+    UpdateJobStatus, ActionQueueItem, DeltaItem
 } from '../types';
 import { applyFilters, getFilterOptions, calculateSummaryMetrics, findValueInRow, normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { enrichDataWithSmartPlan } from '../services/planning/integration';
@@ -28,6 +28,18 @@ interface PendingGeocodingItem {
     originalIndex?: number;
     attempts: number;
 }
+
+const normalize = (rows: any[]): AggregatedDataRow[] => {
+    if (!Array.isArray(rows)) return [];
+    return rows.map(row => ({
+        ...row,
+        clients: Array.isArray(row.clients) ? row.clients : [],
+        fact: typeof row.fact === 'number' ? row.fact : 0,
+        potential: typeof row.potential === 'number' ? row.potential : 0,
+        growthPotential: typeof row.growthPotential === 'number' ? row.growthPotential : 0,
+        growthPercentage: typeof row.growthPercentage === 'number' ? row.growthPercentage : 0,
+    }));
+};
 
 export const useAppLogic = () => {
     const [activeModule, setActiveModule] = useState('adapta');
@@ -313,219 +325,21 @@ export const useAppLogic = () => {
         }
     };
 
-    // --- СОХРАНЕНИЕ В ОБЛАКО (С ЧАНКАМИ И STICKY-ГРУППИРОВКОЙ) ---
-    // UPDATED: Now uses "Sticky Chunks" strategy. Rows stay in their original chunks even if data is deleted.
-    const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
-        if (isSavingRef.current) {
-            console.log("%c[Save] Save in progress. Queuing next run.", "color: orange");
-            saveQueuedRef.current = true;
-            return;
-        }
-        
-        isSavingRef.current = true;
+    // --- DELTA SYSTEM: Save small incremental changes ---
+    const saveDeltaToCloud = async (delta: DeltaItem) => {
         setIsCloudSaving(true);
-        let hasFatalError = false;
-
-        console.groupCollapsed(`%c[Cloud Save] Started at ${new Date().toLocaleTimeString()}`, 'color: #818cf8; font-weight: bold;');
-
         try {
-            console.time('fetch-slots');
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            let availableSlots: { id: string, name: string }[] = [];
-            if (listRes.ok) {
-                availableSlots = await listRes.json();
-            }
-            console.timeEnd('fetch-slots');
-
-            const newVersionHash = `edit_${Date.now()}`;
-            const encoder = new TextEncoder();
-            const getByteSize = (str: string) => encoder.encode(str).length;
-            
-            console.time('chunk-generation');
-            
-            // --- STICKY CHUNKING LOGIC v2 (With Size Checks) ---
-            
-            // 1. Organize existing rows into their assigned chunks
-            const stickyChunksMap = new Map<number, AggregatedDataRow[]>();
-            const unassignedRows: AggregatedDataRow[] = [];
-            let maxChunkIndex = -1;
-
-            currentData.forEach(row => {
-                if (row._chunkIndex !== undefined && row._chunkIndex >= 0) {
-                    if (!stickyChunksMap.has(row._chunkIndex)) {
-                        stickyChunksMap.set(row._chunkIndex, []);
-                    }
-                    stickyChunksMap.get(row._chunkIndex)!.push(row);
-                    maxChunkIndex = Math.max(maxChunkIndex, row._chunkIndex);
-                } else {
-                    unassignedRows.push(row);
-                }
-            });
-
-            // 2. Validate and Enforce Size Limit on Existing Chunks
-            // If a "sticky" chunk grew beyond the limit (e.g. more rows added to it, or data expanded),
-            // we must strip the excess rows and treat them as unassigned (move to end).
-            
-            const chunkIndices = Array.from(stickyChunksMap.keys()).sort((a, b) => a - b);
-            
-            chunkIndices.forEach(idx => {
-                const rows = stickyChunksMap.get(idx)!;
-                const validRows: AggregatedDataRow[] = [];
-                // Base JSON overhead approximation: {"chunkIndex": 123, "rows": []} -> ~50 bytes
-                let currentChunkSize = 100; 
-
-                rows.forEach(row => {
-                    const rowStr = JSON.stringify(row);
-                    const rowSize = getByteSize(rowStr) + 2; // +2 for comma
-
-                    if (currentChunkSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
-                        // OVERFLOW DETECTED
-                        // Row cannot fit in its original chunk anymore.
-                        // Reset its index and move to unassigned to be packed into a NEW chunk.
-                        row._chunkIndex = undefined; 
-                        unassignedRows.push(row);
-                    } else {
-                        currentChunkSize += rowSize;
-                        validRows.push(row);
-                    }
-                });
-
-                // Update the map with only the rows that fit
-                stickyChunksMap.set(idx, validRows);
-            });
-
-            // 3. Process Unassigned Rows (New + Overflow)
-            // Pack them into new chunks starting after the current max index
-            
-            let currentPackIndex = maxChunkIndex + 1;
-            let currentChunkRows: AggregatedDataRow[] = [];
-            let currentNewChunkSize = 100; // Base overhead
-
-            if (unassignedRows.length > 0) {
-                for (const row of unassignedRows) {
-                    // Assign the new index permanently
-                    row._chunkIndex = currentPackIndex;
-                    
-                    const rowStr = JSON.stringify(row);
-                    const rowSize = getByteSize(rowStr) + 2; 
-
-                    if (currentNewChunkSize + rowSize > MAX_CHUNK_SIZE_BYTES && currentChunkRows.length > 0) {
-                        // Finalize current chunk
-                        stickyChunksMap.set(currentPackIndex, currentChunkRows);
-                        
-                        // Start next chunk
-                        currentPackIndex++;
-                        currentChunkRows = [];
-                        currentNewChunkSize = 100;
-                        row._chunkIndex = currentPackIndex;
-                    }
-                    
-                    currentChunkRows.push(row);
-                    currentNewChunkSize += rowSize;
-                }
-                // Push the last partial chunk
-                if (currentChunkRows.length > 0) {
-                    stickyChunksMap.set(currentPackIndex, currentChunkRows);
-                }
-            }
-
-            // 4. Serialize & Prepare Uploads
-            const maxSlotIndex = Math.max(maxChunkIndex, availableSlots.length - 1, currentPackIndex);
-            const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            const chunksContentCache = new Map<number, string>(); 
-
-            for (let i = 0; i <= maxSlotIndex; i++) {
-                const rows = stickyChunksMap.get(i) || [];
-                // Skip if no rows AND no existing file (it's a gap past the end)
-                if (rows.length === 0 && i >= availableSlots.length && i > currentPackIndex) continue;
-
-                const chunkObj = { chunkIndex: i, rows: rows };
-                const content = JSON.stringify(chunkObj);
-                chunksContentCache.set(i, content);
-
-                const prevContent = lastSavedChunksRef.current.get(i);
-                
-                if (prevContent !== content) {
-                    const targetFileId = availableSlots[i] ? availableSlots[i].id : '';
-                    chunksToUpload.push({ index: i, content, targetFileId });
-                }
-            }
-            
-            console.timeEnd('chunk-generation');
-            console.info(`Generated content for ${chunksContentCache.size} chunks. Found ${chunksToUpload.length} changes.`);
-
-            if (chunksToUpload.length === 0) {
-                console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
-                chunksContentCache.forEach((content, idx) => {
-                    lastSavedChunksRef.current.set(idx, content);
-                });
-            } else {
-                console.log(`%c[Cloud Save] Changes detected. Uploading ${chunksToUpload.length} chunk(s)...`, "color: #f59e0b");
-                
-                const CONCURRENCY = 4;
-                for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
-                    const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
-                        const queryParams = item.targetFileId 
-                            ? `action=save-chunk&targetFileId=${item.targetFileId}` 
-                            : `action=save-chunk&chunkIndex=${item.index}`;
-
-                        console.time(`upload-chunk-${item.index}`);
-                        return fetch(`/api/get-full-cache?${queryParams}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ chunk: item.content }) 
-                        }).then(async res => {
-                            console.timeEnd(`upload-chunk-${item.index}`);
-                            if (!res.ok) {
-                                const txt = await res.text();
-                                throw new Error(`Upload failed for chunk ${item.index}: ${txt}`);
-                            }
-                            console.info(`✅ Chunk ${item.index} saved.`);
-                            lastSavedChunksRef.current.set(item.index, item.content);
-                        });
-                    });
-                    
-                    await Promise.all(batch);
-                }
-            }
-            
-            console.time('save-meta');
-            await fetch('/api/get-full-cache?action=save-meta', {
+            await fetch('/api/get-full-cache?action=save-delta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    unidentifiedRows: currentUnidentified,
-                    okbRegionCounts: okbRegionCounts,
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: newVersionHash,
-                    chunkCount: chunksContentCache.size,
-                    totalRows: totalRowsProcessedRef.current,
-                    timestamp: Date.now()
-                })
+                body: JSON.stringify(delta)
             });
-            console.timeEnd('save-meta');
-            
-        } catch (e: any) {
-            console.error("Cloud Save Error:", e);
-            const errString = e.toString();
-            if (errString.includes("storage quota") || errString.includes("500")) {
-                 addNotification('Критическая ошибка: Сбой облачного сохранения (500).', 'error');
-                 hasFatalError = true;
-            } else {
-                 addNotification('Ошибка сохранения в облако', 'warning');
-            }
+            console.log("Delta saved successfully");
+        } catch (e) {
+            console.error("Failed to save delta:", e);
+            addNotification('Ошибка сохранения изменений в облако', 'warning');
         } finally {
-            console.groupEnd();
-            isSavingRef.current = false;
-            
-            if (saveQueuedRef.current && !hasFatalError) {
-                console.log("%c[Queue] Executing queued save...", "color: cyan");
-                saveQueuedRef.current = false;
-                saveSnapshotToCloud(allDataRef.current, unidentifiedRowsRef.current);
-            } else {
-                saveQueuedRef.current = false; 
-                setIsCloudSaving(false); 
-            }
+            setIsCloudSaving(false);
         }
     };
 
@@ -546,9 +360,6 @@ export const useAppLogic = () => {
             
             const groupKey = `${newPoint.region}-${newPoint.rm}-${newPoint.brand}-${newPoint.packaging}`.toLowerCase();
             const existingGroupIndex = newData.findIndex(g => g.key === groupKey);
-            
-            // When moving from Unidentified to Aggregated, we treat it as a "New" row for chunking purposes
-            // It will be assigned a chunk index during the next save.
             
             if (existingGroupIndex !== -1) {
                 newData[existingGroupIndex] = {
@@ -591,15 +402,15 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // Background Save: Only trigger snapshot save after a delay to persist the new state to files
-        // The queue handles the database sync, this handles the file backup.
+        // --- DELTA SAVE: Instead of full snapshot ---
         if (!newPoint.isGeocoding) {
-            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-            saveTimeoutRef.current = setTimeout(() => {
-                saveSnapshotToCloud(newData, newUnidentified).catch(err => {
-                    console.error("Auto-save failed:", err);
-                });
-            }, 5000); // 5 sec debounce
+            saveDeltaToCloud({
+                type: 'update',
+                key: oldKey,
+                rm: newPoint.rm,
+                payload: newPoint,
+                timestamp: Date.now()
+            });
         }
 
     }, [editingClient]);
@@ -643,6 +454,15 @@ export const useAppLogic = () => {
                     return group;
                 });
             }
+            
+            // DELTA SAVE for batch (handled individually to keep logic simple)
+            saveDeltaToCloud({
+                type: 'update',
+                key: oldKey,
+                rm: point.rm,
+                payload: point,
+                timestamp: Date.now()
+            });
         });
         
         enrichWithAbcCategories(currentAllData);
@@ -653,205 +473,13 @@ export const useAppLogic = () => {
             setEditingClient(prev => prev ? ({ ...prev, ...updatedEditingClient }) : null);
         }
 
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => saveSnapshotToCloud(currentAllData, currentUnidentified), 2000);
-
     }, [editingClient]);
-
-    // --- LIVE SYNC POLLING ---
-    useEffect(() => {
-        const syncData = async () => {
-            if (allDataRef.current.length === 0 && unidentifiedRowsRef.current.length === 0) return;
-            if (processingState.isProcessing) return;
-
-            try {
-                const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                if (!res.ok) return;
-                const cacheData: CoordsCache = await res.json();
-
-                const freshData = applyCacheToData(allDataRef.current, cacheData);
-                
-                // Compare to see if we actually need to update state
-                const isDifferent = JSON.stringify(freshData.map(r => r.fact)) !== JSON.stringify(allDataRef.current.map(r => r.fact)) || 
-                                    freshData.length !== allDataRef.current.length;
-
-                if (isDifferent) {
-                    enrichWithAbcCategories(freshData);
-                    setAllData(freshData);
-                    // Less intrusive notification
-                    // addNotification('Данные обновлены (синхронизация)', 'info');
-                }
-
-            } catch (e) {
-                console.error("Auto-sync failed", e);
-            }
-        };
-
-        const intervalId = setInterval(syncData, POLLING_INTERVAL_MS);
-        return () => clearInterval(intervalId);
-    }, [processingState.isProcessing, applyCacheToData]);
-
-    // --- BACKGROUND GEOCODING POLLING ---
-    useEffect(() => {
-        const poll = async () => {
-            if (pendingGeocoding.length === 0) return;
-
-            const updatedPending: PendingGeocodingItem[] = [];
-            const completedItems: { oldKey: string, point: MapPoint, originalIndex?: number }[] = [];
-
-            for (const item of pendingGeocoding) {
-                if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
-                    addNotification(`Тайм-аут геокодинга для: ${item.address}`, 'warning');
-                    const errorPoint = { ...item.basePoint, isGeocoding: false, geocodingError: 'Превышено время ожидания.' };
-                    completedItems.push({ oldKey: item.oldKey, point: errorPoint, originalIndex: item.originalIndex });
-                    continue;
-                }
-
-                try {
-                    const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(item.rm)}&address=${encodeURIComponent(item.address)}&_t=${Date.now()}`, {
-                        headers: { 'Cache-Control': 'no-cache' }
-                    });
-
-                    // ERROR 404 FIX: Stop infinite polling if 404
-                    if (res.status === 404) {
-                        console.warn(`Address not found (404), stopping poll: ${item.address}`);
-                        // Add to completed as failure or keep in pending with max attempts to expire it
-                        updatedPending.push({ ...item, attempts: MAX_GEOCODING_ATTEMPTS + 1 });
-                        continue;
-                    }
-
-                    if (res.ok) {
-                        const result = await res.json();
-                        // Handle explicit "not found" (null) response which is now 200 OK
-                        if (!result) {
-                             updatedPending.push({ ...item, attempts: item.attempts + 1 });
-                             continue;
-                        }
-
-                        const hasCoords = typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0 && result.lon !== 0;
-
-                        if (hasCoords) {
-                            const successPoint = { ...item.basePoint, lat: result.lat, lon: result.lon, isGeocoding: false, comment: result.comment || item.basePoint.comment };
-                            completedItems.push({ oldKey: item.oldKey, point: successPoint, originalIndex: item.originalIndex });
-                            addNotification(`Координаты для "${item.address.substring(0, 30)}..." найдены`, 'success');
-                        } else {
-                            updatedPending.push({ ...item, attempts: item.attempts + 1 });
-                        }
-                    } else {
-                        updatedPending.push({ ...item, attempts: item.attempts + 1 });
-                    }
-                } catch (e) {
-                    updatedPending.push({ ...item, attempts: item.attempts + 1 });
-                }
-            }
-            
-            if (completedItems.length > 0) {
-                handleBatchDataUpdate(completedItems);
-            }
-            setPendingGeocoding(updatedPending);
-        };
-
-        const intervalId = setInterval(poll, GEOCODING_POLLING_INTERVAL_MS);
-        return () => clearInterval(intervalId);
-    }, [pendingGeocoding]);
-
-    // --- NORMALIZE HELPER ---
-    const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
-        if (!Array.isArray(rows)) return [];
-        const result: AggregatedDataRow[] = [];
-        
-        const safeFloat = (v: any) => {
-            if (typeof v === 'number') return v;
-            if (typeof v === 'string') {
-                const f = parseFloat(v.replace(',', '.'));
-                return isNaN(f) ? undefined : f;
-            }
-            return undefined;
-        };
-        
-        const isValidCoord = (n: any) => typeof n === 'number' && !isNaN(n) && n !== 0;
-
-        rows.forEach((row, index) => {
-            if (!row) return;
-            const brandRaw = String(row.brand || '').trim();
-            const hasMultipleBrands = brandRaw.length > 2 && /[,;|\r\n]/.test(brandRaw);
-
-            const generateStableKey = (base: any, suffix: string | number) => {
-                const baseStr = base.key || base.address || `idx_${index}`;
-                return `${baseStr}_${suffix}`.replace(/\s+/g, '_');
-            };
-
-            const normalizeClient = (c: any, cIdx: number) => {
-                const clientObj = { ...c };
-                const original = c.originalRow || {}; 
-
-                if (c.lng !== undefined) clientObj.lon = safeFloat(c.lng);
-                if (c.lat !== undefined) clientObj.lat = safeFloat(c.lat);
-
-                if (!isValidCoord(clientObj.lat)) {
-                    clientObj.lat = safeFloat(c.latitude) || safeFloat(c.geo_lat) || safeFloat(c.y) || safeFloat(c.Lat) ||
-                                    safeFloat(original.lat) || safeFloat(original.latitude) || safeFloat(original.geo_lat) || safeFloat(original.y);
-                }
-                if (!isValidCoord(clientObj.lon)) {
-                    clientObj.lon = safeFloat(c.longitude) || safeFloat(c.geo_lon) || safeFloat(c.x) || safeFloat(c.Lng) || safeFloat(c.Lon) ||
-                                    safeFloat(original.lon) || safeFloat(original.lng) || safeFloat(original.longitude) || safeFloat(original.geo_lon) || safeFloat(original.x);
-                }
-                
-                if (!clientObj.key) {
-                    clientObj.key = generateStableKey(row, `cli_${cIdx}`);
-                }
-                return clientObj;
-            };
-
-            if (hasMultipleBrands) {
-                const parts = brandRaw.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-                if (parts.length > 1) {
-                    const splitFactor = 1 / parts.length;
-                    parts.forEach((brandPart, idx) => {
-                        const regionName = row.region || 'Неизвестный регион';
-                        result.push({
-                            ...row,
-                            // Preserve _chunkIndex if available
-                            _chunkIndex: row._chunkIndex,
-                            key: generateStableKey(row, `spl_${idx}`),
-                            brand: brandPart,
-                            clientName: `${regionName}: ${brandPart}`,
-                            fact: (row.fact || 0) * splitFactor,
-                            potential: (row.potential || 0) * splitFactor,
-                            growthPotential: (row.growthPotential || 0) * splitFactor,
-                            clients: Array.isArray(row.clients) ? row.clients.map(normalizeClient) : []
-                        });
-                    });
-                    return;
-                }
-            }
-            
-            let clientSource = row.clients;
-            if (!Array.isArray(clientSource) || clientSource.length === 0) {
-                 clientSource = [row];
-            }
-
-            const normalizedClients = clientSource.map(normalizeClient);
-            const regionName = row.region || 'Неизвестный регион';
-            const brandName = row.brand || 'Без бренда';
-            const finalClientName = row.clientName || `${regionName}: ${brandName}`;
-
-            result.push({
-                ...row,
-                // Preserve _chunkIndex if available
-                _chunkIndex: row._chunkIndex,
-                key: row.key || generateStableKey(row, 'm'),
-                clientName: finalClientName,
-                clients: normalizedClients
-            });
-        });
-        return result;
-    }, []);
 
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
+            // 1. Load Chunks
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
             
@@ -889,9 +517,6 @@ export const useAppLogic = () => {
                 const chunkData = JSON.parse(text);
                 let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
                 
-                // IMPORTANT: Restore _chunkIndex based on file sequence
-                // This ensures that when we delete rows, we know exactly which chunk they came from
-                // preventing a full repack.
                 const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
                 newRows.forEach(row => row._chunkIndex = chunkIndex);
 
@@ -905,7 +530,7 @@ export const useAppLogic = () => {
             }
 
             if (accumulatedRows.length > 0 || loadedMeta) {
-                // BLOCKING CACHE SYNC: Apply cache *before* setting state
+                // 2. BLOCKING CACHE SYNC: Apply legacy cache
                 setProcessingState(prev => ({ ...prev, message: 'Проверка удаленных записей...' }));
                 
                 let finalData = accumulatedRows;
@@ -917,6 +542,48 @@ export const useAppLogic = () => {
                     }
                 } catch (e) {
                     console.error("Failed to fetch cache during load, using snapshot data only:", e);
+                }
+
+                // 3. APPLY DELTAS (The new "Savepoints" system)
+                try {
+                    setProcessingState(prev => ({ ...prev, message: 'Применение правок (Delta)...' }));
+                    const deltaRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                    if (deltaRes.ok) {
+                        const deltas: DeltaItem[] = await deltaRes.json();
+                        
+                        // Sort by timestamp
+                        deltas.sort((a, b) => a.timestamp - b.timestamp);
+                        
+                        // Apply changes
+                        finalData = finalData.map(group => {
+                            let wasModified = false;
+                            let groupClients = [...group.clients];
+                            
+                            deltas.forEach(delta => {
+                                if (delta.type === 'delete') {
+                                    const initialLen = groupClients.length;
+                                    groupClients = groupClients.filter(c => c.key !== delta.key);
+                                    if (groupClients.length !== initialLen) wasModified = true;
+                                } else if (delta.type === 'update') {
+                                    const idx = groupClients.findIndex(c => c.key === delta.key);
+                                    if (idx !== -1 && delta.payload) {
+                                        groupClients[idx] = { ...groupClients[idx], ...delta.payload };
+                                        wasModified = true;
+                                    }
+                                }
+                            });
+                            
+                            if (wasModified) {
+                                const newFact = groupClients.reduce((s, c) => s + (c.fact || 0), 0);
+                                return { ...group, clients: groupClients, fact: newFact };
+                            }
+                            return group;
+                        });
+                        
+                        console.log(`Applied ${deltas.length} delta updates.`);
+                    }
+                } catch (e) {
+                    console.warn("Failed to load deltas", e);
                 }
 
                 enrichWithAbcCategories(finalData);
@@ -947,7 +614,7 @@ export const useAppLogic = () => {
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
         }
         return false;
-    }, [normalize, addNotification, applyCacheToData]);
+    }, [addNotification, applyCacheToData]);
 
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
@@ -972,23 +639,22 @@ export const useAppLogic = () => {
         }
     }, [processingState.isProcessing, handleDownloadSnapshot]);
 
-    const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
-        addNotification(`Адрес "${address.substring(0, 30)}..." отправлен на геокодинг`, 'info');
-        handleDataUpdate(oldKey, basePoint, originalIndex);
-        setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
-    }, [handleDataUpdate, addNotification]);
-
     const handleDeleteClient = useCallback((rmName: string, address: string) => {
         const normAddress = normalizeAddress(address);
         let newData = [...allDataRef.current]; 
         let newUnidentified = [...unidentifiedRowsRef.current];
         let wasModified = false;
+        let deletedKey = '';
 
         newData = newData.map(group => {
             if (group.rm !== rmName) return group;
 
             const originalClientCount = group.clients.length;
-            const newClients = group.clients.filter(c => normalizeAddress(c.address) !== normAddress);
+            const newClients = group.clients.filter(c => {
+                const isMatch = normalizeAddress(c.address) === normAddress;
+                if (isMatch) deletedKey = c.key;
+                return !isMatch;
+            });
             
             if (newClients.length !== originalClientCount) {
                 wasModified = true;
@@ -1021,12 +687,13 @@ export const useAppLogic = () => {
             setUnidentifiedRows(newUnidentified);
             addNotification('Клиент удален из базы', 'info');
 
-            if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-            saveTimeoutRef.current = setTimeout(() => {
-                saveSnapshotToCloud(newData, newUnidentified).catch(err => {
-                    console.error("Auto-save failed after delete:", err);
-                });
-            }, 1000);
+            // DELTA SAVE: Save deletion record
+            saveDeltaToCloud({
+                type: 'delete',
+                key: deletedKey || normalizeAddress(address),
+                rm: rmName,
+                timestamp: Date.now()
+            });
         }
     }, []);
 
@@ -1067,7 +734,59 @@ export const useAppLogic = () => {
             }
         };
         init();
-    }, [handleDownloadSnapshot, normalize, applyCacheToData]);
+    }, [handleDownloadSnapshot, applyCacheToData]);
+
+    const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
+        setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
+    }, []);
+
+    // --- GEOCODING POLLING EFFECT ---
+    useEffect(() => {
+        if (pendingGeocoding.length === 0) return;
+
+        const intervalId = setInterval(async () => {
+            const nextPending: PendingGeocodingItem[] = [];
+            let changed = false;
+
+            for (const item of pendingGeocoding) {
+                if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
+                    addNotification(`Не удалось найти координаты (тайм-аут): ${item.address}`, 'error');
+                    if (editingClient && (editingClient as MapPoint).key === item.oldKey) {
+                        setEditingClient(prev => prev ? ({ ...prev, isGeocoding: false, geocodingError: 'Тайм-аут геокодирования' }) : null);
+                    }
+                    changed = true;
+                    continue;
+                }
+
+                try {
+                    const url = `/api/get-cached-address?rmName=${encodeURIComponent(item.rm)}&address=${encodeURIComponent(item.address)}`;
+                    const res = await fetch(url);
+                    let found = false;
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && typeof data.lat === 'number' && typeof data.lon === 'number') {
+                            const updatedPoint = { ...item.basePoint, lat: data.lat, lon: data.lon, isGeocoding: false, status: 'match' as const };
+                            handleDataUpdate(item.oldKey, updatedPoint, item.originalIndex);
+                            addNotification(`Координаты найдены: ${item.address}`, 'success');
+                            found = true;
+                        }
+                    }
+                    if (found) {
+                        changed = true;
+                        continue;
+                    }
+                } catch (e) { /* ignore */ }
+
+                nextPending.push({ ...item, attempts: item.attempts + 1 });
+            }
+
+            if (changed || nextPending.length !== pendingGeocoding.length) {
+                setPendingGeocoding(nextPending);
+            }
+        }, GEOCODING_POLLING_INTERVAL_MS);
+
+        return () => clearInterval(intervalId);
+    }, [pendingGeocoding, editingClient, handleDataUpdate, addNotification]);
 
     // --- FILTERED DATA ---
     const filtered = useMemo(() => {

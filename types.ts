@@ -364,3 +364,12 @@ export type ActionQueueItem =
         };
         retryCount: number;
       };
+
+// --- DELTA SYSTEM TYPES ---
+export interface DeltaItem {
+    type: 'update' | 'delete';
+    key: string; // The row key (or address if key absent)
+    rm: string; // To help identifying
+    payload?: Partial<MapPoint>; // Only changed fields
+    timestamp: number;
+}
