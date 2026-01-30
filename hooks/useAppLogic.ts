@@ -11,7 +11,7 @@ import { enrichDataWithSmartPlan } from '../services/planning/integration';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 
-// Максимальный размер JSON-файла в байтах (850 КБ)
+// Максимальный размер JSON-файла в байтах (850 КБ) - оставляем запас до лимита Vercel/Drive
 const MAX_CHUNK_SIZE_BYTES = 850 * 1024; 
 
 // Интервал авто-обновления (в миллисекундах)
@@ -343,7 +343,8 @@ export const useAppLogic = () => {
             
             console.time('chunk-generation');
             
-            // --- STICKY CHUNKING LOGIC ---
+            // --- STICKY CHUNKING LOGIC v2 (With Size Checks) ---
+            
             // 1. Organize existing rows into their assigned chunks
             const stickyChunksMap = new Map<number, AggregatedDataRow[]>();
             const unassignedRows: AggregatedDataRow[] = [];
@@ -361,34 +362,66 @@ export const useAppLogic = () => {
                 }
             });
 
-            // 2. Process Unassigned Rows (pack them into new or last chunks)
-            // If the last chunk has space, we could append, but for simplicity/stability, we can just start new chunks
-            // starting from maxChunkIndex + 1.
+            // 2. Validate and Enforce Size Limit on Existing Chunks
+            // If a "sticky" chunk grew beyond the limit (e.g. more rows added to it, or data expanded),
+            // we must strip the excess rows and treat them as unassigned (move to end).
+            
+            const chunkIndices = Array.from(stickyChunksMap.keys()).sort((a, b) => a - b);
+            
+            chunkIndices.forEach(idx => {
+                const rows = stickyChunksMap.get(idx)!;
+                const validRows: AggregatedDataRow[] = [];
+                // Base JSON overhead approximation: {"chunkIndex": 123, "rows": []} -> ~50 bytes
+                let currentChunkSize = 100; 
+
+                rows.forEach(row => {
+                    const rowStr = JSON.stringify(row);
+                    const rowSize = getByteSize(rowStr) + 2; // +2 for comma
+
+                    if (currentChunkSize + rowSize > MAX_CHUNK_SIZE_BYTES) {
+                        // OVERFLOW DETECTED
+                        // Row cannot fit in its original chunk anymore.
+                        // Reset its index and move to unassigned to be packed into a NEW chunk.
+                        row._chunkIndex = undefined; 
+                        unassignedRows.push(row);
+                    } else {
+                        currentChunkSize += rowSize;
+                        validRows.push(row);
+                    }
+                });
+
+                // Update the map with only the rows that fit
+                stickyChunksMap.set(idx, validRows);
+            });
+
+            // 3. Process Unassigned Rows (New + Overflow)
+            // Pack them into new chunks starting after the current max index
             
             let currentPackIndex = maxChunkIndex + 1;
             let currentChunkRows: AggregatedDataRow[] = [];
-            // Dummy start for sizing, we reset for the loop
-            let currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
+            let currentNewChunkSize = 100; // Base overhead
 
-            // If we have unassigned rows, pack them dynamically
             if (unassignedRows.length > 0) {
                 for (const row of unassignedRows) {
-                    // Assign the new index permanently to the row object
+                    // Assign the new index permanently
                     row._chunkIndex = currentPackIndex;
                     
                     const rowStr = JSON.stringify(row);
                     const rowSize = getByteSize(rowStr) + 2; 
 
-                    if (currentSize + rowSize > MAX_CHUNK_SIZE_BYTES && currentChunkRows.length > 0) {
+                    if (currentNewChunkSize + rowSize > MAX_CHUNK_SIZE_BYTES && currentChunkRows.length > 0) {
+                        // Finalize current chunk
                         stickyChunksMap.set(currentPackIndex, currentChunkRows);
+                        
+                        // Start next chunk
                         currentPackIndex++;
                         currentChunkRows = [];
-                        currentSize = getByteSize(JSON.stringify({ chunkIndex: currentPackIndex, rows: [] }));
-                        row._chunkIndex = currentPackIndex; // Re-assign to next chunk
+                        currentNewChunkSize = 100;
+                        row._chunkIndex = currentPackIndex;
                     }
                     
                     currentChunkRows.push(row);
-                    currentSize += rowSize;
+                    currentNewChunkSize += rowSize;
                 }
                 // Push the last partial chunk
                 if (currentChunkRows.length > 0) {
@@ -396,20 +429,12 @@ export const useAppLogic = () => {
                 }
             }
 
-            // 3. Serialize all chunks from the Map
-            // Note: We iterate based on keys to handle potentially empty intermediate chunks if that ever happens
-            // (though in this logic, we only store existing rows).
-            // If a chunk index exists in availableSlots but is NOT in stickyChunksMap (because all rows were deleted),
-            // we should save an empty chunk to clear it on server.
-            
+            // 4. Serialize & Prepare Uploads
             const maxSlotIndex = Math.max(maxChunkIndex, availableSlots.length - 1, currentPackIndex);
             const chunksToUpload: { index: number; content: string; targetFileId: string }[] = [];
-            const chunksContentCache = new Map<number, string>(); // To update ref later
+            const chunksContentCache = new Map<number, string>(); 
 
             for (let i = 0; i <= maxSlotIndex; i++) {
-                // If we have rows for this index, save them. If not, save empty array (clearing the file).
-                // Unless it's beyond the range of known data AND known files, then we stop.
-                
                 const rows = stickyChunksMap.get(i) || [];
                 // Skip if no rows AND no existing file (it's a gap past the end)
                 if (rows.length === 0 && i >= availableSlots.length && i > currentPackIndex) continue;
@@ -431,7 +456,6 @@ export const useAppLogic = () => {
 
             if (chunksToUpload.length === 0) {
                 console.log("%c[Cloud Save] No data chunks changed. Skipping large upload.", "color: #10b981");
-                // Update cache ref just in case
                 chunksContentCache.forEach((content, idx) => {
                     lastSavedChunksRef.current.set(idx, content);
                 });
@@ -481,9 +505,6 @@ export const useAppLogic = () => {
             });
             console.timeEnd('save-meta');
             
-            // NOTE: We don't notify success here because the queue system handles individual action notifications.
-            // But we keep this for the bulk snapshot save logic.
-            // addNotification('Изменения сохранены', 'success'); 
         } catch (e: any) {
             console.error("Cloud Save Error:", e);
             const errString = e.toString();
