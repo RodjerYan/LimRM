@@ -325,10 +325,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
 
                         if (shouldSquash) {
                             addNotification('Авто-оптимизация базы (Squash)...', 'info');
-                            // Trigger squash in background
-                            setTimeout(() => {
-                                saveSnapshotToCloud(finalData, loadedMeta?.unidentifiedRows || []);
-                            }, 5000);
+                            // Trigger squash immediately in background (Fire and forget)
+                            saveSnapshotToCloud(finalData, loadedMeta?.unidentifiedRows || [])
+                                .catch(err => console.error("Background squash failed", err));
                         }
                     }
                 } catch (e) { console.warn("Delta sync failed", e); }

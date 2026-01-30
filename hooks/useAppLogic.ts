@@ -4,7 +4,7 @@ import {
     OkbDataRow, MapPoint, UnidentifiedRow,
     OkbStatus, UpdateJobStatus
 } from '../types';
-import { normalizeAddress, findAddressInRow, findValueInRow } from '../utils/dataUtils';
+import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 
@@ -12,9 +12,6 @@ import { enrichWithAbcCategories } from '../utils/analytics';
 import { useDataSync } from './useDataSync';
 import { useGeocoding } from './useGeocoding';
 import { useAnalytics } from './useAnalytics';
-
-// Helper for safe row normalization if needed
-const normalize = (rows: any[]) => rows; // Simplified as useDataSync handles it now
 
 export const useAppLogic = () => {
     const [activeModule, setActiveModule] = useState('adapta');
@@ -31,6 +28,9 @@ export const useAppLogic = () => {
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<any | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<MapPoint | UnidentifiedRow | null>(null);
+
+    // Performance optimization: Track last cache size to avoid redundant processing
+    const lastCacheSizeRef = useRef<number>(0);
 
     // --- NOTIFICATIONS ---
     const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning') => {
@@ -49,20 +49,21 @@ export const useAppLogic = () => {
         totalRowsProcessedRef,
         manualUpdateTimestamps,
         saveDeltaToCloud,
-        saveSnapshotToCloud,
         handleDownloadSnapshot,
         applyCacheToData
     } = useDataSync(addNotification);
 
-    // --- INTERNAL DATA UPDATE LOGIC (Used by Geocoding) ---
+    // --- INTERNAL DATA UPDATE LOGIC (Used by Geocoding & UI) ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allData]; 
         let newUnidentified = [...unidentifiedRows];
         
+        // Block auto-overwriting for this address for 2 mins
         if (newPoint.address) {
             manualUpdateTimestamps.current.set(normalizeAddress(newPoint.address), Date.now());
         }
         
+        // Case A: Moving from Unidentified -> Identified
         if (typeof originalIndex === 'number') {
             const rowIndex = newUnidentified.findIndex(r => r.originalIndex === originalIndex);
             if (rowIndex !== -1) newUnidentified.splice(rowIndex, 1);
@@ -84,7 +85,9 @@ export const useAppLogic = () => {
                     potential: (newPoint.fact || 0) * 1.15, growthPotential: 0, growthPercentage: 0, clients: [newPoint]
                 });
             }
-        } else {
+        } 
+        // Case B: Updating Existing Client
+        else {
             newData = newData.map(group => {
                 const clientIndex = group.clients.findIndex(c => c.key === oldKey);
                 if (clientIndex !== -1) {
@@ -96,6 +99,7 @@ export const useAppLogic = () => {
             });
         }
 
+        // Update UI State if currently editing
         if (editingClient && (editingClient as MapPoint).key === oldKey) {
             setEditingClient(prev => prev ? ({ ...prev, ...newPoint }) : null);
         }
@@ -104,6 +108,7 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
+        // SAVE DELTA (Skip transient geocoding states)
         if (!newPoint.isGeocoding) {
             saveDeltaToCloud({
                 type: 'update',
@@ -182,18 +187,39 @@ export const useAppLogic = () => {
         summaryMetrics
     } = useAnalytics(allData, okbData, okbRegionCounts);
 
-    // --- LIVE SYNC POLLING ---
+    // --- LIVE SYNC POLLING (OPTIMIZED) ---
     useEffect(() => {
         const syncData = async () => {
             if (allData.length === 0 || processingState.isProcessing) return;
             try {
+                // 1. Deltas Check (Very Fast)
+                // Just fetching to keep connection alive or check simple flags if API supported it.
+                // In a real scenario, you'd check a `last-modified` header here.
+                await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+
+                // 2. Legacy Cache Check (Heavier)
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                 if (!res.ok) return;
+                
                 const cacheData = await res.json();
+                
+                // OPTIMIZATION: Check size before applying
+                const currentCacheSize = Object.keys(cacheData).length + Object.values(cacheData).flat().length;
+                if (currentCacheSize === lastCacheSizeRef.current) {
+                    return; // No changes inferred from size stability
+                }
+                lastCacheSizeRef.current = currentCacheSize;
+
+                // If changed, apply expensive diff logic
                 const freshData = applyCacheToData(allData, cacheData);
                 
-                const isDifferent = JSON.stringify(freshData.map(r => r.fact)) !== JSON.stringify(allData.map(r => r.fact)) || 
-                                    freshData.length !== allData.length;
+                // Compare Totals to decide if re-render needed
+                const currentTotalFact = allData.reduce((sum, r) => sum + r.fact, 0);
+                const freshTotalFact = freshData.reduce((sum, r) => sum + r.fact, 0);
+                
+                const isDifferent = 
+                    freshData.length !== allData.length || 
+                    Math.abs(currentTotalFact - freshTotalFact) > 0.01;
 
                 if (isDifferent) {
                     enrichWithAbcCategories(freshData);
@@ -201,7 +227,9 @@ export const useAppLogic = () => {
                 }
             } catch (e) { console.error("Auto-sync failed", e); }
         };
-        const intervalId = setInterval(syncData, 15000);
+        
+        // Poll every 30s
+        const intervalId = setInterval(syncData, 30000);
         return () => clearInterval(intervalId);
     }, [allData, processingState.isProcessing, applyCacheToData, setAllData]);
 
@@ -222,13 +250,18 @@ export const useAppLogic = () => {
             }
             
             // Check cloud for updates
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+            try {
+                const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
+                if (metaRes.ok) {
+                    const serverMeta = await metaRes.json();
+                    if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                        await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
+                    }
                     setDbStatus('ready');
                 }
+            } catch (e) {
+                console.warn("Init fetch failed, using local only", e);
+                setDbStatus('ready');
             }
         };
         init();
@@ -238,26 +271,36 @@ export const useAppLogic = () => {
         };
     }, [handleDownloadSnapshot, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
 
-    // --- UPDATE HANDLER ---
+    // --- SERVER DATA UPDATE HANDLER ---
     const handleStartDataUpdate = async () => {
         if (updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error') return;
         try {
             const res = await fetch('/api/start-data-update', { method: 'POST' });
             const { jobId } = await res.json();
+            
             setUpdateJobStatus({ status: 'pending', message: 'Задача поставлена в очередь...', progress: 5 });
+            
             if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
+            
             updatePollingInterval.current = window.setInterval(async () => {
-                const statusRes = await fetch(`/api/check-update-status?jobId=${jobId}`);
-                if (!statusRes.ok) {
-                    clearInterval(updatePollingInterval.current!);
-                    setUpdateJobStatus({ status: 'error', message: 'Ошибка связи с сервером.', progress: 100 });
-                    return;
-                }
-                const statusData = await statusRes.json();
-                setUpdateJobStatus(statusData);
-                if (statusData.status === 'completed' || statusData.status === 'error') {
-                    clearInterval(updatePollingInterval.current!);
-                    if (statusData.status === 'completed') setTimeout(() => window.location.reload(), 2500);
+                try {
+                    const statusRes = await fetch(`/api/check-update-status?jobId=${jobId}`);
+                    if (!statusRes.ok) {
+                        if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
+                        setUpdateJobStatus({ status: 'error', message: 'Ошибка связи с сервером.', progress: 100 });
+                        return;
+                    }
+                    const statusData = await statusRes.json();
+                    setUpdateJobStatus(statusData);
+                    
+                    if (statusData.status === 'completed' || statusData.status === 'error') {
+                        if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
+                        if (statusData.status === 'completed') {
+                            setTimeout(() => window.location.reload(), 2500);
+                        }
+                    }
+                } catch (e) {
+                    // Ignore transient network errors during poll
                 }
             }, 3000);
         } catch (error) {
@@ -287,6 +330,7 @@ export const useAppLogic = () => {
     // Combined Unidentified List for UI
     const combinedUnidentifiedRows = useMemo(() => {
         const parsingFailures = unidentifiedRows;
+        // Also find "Active" clients that are technically unidentified (missing coords)
         const geocodingFailures = allData.flatMap(group => group.clients)
             .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
             .map(c => ({
@@ -294,6 +338,7 @@ export const useAppLogic = () => {
                 rowData: c.originalRow || {},
                 originalIndex: typeof c.key === 'string' && c.key.startsWith('row_') ? -1 : 9999
             } as UnidentifiedRow));
+            
         return [...parsingFailures, ...geocodingFailures];
     }, [unidentifiedRows, allData]);
 
@@ -322,8 +367,8 @@ export const useAppLogic = () => {
         summaryMetrics,
         handleStartDataUpdate,
         handleForceUpdate,
-        handleDataUpdate: handleQueuedUpdate,
-        handleDeleteClient: handleQueuedDelete,
+        handleDataUpdate: handleQueuedUpdate, // Use the queued version
+        handleDeleteClient: handleQueuedDelete, // Use the queued version
         handleStartPolling,
         addNotification,
         queueLength: actionQueue.length

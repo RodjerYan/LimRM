@@ -1,5 +1,5 @@
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapPoint, ActionQueueItem } from '../types';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 
@@ -23,6 +23,19 @@ export const useGeocoding = (
     const [pendingGeocoding, setPendingGeocoding] = useState<PendingGeocodingItem[]>([]);
     const [actionQueue, setActionQueue] = useState<ActionQueueItem[]>([]);
     const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
+    // --- REF PATTERN FOR CALLBACKS ---
+    // Prevent interval resets when parent state updates function references
+    const onDataUpdateRef = useRef(onDataUpdate);
+    const onDeleteClientLocalRef = useRef(onDeleteClientLocal);
+
+    useEffect(() => {
+        onDataUpdateRef.current = onDataUpdate;
+    }, [onDataUpdate]);
+
+    useEffect(() => {
+        onDeleteClientLocalRef.current = onDeleteClientLocal;
+    }, [onDeleteClientLocal]);
 
     // --- QUEUE PROCESSOR ---
     useEffect(() => {
@@ -81,8 +94,8 @@ export const useGeocoding = (
             for (const item of pendingGeocoding) {
                 if (item.attempts >= MAX_GEOCODING_ATTEMPTS) {
                     addNotification(`Не удалось найти координаты (тайм-аут): ${item.address}`, 'error');
-                    // Update client with error status
-                    onDataUpdate(item.oldKey, { ...item.basePoint, isGeocoding: false, geocodingError: 'Тайм-аут' }, item.originalIndex);
+                    // Update client with error status via Ref
+                    onDataUpdateRef.current(item.oldKey, { ...item.basePoint, isGeocoding: false, geocodingError: 'Тайм-аут' }, item.originalIndex);
                     changed = true;
                     continue;
                 }
@@ -95,7 +108,7 @@ export const useGeocoding = (
                         const data = await res.json();
                         if (data && typeof data.lat === 'number' && typeof data.lon === 'number') {
                             const updatedPoint = { ...item.basePoint, lat: data.lat, lon: data.lon, isGeocoding: false, status: 'match' as const };
-                            onDataUpdate(item.oldKey, updatedPoint, item.originalIndex);
+                            onDataUpdateRef.current(item.oldKey, updatedPoint, item.originalIndex);
                             addNotification(`Координаты найдены: ${item.address}`, 'success');
                             found = true;
                         }
@@ -115,19 +128,19 @@ export const useGeocoding = (
         }, GEOCODING_POLLING_INTERVAL_MS);
 
         return () => clearInterval(intervalId);
-    }, [pendingGeocoding, onDataUpdate, addNotification]);
+    }, [pendingGeocoding, addNotification]); // onDataUpdate removed from deps
 
     // --- PUBLIC HANDLERS ---
     const handleStartPolling = useCallback((rm: string, address: string, oldKey: string, basePoint: MapPoint, originalIndex?: number) => {
         addNotification(`Адрес "${address.substring(0, 30)}..." отправлен на геокодинг`, 'info');
         // Optimistic update
-        onDataUpdate(oldKey, basePoint, originalIndex);
+        onDataUpdateRef.current(oldKey, basePoint, originalIndex);
         setPendingGeocoding(prev => [...prev, { rm, address, oldKey, basePoint, originalIndex, attempts: 0 }]);
-    }, [addNotification, onDataUpdate]);
+    }, [addNotification]);
 
     const handleQueuedUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         // 1. Local Update
-        onDataUpdate(oldKey, newPoint, originalIndex);
+        onDataUpdateRef.current(oldKey, newPoint, originalIndex);
         // 2. Queue Server Update
         const originalRow = newPoint.originalRow || {};
         const oldAddress = findAddressInRow(originalRow) || newPoint.address;
@@ -149,11 +162,11 @@ export const useGeocoding = (
         if (!newPoint.isGeocoding) {
             addNotification('Изменения сохранены в очередь', 'success');
         }
-    }, [onDataUpdate, addNotification]);
+    }, [addNotification]);
 
     const handleQueuedDelete = useCallback((rm: string, address: string) => {
         // 1. Local Delete
-        onDeleteClientLocal(rm, address);
+        onDeleteClientLocalRef.current(rm, address);
         // 2. Queue Server Delete
         setActionQueue(prev => [...prev, {
             type: 'DELETE_ADDRESS',
@@ -162,7 +175,7 @@ export const useGeocoding = (
             retryCount: 0
         }]);
         addNotification('Удаление добавлено в очередь', 'info');
-    }, [onDeleteClientLocal, addNotification]);
+    }, [addNotification]);
 
     return {
         pendingGeocoding,
