@@ -71,7 +71,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onForceUpdate,
                                 </div>
                                 <div className="flex-grow">
                                     <h3 className="text-sm font-bold text-emerald-100">Актуализация</h3>
-                                    <p className="text-[10px] text-gray-400">Загрузить последний снимок из облака</p>
+                                    <p className="text-[10px] text-gray-400">Только быстрые снимки (Snapshots)</p>
                                 </div>
                             </div>
 

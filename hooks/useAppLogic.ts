@@ -50,8 +50,7 @@ export const useAppLogic = () => {
         manualUpdateTimestamps,
         saveDeltaToCloud,
         handleDownloadSnapshot,
-        applyCacheToData,
-        runFullSync // Now available
+        applyCacheToData
     } = useDataSync(addNotification);
 
     // --- INTERNAL DATA UPDATE LOGIC (Used by Geocoding & UI) ---
@@ -299,14 +298,14 @@ export const useAppLogic = () => {
     }, [handleDownloadSnapshot, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
 
     // --- MANUAL FORCE UPDATE (Synchronize Button) ---
-    // PRIORITY: 1. Try to download latest Snapshot. 2. Only if fails, process Google Sheets.
+    // STRICT MODE: Only load from Snapshot (JSON Chunks). No fallback to Google Sheets.
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
         
         setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 5, message: 'Проверка облачного снимка...' }));
 
         try {
-            // 1. Try to get Snapshot Metadata first
+            // 1. Try to get Snapshot Metadata
             const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
             
             if (metaRes.ok) {
@@ -321,42 +320,24 @@ export const useAppLogic = () => {
                     
                     if (success) {
                         setDbStatus('ready');
-                        return; // SUCCESS! Exit without touching raw sheets.
+                        return;
                     }
                 }
             }
 
-            // 2. Fallback to Full Sync (Google Sheets) ONLY if snapshot fails or doesn't exist
-            console.warn("Snapshot not found or failed. Falling back to Google Sheets processing.");
-            addNotification("Снимок не найден. Запуск полной обработки таблиц...", "info");
-            
-            // Load OKB if needed
-            let currentOkb = okbData;
-            if (currentOkb.length === 0) {
-                setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 10, message: 'Загрузка справочника ОКБ...' }));
-                const okbRes = await fetch('/api/get-akb?mode=okb_data');
-                if (okbRes.ok) currentOkb = await okbRes.json();
-            }
-
-            // Load Cache if needed
-            const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-            let currentCache = {};
-            if (cacheRes.ok) currentCache = await cacheRes.json();
-
-            // Run Worker to process raw sheets
-            await runFullSync(currentOkb, currentCache);
-            
-            setDbStatus('ready');
+            // 2. ERROR if no snapshot found. NO FALLBACK.
+            console.error("Snapshot not found or invalid.");
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
+            addNotification("Снимок данных (snapshot.json) не найден. Загрузка отменена.", "error");
 
         } catch (e) {
             console.error("Force Update Failed:", e);
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка обновления' }));
             addNotification('Не удалось обновить данные с сервера', 'error');
         }
-    }, [processingState.isProcessing, okbData, handleDownloadSnapshot, runFullSync, addNotification, setProcessingState]);
+    }, [processingState.isProcessing, handleDownloadSnapshot, addNotification, setProcessingState]);
 
     const handleStartDataUpdate = async () => {
-        // Fallback or specific backend job trigger
         handleForceUpdate();
     };
 
