@@ -146,7 +146,7 @@ export const useAppLogic = () => {
         return result;
     }, []);
 
-    // --- LOCAL ROBUST SNAPSHOT DOWNLOADER ---
+    // --- LOCAL ROBUST SNAPSHOT DOWNLOADER (OPTIMIZED) ---
     const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
@@ -165,51 +165,57 @@ export const useAppLogic = () => {
                 return numA - numB;
             });
 
-            let loadedCount = 0;
             const total = fileList.length;
+            let loadedCount = 0;
             let accumulatedRows: AggregatedDataRow[] = [];
             let loadedMeta: any = serverMeta || null;
             
             lastSavedChunksRef.current.clear();
 
-            for (let i = 0; i < total; i++) {
-                const file = fileList[i];
-                try {
-                    const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                    if (!res.ok) {
-                        console.warn(`[Snapshot] Skipping failed chunk ${file.name} (${file.id})`);
-                        continue;
-                    }
-                    const text = await res.text();
-
-                    // SKIP EMPTY FILES GRACEFULLY
-                    if (!text || text.trim().length === 0) {
-                        console.warn(`[Snapshot] Skipping empty chunk ${file.name}`);
-                        continue;
-                    }
-
-                    lastSavedChunksRef.current.set(i, text);
+            // CONCURRENCY QUEUE
+            const CONCURRENCY = 6; // Parallel requests
+            const queue = fileList.map((file: any, index: number) => ({ file, index }));
+            
+            const worker = async () => {
+                while (queue.length > 0) {
+                    const item = queue.shift();
+                    if (!item) break;
                     
-                    const chunkData = JSON.parse(text);
-                    let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                    
-                    const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
-                    newRows.forEach(row => row._chunkIndex = chunkIndex);
+                    try {
+                        const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
+                        if (res.ok) {
+                            const text = await res.text();
+                            
+                            // SKIP EMPTY GRACEFULLY
+                            if (text && text.trim().length > 0) {
+                                lastSavedChunksRef.current.set(item.index, text);
+                                const chunkData = JSON.parse(text);
+                                let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                                
+                                const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
+                                newRows.forEach(row => row._chunkIndex = chunkIndex);
 
-                    if (newRows.length > 0) {
-                        accumulatedRows.push(...normalize(newRows));
+                                if (newRows.length > 0) {
+                                    accumulatedRows.push(...normalize(newRows));
+                                }
+                                if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
+                            }
+                        } else {
+                            console.warn(`[Snapshot] Failed to load chunk ${item.file.name}`);
+                        }
+                    } catch (chunkError) {
+                        console.warn(`[Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
+                    } finally {
+                        loadedCount++;
+                        setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
                     }
-                    if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
-                } catch (chunkError) {
-                    console.warn(`[Snapshot] Error processing chunk ${file.name}:`, chunkError);
-                    // Continue to next chunk instead of failing
                 }
-                
-                loadedCount++;
-                setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-            }
+            };
 
-            // SUCCESS CRITERIA: Metadata exists OR we loaded some rows OR file list was iterated
+            // Start workers
+            await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
+            // SUCCESS CRITERIA
             if (loadedMeta || accumulatedRows.length > 0 || total > 0) {
                 setProcessingState(prev => ({ ...prev, message: 'Проверка удаленных записей...' }));
                 
