@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
     OkbDataRow, MapPoint, UnidentifiedRow,
-    OkbStatus, UpdateJobStatus, AggregatedDataRow
+    OkbStatus, UpdateJobStatus, AggregatedDataRow, DeltaItem
 } from '../types';
 import { normalizeAddress, findAddressInRow } from '../utils/dataUtils';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
@@ -31,9 +31,6 @@ export const useAppLogic = () => {
 
     // Performance optimization: Track last cache size to avoid redundant processing
     const lastCacheSizeRef = useRef<number>(0);
-    // Cache for content of last saved chunks (used in useDataSync but ref managed here if needed locally, though useDataSync has its own)
-    const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
-    
     // LOCK for sync to prevent overlapping requests causing congestion
     const isSyncingRef = useRef(false);
 
@@ -54,8 +51,9 @@ export const useAppLogic = () => {
         totalRowsProcessedRef,
         manualUpdateTimestamps,
         saveDeltaToCloud,
-        // handleDownloadSnapshot, // We use LOCAL version below to keep custom normalization logic
-        applyCacheToData
+        handleDownloadSnapshot,
+        applyCacheToData,
+        applyDeltasToData
     } = useDataSync(addNotification);
 
     // --- NORMALIZE HELPER (Preserved from original useAppLogic) ---
@@ -148,156 +146,6 @@ export const useAppLogic = () => {
         });
         return result;
     }, []);
-
-    // --- LOCAL ROBUST SNAPSHOT DOWNLOADER (OPTIMIZED) ---
-    const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
-        console.groupCollapsed('📦 Snapshot Download Process');
-        console.time('Snapshot Total Load Time');
-        
-        try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
-            
-            console.log('1. Requesting snapshot list...');
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
-            
-            let fileList = await listRes.json();
-            if (!Array.isArray(fileList)) fileList = [];
-
-            console.log(`2. Received ${fileList.length} files to download.`);
-
-            fileList.sort((a: any, b: any) => {
-                const nameA = a.name || '';
-                const nameB = b.name || '';
-                const numA = parseInt(nameA.match(/\d+/)?.[0] || '0', 10);
-                const numB = parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
-                return numA - numB;
-            });
-
-            const total = fileList.length;
-            let loadedCount = 0;
-            let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = serverMeta || null;
-            
-            lastSavedChunksRef.current.clear();
-
-            // CONCURRENCY QUEUE with RETRIES
-            const CONCURRENCY = 6; // Parallel requests
-            const queue = fileList.map((file: any, index: number) => ({ file, index }));
-            
-            // Helper for retries
-            const fetchWithRetry = async (url: string, retries = 3, delay = 1000) => {
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        const res = await fetch(url);
-                        if (!res.ok) throw new Error(`Status ${res.status}`);
-                        return res;
-                    } catch (err) {
-                        console.warn(`[Retry ${i+1}/${retries}] Failed to fetch ${url}`);
-                        if (i === retries - 1) throw err;
-                        await new Promise(res => setTimeout(res, delay * (i + 1)));
-                    }
-                }
-                throw new Error("Retry failed");
-            };
-
-            const worker = async (workerId: number) => {
-                while (queue.length > 0) {
-                    const item = queue.shift();
-                    if (!item) break;
-                    
-                    const label = `Worker ${workerId} -> File ${item.file.name}`;
-                    console.time(label);
-                    
-                    try {
-                        const res = await fetchWithRetry(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
-                        const text = await res.text();
-                        
-                        // SKIP EMPTY GRACEFULLY
-                        if (text && text.trim().length > 0) {
-                            lastSavedChunksRef.current.set(item.index, text);
-                            const chunkData = JSON.parse(text);
-                            let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                            
-                            const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
-                            newRows.forEach(row => row._chunkIndex = chunkIndex);
-
-                            console.log(`${label}: Loaded ${newRows.length} rows.`);
-
-                            if (newRows.length > 0) {
-                                accumulatedRows.push(...normalize(newRows));
-                            }
-                            if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
-                        } else {
-                            console.warn(`${label}: File is empty.`);
-                        }
-                    } catch (chunkError) {
-                        console.error(`❌ [Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
-                    } finally {
-                        console.timeEnd(label);
-                        loadedCount++;
-                        setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
-                    }
-                }
-            };
-
-            // Start workers
-            console.log(`3. Starting ${CONCURRENCY} download workers...`);
-            await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => worker(i + 1)));
-
-            // SUCCESS CRITERIA
-            if (loadedMeta || accumulatedRows.length > 0 || total > 0) {
-                console.log(`4. Download complete. Total accumulated rows: ${accumulatedRows.length}`);
-                setProcessingState(prev => ({ ...prev, message: 'Проверка удаленных записей...' }));
-                
-                let finalData = accumulatedRows;
-                try {
-                    console.log('5. Fetching legacy cache/deletes...');
-                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                    if (cacheRes.ok) {
-                        const cacheData = await cacheRes.json();
-                        finalData = applyCacheToData(accumulatedRows, cacheData);
-                        console.log('   Cache applied.');
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch cache during load, using snapshot data only:", e);
-                }
-
-                enrichWithAbcCategories(finalData);
-                setAllData(finalData);
-                
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
-                
-                const versionHash = serverMeta?.versionHash || 'unknown';
-
-                await saveAnalyticsState({
-                    allData: finalData,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: versionHash,
-                    okbData: [], okbStatus: null
-                });
-                
-                localStorage.setItem('last_snapshot_version', versionHash);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                console.timeEnd('Snapshot Total Load Time');
-                console.groupEnd();
-                return true;
-            }
-            console.warn("Snapshot load failed: No data found.");
-            console.groupEnd();
-            return false;
-        } catch (e) { 
-            console.error("❌ Snapshot critical error:", e); 
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-            console.groupEnd();
-            return false;
-        }
-    }, [normalize, addNotification, applyCacheToData]);
 
     // --- INTERNAL DATA UPDATE LOGIC ---
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
@@ -449,7 +297,11 @@ export const useAppLogic = () => {
             try {
                 // 1. Get Deltas (lightweight)
                 console.debug('🔄 Auto-Sync: Checking deltas...');
-                await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
+                let deltas: DeltaItem[] = [];
+                if (deltasRes.ok) {
+                    deltas = await deltasRes.json();
+                }
                 
                 // 2. Get Legacy Cache (heavier, but cached by size ref)
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
@@ -460,16 +312,23 @@ export const useAppLogic = () => {
                 
                 const cacheData = await res.json();
                 
+                // Check if anything changed in Legacy Cache OR Deltas
                 const currentCacheSize = Object.keys(cacheData).length + Object.values(cacheData).flat().length;
-                if (currentCacheSize === lastCacheSizeRef.current) {
-                    // console.debug('🔄 Auto-Sync: No changes detected.');
+                const deltaCount = deltas.length;
+                const totalChangeSig = currentCacheSize + deltaCount; // Simple change signature
+
+                if (totalChangeSig === lastCacheSizeRef.current) {
+                    // No changes detected in either system
                     return;
                 }
                 
-                console.log(`🔄 Auto-Sync: Changes detected! (Old Size: ${lastCacheSizeRef.current}, New Size: ${currentCacheSize})`);
-                lastCacheSizeRef.current = currentCacheSize;
+                console.log(`🔄 Auto-Sync: Changes detected! (Sig: ${lastCacheSizeRef.current} -> ${totalChangeSig})`);
+                lastCacheSizeRef.current = totalChangeSig;
 
-                const freshData = applyCacheToData(allData, cacheData);
+                // Apply BOTH Legacy Cache AND Deltas
+                // Important: Apply deltas LAST as they are the newest truth
+                let freshData = applyCacheToData(allData, cacheData);
+                freshData = applyDeltasToData(freshData, deltas);
                 
                 const currentTotalFact = allData.reduce((sum, r) => sum + r.fact, 0);
                 const freshTotalFact = freshData.reduce((sum, r) => sum + r.fact, 0);
@@ -491,10 +350,9 @@ export const useAppLogic = () => {
             }
         };
         
-        // Increased interval to 45s to avoid hitting API limits
         const intervalId = setInterval(syncData, 45000);
         return () => clearInterval(intervalId);
-    }, [allData, processingState.isProcessing, applyCacheToData, setAllData, addNotification]);
+    }, [allData, processingState.isProcessing, applyCacheToData, applyDeltasToData, setAllData, addNotification]);
 
     // --- INIT ---
     useEffect(() => {
