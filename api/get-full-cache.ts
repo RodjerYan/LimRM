@@ -13,10 +13,9 @@ import {
 
 export const config = { maxDuration: 60, api: { bodyParser: false } };
 
-// FIXED: Correct Folder ID from the URL provided by user
-const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
-// NEW: Dedicated folder for Delta Updates (LimRM_save points_data)
-const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P';
+// Configuration via Environment Variables
+const FOLDER_ID = process.env.GOOGLE_DRIVE_SNAPSHOT_FOLDER_ID || '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
+const DELTA_FOLDER_ID = process.env.GOOGLE_DRIVE_DELTA_FOLDER_ID || '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P';
 
 // CRITICAL FIX: Changed scope from 'drive.file' to 'drive' (full access)
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
@@ -141,6 +140,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     });
                     return res.json({ status: 'created', file: fileName });
                 }
+            }
+
+            // --- SQUASH: Clear Deltas ---
+            if (action === 'clear-deltas') {
+                const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
+                console.log(`[SQUASH] Deleting ${savepointsFiles.length} delta files...`);
+                
+                // Delete all savepoints files
+                await Promise.all(savepointsFiles.map((f: any) => 
+                    drive.files.delete({ fileId: f.id }).catch((e: any) => console.error(`Failed to delete delta ${f.id}`, e))
+                ));
+                
+                return res.json({ status: 'deltas_cleared', count: savepointsFiles.length });
             }
 
             // Snapshot Operations
