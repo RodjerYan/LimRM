@@ -291,7 +291,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-deltas') {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
                 
-                // FIX: Use mapConcurrent to limit parallel downloads (e.g. 5 at a time) to prevent timeouts
+                // PERFORMANCE FIX: 
+                // Limit to the last 15 delta files. 
+                // Vercel timeouts (504) occur when trying to fetch too many files from Google Drive in one request.
+                // 15 files is a safe limit to ensure the UI stays responsive.
+                const filesToProcess = savepointsFiles.slice(-15);
+                
                 const downloadFn = async (file: any) => {
                     return drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
                         .then(res => {
@@ -309,8 +314,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         });
                 };
 
-                // Limit concurrency to 5 requests at a time
-                const results = await mapConcurrent(savepointsFiles, 5, downloadFn);
+                // Limit concurrency to 8 requests at a time
+                const results = await mapConcurrent(filesToProcess, 8, downloadFn);
                 const allDeltas = results.flat();
                 
                 return res.json(allDeltas);

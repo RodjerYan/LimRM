@@ -36,17 +36,22 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     // --- DELTA MANAGEMENT ---
     const saveDeltaToCloud = async (delta: DeltaItem) => {
         setIsCloudSaving(true);
+        console.groupCollapsed('☁️ Saving Delta');
+        console.log('Type:', delta.type);
+        console.log('Payload:', delta);
+        
         try {
             await fetch('/api/get-full-cache?action=save-delta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(delta)
             });
-            console.log("Delta saved successfully");
+            console.log("✅ Delta saved successfully");
         } catch (e) {
-            console.error("Failed to save delta:", e);
+            console.error("❌ Failed to save delta:", e);
             addNotification('Ошибка сохранения изменений в облако', 'warning');
         } finally {
+            console.groupEnd();
             setIsCloudSaving(false);
         }
     };
@@ -54,6 +59,8 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     // --- FULL SAVE / SQUASH ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         setIsCloudSaving(true);
+        console.group('🧹 Snapshot Squash (Optimization)');
+        
         try {
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             let availableSlots: { id: string, name: string }[] = [];
@@ -143,7 +150,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             }
 
             if (chunksToUpload.length > 0) {
-                console.log(`[Squash] Uploading ${chunksToUpload.length} chunks...`);
+                console.log(`[Squash] Uploading ${chunksToUpload.length} updated chunks...`);
                 const CONCURRENCY = 4;
                 for (let i = 0; i < chunksToUpload.length; i += CONCURRENCY) {
                     const batch = chunksToUpload.slice(i, i + CONCURRENCY).map((item) => {
@@ -157,13 +164,17 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                         }).then(async res => {
                             if (!res.ok) throw new Error(`Upload failed for chunk ${item.index}`);
                             lastSavedChunksRef.current.set(item.index, item.content);
+                            console.log(`[Squash] Chunk ${item.index} saved.`);
                         });
                     });
                     await Promise.all(batch);
                 }
+            } else {
+                console.log('[Squash] No chunks needed updates.');
             }
 
             // 5. Save Meta
+            console.log('[Squash] Updating meta...');
             await fetch('/api/get-full-cache?action=save-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -179,15 +190,17 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             });
 
             // 6. CLEAR DELTAS (The squash magic)
+            console.log('[Squash] Clearing old deltas...');
             await fetch('/api/get-full-cache?action=clear-deltas', { method: 'POST' });
             
-            console.log("[Squash] Complete. Deltas cleared.");
+            console.log("✅ [Squash] Complete. System optimized.");
             addNotification("База успешно оптимизирована (Squash)", "success");
 
         } catch (e) {
-            console.error("Save Snapshot Error:", e);
+            console.error("❌ Save Snapshot Error:", e);
             addNotification('Ошибка сохранения снимка', 'error');
         } finally {
+            console.groupEnd();
             setIsCloudSaving(false);
         }
     };
@@ -240,168 +253,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     }, []);
 
     // --- LOAD SNAPSHOT + DELTAS ---
-    const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
-        try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
-            
-            // 1. Load Chunks List
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
-            
-            let fileList = await listRes.json();
-            
-            // Sort by logical index (snapshot1, snapshot2...)
-            fileList.sort((a: any, b: any) => {
-                const numA = parseInt((a.name || '').match(/\d+/)?.[0] || '0', 10);
-                const numB = parseInt((b.name || '').match(/\d+/)?.[0] || '0', 10);
-                return numA - numB;
-            });
-
-            let accumulatedRows: AggregatedDataRow[] = [];
-            let loadedMeta: any = serverMeta || null;
-            lastSavedChunksRef.current.clear();
-
-            // Iterate through files
-            for (let i = 0; i < fileList.length; i++) {
-                const file = fileList[i];
-                
-                try {
-                    const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${file.id}`);
-                    if (!res.ok) {
-                        console.warn(`Failed to load chunk ${file.name} (${file.id}), skipping...`);
-                        continue; // Skip failed download, don't crash
-                    }
-                    
-                    const text = await res.text();
-                    
-                    // 1. Check for empty file
-                    if (!text || text.trim() === '') {
-                        console.warn(`File ${file.name} is empty, skipping.`);
-                        continue;
-                    }
-
-                    // 2. Parse JSON
-                    const chunkData = JSON.parse(text);
-                    lastSavedChunksRef.current.set(i, text);
-
-                    let newRows: AggregatedDataRow[] = [];
-                    if (Array.isArray(chunkData.rows)) {
-                        newRows = chunkData.rows;
-                    } else if (Array.isArray(chunkData.aggregatedData)) {
-                        newRows = chunkData.aggregatedData;
-                    } else if (Array.isArray(chunkData)) {
-                        newRows = chunkData; // Direct array support
-                    }
-
-                    const chunkIndex = parseInt(file.name.match(/\d+/)?.[0] || String(i), 10);
-                    newRows.forEach(row => row._chunkIndex = chunkIndex);
-
-                    if (newRows.length > 0) {
-                        accumulatedRows.push(...normalize(newRows));
-                    }
-                    
-                    // If chunk contains embedded meta (legacy), prefer it if serverMeta wasn't passed
-                    if (chunkData.meta && !loadedMeta) {
-                        loadedMeta = chunkData.meta;
-                    }
-                } catch (parseError) {
-                    console.warn(`Error parsing chunk ${file.name}:`, parseError);
-                    // Do NOT throw. Continue to next chunk.
-                }
-                
-                setProcessingState(prev => ({ ...prev, progress: Math.round(((i+1)/fileList.length)*100) }));
-            }
-
-            // RELAXED SUCCESS CONDITION:
-            // If we have loaded *any* meta (passed or found) OR we iterated the file list successfully (even if data is empty/0 rows)
-            // we treat this as a success. This supports "empty" initial snapshots.
-            const isSuccess = accumulatedRows.length > 0 || !!loadedMeta || fileList.length > 0;
-
-            if (isSuccess) {
-                // 2. Apply Legacy Cache
-                let finalData = accumulatedRows;
-                try {
-                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                    if (cacheRes.ok) {
-                        const cacheData = await cacheRes.json();
-                        finalData = applyCacheToData(accumulatedRows, cacheData);
-                    }
-                } catch (e) { console.warn("Cache sync failed", e); }
-
-                // 3. APPLY DELTAS
-                try {
-                    setProcessingState(prev => ({ ...prev, message: 'Применение правок (Delta)...' }));
-                    const deltaRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
-                    if (deltaRes.ok) {
-                        const deltas: DeltaItem[] = await deltaRes.json();
-                        deltas.sort((a, b) => a.timestamp - b.timestamp);
-                        
-                        const shouldSquash = deltas.length > 1000;
-
-                        finalData = finalData.map(group => {
-                            let wasModified = false;
-                            let groupClients = [...group.clients];
-                            deltas.forEach(delta => {
-                                if (delta.type === 'delete') {
-                                    const initialLen = groupClients.length;
-                                    groupClients = groupClients.filter(c => c.key !== delta.key);
-                                    if (groupClients.length !== initialLen) wasModified = true;
-                                } else if (delta.type === 'update') {
-                                    const idx = groupClients.findIndex(c => c.key === delta.key);
-                                    if (idx !== -1 && delta.payload) {
-                                        groupClients[idx] = { ...groupClients[idx], ...delta.payload };
-                                        wasModified = true;
-                                    }
-                                }
-                            });
-                            if (wasModified) {
-                                const newFact = groupClients.reduce((s, c) => s + (c.fact || 0), 0);
-                                return { ...group, clients: groupClients, fact: newFact };
-                            }
-                            return group;
-                        });
-
-                        if (shouldSquash) {
-                            addNotification('Авто-оптимизация базы (Squash)...', 'info');
-                            saveSnapshotToCloud(finalData, loadedMeta?.unidentifiedRows || [])
-                                .catch(err => console.error("Background squash failed", err));
-                        }
-                    }
-                } catch (e) { console.warn("Delta sync failed", e); }
-
-                enrichWithAbcCategories(finalData);
-                setAllData(finalData);
-                
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
-
-                await saveAnalyticsState({
-                    allData: finalData,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
-                    okbRegionCounts: safeMeta.okbRegionCounts || {},
-                    totalRowsProcessed: totalRowsProcessedRef.current,
-                    versionHash: serverMeta?.versionHash || 'unknown',
-                    okbData: [], okbStatus: null
-                });
-                
-                localStorage.setItem('last_snapshot_version', serverMeta?.versionHash || 'unknown');
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                return true;
-            }
-            
-            console.error("Snapshot download failed: List loaded but no valid data found.");
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка данных' }));
-            return false;
-
-        } catch (e) {
-            console.error("Snapshot Load Error:", e);
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-            return false;
-        }
-    }, [applyCacheToData, addNotification]);
-
+    // Note: The main logic for initial load is usually in useAppLogic, but this hook provides
+    // helper logic for managing the state it owns.
+    
     return {
         allData, setAllData,
         unidentifiedRows, setUnidentifiedRows,
@@ -412,7 +266,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         manualUpdateTimestamps,
         saveDeltaToCloud,
         saveSnapshotToCloud,
-        handleDownloadSnapshot,
         applyCacheToData,
     };
 };
