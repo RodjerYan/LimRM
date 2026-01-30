@@ -193,8 +193,6 @@ export const useAppLogic = () => {
             if (allData.length === 0 || processingState.isProcessing) return;
             try {
                 // 1. Deltas Check (Very Fast)
-                // Just fetching to keep connection alive or check simple flags if API supported it.
-                // In a real scenario, you'd check a `last-modified` header here.
                 await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
 
                 // 2. Legacy Cache Check (Heavier)
@@ -254,7 +252,13 @@ export const useAppLogic = () => {
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
-                    if (serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash) {
+                    
+                    // FIXED LOGIC: Force download if local is empty OR hashes mismatch
+                    const hasLocalData = local?.allData?.length > 0;
+                    const isNewVersion = serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash;
+                    
+                    if (serverMeta?.versionHash && (!hasLocalData || isNewVersion)) {
+                        console.log("Starting cloud snapshot download...", { hasLocalData, isNewVersion, hash: serverMeta.versionHash });
                         await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
                     }
                     setDbStatus('ready');
