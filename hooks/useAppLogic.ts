@@ -108,24 +108,35 @@ export const useAppLogic = () => {
         setAllData(newData);
         setUnidentifiedRows(newUnidentified);
         
-        // SAVE DELTA (Skip transient geocoding states)
-        // Log "LimRM_save points_data" ONLY when we actually have data to save
-        if (!newPoint.isGeocoding) {
-            console.group('LimRM_save points_data');
-            console.log('Action: Save Chunk (Delta)');
-            console.log('Key:', oldKey);
-            console.log('Payload:', newPoint);
-            console.log('Timestamp:', new Date().toISOString());
-            console.groupEnd();
-
-            saveDeltaToCloud({
-                type: 'update',
-                key: oldKey,
-                rm: newPoint.rm,
-                payload: newPoint,
-                timestamp: Date.now()
-            });
+        // SAVE DELTA LOGIC
+        // We MUST verify that we are not in a transient geocoding state
+        if (newPoint.isGeocoding) {
+            console.log(`[AppLogic] Update deferred: Geocoding active for ${newPoint.address}`);
+            return;
         }
+
+        if (!newPoint.lat || !newPoint.lon) {
+             console.warn(`[AppLogic] Update deferred: Missing coordinates for ${newPoint.address}`);
+             return;
+        }
+
+        // Only save if we have actual coordinates and the process is finished
+        console.group('LimRM_save points_data');
+        console.log('Action: Save Chunk (Delta)');
+        console.log('Key:', oldKey);
+        console.log('Coords:', newPoint.lat, newPoint.lon);
+        console.log('Payload:', newPoint);
+        console.log('Timestamp:', new Date().toISOString());
+        console.groupEnd();
+
+        saveDeltaToCloud({
+            type: 'update',
+            key: oldKey,
+            rm: newPoint.rm,
+            payload: newPoint,
+            timestamp: Date.now()
+        });
+
     }, [allData, unidentifiedRows, editingClient, setAllData, setUnidentifiedRows, saveDeltaToCloud]);
 
     // --- INTERNAL DELETE LOGIC ---

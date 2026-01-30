@@ -133,7 +133,7 @@ export const useGeocoding = (
                                 ...item.basePoint,
                                 lat: data.lat,
                                 lon: data.lon,
-                                isGeocoding: false, // Turn off loading state
+                                isGeocoding: false, // Turn off loading state immediately
                                 coordStatus: 'confirmed',
                                 comment: data.comment || item.basePoint.comment,
                                 lastUpdated: Date.now()
@@ -185,8 +185,15 @@ export const useGeocoding = (
             retryCount: 0
         }]);
 
-        // 2. Set Local State to "Geocoding" immediately
-        const tempPoint: MapPoint = { ...basePoint, address, isGeocoding: true, lat: undefined, lon: undefined };
+        // 2. Set Local State to "Geocoding" immediately.
+        // IMPORTANT: Set lat/lon to undefined so the UI knows to wait.
+        const tempPoint: MapPoint = { 
+            ...basePoint, 
+            address, 
+            isGeocoding: true, 
+            lat: undefined, 
+            lon: undefined 
+        };
         onDataUpdateRef.current(oldKey, tempPoint, originalIndex);
 
         // 3. Add to Polling List

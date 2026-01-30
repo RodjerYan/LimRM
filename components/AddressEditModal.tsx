@@ -351,7 +351,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 // This logic detects when the global state updates via the poller
                 const pt = data as MapPoint;
                 
-                // If we were waiting for geocoding, and now we have coords + not geocoding flag
+                // CRITICAL FIX: Only change status if we are waiting for geocoding
+                // and the data now indicates it is finished.
                 if (status === 'geocoding') {
                     const isStillGeocoding = pt.isGeocoding;
                     const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
@@ -511,6 +512,11 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             return;
         }
 
+        // Logic split:
+        // 1. If address changed -> We MUST Geocode.
+        // 2. If coords manually set -> We update immediately.
+        // 3. If only comment changed -> We update immediately.
+        
         const needsGeocoding = isAddressChanged && !manualCoords;
         const updateTimestamp = Date.now();
         let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
@@ -518,8 +524,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
 
         const baseNewPoint: MapPoint = {
             key: oldKey, 
-            lat: needsGeocoding ? undefined : (data as MapPoint).lat, 
-            lon: needsGeocoding ? undefined : (data as MapPoint).lon,
+            lat: needsGeocoding ? undefined : (manualCoords?.lat || (data as MapPoint).lat), 
+            lon: needsGeocoding ? undefined : (manualCoords?.lon || (data as MapPoint).lon),
             status: 'match',
             name: findValueInRow(originalRow, ['наименование клиенты', 'контрагент', 'клиент']) || 'N/A',
             address: editedAddress, city: parsed.city, region: parsed.region, rm: rm,
@@ -536,20 +542,12 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // DO NOT CLOSE MODAL. WAIT FOR COORDS.
             setStatus('geocoding');
             console.log('[Modal] Starting geocoding polling. Waiting for coordinates...');
+            // This starts the background job. 
+            // Crucially, useGeocoding will eventually call onDataUpdate with the FINAL result.
             onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
         } else {
-            // Apply Manual Coords
-            const finalPoint = { 
-                ...baseNewPoint, 
-                lat: manualCoords?.lat || baseNewPoint.lat, 
-                lon: manualCoords?.lon || baseNewPoint.lon 
-            };
-            
-            // This will trigger the queue in useAppLogic
-            onDataUpdate(oldKey, finalPoint, originalIndex);
-            
-            // If manual update, we can show success briefly then close, or just close.
-            // Current behavior: close immediately.
+            // Manual update or just comment change. Save immediately.
+            onDataUpdate(oldKey, baseNewPoint, originalIndex);
             onClose(); 
         }
     };
