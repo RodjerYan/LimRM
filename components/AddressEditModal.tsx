@@ -347,22 +347,26 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     setHistory([]);
                 }
             } else {
-                // UPDATE FOR SAME CLIENT (e.g. Polling Result)
+                // UPDATE FOR SAME CLIENT (Listening for Polling Result)
+                // This logic detects when the global state updates via the poller
+                const pt = data as MapPoint;
+                
+                // If we were waiting for geocoding, and now we have coords + not geocoding flag
                 if (status === 'geocoding') {
-                    const isStillGeocoding = (data as MapPoint).isGeocoding;
-                    const hasCoords = (data as MapPoint).lat && (data as MapPoint).lon && (data as MapPoint).lat !== 0;
+                    const isStillGeocoding = pt.isGeocoding;
+                    const hasCoords = pt.lat && pt.lon && pt.lat !== 0;
                     
                     if (!isStillGeocoding && hasCoords) {
                         setStatus('success_geocoding');
+                        console.log('%c[Modal] Coordinates received & confirmed. Showing success state.', 'color: green; font-weight: bold');
                     }
                     
-                    if (!isStillGeocoding && !hasCoords && (data as MapPoint).geocodingError) {
+                    if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
                          setStatus('error_geocoding');
-                         setError((data as MapPoint).geocodingError || 'Координаты не найдены');
+                         setError(pt.geocodingError || 'Координаты не найдены');
                     }
                 }
                 
-                const pt = data as MapPoint;
                 if (pt.lastUpdated) {
                     setLastUpdatedStr(new Date(pt.lastUpdated).toLocaleString('ru-RU'));
                 }
@@ -370,7 +374,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             
             prevKeyRef.current = currentKey;
         }
-    }, [isOpen, data, globalTheme]); 
+    }, [isOpen, data, globalTheme, status]); // Added status dependency
 
     // --- Fetch History with Improved Error Handling ---
     const fetchHistory = useCallback(async (rmName: string, address: string) => {
@@ -380,10 +384,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             const url = `/api/get-cached-address?rmName=${encodeURIComponent(rmName)}&address=${encodeURIComponent(address)}&t=${Date.now()}`;
             const res = await fetch(url);
 
-            // FIX: Now expecting 200 with null body for "not found"
             if (res.ok) {
                 const result = await res.json();
-                if (!result) return; // Not found in cache
+                if (!result) return; 
 
                 if (result.history) {
                     const historyArray = result.history.split(/\s*\|\|\s*/).filter(Boolean);
@@ -392,9 +395,6 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 if (result.comment && !comment && !isCommentTouched.current) {
                     setComment(result.comment);
                 }
-            } else {
-               if (res.status === 404) return;
-               throw new Error(`API returned ${res.status}: ${res.statusText}`);
             }
         } catch (e) {
             console.error("Failed to fetch history for address:", address, e);
@@ -533,7 +533,9 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         };
         
         if (needsGeocoding) {
+            // DO NOT CLOSE MODAL. WAIT FOR COORDS.
             setStatus('geocoding');
+            console.log('[Modal] Starting geocoding polling. Waiting for coordinates...');
             onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex);
         } else {
             // Apply Manual Coords
@@ -546,7 +548,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
             // This will trigger the queue in useAppLogic
             onDataUpdate(oldKey, finalPoint, originalIndex);
             
-            // Close modal immediately for optimistic feel
+            // If manual update, we can show success briefly then close, or just close.
+            // Current behavior: close immediately.
             onClose(); 
         }
     };
@@ -754,7 +757,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                                                 <span>Геокодирование запущено...</span>
                                             </div>
                                             <p className="text-center text-[10px] leading-relaxed text-gray-500 px-4 italic uppercase tracking-tighter">
-                                                Процесс идет в фоновом режиме. Вы можете закрыть это окно, точка появится на карте автоматически.
+                                                Ожидание координат... Не закрывайте окно.
                                             </p>
                                         </div>
                                     )}

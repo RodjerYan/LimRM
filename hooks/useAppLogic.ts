@@ -109,7 +109,15 @@ export const useAppLogic = () => {
         setUnidentifiedRows(newUnidentified);
         
         // SAVE DELTA (Skip transient geocoding states)
+        // Log "LimRM_save points_data" ONLY when we actually have data to save
         if (!newPoint.isGeocoding) {
+            console.group('LimRM_save points_data');
+            console.log('Action: Save Chunk (Delta)');
+            console.log('Key:', oldKey);
+            console.log('Payload:', newPoint);
+            console.log('Timestamp:', new Date().toISOString());
+            console.groupEnd();
+
             saveDeltaToCloud({
                 type: 'update',
                 key: oldKey,
@@ -157,6 +165,12 @@ export const useAppLogic = () => {
             setAllData(newData);
             setUnidentifiedRows(newUnidentified);
             
+            console.group('LimRM_save points_data');
+            console.log('Action: Delete Chunk');
+            console.log('Key:', deletedKey || normalizeAddress(address));
+            console.log('RM:', rmName);
+            console.groupEnd();
+
             saveDeltaToCloud({
                 type: 'delete',
                 key: deletedKey || normalizeAddress(address),

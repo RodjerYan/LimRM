@@ -42,7 +42,7 @@ async function getSortedFiles(drive: any, folderId: string = FOLDER_ID) {
     
     const res = await drive.files.list({ 
         q, 
-        fields: "files(id, name, mimeType)", 
+        fields: "files(id, name, mimeType, size)", 
         supportsAllDrives: true, 
         includeItemsFromAllDrives: true,
         pageSize: 1000 
@@ -62,7 +62,20 @@ async function getSortedFiles(drive: any, folderId: string = FOLDER_ID) {
         return match ? parseInt(match[0], 10) : 9999;
     };
 
-    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name }));
+    return filteredFiles.sort((a: any, b: any) => sortKey(a) - sortKey(b)).map((f: any) => ({ id: f.id, name: f.name, size: f.size }));
+}
+
+// Concurrency Limiter Helper
+async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const results: R[] = new Array(items.length);
+    const iterator = items.entries();
+    const workers = Array(concurrency).fill(iterator).map(async (iter) => {
+        for (const [index, item] of iter) {
+            results[index] = await fn(item);
+        }
+    });
+    await Promise.all(workers);
+    return results;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -93,23 +106,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     const currentIndex = match ? parseInt(match[1], 10) : 1;
                     nextIndex = currentIndex;
 
-                    // Download to check size
-                    try {
-                        const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                        const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
-                        
-                        // Rule: If file > 100KB, rotate to next
-                        if (contentStr.length > 100 * 1024) {
-                            nextIndex = currentIndex + 1;
-                            targetFile = null; // Create new
-                        } else {
+                    // Optimization: Check size metadata first to avoid downloading large files
+                    const fileSize = lastFile.size ? parseInt(lastFile.size, 10) : 0;
+                    
+                    // Rule: If file > 100KB, rotate to next immediately without download
+                    if (fileSize > 100 * 1024) {
+                        nextIndex = currentIndex + 1;
+                        targetFile = null; // Create new
+                    } else {
+                        // Download to append
+                        try {
+                            const fileRes = await drive.files.get({ fileId: lastFile.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+                            const contentStr = Buffer.from(fileRes.data as any).toString('utf-8');
+                            
                             targetFile = lastFile;
                             try { fileContent = JSON.parse(contentStr); } catch (e) { /* ignore corrupt, start fresh */ }
+                        } catch (e) {
+                            // Error reading? Start new file.
+                            nextIndex = currentIndex + 1;
+                            targetFile = null; 
                         }
-                    } catch (e) {
-                        // Error reading? Start new file.
-                        nextIndex = currentIndex + 1;
-                        targetFile = null; 
                     }
                 }
 
@@ -147,10 +163,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
                 console.log(`[SQUASH] Deleting ${savepointsFiles.length} delta files...`);
                 
-                // Delete all savepoints files
-                await Promise.all(savepointsFiles.map((f: any) => 
+                // Delete all savepoints files (with concurrency limit for safety)
+                await mapConcurrent(savepointsFiles, 5, async (f: any) => 
                     drive.files.delete({ fileId: f.id }).catch((e: any) => console.error(`Failed to delete delta ${f.id}`, e))
-                ));
+                );
                 
                 return res.json({ status: 'deltas_cleared', count: savepointsFiles.length });
             }
@@ -244,9 +260,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     
                     console.log(`[CLEANUP] Deleting ${filesToDelete.length} obsolete chunks...`);
                     
-                    await Promise.all(filesToDelete.map((f: any) => 
+                    await mapConcurrent(filesToDelete, 5, async (f: any) => 
                         drive.files.delete({ fileId: f.id }).catch((e: any) => console.error(`Failed to delete ${f.id}`, e))
-                    ));
+                    );
                     
                     return res.status(200).json({ status: 'cleanup_done', deleted: filesToDelete.length });
                 }
@@ -271,23 +287,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (req.method === 'GET') {
             
-            // --- NEW: Load Deltas ---
+            // --- NEW: Load Deltas Optimized ---
             if (action === 'get-deltas') {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
-                const allDeltas: any[] = [];
                 
-                // Read all savepoint files
-                for (const file of savepointsFiles) {
-                    try {
-                        const fileRes = await drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
-                        const content = JSON.parse(Buffer.from(fileRes.data as any).toString('utf-8'));
-                        if (content.deltas && Array.isArray(content.deltas)) {
-                            allDeltas.push(...content.deltas);
-                        }
-                    } catch (e) {
-                        console.warn(`Failed to read delta file ${file.name}`, e);
-                    }
-                }
+                // FIX: Use mapConcurrent to limit parallel downloads (e.g. 5 at a time) to prevent timeouts
+                const downloadFn = async (file: any) => {
+                    return drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
+                        .then(res => {
+                            try {
+                                const content = JSON.parse(Buffer.from(res.data as any).toString('utf-8'));
+                                return Array.isArray(content.deltas) ? content.deltas : [];
+                            } catch (e) {
+                                console.warn(`Corrupt delta file ${file.name}`, e);
+                                return [];
+                            }
+                        })
+                        .catch(e => {
+                            console.warn(`Failed to download delta file ${file.name}`, e);
+                            return [];
+                        });
+                };
+
+                // Limit concurrency to 5 requests at a time
+                const results = await mapConcurrent(savepointsFiles, 5, downloadFn);
+                const allDeltas = results.flat();
                 
                 return res.json(allDeltas);
             }
