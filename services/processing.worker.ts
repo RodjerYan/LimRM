@@ -299,7 +299,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         const rawAddr = findAddressInRow(row);
         
-        // --- STRICT DATA QUALITY GATE ---
+        // --- DATA QUALITY GATE (RELAXED) ---
         // 1. Must have an address field
         if (!rawAddr) continue;
         
@@ -312,9 +312,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const lowerAddr = cleanAddr.toLowerCase();
         if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
 
-        // 4. Client name must exist
-        const clientName = String(row[state_clientNameHeader || ''] || '').trim();
-        if (!clientName || clientName.length < 2) continue;
+        // 4. Client name check (Relaxed: fallback to address if missing)
+        let clientName = String(row[state_clientNameHeader || ''] || '').trim();
+        if (!clientName || clientName.length < 2) {
+             clientName = cleanAddr || 'Без названия';
+        }
 
         // 5. Filter out Summary/Total rows
         const lowerName = clientName.toLowerCase();
@@ -322,8 +324,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             continue;
         }
 
-        // 6. Suspicious duplicate check: If address is identical to client name, it's likely a column shift or bad data
-        if (lowerName === lowerAddr) continue;
         // --------------------------------
 
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
@@ -353,15 +353,20 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
+            // FIX: DO NOT DROP ROWS even if identification fails.
+            // We register them in unidentifiedRows for manual fixing,
+            // BUT we also allow them to proceed to aggregation with default "Unknown" values
+            // so that the total volume (FACT) remains accurate.
             state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
-            continue;
+            // continue; // <-- REMOVED THIS LINE to prevent data loss
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
         
-        // 7. Extra check: If weight is 0 AND address is unverified, likely garbage.
-        if (totalWeight === 0 && !cacheEntry && !isCityFound) continue;
+        // 7. Extra check: Dropped rows with 0 weight if they were not verified or geocoded.
+        // Relaxed: if we found a city or region, we keep it as potential.
+        // if (totalWeight === 0 && !cacheEntry && !isCityFound) continue;
 
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
