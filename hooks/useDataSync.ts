@@ -1,6 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus } from '../types';
+import { AggregatedDataRow, UnidentifiedRow, FileProcessingState, DeltaItem, CoordsCache, OkbStatus, OkbDataRow, WorkerMessage } from '../types';
 import { saveAnalyticsState, loadAnalyticsState } from '../utils/db';
 import { enrichWithAbcCategories } from '../utils/analytics';
 import { normalizeAddress } from '../utils/dataUtils';
@@ -242,6 +242,119 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         return cleanData;
     }, []);
 
+    // --- FULL RE-SYNC FROM SOURCE ---
+    const runFullSync = useCallback(async (okbData: OkbDataRow[], okbCache: CoordsCache) => {
+        if (processingState.isProcessing) return;
+        
+        setProcessingState({
+            isProcessing: true,
+            progress: 0,
+            message: 'Инициализация процессора...',
+            startTime: Date.now(),
+            fileName: null,
+            backgroundMessage: null,
+            totalRowsProcessed: 0
+        });
+
+        try {
+            // Import Worker
+            const ProcessingWorker = (await import('../services/processing.worker?worker')).default;
+            const worker = new ProcessingWorker();
+
+            worker.onmessage = async (e: MessageEvent<WorkerMessage>) => {
+                const { type, payload } = e.data;
+                
+                if (type === 'progress') {
+                    setProcessingState(prev => ({
+                        ...prev,
+                        progress: payload.percentage,
+                        message: payload.message,
+                        totalRowsProcessed: payload.totalProcessed
+                    }));
+                }
+                else if (type === 'result_finished') {
+                    // Success!
+                    const { aggregatedData, unidentifiedRows: unID, okbRegionCounts: okbCounts, totalRowsProcessed } = payload as any;
+                    
+                    enrichWithAbcCategories(aggregatedData);
+                    setAllData(aggregatedData);
+                    setUnidentifiedRows(unID);
+                    setOkbRegionCounts(okbCounts);
+                    
+                    // Save Snapshot immediately
+                    setProcessingState(prev => ({ ...prev, message: 'Сохранение снимка...' }));
+                    await saveSnapshotToCloud(aggregatedData, unID);
+                    
+                    // Cleanup
+                    worker.terminate();
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Синхронизация завершена', progress: 100 }));
+                    addNotification(`Обработано ${totalRowsProcessed} строк`, 'success');
+                }
+                else if (type === 'error') {
+                    console.error("Worker Error:", payload);
+                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка обработки' }));
+                    addNotification('Ошибка в процессе обработки', 'error');
+                    worker.terminate();
+                }
+            };
+
+            // Init
+            worker.postMessage({ 
+                type: 'INIT_STREAM', 
+                payload: { okbData, cacheData: okbCache } 
+            });
+
+            // Fetch Files
+            setProcessingState(prev => ({ ...prev, message: 'Получение списка файлов...' }));
+            const listRes = await fetch('/api/get-akb?mode=list&year=2025'); // Default to 2025
+            if (!listRes.ok) throw new Error("Failed to list files");
+            const files = await listRes.json();
+
+            if (!files || files.length === 0) {
+                throw new Error("Файлы продаж не найдены");
+            }
+
+            // Iterate Files
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const CHUNK_SIZE = 5000;
+                let offset = 0;
+                let hasMore = true;
+
+                setProcessingState(prev => ({ ...prev, message: `Загрузка: ${file.name}`, fileName: file.name }));
+
+                while (hasMore) {
+                    const chunkRes = await fetch(`/api/get-akb?fileId=${file.id}&offset=${offset}&limit=${CHUNK_SIZE}`);
+                    if (!chunkRes.ok) throw new Error(`Ошибка загрузки файла ${file.name}`);
+                    
+                    const chunkData = await chunkRes.json();
+                    const rows = chunkData.rows || [];
+                    
+                    if (rows.length > 0) {
+                        worker.postMessage({
+                            type: 'PROCESS_CHUNK',
+                            payload: { 
+                                rawData: rows, 
+                                isFirstChunk: (i === 0 && offset === 0),
+                                fileName: file.name
+                            }
+                        });
+                        offset += rows.length;
+                    }
+                    
+                    hasMore = chunkData.hasMore;
+                }
+            }
+
+            worker.postMessage({ type: 'FINALIZE_STREAM' });
+
+        } catch (e: any) {
+            console.error("Sync Error:", e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: `Сбой: ${e.message}` }));
+            addNotification('Сбой синхронизации', 'error');
+        }
+    }, [processingState.isProcessing, addNotification, saveSnapshotToCloud]);
+
     // --- LOAD SNAPSHOT + DELTAS ---
     const handleDownloadSnapshot = useCallback(async (chunkCount: number, versionHash: string) => {
         try {
@@ -371,8 +484,9 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
         totalRowsProcessedRef,
         manualUpdateTimestamps,
         saveDeltaToCloud,
-        saveSnapshotToCloud, // Expose for manual squash if needed
+        saveSnapshotToCloud,
         handleDownloadSnapshot,
-        applyCacheToData // Needed for geocoding hook
+        applyCacheToData,
+        runFullSync // Expose new function
     };
 };

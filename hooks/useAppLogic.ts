@@ -50,7 +50,8 @@ export const useAppLogic = () => {
         manualUpdateTimestamps,
         saveDeltaToCloud,
         handleDownloadSnapshot,
-        applyCacheToData
+        applyCacheToData,
+        runFullSync // Now available
     } = useDataSync(addNotification);
 
     // --- INTERNAL DATA UPDATE LOGIC (Used by Geocoding & UI) ---
@@ -109,7 +110,6 @@ export const useAppLogic = () => {
         setUnidentifiedRows(newUnidentified);
         
         // SAVE DELTA LOGIC
-        // We MUST verify that we are not in a transient geocoding state
         if (newPoint.isGeocoding) {
             console.log(`[AppLogic] Update deferred: Geocoding active for ${newPoint.address}`);
             return;
@@ -120,7 +120,6 @@ export const useAppLogic = () => {
              return;
         }
 
-        // Only save if we have actual coordinates and the process is finished
         console.group('LimRM_save points_data');
         console.log('Action: Save Chunk (Delta)');
         console.log('Key:', oldKey);
@@ -272,13 +271,12 @@ export const useAppLogic = () => {
                 setDbStatus('ready');
             }
             
-            // Check cloud for updates
+            // Check cloud for updates (Snapshot)
             try {
                 const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
                 if (metaRes.ok) {
                     const serverMeta = await metaRes.json();
                     
-                    // FIXED LOGIC: Force download if local is empty OR hashes mismatch
                     const hasLocalData = local?.allData?.length > 0;
                     const isNewVersion = serverMeta?.versionHash && serverMeta.versionHash !== local?.versionHash;
                     
@@ -300,66 +298,46 @@ export const useAppLogic = () => {
         };
     }, [handleDownloadSnapshot, setAllData, setUnidentifiedRows, setOkbRegionCounts]);
 
-    // --- SERVER DATA UPDATE HANDLER ---
-    const handleStartDataUpdate = async () => {
-        if (updateJobStatus && updateJobStatus.status !== 'completed' && updateJobStatus.status !== 'error') return;
-        try {
-            const res = await fetch('/api/start-data-update', { method: 'POST' });
-            const { jobId } = await res.json();
-            
-            setUpdateJobStatus({ status: 'pending', message: 'Задача поставлена в очередь...', progress: 5 });
-            
-            if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
-            
-            updatePollingInterval.current = window.setInterval(async () => {
-                try {
-                    const statusRes = await fetch(`/api/check-update-status?jobId=${jobId}`);
-                    if (!statusRes.ok) {
-                        if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
-                        setUpdateJobStatus({ status: 'error', message: 'Ошибка связи с сервером.', progress: 100 });
-                        return;
-                    }
-                    const statusData = await statusRes.json();
-                    setUpdateJobStatus(statusData);
-                    
-                    if (statusData.status === 'completed' || statusData.status === 'error') {
-                        if (updatePollingInterval.current) clearInterval(updatePollingInterval.current);
-                        if (statusData.status === 'completed') {
-                            setTimeout(() => window.location.reload(), 2500);
-                        }
-                    }
-                } catch (e) {
-                    // Ignore transient network errors during poll
-                }
-            }, 3000);
-        } catch (error) {
-            setUpdateJobStatus({ status: 'error', message: 'Не удалось запустить обновление.', progress: 100 });
-        }
-    };
-
+    // --- MANUAL FORCE UPDATE (Full Resync) ---
+    // Called when user clicks "Synchronize"
     const handleForceUpdate = useCallback(async () => {
         if (processingState.isProcessing) return;
-        setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 0, message: 'Проверка обновления...', startTime: Date.now() }));
+        
+        // 1. Load OKB and Cache first (needed for processing)
+        let currentOkb = okbData;
+        let currentCache = {};
+
         try {
-            const metaRes = await fetch(`/api/get-full-cache?action=get-snapshot-meta&t=${Date.now()}`);
-            if (metaRes.ok) {
-                const serverMeta = await metaRes.json();
-                if (serverMeta?.versionHash) {
-                    await handleDownloadSnapshot(serverMeta.chunkCount, serverMeta.versionHash);
-                    setDbStatus('ready');
-                } else {
-                    setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Снимок не найден' }));
-                }
-            } else throw new Error("Meta fetch failed");
+            if (currentOkb.length === 0) {
+                setProcessingState(prev => ({ ...prev, isProcessing: true, progress: 5, message: 'Загрузка справочника ОКБ...' }));
+                const okbRes = await fetch('/api/get-akb?mode=okb_data');
+                if (okbRes.ok) currentOkb = await okbRes.json();
+            }
+
+            const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+            if (cacheRes.ok) currentCache = await cacheRes.json();
+
+            // 2. Run Full Sync Pipeline (Source -> Worker -> Snapshot)
+            // This pulls fresh rows from the Google Sheet chunks
+            await runFullSync(currentOkb, currentCache);
+            
+            setDbStatus('ready');
+
         } catch (e) {
-            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка соединения' }));
+            console.error("Force Update Failed:", e);
+            setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка обновления' }));
+            addNotification('Не удалось обновить данные с сервера', 'error');
         }
-    }, [processingState.isProcessing, handleDownloadSnapshot, setProcessingState]);
+    }, [processingState.isProcessing, okbData, runFullSync, addNotification, setProcessingState]);
+
+    const handleStartDataUpdate = async () => {
+        // Fallback or specific backend job trigger
+        handleForceUpdate();
+    };
 
     // Combined Unidentified List for UI
     const combinedUnidentifiedRows = useMemo(() => {
         const parsingFailures = unidentifiedRows;
-        // Also find "Active" clients that are technically unidentified (missing coords)
         const geocodingFailures = allData.flatMap(group => group.clients)
             .filter(c => (!c.lat || !c.lon) && !c.isGeocoding)
             .map(c => ({
@@ -396,8 +374,8 @@ export const useAppLogic = () => {
         summaryMetrics,
         handleStartDataUpdate,
         handleForceUpdate,
-        handleDataUpdate: handleQueuedUpdate, // Use the queued version
-        handleDeleteClient: handleQueuedDelete, // Use the queued version
+        handleDataUpdate: handleQueuedUpdate, 
+        handleDeleteClient: handleQueuedDelete,
         handleStartPolling,
         addNotification,
         queueLength: actionQueue.length
