@@ -291,13 +291,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-deltas') {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
                 
-                // PERFORMANCE FIX: 
-                // 1. Limit to the last 50 delta files to guarantee response within 60s timeout.
-                //    If there are more than 50 unsquashed deltas, the system should trigger a full squash.
-                // 2. Increase concurrency to 8 parallel downloads.
-                
-                const filesToProcess = savepointsFiles.slice(-50);
-                
+                // FIX: Use mapConcurrent to limit parallel downloads (e.g. 5 at a time) to prevent timeouts
                 const downloadFn = async (file: any) => {
                     return drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
                         .then(res => {
@@ -315,8 +309,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         });
                 };
 
-                // Limit concurrency to 8 requests at a time
-                const results = await mapConcurrent(filesToProcess, 8, downloadFn);
+                // Limit concurrency to 5 requests at a time
+                const results = await mapConcurrent(savepointsFiles, 5, downloadFn);
                 const allDeltas = results.flat();
                 
                 return res.json(allDeltas);

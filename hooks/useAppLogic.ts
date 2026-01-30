@@ -33,9 +33,6 @@ export const useAppLogic = () => {
     const lastCacheSizeRef = useRef<number>(0);
     // Cache for content of last saved chunks (used in useDataSync but ref managed here if needed locally, though useDataSync has its own)
     const lastSavedChunksRef = useRef<Map<number, string>>(new Map());
-    
-    // LOCK for sync to prevent overlapping requests causing congestion
-    const isSyncingRef = useRef(false);
 
     // --- NOTIFICATIONS ---
     const addNotification = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning') => {
@@ -175,47 +172,36 @@ export const useAppLogic = () => {
             
             lastSavedChunksRef.current.clear();
 
-            // CONCURRENCY QUEUE with RETRIES
+            // CONCURRENCY QUEUE
             const CONCURRENCY = 6; // Parallel requests
             const queue = fileList.map((file: any, index: number) => ({ file, index }));
             
-            // Helper for retries
-            const fetchWithRetry = async (url: string, retries = 3, delay = 1000) => {
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        const res = await fetch(url);
-                        if (!res.ok) throw new Error(`Status ${res.status}`);
-                        return res;
-                    } catch (err) {
-                        if (i === retries - 1) throw err;
-                        await new Promise(res => setTimeout(res, delay * (i + 1)));
-                    }
-                }
-                throw new Error("Retry failed");
-            };
-
             const worker = async () => {
                 while (queue.length > 0) {
                     const item = queue.shift();
                     if (!item) break;
                     
                     try {
-                        const res = await fetchWithRetry(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
-                        const text = await res.text();
-                        
-                        // SKIP EMPTY GRACEFULLY
-                        if (text && text.trim().length > 0) {
-                            lastSavedChunksRef.current.set(item.index, text);
-                            const chunkData = JSON.parse(text);
-                            let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                        const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
+                        if (res.ok) {
+                            const text = await res.text();
                             
-                            const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
-                            newRows.forEach(row => row._chunkIndex = chunkIndex);
+                            // SKIP EMPTY GRACEFULLY
+                            if (text && text.trim().length > 0) {
+                                lastSavedChunksRef.current.set(item.index, text);
+                                const chunkData = JSON.parse(text);
+                                let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                                
+                                const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
+                                newRows.forEach(row => row._chunkIndex = chunkIndex);
 
-                            if (newRows.length > 0) {
-                                accumulatedRows.push(...normalize(newRows));
+                                if (newRows.length > 0) {
+                                    accumulatedRows.push(...normalize(newRows));
+                                }
+                                if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
                             }
-                            if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
+                        } else {
+                            console.warn(`[Snapshot] Failed to load chunk ${item.file.name}`);
                         }
                     } catch (chunkError) {
                         console.warn(`[Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
@@ -415,14 +401,9 @@ export const useAppLogic = () => {
     // --- LIVE SYNC POLLING ---
     useEffect(() => {
         const syncData = async () => {
-            if (allData.length === 0 || processingState.isProcessing || isSyncingRef.current) return;
-            
-            isSyncingRef.current = true;
+            if (allData.length === 0 || processingState.isProcessing) return;
             try {
-                // 1. Get Deltas (lightweight)
                 await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
-                
-                // 2. Get Legacy Cache (heavier, but cached by size ref)
                 const res = await fetch(`/api/get-full-cache?t=${Date.now()}`);
                 if (!res.ok) return;
                 
@@ -445,11 +426,7 @@ export const useAppLogic = () => {
                     enrichWithAbcCategories(freshData);
                     setAllData(freshData);
                 }
-            } catch (e) { 
-                console.error("Auto-sync failed", e); 
-            } finally {
-                isSyncingRef.current = false;
-            }
+            } catch (e) { console.error("Auto-sync failed", e); }
         };
         
         const intervalId = setInterval(syncData, 30000);
