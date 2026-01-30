@@ -223,7 +223,7 @@ const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => vo
             onClick={() => onEdit(client)}
             className="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
         >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
             Редактировать данные
         </button>
     );
@@ -400,11 +400,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             map.on('click', resetHighlight);
 
             // --- REFACTORED POPUP LOGIC ---
-            // 1. One React Root per popup instance (stored on the Leaflet popup object)
-            // 2. No StrictMode to avoid lifecycle conflicts with Leaflet
-            // 3. Using data-attributes for selection
-            // 4. Strict Key Comparison & Safer Root Management
-            // 5. Handling 'contentupdate' event for string-based popups
             
             map.on('popupopen', (e) => {
                 const popup = e.popup as any;
@@ -420,25 +415,20 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     const rawKey = placeholder.getAttribute('data-key');
                     if (!rawKey) return;
 
-                    // FIX: Decode the key to handle special characters (quotes, etc.) safely
                     const key = decodeURIComponent(rawKey);
                     
-                    // CRITICAL FIX: Strict String comparison for reliability
                     const client = activeClientsDataRef.current.find(
                         c => String(c.key) === String(key)
                     );
 
                     if (!client) return;
 
-                    // CRITICAL FIX: Always unmount old root to avoid stale roots on Leaflet DOM updates
                     if (popup.__reactRoot) {
                         popup.__reactRoot.unmount();
                     }
                     
-                    // Create fresh root
                     popup.__reactRoot = ReactDOM.createRoot(placeholder);
                     
-                    // Render WITHOUT StrictMode to prevent mounting/unmounting issues in imperative API
                     popup.__reactRoot.render(
                         <PopupButton client={client} onEdit={(c) => {
                             setIsFullscreen(false);
@@ -447,24 +437,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     );
                 };
 
-                // CRITICAL FIX for Race Condition with preferCanvas / string popups:
-                // Leaflet might fire 'popupopen' before the HTML is actually inserted into the DOM.
-                // We use 'contentupdate' which fires after content is set, and a fallback RAF.
-                
-                // 1. Try immediately (if content is already there)
                 renderButton();
-
-                // 2. Listen for content updates (crucial for string binding)
                 popup.once('contentupdate', renderButton);
-
-                // 3. Fallback check on next frame just in case
                 requestAnimationFrame(renderButton);
             });
 
             map.on('popupclose', (e) => {
                 const popup = e.popup as any;
                 if (popup.__reactRoot) {
-                    // Properly unmount the React root associated with this specific popup
                     popup.__reactRoot.unmount();
                     popup.__reactRoot = null;
                 }
@@ -495,8 +475,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         else if (abcCategory === 'B') badge = '<span class="px-2 py-0.5 rounded bg-emerald-500 text-white font-bold text-xs ml-2">B</span>';
         else if (abcCategory === 'C') badge = '<span class="px-2 py-0.5 rounded bg-gray-500 text-white font-bold text-xs ml-2">C</span>';
 
-        // UPDATED: Using data attributes instead of ID.
-        // FIX: Encoded key using encodeURIComponent to prevent HTML attribute breakage.
         return `
         <div class="popup-inner-content">
             <div class="flex items-center mb-1"><b>${name}</b>${badge}</div>
@@ -524,7 +502,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Only show potential clients if NOT in ABC mode (to reduce clutter)
         if (overlayMode !== 'abc') {
             potentialClients.forEach(tt => {
-                // Robust check for coordinates in various keys, using the enhanced getCoordinate helper
                 const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
                 const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
 
@@ -543,7 +520,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
         }
 
-        // Sort active clients for rendering order (z-index simulation for Canvas)
         const sortedActiveClients = [...activeClients];
         if (overlayMode === 'abc') {
              const priority: Record<string, number> = { 'A': 3, 'B': 2, 'C': 1 };

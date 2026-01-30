@@ -291,11 +291,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (action === 'get-deltas') {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID);
                 
-                // PERFORMANCE FIX: 
-                // Limit to the last 15 delta files. 
-                // Vercel timeouts (504) occur when trying to fetch too many files from Google Drive in one request.
-                // 15 files is a safe limit to ensure the UI stays responsive.
-                const filesToProcess = savepointsFiles.slice(-15);
+                // RESTORED: Process ALL files. 
+                // Previously limited to 15 to avoid timeouts, but this causes data loss for older deltas not yet squashed.
+                // The concurrency limiter (8) below should help manage the load.
+                const filesToProcess = savepointsFiles; 
+                
+                if (filesToProcess.length > 20) {
+                    console.warn(`[Performance] High delta count: ${filesToProcess.length}. Squash recommended.`);
+                }
                 
                 const downloadFn = async (file: any) => {
                     return drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
