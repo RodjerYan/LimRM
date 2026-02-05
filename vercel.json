@@ -1,0 +1,80 @@
+
+{
+  "rewrites": [
+    {
+      "source": "/api/gemini-proxy",
+      "destination": "/api/gemini-proxy"
+    },
+    {
+      "source": "/api/start-data-update",
+      "destination": "/api/start-data-update"
+    },
+    {
+      "source": "/api/check-update-status",
+      "destination": "/api/check-update-status"
+    },
+    {
+      "source": "/api/get-full-cache",
+      "destination": "/api/get-full-cache?action=get-full-cache"
+    },
+    {
+      "source": "/api/add-to-cache",
+      "destination": "/api/get-full-cache?action=add-to-cache"
+    },
+    {
+      "source": "/api/update-coords",
+      "destination": "/api/get-full-cache?action=update-coords"
+    },
+    {
+      "source": "/api/update-address",
+      "destination": "/api/get-full-cache?action=update-address"
+    },
+    {
+      "source": "/api/delete-address",
+      "destination": "/api/get-full-cache?action=delete-address"
+    },
+    {
+      "source": "/api/get-cached-address",
+      "destination": "/api/get-full-cache?action=get-cached-address"
+    },
+    {
+      "source": "/api/snapshot",
+      "has": [{ "type": "header", "key": "content-type", "value": "application/json" }],
+      "destination": "/api/get-full-cache?action=save-snapshot"
+    },
+    {
+      "source": "/api/snapshot",
+      "destination": "/api/get-full-cache?action=get-snapshot"
+    },
+    {
+      "source": "/:path*",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*).html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/get-akb?mode=okb_data",
+      "schedule": "0 5 * * *"
+    }
+  ]
+}

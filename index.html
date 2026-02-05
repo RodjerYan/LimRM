@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Гео-Анализ Рынка | Limkorm</title>
+    <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.0",
+    "buffer": "https://aistudiocdn.com/buffer@^6.0.3",
+    "leaflet/": "https://aistudiocdn.com/leaflet@^1.9.4/",
+    "leaflet": "https://aistudiocdn.com/leaflet@^1.9.4",
+    "chart.js/": "https://aistudiocdn.com/chart.js@^4.5.1/",
+    "dompurify": "https://aistudiocdn.com/dompurify@^3.3.0",
+    "marked": "https://aistudiocdn.com/marked@^17.0.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.2",
+    "papaparse": "https://aistudiocdn.com/papaparse@^5.5.3",
+    "geojson": "https://aistudiocdn.com/geojson@^0.5.0",
+    "googleapis": "https://aistudiocdn.com/googleapis@^165.0.0",
+    "@vercel/node": "https://aistudiocdn.com/@vercel/node@^5.5.4",
+    "@vercel/speed-insights/": "https://aistudiocdn.com/@vercel/speed-insights@^1.0.12/",
+    "chart.js": "https://aistudiocdn.com/chart.js@^4.5.1",
+    "react-chartjs-2": "https://aistudiocdn.com/react-chartjs-2@^5.3.1",
+    "stream": "https://esm.sh/stream@^0.0.3",
+    "@vercel/analytics/": "https://esm.sh/@vercel/analytics@^1.6.1/",
+    "fs": "https://esm.sh/fs@^0.0.1-security",
+    "path": "https://esm.sh/path@^0.12.7",
+    "url": "https://esm.sh/url@^0.11.4",
+    "react-virtualized-auto-sizer": "https://esm.sh/react-virtualized-auto-sizer@^2.0.2",
+    "react-window": "https://esm.sh/react-window@^2.2.5",
+    "leaflet.markercluster": "https://esm.sh/leaflet.markercluster@^1.5.3",
+    "leaflet.markercluster/": "https://esm.sh/leaflet.markercluster@^1.5.3/",
+    "express": "https://esm.sh/express@^5.2.1",
+    "electron": "https://esm.sh/electron@^40.1.0",
+    "cors": "https://esm.sh/cors@^2.8.6",
+    "child_process": "https://esm.sh/child_process@^1.0.2",
+    "dotenv": "https://esm.sh/dotenv@^17.2.3",
+    "electron-updater": "https://esm.sh/electron-updater@^6.7.3"
+  }
+}
+</script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+        <style>
+      /* --- Dark Theme Styles --- */
+      .theme-dark .leaflet-popup-content-wrapper,
+      .theme-dark .leaflet-popup-tip {
+        background: rgba(31, 41, 55, 0.85) !important;
+        backdrop-filter: blur(8px);
+        color: #e5e7eb !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(129, 140, 248, 0.2) !important;
+      }
+      .theme-dark .leaflet-popup-content b {
+        color: #818cf8 !important;
+      }
+      .theme-dark .leaflet-container a.leaflet-popup-close-button {
+        color: #9ca3af !important;
+      }
+      .theme-dark .leaflet-container a.leaflet-popup-close-button:hover {
+        color: #ffffff !important;
+      }
+      .theme-dark .leaflet-control-layers {
+        background: rgba(31, 41, 55, 0.85) !important;
+        backdrop-filter: blur(8px);
+        border: 1px solid rgba(129, 140, 248, 0.2) !important;
+        border-radius: 8px !important;
+        color: #e5e7eb !important;
+      }
+      .theme-dark .leaflet-control-layers-separator {
+        border-top: 1px solid #4b5563 !important;
+      }
+
+      /* --- Light Theme Styles --- */
+      .theme-light .leaflet-popup-content-wrapper,
+      .theme-light .leaflet-popup-tip {
+        background: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(8px);
+        color: #111827 !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(0, 0, 0, 0.1) !important;
+      }
+      .theme-light .leaflet-popup-content b {
+        color: #4f46e5 !important;
+      }
+      .theme-light .leaflet-container a.leaflet-popup-close-button {
+        color: #4b5563 !important;
+      }
+      .theme-light .leaflet-container a.leaflet-popup-close-button:hover {
+        color: #000000 !important;
+      }
+      .theme-light .leaflet-control-layers {
+        background: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(8px);
+        color: #111827 !important;
+        border: 1px solid #d1d5db !important;
+        border-radius: 8px !important;
+      }
+      .theme-light .leaflet-control-layers-separator {
+        border-top: 1px solid #d1d5db !important;
+      }
+
+      /* --- General Leaflet Styles --- */
+      .leaflet-popup-content {
+        margin: 14px !important;
+        font-family: 'Inter', sans-serif !important;
+      }
+      .leaflet-container a.leaflet-popup-close-button {
+        padding: 8px 8px 0 0 !important;
+      }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 8px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: #1f2937; /* card-bg */
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background-color: #4b5563; /* gray-600 */
+        border-radius: 10px;
+        border: 2px solid #1f2937; /* card-bg */
+      }
+      /* Animation for capital markers */
+      @keyframes pulse-animation {
+        0%, 100% {
+          transform: scale(1);
+          fill-opacity: 0.8;
+          filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.6));
+        }
+        50% {
+          transform: scale(1.1);
+          fill-opacity: 1.0;
+          filter: drop-shadow(0 0 8px rgba(251, 191, 36, 1));
+        }
+      }
+      .pulsing-marker {
+        animation: pulse-animation 2.5s infinite ease-in-out;
+        transform-origin: center;
+      }
+      /* Styles for Layer Control */
+      .leaflet-control-layers-base label, .leaflet-control-layers-overlays label {
+        font-weight: normal !important;
+      }
+      .leaflet-control-layers-selector {
+        margin-top: 2px;
+      }
+      .leaflet-control-layers-overlays label span {
+          display: inline-flex;
+          align-items: center;
+      }
+      /* Style for the warning emoji in the layer control */
+      .leaflet-control-layers-overlays label span span:first-child {
+        min-width: 80px; /* Adjust as needed */
+      }
+      .leaflet-control-layers-overlays label span:first-child:has(span:contains("⚠️")) {
+          color: #f87171; /* danger color */
+          font-weight: bold;
+      }
+    </style>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
