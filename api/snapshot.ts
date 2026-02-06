@@ -1,19 +1,15 @@
-
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import handler from './get-full-cache.js';
 
-export const config = {
-    maxDuration: 60,
-    api: {
-        bodyParser: false,
-    },
-};
-
-export default async function (req: VercelRequest, res: VercelResponse) {
+export default async function (req: Request) {
+    // Modify the request URL to include the action parameter
+    const url = new URL(req.url);
     if (req.method === 'POST') {
-        req.query.action = 'save-snapshot';
+        url.searchParams.set('action', 'save-snapshot');
     } else if (req.method === 'GET') {
-        req.query.action = 'get-snapshot';
+        url.searchParams.set('action', 'get-snapshot');
     }
-    return handler(req, res);
+    
+    // Create a new request with the modified URL
+    const newReq = new Request(url.toString(), req);
+    return handler(newReq);
 }

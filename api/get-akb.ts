@@ -1,45 +1,60 @@
-
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getGoogleSheetsClient, listFilesForYear, getOKBData } from './_lib/sheets.js';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-    // CORS Headers for local development
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    
+export default async function handler(req: Request) {
+    // Check method
     if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+        return new Response(null, {
+            status: 200,
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS'
+            }
+        });
     }
 
-    const { year, mode, fileId, offset = '0', limit = '1000' } = req.query;
+    const url = new URL(req.url);
+    const mode = url.searchParams.get('mode');
+    const year = url.searchParams.get('year');
+    const fileId = url.searchParams.get('fileId');
+    const offset = url.searchParams.get('offset') || '0';
+    const limit = url.searchParams.get('limit') || '1000';
 
     try {
-        // --- РЕЖИМ: ПОЛУЧИТЬ БАЗУ КЛИЕНТОВ (OKB) ---
+        // --- MODE: GET CLIENT BASE (OKB) ---
         if (mode === 'okb_data') {
             const data = await getOKBData();
-            res.setHeader('Cache-Control', 'public, max-age=0, s-maxage=60, stale-while-revalidate=60');
-            return res.status(200).json(data);
+            return new Response(JSON.stringify(data), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'public, max-age=0, s-maxage=60, stale-while-revalidate=60',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            });
         }
 
-        // --- РЕЖИМ: ПОЛУЧИТЬ СПИСОК ФАЙЛОВ ---
+        // --- MODE: LIST FILES ---
         if (mode === 'list') {
-            if (!year || typeof year !== 'string') {
-                return res.status(400).json({ error: 'Year is required for list mode' });
+            if (!year) {
+                return new Response(JSON.stringify({ error: 'Year is required for list mode' }), { status: 400 });
             }
             const files = await listFilesForYear(year);
-            res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=59');
-            return res.status(200).json(files);
+            return new Response(JSON.stringify(files), {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=59',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            });
         }
 
-        // --- РЕЖИМ: ПОЛУЧИТЬ КОНТЕНТ ФАЙЛА (ЧАНК ЧЕРЕЗ SHEETS API) ---
-        if (fileId && typeof fileId === 'string') {
+        // --- MODE: GET FILE CONTENT (CHUNK VIA SHEETS API) ---
+        if (fileId) {
             const sheets = await getGoogleSheetsClient();
             
-            // Sheets API использует 1-based индексацию
-            const startRow = parseInt(offset as string, 10) + 1; 
-            const endRow = startRow + parseInt(limit as string, 10) - 1;
-            
-            // Запрашиваем диапазон. Если имя листа не указано, берется первый.
+            const startRow = parseInt(offset, 10) + 1; 
+            const endRow = startRow + parseInt(limit, 10) - 1;
             const range = `A${startRow}:CZ${endRow}`;
 
             try {
@@ -50,48 +65,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 });
                 
                 const rows = response.data.values || [];
-                
-                // Если вернулось меньше строк, чем лимит, значит файл кончился
-                const hasMore = rows.length === parseInt(limit as string, 10);
+                const hasMore = rows.length === parseInt(limit, 10);
 
-                res.setHeader('Cache-Control', 'no-store');
-                return res.status(200).json({
+                return new Response(JSON.stringify({
                     fileId,
                     rows,
                     offset,
                     limit,
                     hasMore
+                }), {
+                    status: 200,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-store',
+                        'Access-Control-Allow-Origin': '*'
+                    }
                 });
 
             } catch (error: any) {
-                // ОБРАБОТКА КОНЦА ФАЙЛА
-                // Если мы запросили диапазон за пределами листа (например, строки 90001-91000, а всего 90000),
-                // Google вернет 400 Bad Request с сообщением "Range exceeds grid limits".
-                // Мы ловим это и возвращаем пустой результат, чтобы фронтенд перешел к следующему файлу.
                 if (error.code === 400 && (error.message.includes('exceeds grid limits') || error.message.includes('Unable to parse range'))) {
-                    console.log(`Graceful EOF for file ${fileId} at offset ${offset}.`);
-                    return res.status(200).json({
+                    return new Response(JSON.stringify({
                         fileId,
                         rows: [],
                         offset,
                         limit,
                         hasMore: false
-                    });
+                    }), { status: 200, headers: {'Content-Type': 'application/json'} });
                 }
-                
-                // Если ошибка другая, пробрасываем её дальше
                 throw error;
             }
         }
 
-        // Если ни один из режимов не подошел
-        return res.status(400).json({ error: 'Invalid parameters. Use mode=list, mode=okb_data or provide a fileId.' });
+        return new Response(JSON.stringify({ error: 'Invalid parameters.' }), { status: 400 });
 
     } catch (error: any) {
-        console.error(`Critical API Error in /api/get-akb (mode=${mode}, fileId=${fileId}):`, error);
-        res.status(500).json({ 
+        console.error(`API Error in /api/get-akb:`, error);
+        return new Response(JSON.stringify({ 
             error: 'Failed to process request.', 
             details: error.message 
-        });
+        }), { status: 500, headers: {'Content-Type': 'application/json'} });
     }
 }

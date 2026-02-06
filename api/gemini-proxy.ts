@@ -1,9 +1,8 @@
-
 import { GoogleGenAI } from "@google/genai";
 
-// Configure for Vercel Edge runtime for optimal streaming performance.
+// Netlify Edge Function configuration
 export const config = {
-  runtime: 'edge',
+  path: "/api/gemini-proxy"
 };
 
 /**
@@ -37,10 +36,6 @@ function getRandomKey(): string {
     return keys[Math.floor(Math.random() * keys.length)];
 }
 
-/**
- * Handles POST requests to proxy Gemini API calls.
- * It takes a 'prompt' and optional 'tools' from the request body.
- */
 export default async function handler(req: Request) {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -63,10 +58,9 @@ export default async function handler(req: Request) {
     const apiKey = getRandomKey();
     const ai = new GoogleGenAI({ apiKey });
 
-    // Fix: Use 'gemini-3-flash-preview' for text tasks as per model selection guidelines.
+    // Use 'gemini-3-flash-preview' for text tasks.
     const model = 'gemini-3-flash-preview';
 
-    // Fix: Simplified content structure for text tasks as per GenAI guidelines.
     const generateParams: any = {
         model,
         contents: prompt,
@@ -75,7 +69,7 @@ export default async function handler(req: Request) {
         }
     };
 
-    // Attach tools if provided (e.g. { googleSearch: {} })
+    // Attach tools if provided
     if (tools) {
         generateParams.config.tools = tools;
     }
@@ -86,7 +80,6 @@ export default async function handler(req: Request) {
       async start(controller) {
         try {
             for await (const chunk of responseStream) {
-              // Fix: Access the .text property directly instead of calling a method.
               const chunkText = chunk.text;
               if (chunkText) {
                 controller.enqueue(new TextEncoder().encode(chunkText));

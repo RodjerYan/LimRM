@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 const ApiKeyErrorDisplay: React.FC = () => (
@@ -6,13 +5,13 @@ const ApiKeyErrorDisplay: React.FC = () => (
         <div className="bg-card-bg/70 backdrop-blur-sm p-8 rounded-2xl shadow-lg border border-danger/50 max-w-4xl text-center">
             <h1 className="text-3xl font-bold text-danger mb-4">Ошибка Конфигурирования Сервера</h1>
             <p className="text-lg text-slate-300 mb-6">
-                Приложение не может запуститься, так как не настроены переменные окружения, необходимые для его работы на Vercel.
+                Приложение не может запуститься, так как не настроены переменные окружения, необходимые для его работы на Netlify.
             </p>
             <div className="text-left bg-gray-900/50 p-6 rounded-lg border border-gray-700">
-                <p className="font-semibold text-white mb-3">Как это исправить (для Vercel):</p>
+                <p className="font-semibold text-white mb-3">Как это исправить (для Netlify):</p>
                 <ol className="list-decimal list-inside space-y-3 text-slate-400">
                     <li>
-                        Перейдите в ваш проект на Vercel, откройте вкладку **"Settings"**, затем выберите **"Environment Variables"**.
+                        Перейдите в ваш проект на Netlify, откройте вкладку **"Site configuration"**, затем выберите **"Environment variables"**.
                     </li>
                     <li>
                         Добавьте ключи ИИ (поддерживается ротация до 20 ключей):
@@ -50,13 +49,13 @@ const ApiKeyErrorDisplay: React.FC = () => (
                                      <code className="bg-gray-800 text-cyan-400 px-2 py-1 rounded">VITE_GEMINI_PROXY_URL</code>
                                 </div>
                                 <div className="text-xs text-gray-400 mt-1">
-                                    **(Конфигурация)** Вставьте значение <code className="bg-gray-700 px-1 rounded">/api/gemini-proxy</code>. Это путь для прокси-запросов к Gemini API.
+                                    **(Конфигурация)** Вставьте значение <code className="bg-gray-700 px-1 rounded">/api/gemini-proxy</code>.
                                 </div>
                            </li>
                         </ul>
                     </li>
                      <li>
-                        После добавления переменных, перейдите на вкладку **"Deployments"**, выберите последнее развертывание и нажмите **"Redeploy"** (Переразвернуть), чтобы применить изменения.
+                        После добавления переменных, изменения должны примениться при следующей сборке или деплое.
                     </li>
                 </ol>
             </div>

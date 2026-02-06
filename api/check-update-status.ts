@@ -1,8 +1,4 @@
-
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import type { UpdateJobStatus } from '../types';
-
-const TOTAL_DURATION = 15000; // 15 seconds total job time
+const TOTAL_DURATION = 15000;
 
 const steps = [
     { progress: 0, message: 'Задача поставлена в очередь...' },
@@ -14,16 +10,17 @@ const steps = [
     { progress: 100, message: 'Обновление завершено! Приложение будет перезагружено.' },
 ];
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
-    const { jobId } = req.query;
+export default function handler(req: Request) {
+    const url = new URL(req.url);
+    const jobId = url.searchParams.get('jobId');
 
-    if (!jobId || typeof jobId !== 'string') {
-        return res.status(400).json({ error: 'jobId is required' });
+    if (!jobId) {
+        return new Response(JSON.stringify({ error: 'jobId is required' }), { status: 400 });
     }
 
     const startTime = parseInt(jobId, 10);
     if (isNaN(startTime)) {
-        return res.status(400).json({ error: 'Invalid jobId' });
+        return new Response(JSON.stringify({ error: 'Invalid jobId' }), { status: 400 });
     }
 
     const elapsedTime = Date.now() - startTime;
@@ -38,12 +35,17 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
         }
     }
     
-    const status: UpdateJobStatus = {
+    const status = {
         status: progress < 100 ? 'processing' : 'completed',
         message: currentStep.message,
         progress: progress,
     };
     
-    res.setHeader('Cache-Control', 'no-cache');
-    return res.status(200).json(status);
+    return new Response(JSON.stringify(status), {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache'
+        }
+    });
 }
