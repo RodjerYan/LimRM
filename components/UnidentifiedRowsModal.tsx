@@ -5,7 +5,7 @@ import AutoSizerPkg from 'react-virtualized-auto-sizer';
 import Modal from './Modal';
 import { UnidentifiedRow } from '../types';
 import { findAddressInRow, findValueInRow } from '../utils/dataUtils';
-import { WarningIcon, SearchIcon } from './icons';
+import { WarningIcon, SearchIcon, InfoIcon } from './icons';
 
 const AutoSizer = AutoSizerPkg as any;
 const FixedSizeList = (ReactWindow as any).FixedSizeList;
@@ -17,6 +17,66 @@ interface UnidentifiedRowsModalProps {
     onStartEdit: (row: UnidentifiedRow) => void;
 }
 
+// --- Heuristic Data Extractor ---
+// Attempts to find meaningful data even if headers are broken or missing
+const extractDisplayData = (row: UnidentifiedRow) => {
+    const rawData = row.rowData || {};
+    
+    // 1. Try Strict Key Matching (Best Quality)
+    let clientName = findValueInRow(rawData, ['наименование', 'клиент', 'партнер', 'контрагент', 'name', 'client', 'customer']);
+    let address = findAddressInRow(rawData) || findValueInRow(rawData, ['город', 'регион', 'city', 'region', 'address']);
+
+    const hasName = clientName && clientName.length > 1;
+    const hasAddress = address && address.length > 1;
+
+    // 2. Fallback: Heuristic Content Scanning (If keys failed)
+    if (!hasName || !hasAddress) {
+        const allValues = Object.entries(rawData)
+            .map(([k, v]) => String(v || '').trim())
+            .filter(v => v.length > 0);
+
+        // Filter out values that look like the RM name or IDs/Numbers
+        const candidates = allValues.filter(v => 
+            v !== row.rm && 
+            !/^\d+$/.test(v) && // Not just numbers
+            v.length > 3 // Significant length
+        );
+
+        if (!hasAddress) {
+            // Address usually contains digits, commas, or specific markers
+            const addrCandidate = candidates.find(v => 
+                (v.includes(',') && /\d/.test(v)) || 
+                v.toLowerCase().includes('ул.') || 
+                v.toLowerCase().includes('обл.') || 
+                v.toLowerCase().includes('г.')
+            );
+            if (addrCandidate) address = addrCandidate;
+        }
+
+        if (!hasName) {
+            // Name is usually the longest remaining string that isn't the address
+            const nameCandidates = candidates.filter(v => v !== address);
+            if (nameCandidates.length > 0) {
+                // Sort by length, assuming client name is descriptive
+                clientName = nameCandidates.sort((a, b) => b.length - a.length)[0];
+            }
+        }
+    }
+
+    // 3. Fallback: Raw Dump
+    // If we still have nothing, just join the first few values so the user sees *something*
+    if ((!clientName || clientName === '0') && (!address || address === '0')) {
+        const rawValues = Object.values(rawData).filter(v => v && String(v).trim() !== '').slice(0, 3).join(' | ');
+        clientName = rawValues || 'Нет данных';
+    }
+
+    return {
+        name: clientName || 'Без названия',
+        address: address || 'Адрес не найден',
+        raw: rawData
+    };
+};
+
 // Row component for virtualization
 const UnidentifiedRowItem: React.FC<{ 
     data: { rows: UnidentifiedRow[], onEdit: (r: UnidentifiedRow) => void }; 
@@ -25,28 +85,22 @@ const UnidentifiedRowItem: React.FC<{
 }> = ({ data, index, style }) => {
     const row = data.rows[index];
     const { onEdit } = data;
+    const { name, address, raw } = extractDisplayData(row);
 
-    // Intelligent value extraction regardless of column headers
-    const rawData = row.rowData || {};
-    
-    // Try to find Client Name
-    const clientName = findValueInRow(rawData, ['наименование', 'клиент', 'партнер', 'контрагент', 'name', 'client']) || 'Без названия';
-    
-    // Try to find Address
-    const address = findAddressInRow(rawData) || findValueInRow(rawData, ['город', 'регион']) || 'Адрес не найден';
-
-    // Preview of other data (first 2 non-empty values that aren't name or address)
-    const preview = Object.entries(rawData)
+    // Prepare preview of "Other Data" excluding what we already displayed
+    const preview = Object.entries(raw)
         .filter(([k, v]) => {
             const val = String(v).toLowerCase();
+            const key = k.toLowerCase();
             return v && 
-                   !k.includes('rowId') && 
-                   !val.includes(clientName.toLowerCase()) && 
-                   !val.includes(address.toLowerCase());
+                   !key.startsWith('__') && // Skip internal fields
+                   !val.includes(name.toLowerCase()) && 
+                   !val.includes(address.toLowerCase()) &&
+                   key !== 'rm' && key !== 'manager';
         })
         .slice(0, 3)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(' | ');
+        .map(([k, v]) => `${v}`)
+        .join(' • ');
 
     return (
         <div style={style} 
@@ -54,17 +108,18 @@ const UnidentifiedRowItem: React.FC<{
              className="flex items-center border-b border-gray-700/50 hover:bg-indigo-500/10 cursor-pointer transition-colors text-sm group"
              title="Нажмите для ручного исправления"
         >
-            <div className="w-16 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 text-gray-500 text-xs font-mono">
+            <div className="w-12 px-2 py-2 border-r border-gray-700/30 flex-shrink-0 text-gray-500 text-xs font-mono text-center">
                 {index + 1}
             </div>
-            <div className="w-32 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 font-bold text-indigo-300 truncate">
+            <div className="w-32 px-3 py-2 border-r border-gray-700/30 flex-shrink-0 font-bold text-indigo-300 truncate" title={row.rm}>
                 {row.rm || 'Не указан'}
             </div>
-            <div className="w-1/4 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate font-medium text-white">
-                {clientName}
+            <div className="w-1/4 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate font-medium text-white" title={name}>
+                {name}
             </div>
-            <div className="w-1/3 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate text-gray-300 group-hover:text-white">
-                <span className="text-gray-500 mr-2">📍</span>{address}
+            <div className="w-1/3 px-4 py-2 border-r border-gray-700/30 flex-shrink-0 truncate text-gray-300 group-hover:text-white" title={address}>
+                {address !== 'Адрес не найден' ? <span className="text-gray-500 mr-2">📍</span> : <span className="text-red-500 mr-2">?</span>}
+                {address}
             </div>
             <div className="flex-grow px-4 py-2 truncate text-xs text-gray-500 italic">
                 {preview}
@@ -88,15 +143,16 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                         <div className="text-amber-400 mt-1"><WarningIcon /></div>
                         <div>
                             <h4 className="font-bold text-white text-sm">Что это за список?</h4>
-                            <p className="text-gray-400 text-sm mt-1">
-                                Это строки, в которых автоматический алгоритм не смог уверенно определить <strong>Регион</strong> или <strong>Город</strong>. 
-                                Это часто случается из-за опечаток, сокращений или отсутствия города в адресе.
+                            <p className="text-gray-400 text-sm mt-1 leading-relaxed">
+                                Это записи, которые система не смогла привязать к карте автоматически. <br/>
+                                <span className="text-indigo-300">Причины:</span> Опечатки в адресе, отсутствие города, или нестандартный формат файла.<br/>
+                                <span className="text-gray-500 text-xs">Система попыталась извлечь данные эвристически, даже если заголовки колонок не были найдены.</span>
                             </p>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2 text-xs text-indigo-400">
-                        <SearchIcon small />
-                        <span>Нажмите на любую строку, чтобы вручную найти адрес на карте и привязать его.</span>
+                    <div className="flex items-center gap-2 text-xs text-indigo-400 bg-indigo-500/10 p-2 rounded-lg border border-indigo-500/20">
+                        <InfoIcon small />
+                        <span>Нажмите на любую строку, чтобы открыть форму <strong>ручного поиска</strong> и привязать клиента к карте.</span>
                     </div>
                 </div>
 
@@ -109,10 +165,10 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                     <div className="flex-grow border border-gray-700 rounded-lg overflow-hidden flex flex-col bg-gray-900/30">
                         {/* Header Row */}
                         <div className="flex items-center bg-gray-800/90 border-b border-gray-700 text-xs font-bold text-gray-400 uppercase py-3">
-                            <div className="w-16 px-4 flex-shrink-0">#</div>
-                            <div className="w-32 px-4 flex-shrink-0">РМ</div>
-                            <div className="w-1/4 px-4 flex-shrink-0">Клиент</div>
-                            <div className="w-1/3 px-4 flex-shrink-0">Исходный Адрес</div>
+                            <div className="w-12 px-2 text-center flex-shrink-0">#</div>
+                            <div className="w-32 px-3 flex-shrink-0">РМ</div>
+                            <div className="w-1/4 px-4 flex-shrink-0">Клиент (Raw)</div>
+                            <div className="w-1/3 px-4 flex-shrink-0">Адрес (Raw)</div>
                             <div className="flex-grow px-4">Прочие данные</div>
                         </div>
 
@@ -123,7 +179,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                                     <FixedSizeList
                                         height={height}
                                         itemCount={rows.length}
-                                        itemSize={44} // Slightly taller for readability
+                                        itemSize={48} // Taller for better readability
                                         width={width}
                                         itemData={itemData}
                                     >
@@ -135,9 +191,9 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                     </div>
                 )}
                 
-                <div className="mt-2 text-xs text-gray-600 text-right flex justify-between">
-                    <span>* Строки с пустым адресом можно игнорировать</span>
-                    <span>Рендеринг: Virtualized List</span>
+                <div className="mt-2 text-xs text-gray-600 text-right flex justify-between px-2">
+                    <span>* Данные показаны "как есть" из исходного файла</span>
+                    <span>Всего строк: {rows.length}</span>
                 </div>
             </div>
         </Modal>
