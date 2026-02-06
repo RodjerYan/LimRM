@@ -74,17 +74,29 @@ async function mapConcurrent<T, R>(items: T[], concurrency: number, fn: (item: T
 
 export default async function handler(req: Request) {
     const url = new URL(req.url);
-    const action = url.searchParams.get('action') as string;
+    let action = url.searchParams.get('action');
     const chunkIndexStr = url.searchParams.get('chunkIndex');
     const chunkIndex = chunkIndexStr ? parseInt(chunkIndexStr, 10) : -1;
 
+    // Detect action from path if not provided in params
+    if (!action) {
+        if (url.pathname.endsWith('/update-address')) action = 'update-address';
+        else if (url.pathname.endsWith('/delete-address')) action = 'delete-address';
+        else if (url.pathname.endsWith('/get-cached-address')) action = 'get-cached-address';
+        else if (url.pathname.endsWith('/snapshot')) {
+             action = req.method === 'POST' ? 'save-snapshot' : 'get-snapshot';
+        }
+    }
+
     try {
-        const drive = await getDriveClient();
+        // We only need Drive client for snapshot/delta operations
+        const needsDrive = ['save-delta', 'clear-deltas', 'save-chunk', 'save-meta', 'cleanup-chunks', 'get-deltas', 'get-snapshot-meta', 'get-snapshot-list', 'get-file-content'].includes(action || '');
+        const drive = needsDrive ? await getDriveClient() : null;
 
         if (req.method === 'POST') {
             const body = await req.json().catch(() => ({}));
             
-            if (action === 'save-delta') {
+            if (action === 'save-delta' && drive) {
                 const deltaItem = body;
                 if (!deltaItem) return new Response(JSON.stringify({ error: 'Missing delta payload' }), { status: 400 });
 
@@ -143,7 +155,7 @@ export default async function handler(req: Request) {
                 }
             }
 
-            if (action === 'clear-deltas') {
+            if (action === 'clear-deltas' && drive) {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
                 await mapConcurrent(savepointsFiles, 5, async (f: any) => 
                     drive.files.delete({ fileId: f.id }).catch((e: any) => console.error(`Failed to delete delta ${f.id}`, e))
@@ -151,7 +163,7 @@ export default async function handler(req: Request) {
                 return new Response(JSON.stringify({ status: 'deltas_cleared', count: savepointsFiles.length }));
             }
 
-            if (action === 'save-chunk') {
+            if (action === 'save-chunk' && drive) {
                 let targetFileId = url.searchParams.get('targetFileId');
                 const content = typeof body === 'string' ? body : (body.chunk || JSON.stringify(body));
 
@@ -184,7 +196,7 @@ export default async function handler(req: Request) {
                     return new Response(JSON.stringify({ status: 'created', fileId: createRes.data.id }));
                 }
             }
-            if (action === 'save-meta') {
+            if (action === 'save-meta' && drive) {
                 const sortedFiles = await getSortedFiles(drive, FOLDER_ID, 'snapshot');
                 let metaFileId = sortedFiles[0]?.id;
                 const content = JSON.stringify(body);
@@ -206,7 +218,7 @@ export default async function handler(req: Request) {
                 }
             }
             
-            if (action === 'cleanup-chunks') {
+            if (action === 'cleanup-chunks' && drive) {
                 const keepCount = parseInt(url.searchParams.get('keepCount') || '', 10);
                 if (!isNaN(keepCount)) {
                     const sortedFiles = await getSortedFiles(drive, FOLDER_ID, 'snapshot');
@@ -236,7 +248,7 @@ export default async function handler(req: Request) {
         }
 
         if (req.method === 'GET') {
-            if (action === 'get-deltas') {
+            if (action === 'get-deltas' && drive) {
                 const savepointsFiles = await getSortedFiles(drive, DELTA_FOLDER_ID, 'savepoints');
                 const filesToProcess = savepointsFiles.filter((f: any) => f.size > 0);
                 
@@ -256,7 +268,7 @@ export default async function handler(req: Request) {
                 return new Response(JSON.stringify(allDeltas));
             }
 
-            if (action === 'get-snapshot-meta') {
+            if (action === 'get-snapshot-meta' && drive) {
                 const sortedFiles = await getSortedFiles(drive, FOLDER_ID, 'snapshot');
                 if (sortedFiles.length === 0) return new Response(JSON.stringify({ versionHash: 'none' }));
                 if (sortedFiles[0].id === FOLDER_ID) return new Response(JSON.stringify({ versionHash: 'none', error: 'Misconfiguration' }));
@@ -270,7 +282,7 @@ export default async function handler(req: Request) {
                     return new Response(JSON.stringify({ versionHash: 'none', error: e.message }));
                 }
             }
-            if (action === 'get-snapshot-list') {
+            if (action === 'get-snapshot-list' && drive) {
                 const sortedFiles = await getSortedFiles(drive, FOLDER_ID, 'snapshot');
                 const relevantFiles = sortedFiles.filter((f: any, index: number) => {
                     if (index === 0) return true; 
@@ -278,7 +290,7 @@ export default async function handler(req: Request) {
                 });
                 return new Response(JSON.stringify(relevantFiles));
             }
-            if (action === 'get-file-content') {
+            if (action === 'get-file-content' && drive) {
                 const fileId = url.searchParams.get('fileId');
                 if (!fileId) return new Response('File ID required', { status: 400 });
                 const file = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
@@ -288,6 +300,7 @@ export default async function handler(req: Request) {
             }
 
             if (action === 'get-full-cache' || !action) return new Response(JSON.stringify(await getFullCoordsCache()));
+            
             if (action === 'get-cached-address') {
                 const rmName = url.searchParams.get('rmName');
                 const address = url.searchParams.get('address');

@@ -152,6 +152,13 @@ const adaptGemini = (handler: any) => async (req: any, res: any) => {
 // --- API Routes ---
 app.all('/api/get-akb', adapt(getAkb));
 app.all('/api/get-full-cache', adapt(getFullCache));
+
+// Routes for address management (redirect to getFullCache logic)
+app.all('/api/get-cached-address', adapt(getFullCache));
+app.all('/api/update-address', adapt(getFullCache));
+app.all('/api/delete-address', adapt(getFullCache));
+app.all('/api/snapshot', adapt(getFullCache)); // Legacy/Alias
+
 app.all('/api/start-data-update', adapt(startDataUpdate));
 app.all('/api/check-update-status', adapt(checkUpdateStatus));
 app.all('/api/check-rosstat-update', adapt(checkRosstat));
