@@ -43,6 +43,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import fs from 'fs';
 
 // Import existing API handlers
 // @ts-ignore
@@ -145,12 +146,18 @@ const staticPath = path.join(__dirname, '..', 'dist');
 
 console.log(`[Server] Serving static files from: ${staticPath}`);
 
-// Safety check for static folder
-import fs from 'fs';
 if (!fs.existsSync(staticPath)) {
     console.error(`\n⚠️  WARNING: Static folder not found at ${staticPath}`);
     console.error(`   The frontend will not load. Ensure 'vite build' ran successfully.\n`);
 }
+
+// Log requests for static files to help debug 404s
+app.use((req, res, next) => {
+    if (req.path.startsWith('/assets') || req.path.includes('.')) {
+        // console.log(`[Static Request] ${req.method} ${req.path}`);
+    }
+    next();
+});
 
 app.use(express.static(staticPath) as any);
 
@@ -159,6 +166,15 @@ app.get('*', (req: any, res: any) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ error: 'API endpoint not found' });
     }
+    
+    // CRITICAL FIX: If an asset is requested but not found (handled by express.static above),
+    // do NOT return index.html. Return 404 instead.
+    // This prevents "Unexpected token <" errors in browser console when JS files are missing.
+    if (req.path.startsWith('/assets/') || req.path.endsWith('.js') || req.path.endsWith('.css')) {
+        console.warn(`[404] Missing asset requested: ${req.path}`);
+        return res.status(404).send('Not found');
+    }
+
     const indexPath = path.join(staticPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
