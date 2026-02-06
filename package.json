@@ -8,14 +8,15 @@
   "description": "LimRM Geo Analyzer Desktop",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build --base=/ && npm run build:server && node scripts/deploy-shim.js",
+    "build": "vite build --base=/ && npm run build:server && node scripts/deploy-shim.js",
     "build:electron-renderer": "tsc && vite build --base=./",
     "start": "node server.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "build:server": "esbuild server/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist-server/index.js --external:electron",
     "build:electron-main": "esbuild electron/main.ts --bundle --platform=node --target=node18 --outfile=dist-electron/main.js --external:electron",
-    "dist": "npm run build:electron-renderer && npm run build:electron-main && electron-builder"
+    "dist": "npm run build:electron-renderer && npm run build:electron-main && electron-builder",
+    "postinstall": "if [ \"$RENDER\" = \"true\" ]; then npm run build; fi"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
