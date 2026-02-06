@@ -1,3 +1,4 @@
+
 // --- GLOBAL ERROR HANDLERS (Must be first) ---
 process.on('uncaughtException', (err: any) => {
     console.error('\n\n================================================================');
@@ -6,23 +7,6 @@ process.on('uncaughtException', (err: any) => {
     console.error('Error Type:', err.name);
     console.error('Message:', err.message);
     console.error('Stack:', err.stack);
-    
-    if (err.message && err.message.includes('Dynamic require')) {
-        console.error('\n💡 [POSSIBLE FIX]:');
-        console.error('This "Dynamic require" error usually means bundled CommonJS code is running in an ESM environment.');
-        console.error('CHECK: Make sure the build script includes "--packages=external" for esbuild.');
-        console.error('ACTION: Re-run "npm run build" cleanly.');
-    } else if (err.code === 'MODULE_NOT_FOUND') {
-        console.error('\n💡 [POSSIBLE FIX]:');
-        console.error('A file or dependency is missing.');
-        console.error('CHECK: If it says "dist/index.html" is missing, ensure "vite build" ran successfully.');
-        console.error('CHECK: If a library is missing, run "npm install".');
-    } else if (err.code === 'EADDRINUSE') {
-        console.error('\n💡 [POSSIBLE FIX]:');
-        console.error('The port is already taken. Render usually handles PORT automatically.');
-        console.error('CHECK: Ensure you are using process.env.PORT.');
-    }
-
     console.error('================================================================\n');
     process.exit(1);
 });
@@ -74,10 +58,44 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }) as any);
 app.use(express.text({ limit: '50mb' }) as any);
 
-// --- Vercel/Netlify Function Adapter ---
+// --- Vercel/Netlify Function Adapter (FIXED FOR INVALID URL) ---
 const adapt = (handler: any) => async (req: any, res: any) => {
     try {
-        await handler(req, res);
+        // CRITICAL FIX: Construct full URL
+        const protocol = req.protocol || 'http';
+        const host = req.get('host') || `localhost:${PORT}`;
+        const fullUrl = `${protocol}://${host}${req.originalUrl}`;
+
+        const webReq = new Request(fullUrl, {
+            method: req.method,
+            headers: req.headers as any,
+            body: (req.method !== 'GET' && req.method !== 'HEAD') ? JSON.stringify(req.body) : undefined,
+        });
+
+        const webRes = await handler(webReq);
+
+        res.status(webRes.status);
+        webRes.headers.forEach((value: string, key: string) => {
+            res.setHeader(key, value);
+        });
+
+        if (webRes.body) {
+            const reader = webRes.body.getReader();
+            const stream = async () => {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        res.end();
+                        break;
+                    }
+                    res.write(value);
+                }
+            };
+            stream();
+        } else {
+            res.end();
+        }
+
     } catch (error: any) {
         console.error("API Error in adapter:", error);
         if (!res.headersSent) {
@@ -89,7 +107,10 @@ const adapt = (handler: any) => async (req: any, res: any) => {
 // --- Special Adapter for Gemini Proxy ---
 const adaptGemini = (handler: any) => async (req: any, res: any) => {
     try {
-        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+        const protocol = req.protocol || 'http';
+        const host = req.get('host') || `localhost:${PORT}`;
+        const fullUrl = `${protocol}://${host}${req.originalUrl}`;
+        
         const webReq = new Request(fullUrl, {
             method: req.method,
             headers: req.headers as any,
@@ -151,14 +172,6 @@ if (!fs.existsSync(staticPath)) {
     console.error(`   The frontend will not load. Ensure 'vite build' ran successfully.\n`);
 }
 
-// Log requests for static files to help debug 404s
-app.use((req, res, next) => {
-    if (req.path.startsWith('/assets') || req.path.includes('.')) {
-        // console.log(`[Static Request] ${req.method} ${req.path}`);
-    }
-    next();
-});
-
 app.use(express.static(staticPath) as any);
 
 // Catch-all handler for React Router
@@ -167,11 +180,7 @@ app.get('*', (req: any, res: any) => {
         return res.status(404).json({ error: 'API endpoint not found' });
     }
     
-    // CRITICAL FIX: If an asset is requested but not found (handled by express.static above),
-    // do NOT return index.html. Return 404 instead.
-    // This prevents "Unexpected token <" errors in browser console when JS files are missing.
     if (req.path.startsWith('/assets/') || req.path.endsWith('.js') || req.path.endsWith('.css')) {
-        console.warn(`[404] Missing asset requested: ${req.path}`);
         return res.status(404).send('Not found');
     }
 

@@ -21,8 +21,9 @@ async function getDriveClient() {
     
     let credentials;
     try {
-        credentials = JSON.parse(serviceAccountKey);
-        // CRITICAL FIX: Sanitize private_key to handle escaped newlines often found in environment variables
+        const cleanedKey = serviceAccountKey.trim();
+        credentials = JSON.parse(cleanedKey);
+        // CRITICAL FIX: Sanitize private_key to handle escaped newlines
         if (credentials.private_key) {
             credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
         }

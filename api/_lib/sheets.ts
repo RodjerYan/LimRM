@@ -31,12 +31,16 @@ async function getAuthClient() {
     
     let credentials;
     try { 
-        credentials = JSON.parse(serviceAccountKey);
-        // CRITICAL FIX: Sanitize private_key to handle escaped newlines often found in environment variables
+        // Remove whitespace/newlines that might wrap the JSON
+        const cleanedKey = serviceAccountKey.trim();
+        credentials = JSON.parse(cleanedKey);
+        
+        // CRITICAL FIX: Sanitize private_key to handle escaped newlines
         if (credentials.private_key) {
             credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
         }
     } catch (error) { 
+        console.error("JSON Parse Error for Service Account Key:", error);
         throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.'); 
     }
     
@@ -91,7 +95,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
 
 export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025']; // Defaulting to 2025 folder for snapshots if not specified otherwise
+    const folderId = ROOT_FOLDERS['2025']; // Defaulting to 2025 folder for snapshots
     if (!folderId) throw new Error("Folder ID for 2025 not configured.");
     const listRes = await callWithRetry(() => drive.files.list({
         q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
@@ -124,7 +128,21 @@ export async function getSnapshot(): Promise<any | null> {
 
 export async function getOKBData(): Promise<OkbDataRow[]> {
   const sheets = await getGoogleSheetsClient();
-  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${SHEET_NAME}!A:P` }), 'getOKBData') as any;
+  
+  // Try to find the correct sheet name if 'Base' fails or just list sheets first
+  let targetSheetName = SHEET_NAME;
+  try {
+      const meta = await callWithRetry(() => sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID }), 'getSpreadsheetMeta') as any;
+      const sheetExists = meta.data.sheets?.some((s: any) => s.properties.title === SHEET_NAME);
+      if (!sheetExists && meta.data.sheets && meta.data.sheets.length > 0) {
+          targetSheetName = meta.data.sheets[0].properties.title;
+          console.log(`Sheet '${SHEET_NAME}' not found. Using first sheet: '${targetSheetName}'`);
+      }
+  } catch (e) {
+      console.warn("Could not fetch spreadsheet meta, trying default name.");
+  }
+
+  const res = await callWithRetry(() => sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: `${targetSheetName}!A:P` }), 'getOKBData') as any;
   const rows = res.data.values;
   if (!rows || rows.length < 2) return [];
   const header = rows[0].map((h: any) => String(h || '').trim());
