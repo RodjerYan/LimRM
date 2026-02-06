@@ -3,8 +3,9 @@ import { google, sheets_v4, drive_v3 } from 'googleapis';
 import { OkbDataRow } from '../../types.js';
 import { Readable } from 'stream';
 
-const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI';
-const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8';
+// Updated IDs based on user input
+const SPREADSHEET_ID = '13HkruBN9a_Y5xF8nUGpoyo3N7nJxiTW3PPgqw8FsApI'; // OKB Base
+const CACHE_SPREADSHEET_ID = '1peEj55jcwLQMG9yN8uX5-0xtSCycNA0SA5UrAoF0OE8'; // AKB Cache
 const SHEET_NAME = 'Base';
 const SNAPSHOT_FILENAME = 'system_analytics_snapshot_v1.json';
 
@@ -27,8 +28,18 @@ const RUSSIAN_MONTHS_ORDER = [
 async function getAuthClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('The GOOGLE_SERVICE_ACCOUNT_KEY environment variable is not set.');
+    
     let credentials;
-    try { credentials = JSON.parse(serviceAccountKey); } catch (error) { throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY.'); }
+    try { 
+        credentials = JSON.parse(serviceAccountKey);
+        // CRITICAL FIX: Sanitize private_key to handle escaped newlines often found in environment variables
+        if (credentials.private_key) {
+            credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+        }
+    } catch (error) { 
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY JSON.'); 
+    }
+    
     return new google.auth.GoogleAuth({
         credentials,
         scopes: ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'],
@@ -68,7 +79,10 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
             attempt++;
             const status = error.response?.status || error.code;
             const isRetryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) throw error;
+            if (attempt > MAX_RETRIES || (!isRetryable && status >= 400 && status < 500)) {
+                console.error(`[Google API Error] ${context}:`, error.message);
+                throw error;
+            }
             const delay = Math.min(2000 * Math.pow(2, attempt - 1), 30000);
             await new Promise(resolve => setTimeout(resolve, delay));
         }
@@ -77,7 +91,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, context: string): Promise<
 
 export async function saveSnapshot(data: any): Promise<void> {
     const drive = await getGoogleDriveClient();
-    const folderId = ROOT_FOLDERS['2025'];
+    const folderId = ROOT_FOLDERS['2025']; // Defaulting to 2025 folder for snapshots if not specified otherwise
     if (!folderId) throw new Error("Folder ID for 2025 not configured.");
     const listRes = await callWithRetry(() => drive.files.list({
         q: `name = '${SNAPSHOT_FILENAME}' and '${folderId}' in parents and trashed = false`,
@@ -118,9 +132,11 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
         if (rowArray.every(cell => !cell)) return null;
         const row: { [key: string]: any } = {};
         header.forEach((key: string, index: number) => { if (key) row[key] = rowArray[index] || null; });
-        let latVal = row['lat'] || row['latitude'];
-        let lonVal = row['lon'] || row['lng'] || row['longitude'];
         
+        let latVal = row['lat'] || row['latitude'] || row['широта'];
+        let lonVal = row['lon'] || row['lng'] || row['longitude'] || row['долгота'];
+        
+        // RESTORED FALLBACK FOR MISSING HEADERS
         if ((!latVal || !lonVal) && rowArray.length > 12) {
              const rawLon = rowArray[11]; 
              const rawLat = rowArray[12];
@@ -134,6 +150,7 @@ export async function getOKBData(): Promise<OkbDataRow[]> {
             const lat = parseFloat(String(latVal).replace(',', '.').trim());
             const lon = parseFloat(String(lonVal).replace(',', '.').trim());
             
+            // VALIDATION TO PREVENT CORRUPTION
             if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && lat !== 0) { 
                 row.lat = lat; 
                 row.lon = lon; 

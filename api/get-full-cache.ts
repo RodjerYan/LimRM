@@ -1,3 +1,4 @@
+
 import { google } from 'googleapis';
 import { Buffer } from 'buffer';
 import { 
@@ -9,15 +10,26 @@ import {
     updateCacheCoords 
 } from './_lib/sheets.js';
 
-const FOLDER_ID = process.env.GOOGLE_DRIVE_SNAPSHOT_FOLDER_ID || '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX';
-const DELTA_FOLDER_ID = process.env.GOOGLE_DRIVE_DELTA_FOLDER_ID || '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P';
+// Updated IDs based on user input
+const FOLDER_ID = '1bNcjQp-BhPtgf5azbI5gkkx__eMthCfX'; // Snapshot Folder
+const DELTA_FOLDER_ID = '19SNRc4HNKNs35sP7GeYeFj2UPTtWru5P'; // Savepoint (Delta) Folder
 const SCOPES = ['https://www.googleapis.com/auth/drive', 'https://www.googleapis.com/auth/spreadsheets'];
 
 async function getDriveClient() {
     const serviceAccountKey = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
     if (!serviceAccountKey) throw new Error('GOOGLE_SERVICE_ACCOUNT_KEY missing');
-    const credentials = JSON.parse(serviceAccountKey);
-    if (credentials.private_key) credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+    
+    let credentials;
+    try {
+        credentials = JSON.parse(serviceAccountKey);
+        // CRITICAL FIX: Sanitize private_key to handle escaped newlines often found in environment variables
+        if (credentials.private_key) {
+            credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+        }
+    } catch (error) {
+        throw new Error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY');
+    }
+
     const auth = new google.auth.GoogleAuth({ credentials, scopes: SCOPES });
     return google.drive({ version: 'v3', auth });
 }
