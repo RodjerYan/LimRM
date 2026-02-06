@@ -252,9 +252,22 @@ export const useAppLogic = () => {
                 
                 let finalData = accumulatedRows;
 
-                // --- NEW BLOCK: APPLY DELTAS (Critical Fix) ---
+                // --- ORDER FIX: APPLY LEGACY CACHE FIRST (BASE LAYER) ---
                 try {
-                    console.log('5. Fetching savepoint deltas...');
+                    console.log('5. Fetching legacy cache/deletes...');
+                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
+                    if (cacheRes.ok) {
+                        const cacheData = await cacheRes.json();
+                        finalData = applyCacheToData(finalData, cacheData);
+                        console.log('   Legacy Cache applied.');
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch cache during load, using snapshot data only:", e);
+                }
+
+                // --- ORDER FIX: APPLY DELTAS LAST (OVERLAY LAYER) ---
+                try {
+                    console.log('6. Fetching savepoint deltas...');
                     const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
                     if (deltasRes.ok) {
                         const deltas = await deltasRes.json();
@@ -267,19 +280,6 @@ export const useAppLogic = () => {
                     }
                 } catch (e) {
                     console.error("Failed to fetch/apply deltas:", e);
-                }
-                // ----------------------------------------------
-
-                try {
-                    console.log('6. Fetching legacy cache/deletes...');
-                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                    if (cacheRes.ok) {
-                        const cacheData = await cacheRes.json();
-                        finalData = applyCacheToData(finalData, cacheData);
-                        console.log('   Legacy Cache applied.');
-                    }
-                } catch (e) {
-                    console.error("Failed to fetch cache during load, using snapshot data only:", e);
                 }
 
                 enrichWithAbcCategories(finalData);

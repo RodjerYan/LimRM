@@ -566,14 +566,14 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // Fallback: If address is empty, use coordinate hash as key
             let groupKey = normAddr;
             if (!groupKey) {
-                const rawLat = getCoordinate(client, ['lat', 'latitude']);
-                const rawLon = getCoordinate(client, ['lon', 'lng', 'longitude']);
-                const lat = parseCoord(rawLat);
-                const lon = parseCoord(rawLon);
+                // For ACTIVE clients, strictly use .lat/.lon properties.
+                // Do NOT use getCoordinate here to avoid falling back to stale originalRow data.
+                const lat = parseCoord(client.lat);
+                const lon = parseCoord(client.lon);
                 if (lat && lon) {
                     groupKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
                 } else {
-                    return; // Skip invalid
+                    return; // Skip invalid or cleared coordinates
                 }
             }
             
@@ -612,8 +612,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
             // The first one in sorted list is our best candidate for position
             const representative = sortedGroup[0];
-            const lat = parseCoord(getCoordinate(representative, ['lat', 'latitude']));
-            let lon = parseCoord(getCoordinate(representative, ['lon', 'lng', 'longitude']));
+            
+            // CRITICAL FIX: Direct access to properties to avoid stale originalRow data fallback
+            const lat = parseCoord(representative.lat);
+            let lon = parseCoord(representative.lon);
 
             // Only render if valid
             if (lat !== null && lon !== null && (Math.abs(lat) > 1 || Math.abs(lon) > 1)) {
