@@ -28,12 +28,12 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 // Increase limit for data uploads
-app.use(express.json({ limit: '50mb' }));
-app.use(express.text({ limit: '50mb' }));
+app.use(express.json({ limit: '50mb' }) as any);
+app.use(express.text({ limit: '50mb' }) as any);
 
 // --- Vercel/Netlify Function Adapter ---
 // Converts Express req/res to Vercel-like signature where needed
-const adapt = (handler: any) => async (req: express.Request, res: express.Response) => {
+const adapt = (handler: any) => async (req: any, res: any) => {
     try {
         await handler(req, res);
     } catch (error: any) {
@@ -46,7 +46,7 @@ const adapt = (handler: any) => async (req: express.Request, res: express.Respon
 
 // --- Special Adapter for Gemini Proxy (Web Standard Response) ---
 // gemini-proxy.ts returns a 'new Response()', which Express doesn't handle natively.
-const adaptGemini = (handler: any) => async (req: express.Request, res: express.Response) => {
+const adaptGemini = (handler: any) => async (req: any, res: any) => {
     try {
         // Construct a Web Standard Request from Express Req
         const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -109,7 +109,7 @@ const staticPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(staticPath));
 
 // Catch-all handler for React Router (SPA)
-app.get('*', (req: express.Request, res: express.Response) => {
+app.get('*', (req: any, res: any) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ error: 'API endpoint not found' });
     }
