@@ -306,6 +306,101 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
+// --- NEW: Restore from Snapshot Chunk (Pre-aggregated data) ---
+function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: PostMessageFn) {
+    const rows = payload.chunkData;
+    if (!Array.isArray(rows)) {
+        console.error("restoreChunk received invalid data:", rows);
+        return;
+    }
+
+    rows.forEach(aggRow => {
+        // Hydrate clients map
+        const clientMap = new Map<string, MapPoint>();
+        let newRowFact = 0;
+
+        if (aggRow.clients && Array.isArray(aggRow.clients)) {
+            aggRow.clients.forEach(client => {
+                let clientFact = client.fact || 0;
+                
+                // --- APPLY DATE FILTER ---
+                if ((state_filterStartDate || state_filterEndDate) && client.monthlyFact) {
+                    clientFact = 0;
+                    let hasDataInRange = false;
+                    
+                    Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
+                        // dateStr is YYYY-MM
+                        const parts = dateStr.split('-');
+                        if (parts.length >= 2) {
+                            const ts = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1).getTime();
+                            
+                            let inRange = true;
+                            if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
+                            if (state_filterEndDate && ts > state_filterEndDate) inRange = false;
+                            
+                            if (inRange) {
+                                clientFact += (val as number);
+                                hasDataInRange = true;
+                            }
+                        }
+                    });
+                    
+                    // If no data in range for this client, and filtering is active, it contributes 0
+                }
+
+                // If filtering is on and clientFact is 0, we generally skip adding it to active set?
+                // Or keep it as 0? Let's keep if > 0 or if NO filters applied.
+                const shouldInclude = clientFact > 0 || (!state_filterStartDate && !state_filterEndDate);
+
+                if (shouldInclude) {
+                    const filteredClient = { ...client, fact: clientFact };
+                    clientMap.set(client.key, filteredClient);
+                    newRowFact += clientFact;
+
+                    // Update Global Client Map
+                    if (!state_uniquePlottableClients.has(client.key)) {
+                        state_uniquePlottableClients.set(client.key, filteredClient);
+                    }
+                }
+            });
+        }
+
+        // Only add row if it has active clients after filtering
+        if (clientMap.size > 0) {
+            if (!state_aggregatedData[aggRow.key]) {
+                const { clients, ...rest } = aggRow;
+                state_aggregatedData[aggRow.key] = {
+                    ...rest,
+                    fact: newRowFact, // Updated Fact
+                    potential: newRowFact * 1.15, // Recalc Potential based on new Fact
+                    clients: clientMap
+                };
+            } else {
+                // Merge (Rare case for snapshot, but good for safety)
+                const existing = state_aggregatedData[aggRow.key];
+                existing.fact += newRowFact;
+                clientMap.forEach((v, k) => existing.clients.set(k, v));
+            }
+        }
+    });
+
+    state_processedRowsCount += rows.length;
+    
+    // Debounced Progress Update
+    if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
+        state_lastEmitCount = state_processedRowsCount;
+        const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 200000) * 85); 
+        postMessage({ 
+            type: 'progress', 
+            payload: { 
+                percentage: currentProgress, 
+                message: `Синхронизация снимка: ${state_processedRowsCount.toLocaleString()}...`, 
+                totalProcessed: state_processedRowsCount 
+            } 
+        });
+    }
+}
+
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk } = payload;
     
@@ -598,5 +693,6 @@ self.onmessage = async (e) => {
     const msg = e.data;
     if (msg.type === 'INIT_STREAM') initStream(msg.payload, self.postMessage);
     else if (msg.type === 'PROCESS_CHUNK') processChunk(msg.payload, self.postMessage);
+    else if (msg.type === 'RESTORE_CHUNK') restoreChunk(msg.payload, self.postMessage);
     else if (msg.type === 'FINALIZE_STREAM') await finalizeStream(self.postMessage);
 };

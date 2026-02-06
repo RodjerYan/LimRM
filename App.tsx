@@ -1,5 +1,5 @@
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import Navigation from './components/Navigation';
 import Adapta from './components/modules/Adapta';
 import Prophet from './components/modules/Prophet';
@@ -58,6 +58,27 @@ const App: React.FC = () => {
         loadStartDate, setLoadStartDate,
         loadEndDate, setLoadEndDate
     } = useAppLogic();
+
+    // --- KEEP-ALIVE MECHANISM ---
+    // Pings the server every 14 minutes to prevent Render Free Tier from sleeping
+    // while the user has the tab open.
+    useEffect(() => {
+        const pingServer = () => {
+            fetch('/api/keep-alive', { method: 'GET', cache: 'no-store' })
+                .then(res => {
+                    if (res.ok) console.debug('💓 [Keep-Alive] Server pinged successfully.');
+                })
+                .catch(e => console.error('💓 [Keep-Alive] Ping failed:', e));
+        };
+
+        // Initial ping
+        pingServer();
+
+        // 14 minutes interval (840000ms)
+        const intervalId = setInterval(pingServer, 840000); 
+
+        return () => clearInterval(intervalId);
+    }, []);
 
     return (
         <div className="flex min-h-screen bg-primary-dark font-sans text-text-main overflow-hidden">

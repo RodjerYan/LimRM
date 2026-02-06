@@ -42,6 +42,8 @@ import checkUpdateStatus from '../api/check-update-status.ts';
 import checkRosstat from '../api/check-rosstat-update.ts';
 // @ts-ignore
 import geminiProxy from '../api/gemini-proxy.ts';
+// @ts-ignore
+import keepAlive from '../api/keep-alive.ts';
 
 // Load environment variables
 dotenv.config();
@@ -163,6 +165,7 @@ app.all('/api/start-data-update', adapt(startDataUpdate));
 app.all('/api/check-update-status', adapt(checkUpdateStatus));
 app.all('/api/check-rosstat-update', adapt(checkRosstat));
 app.post('/api/gemini-proxy', adaptGemini(geminiProxy));
+app.all('/api/keep-alive', adapt(keepAlive)); // Keep-Alive route
 
 // --- Static Files Serving ---
 const __filename = fileURLToPath(import.meta.url);
