@@ -8,7 +8,7 @@
   "description": "LimRM Geo Analyzer Desktop",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build --base=/ && npm run build:server",
+    "build": "tsc && vite build --base=/ && npm run build:server && node scripts/deploy-shim.js",
     "build:electron-renderer": "tsc && vite build --base=./",
     "start": "node server.js",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
