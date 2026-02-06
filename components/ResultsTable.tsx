@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { AggregatedDataRow } from '../types';
 import { findAddressInRow } from '../utils/dataUtils';
 import { SortIcon, SortUpIcon, SortDownIcon, SearchIcon, CopyIcon, CheckIcon, WarningIcon } from './icons';
@@ -17,18 +17,17 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     const [sortConfig, setSortConfig] = useState<{ key: keyof AggregatedDataRow | 'costScore'; direction: 'ascending' | 'descending' } | null>({ key: 'growthPotential', direction: 'descending' });
     const [currentPage, setCurrentPage] = useState(1);
     const [searchTerm, setSearchTerm] = useState('');
+    const deferredSearchTerm = useDeferredValue(searchTerm); // OPTIMIZATION: Non-blocking search
     const [rowsPerPage, setRowsPerPage] = useState(15);
     const [copied, setCopied] = useState(false);
 
     // Mock Cost to Serve Calculation (Idea 6)
-    // In real life, this would use distance from warehouse.
-    // Here we use inverse volume (smaller clients = harder to serve) + random logistics factor.
-    const enrichWithCost = (row: AggregatedDataRow) => {
-        // Simple heuristic: Small volume clients in remote regions cost more
+    // Memoized cost calculation to avoid re-computing on every render
+    const enrichWithCost = useMemo(() => (row: AggregatedDataRow) => {
         const volumeFactor = row.fact > 500 ? 1 : (row.fact > 100 ? 2 : 3);
-        const regionCost = (row.region || '').length % 3 + 1; // Random static factor based on name length
+        const regionCost = (row.region || '').length % 3 + 1; 
         return (volumeFactor * regionCost) * 1.5; 
-    };
+    }, []);
 
     const handleCopyToClipboard = () => {
         const tsv = [
@@ -45,11 +44,10 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     };
 
     const filteredData = useMemo(() => {
-        // Helper for safe string comparison
         const safeLower = (val: any) => (val || '').toString().toLowerCase();
 
-        if (!searchTerm) return data.map(d => ({ ...d, costScore: enrichWithCost(d) }));
-        const lowercasedFilter = searchTerm.toLowerCase().trim();
+        if (!deferredSearchTerm) return data.map(d => ({ ...d, costScore: enrichWithCost(d) }));
+        const lowercasedFilter = deferredSearchTerm.toLowerCase().trim();
         
         return data.filter(item => {
             if (safeLower(item.clientName).includes(lowercasedFilter)) return true;
@@ -72,7 +70,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
             }
             return false;
         }).map(d => ({ ...d, costScore: enrichWithCost(d) }));
-    }, [data, searchTerm]);
+    }, [data, deferredSearchTerm, enrichWithCost]);
 
     const sortedData = useMemo(() => {
         let sortableItems = [...filteredData];
@@ -81,7 +79,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                 const aValue = (a as any)[sortConfig.key];
                 const bValue = (b as any)[sortConfig.key];
                 
-                // Handle potential nulls/undefined in sort
                 if (aValue === bValue) return 0;
                 if (aValue === null || aValue === undefined) return 1;
                 if (bValue === null || bValue === undefined) return -1;
@@ -136,7 +133,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
             <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700">
                 <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты Анализа</h2>
                 <div className="w-full md:w-auto flex items-center gap-3">
-                    {/* Unidentified Button: Now always visible, changes style based on count */}
                     <button
                         onClick={onUnidentifiedClick}
                         className={`font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 flex-shrink-0 ${
@@ -176,7 +172,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                             <SortableHeader sortKey="fact">Факт</SortableHeader>
                             <SortableHeader sortKey="potential">Потенциал</SortableHeader>
                             <SortableHeader sortKey="growthPotential">Рост</SortableHeader>
-                            {/* Idea 6: Cost to Serve Column */}
                             <SortableHeader sortKey="costScore" title="Стоимость обслуживания (Cost-to-Serve). Чем выше балл, тем дороже логистика и менеджмент.">Cost Score</SortableHeader>
                         </tr>
                     </thead>
@@ -193,7 +188,6 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                                 <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
                                 <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
                                 <td className="px-4 py-3 text-warning font-bold">{formatNumber(row.growthPotential)}</td>
-                                {/* Cost Score Cell */}
                                 <td className="px-4 py-3">
                                     <div className="flex items-center gap-2">
                                         <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
@@ -229,4 +223,4 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
     );
 };
 
-export default ResultsTable;
+export default React.memo(ResultsTable);

@@ -152,4 +152,4 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onForceUpdate,
     );
 };
 
-export default FileUpload;
+export default React.memo(FileUpload);

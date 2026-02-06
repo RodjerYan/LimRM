@@ -5,7 +5,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AggregatedDataRow, OkbDataRow, MapPoint } from '../types';
 import { getMarketData } from '../utils/marketData';
-import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon, CheckIcon } from './icons';
+import { SearchIcon, MaximizeIcon, MinimizeIcon, SunIcon, MoonIcon, LoaderIcon } from './icons';
 import type { FeatureCollection } from 'geojson';
 import { MANUAL_BOUNDARIES } from '../data/manual_boundaries';
 import { normalizeAddress } from '../utils/dataUtils';
@@ -102,7 +102,7 @@ const fixChukotkaGeoJSON = (feature: any) => {
     return feature;
 };
 
-const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
+const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     if (mode === 'abc') {
         return (
             <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
@@ -215,7 +215,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = ({ mode }) => {
             </div>
         </div>
     );
-};
+});
 
 // React component for the popup button to ensure stable event handling
 const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => void }> = ({ client, onEdit }) => {
@@ -579,13 +579,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         // Only show potential clients if NOT in ABC mode (to reduce clutter)
         if (overlayMode !== 'abc') {
             potentialClients.forEach(tt => {
-                const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
-                const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+                // OPTIMIZATION: Try direct property access first
+                let lat = tt.lat;
+                let lon = tt.lon;
 
-                const lat = parseCoord(rawLat);
-                let lon = parseCoord(rawLon);
+                if (!lat || !lon || lat === 0 || lon === 0) {
+                    const rawLat = getCoordinate(tt, ['lat', 'latitude', 'широта', 'y', 'geo_lat']);
+                    const rawLon = getCoordinate(tt, ['lon', 'lng', 'longitude', 'долгота', 'x', 'geo_lon']);
+                    lat = parseCoord(rawLat) || 0;
+                    lon = parseCoord(rawLon) || 0;
+                }
 
-                if (lat !== null && lon !== null) {
+                if (lat !== 0 && lon !== 0) {
                     if (lon < -170) lon += 360;
 
                     const popupContent = `<b>${findValueInRow(tt, ['наименование', 'клиент'])}</b><br>${findValueInRow(tt, ['юридический адрес', 'адрес'])}<br><small>${findValueInRow(tt, ['вид деятельности', 'тип']) || 'н/д'}</small>`;
@@ -600,48 +605,38 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
         // --- MARKER GROUPING LOGIC START ---
         // Group clients by normalized address
-        // This ensures points at the same location are collapsed into one visual marker
         const groupedClientsMap = new Map<string, MapPoint[]>();
         
         activeClients.forEach(client => {
             // Group STRICTLY by address string first
             const normAddr = normalizeAddress(client.address);
             
-            // Fallback: If address is empty, use coordinate hash as key
             let groupKey = normAddr;
             if (!groupKey) {
-                // For ACTIVE clients, strictly use .lat/.lon properties.
-                // Do NOT use getCoordinate here to avoid falling back to stale originalRow data.
-                const lat = parseCoord(client.lat);
-                const lon = parseCoord(client.lon);
+                // FAST PATH: Direct access
+                const lat = client.lat;
+                const lon = client.lon;
                 if (lat && lon) {
                     groupKey = `${lat.toFixed(4)},${lon.toFixed(4)}`;
                 } else {
-                    return; // Skip invalid or cleared coordinates
+                    return; 
                 }
             }
             
             if (!groupedClientsMap.has(groupKey)) {
                 groupedClientsMap.set(groupKey, []);
             }
-            
-            // Push ALL clients to the group array
             groupedClientsMap.get(groupKey)!.push(client);
         });
 
-        // Store a flat list of ALL clients for popup lookups (keys must be preserved)
-        // The popup renderer will find the client by key to mount the edit button
         activeClientsDataRef.current = activeClients;
 
         groupedClientsMap.forEach((groupClients) => {
-            // FIX: Sort to find the "Anchor" - the most authoritative point in the group.
-            // 1. Most recently updated.
-            // 2. Explicitly confirmed coords.
-            // 3. Valid (non-zero) coords.
+            // Sort to find the "Anchor"
             const sortedGroup = [...groupClients].sort((a, b) => {
                 const timeA = a.lastUpdated || 0;
                 const timeB = b.lastUpdated || 0;
-                if (timeA !== timeB) return timeB - timeA; // Newest first
+                if (timeA !== timeB) return timeB - timeA;
 
                 const isConfirmedA = a.coordStatus === 'confirmed';
                 const isConfirmedB = b.coordStatus === 'confirmed';
@@ -654,67 +649,51 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 return 0;
             });
 
-            // The first one in sorted list is our best candidate for position
             const representative = sortedGroup[0];
             
-            // Safety Net: If status is explicitly pending, do not show marker
             if (representative.coordStatus === 'pending' || representative.isGeocoding) {
                 return;
             }
             
-            // CRITICAL FIX: Direct access to properties to avoid stale originalRow data fallback
-            const lat = parseCoord(representative.lat);
-            let lon = parseCoord(representative.lon);
+            // FAST PATH: Access pre-parsed numbers from the object directly
+            let lat = representative.lat;
+            let lon = representative.lon;
 
-            // Only render if valid
-            if (lat !== null && lon !== null && (Math.abs(lat) > 1 || Math.abs(lon) > 1)) {
+            // Only parse if missing (fallback for legacy data)
+            if (lat === undefined || lon === undefined) {
+                 lat = parseCoord(getCoordinate(representative, ['lat', 'latitude']));
+                 lon = parseCoord(getCoordinate(representative, ['lon', 'lng']));
+            }
+
+            if (lat && lon && (Math.abs(lat) > 1 || Math.abs(lon) > 1)) {
                 if (lon < -170) lon += 360;
                 
                 pointsForBounds.push([lat, lon]);
 
-                // Generate popup content summarizing ALL clients in the group (passed original array)
                 const popupContent = createGroupPopupContent(groupClients);
-                
-                // Representative used for edit button ID (usually the first one for stability)
                 const popupRep = groupClients[0];
                 
-                let markerColor = '#10b981'; // Default Green (Sales mode)
+                let markerColor = '#10b981';
                 let markerBorder = '#047857';
                 let markerRadius = 5;
 
-                // Adjust size if it's a group
                 if (groupClients.length > 1) {
                     markerRadius = 7; 
-                    // Visual cue for group? Maybe thicker border
-                    markerBorder = '#064e3b'; // Darker green
+                    markerBorder = '#064e3b';
                 }
 
                 if (overlayMode === 'abc') {
-                    // For ABC mode, use the best category in the group to determine color
-                    const bestCategory = groupClients.reduce((best, curr) => {
-                        if (curr.abcCategory === 'A') return 'A';
-                        if (best === 'A') return 'A';
-                        if (curr.abcCategory === 'B') return 'B';
-                        if (best === 'B') return 'B';
-                        return 'C';
-                    }, 'C');
+                    // Optimized Loop
+                    let bestCategory = 'C';
+                    for (const curr of groupClients) {
+                        if (curr.abcCategory === 'A') { bestCategory = 'A'; break; }
+                        if (curr.abcCategory === 'B') bestCategory = 'B';
+                    }
 
                     switch (bestCategory) {
-                        case 'A':
-                            markerColor = '#f59e0b'; // Amber
-                            markerBorder = '#b45309';
-                            markerRadius = groupClients.length > 1 ? 9 : 7;
-                            break;
-                        case 'B':
-                            markerColor = '#10b981'; // Emerald
-                            markerBorder = '#047857';
-                            markerRadius = groupClients.length > 1 ? 7 : 5;
-                            break;
-                        default: // C
-                            markerColor = '#9ca3af'; // Gray
-                            markerBorder = '#4b5563';
-                            markerRadius = groupClients.length > 1 ? 5 : 3;
-                            break;
+                        case 'A': markerColor = '#f59e0b'; markerBorder = '#b45309'; markerRadius = groupClients.length > 1 ? 9 : 7; break;
+                        case 'B': markerColor = '#10b981'; markerBorder = '#047857'; markerRadius = groupClients.length > 1 ? 7 : 5; break;
+                        default: markerColor = '#9ca3af'; markerBorder = '#4b5563'; markerRadius = groupClients.length > 1 ? 5 : 3; break;
                     }
                 }
 
@@ -725,13 +704,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     opacity: 1, 
                     fillOpacity: 0.8, 
                     radius: markerRadius, 
-                    pane: 'activeMarkersPane', // FORCE ON TOP
+                    pane: 'activeMarkersPane',
                     renderer: activeRenderer
                 }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
-                
-                // Map the representative key to the marker for flyTo operations
                 activeClientMarkersRef.current.set(popupRep.key, marker);
             }
         });
@@ -744,7 +721,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-400 font-bold">●</span> Активные ТТ');
 
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients, overlayMode]); // Re-run when data or mode changes
+    }, [potentialClients, activeClients, overlayMode]); // Dependency array kept for Memoization
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
@@ -831,4 +808,4 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     );
 };
 
-export default InteractiveRegionMap;
+export default React.memo(InteractiveRegionMap);
