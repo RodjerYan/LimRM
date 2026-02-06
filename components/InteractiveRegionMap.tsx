@@ -222,9 +222,9 @@ const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => vo
     return (
         <button
             onClick={() => onEdit(client)}
-            className="edit-location-btn mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1.5 px-3 rounded text-xs transition-colors flex items-center justify-center gap-2"
+            className="group mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/40 active:scale-[0.98]"
         >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            <svg className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
             Редактировать адрес
         </button>
     );
@@ -480,39 +480,83 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const totalFact = clients.reduce((sum, c) => sum + (c.fact || 0), 0);
         const firstClient = clients[0];
         
-        const listHtml = clients.map(c => `
-            <div style="border-bottom: 1px solid #374151; padding: 6px 0; display: flex; justify-content: space-between; align-items: flex-start;">
-                <div style="margin-right: 8px;">
-                    <div style="font-weight: 700; color: #e5e7eb; font-size: 11px;">${c.brand} ${c.packaging || ''}</div>
-                    <div style="font-size: 10px; color: #9ca3af;">${c.type || 'н/д'}</div>
+        // Sort by volume descending for better visibility
+        const sortedClients = [...clients].sort((a, b) => (b.fact || 0) - (a.fact || 0));
+
+        const getBrandColor = (brand: string) => {
+            const b = brand.toLowerCase();
+            if (b.includes('sirius')) return 'bg-indigo-500';
+            if (b.includes('ajo')) return 'bg-purple-500';
+            if (b.includes('limkorm')) return 'bg-emerald-500';
+            return 'bg-gray-500';
+        };
+
+        const listHtml = sortedClients.map(c => {
+            const pct = totalFact > 0 ? ((c.fact || 0) / totalFact) * 100 : 0;
+            const brandColor = getBrandColor(c.brand || '');
+            
+            return `
+            <div class="flex items-start justify-between py-2 border-b border-gray-700/50 last:border-0 hover:bg-white/5 transition-colors px-1 rounded-md">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-8 h-8 rounded-lg ${brandColor} bg-opacity-20 text-white flex items-center justify-center font-bold text-xs border border-white/10 flex-shrink-0">
+                        ${(c.brand || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div class="min-w-0">
+                        <div class="font-bold text-gray-200 text-xs truncate" title="${c.brand} ${c.packaging || ''}">${c.brand} <span class="font-normal text-gray-500">${c.packaging || ''}</span></div>
+                        <div class="text-[10px] text-gray-400 truncate">${c.type || 'Канал не указан'}</div>
+                    </div>
                 </div>
-                <div style="font-weight: 700; font-family: monospace; color: #34d399; font-size: 11px; white-space: nowrap;">
-                    ${new Intl.NumberFormat('ru-RU').format(c.fact || 0)} кг
+                <div class="text-right pl-2 flex-shrink-0">
+                    <div class="font-mono font-bold text-emerald-400 text-xs whitespace-nowrap">${new Intl.NumberFormat('ru-RU').format(c.fact || 0)}</div>
+                    <div class="w-12 h-1 bg-gray-700 rounded-full mt-1 ml-auto overflow-hidden">
+                        <div class="h-full ${brandColor} transition-all" style="width: ${pct}%"></div>
+                    </div>
                 </div>
             </div>
-        `).join('');
+        `}).join('');
+
+        const addressParts = firstClient.address.split(',').map(p => p.trim());
+        const shortAddress = addressParts.length > 2 
+            ? `${addressParts[0]}, ...${addressParts[addressParts.length-1]}` 
+            : firstClient.address;
 
         return `
-        <div class="popup-inner-content" style="min-width: 240px;">
-            <div style="margin-bottom: 8px; border-bottom: 1px solid #4b5563; padding-bottom: 6px;">
-                <div style="font-weight: 700; color: #f3f4f6; font-size: 13px; line-height: 1.3;">${firstClient.address}</div>
-                <div style="font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                    Клиентов: <span style="color: #fff; font-weight: bold;">${clients.length}</span>
+        <div class="popup-inner-content" style="min-width: 280px; padding: 0;">
+            <!-- Header -->
+            <div style="background: linear-gradient(to right, rgba(17, 24, 39, 0.95), rgba(31, 41, 55, 0.9)); padding: 12px; border-bottom: 1px solid rgba(75, 85, 99, 0.5); border-radius: 8px 8px 0 0;">
+                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; font-weight: 700;">
+                        ${firstClient.city || 'Город не определен'}
+                    </div>
+                    <span style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; text-transform: uppercase;">
+                        Активен
+                    </span>
+                </div>
+                <div style="font-weight: 700; color: #f3f4f6; font-size: 13px; line-height: 1.4; word-break: break-word;">
+                    ${firstClient.address}
+                </div>
+                <div style="margin-top: 6px; display: flex; gap: 8px;">
+                     <div style="font-size: 10px; color: #d1d5db; background: rgba(55, 65, 81, 0.5); padding: 2px 6px; rounded: 4px;">
+                        Клиентов: <strong style="color: white;">${clients.length}</strong>
+                    </div>
                 </div>
             </div>
             
-            <div class="custom-scrollbar" style="max-height: 160px; overflow-y: auto; padding-right: 4px;">
+            <!-- Body -->
+            <div class="custom-scrollbar" style="max-height: 180px; overflow-y: auto; padding: 8px 12px; background: rgba(17, 24, 39, 0.8);">
                 ${listHtml}
             </div>
             
-            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #4b5563; display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 11px; color: #d1d5db; text-transform: uppercase; font-weight: bold;">Всего</span>
-                <span style="font-size: 14px; color: #10b981; font-weight: 800; font-family: monospace;">
-                    ${new Intl.NumberFormat('ru-RU').format(totalFact)} кг
-                </span>
+            <!-- Footer -->
+            <div style="background: rgba(17, 24, 39, 0.95); padding: 10px 12px; border-top: 1px solid rgba(75, 85, 99, 0.5); border-radius: 0 0 8px 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Всего продажи</span>
+                    <span style="font-size: 16px; color: #10b981; font-weight: 800; font-family: monospace; text-shadow: 0 0 10px rgba(16, 185, 129, 0.3);">
+                        ${new Intl.NumberFormat('ru-RU').format(totalFact)} <span style="font-size: 12px; font-weight: 600;">кг</span>
+                    </span>
+                </div>
+                <div data-popup-edit data-key="${encodeURIComponent(String(firstClient.key))}"></div>
             </div>
-            
-            <div data-popup-edit data-key="${encodeURIComponent(String(firstClient.key))}"></div>
         </div>
         `;
     };
@@ -613,6 +657,11 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             // The first one in sorted list is our best candidate for position
             const representative = sortedGroup[0];
             
+            // Safety Net: If status is explicitly pending, do not show marker
+            if (representative.coordStatus === 'pending' || representative.isGeocoding) {
+                return;
+            }
+            
             // CRITICAL FIX: Direct access to properties to avoid stale originalRow data fallback
             const lat = parseCoord(representative.lat);
             let lon = parseCoord(representative.lon);
@@ -678,7 +727,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     radius: markerRadius, 
                     pane: 'activeMarkersPane', // FORCE ON TOP
                     renderer: activeRenderer
-                }).bindPopup(popupContent);
+                }).bindPopup(popupContent, { minWidth: 280, maxWidth: 320 });
                 
                 activeClientMarkersLayer.current?.addLayer(marker);
                 
