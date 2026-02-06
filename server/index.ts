@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,7 +22,8 @@ import geminiProxy from '../api/gemini-proxy.ts';
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+// Render assigns a port dynamically to process.env.PORT
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -30,9 +31,9 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.text({ limit: '50mb' }));
 
-// --- Vercel Function Adapter ---
+// --- Vercel/Netlify Function Adapter ---
 // Converts Express req/res to Vercel-like signature where needed
-const adapt = (handler: any) => async (req: Request, res: Response) => {
+const adapt = (handler: any) => async (req: express.Request, res: express.Response) => {
     try {
         await handler(req, res);
     } catch (error: any) {
@@ -45,7 +46,7 @@ const adapt = (handler: any) => async (req: Request, res: Response) => {
 
 // --- Special Adapter for Gemini Proxy (Web Standard Response) ---
 // gemini-proxy.ts returns a 'new Response()', which Express doesn't handle natively.
-const adaptGemini = (handler: any) => async (req: Request, res: Response) => {
+const adaptGemini = (handler: any) => async (req: express.Request, res: express.Response) => {
     try {
         // Construct a Web Standard Request from Express Req
         const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -83,7 +84,9 @@ const adaptGemini = (handler: any) => async (req: Request, res: Response) => {
 
     } catch (error: any) {
         console.error("Gemini Proxy Adapter Error:", error);
-        res.status(500).json({ error: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message });
+        }
     }
 };
 
@@ -99,14 +102,14 @@ app.post('/api/gemini-proxy', adaptGemini(geminiProxy));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// In production, index.js is in /dist-server, frontend is in /dist
+// In production (Render), index.js is in /dist-server, frontend is in /dist
 // So we go up one level to find dist
 const staticPath = path.join(__dirname, '..', 'dist');
 
 app.use(express.static(staticPath));
 
 // Catch-all handler for React Router (SPA)
-app.get('*', (req, res) => {
+app.get('*', (req: express.Request, res: express.Response) => {
     if (req.path.startsWith('/api')) {
         return res.status(404).json({ error: 'API endpoint not found' });
     }
@@ -114,5 +117,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[Local Server] Running on http://localhost:${PORT}`);
+    console.log(`[Server] Running on port ${PORT}`);
 });

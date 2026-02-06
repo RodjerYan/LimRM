@@ -5,13 +5,13 @@ const ApiKeyErrorDisplay: React.FC = () => (
         <div className="bg-card-bg/70 backdrop-blur-sm p-8 rounded-2xl shadow-lg border border-danger/50 max-w-4xl text-center">
             <h1 className="text-3xl font-bold text-danger mb-4">Ошибка Конфигурирования Сервера</h1>
             <p className="text-lg text-slate-300 mb-6">
-                Приложение не может запуститься, так как не настроены переменные окружения, необходимые для его работы на Netlify.
+                Приложение не может запуститься, так как не настроены переменные окружения, необходимые для его работы на Render.com.
             </p>
             <div className="text-left bg-gray-900/50 p-6 rounded-lg border border-gray-700">
-                <p className="font-semibold text-white mb-3">Как это исправить (для Netlify):</p>
+                <p className="font-semibold text-white mb-3">Как это исправить (для Render):</p>
                 <ol className="list-decimal list-inside space-y-3 text-slate-400">
                     <li>
-                        Перейдите в ваш проект на Netlify, откройте вкладку **"Site configuration"**, затем выберите **"Environment variables"**.
+                        Перейдите в ваш сервис на Render.com, выберите вкладку **"Environment"**.
                     </li>
                     <li>
                         Добавьте ключи ИИ (поддерживается ротация до 20 ключей):
@@ -31,7 +31,7 @@ const ApiKeyErrorDisplay: React.FC = () => (
                                 <div className="text-xs text-gray-400 mt-1 space-y-1">
                                     <p>**(Секрет)** Полный JSON-ключ вашего сервисного аккаунта Google.</p>
                                     <p className="text-yellow-500">
-                                        **Важно:** Скопируйте все содержимое JSON-файла и вставьте его как одну строку. Убедитесь, что нет переносов строк.
+                                        **Важно:** Скопируйте все содержимое JSON-файла и вставьте его как одну строку. Убедитесь, что нет переносов строк (Render иногда экранирует их, возможно потребуется удалить \n вручную, если возникнут ошибки).
                                     </p>
                                      <p>Не забудьте "поделиться" вашей Google Таблицей с адресом `client_email` из этого JSON-ключа, выдав ему права **Редактора**.</p>
                                 </div>
@@ -55,7 +55,7 @@ const ApiKeyErrorDisplay: React.FC = () => (
                         </ul>
                     </li>
                      <li>
-                        После добавления переменных, изменения должны примениться при следующей сборке или деплое.
+                        Сохраните изменения. Render автоматически перезапустит сервис.
                     </li>
                 </ol>
             </div>

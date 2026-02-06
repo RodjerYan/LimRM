@@ -1,10 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
 
-// Netlify Edge Function configuration
-export const config = {
-  path: "/api/gemini-proxy"
-};
-
 /**
  * Helper to select a random API key from available environment variables.
  * Supports API_KEY and API_KEY_1 through API_KEY_20.

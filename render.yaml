@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: limrm-geo-analyzer
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: VITE_GEMINI_PROXY_URL
+        value: /api/gemini-proxy
+      - key: VITE_GEMINI_API_KEY
+        value: key_is_set
+      - key: NODE_VERSION
+        value: 20.11.0
