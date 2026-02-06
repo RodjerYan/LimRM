@@ -24,6 +24,10 @@ export const useAppLogic = () => {
     const [okbData, setOkbData] = useState<OkbDataRow[]>([]);
     const [okbStatus, setOkbStatus] = useState<OkbStatus | null>(null);
     
+    // Data Loading Filters (Sync Scope)
+    const [loadStartDate, setLoadStartDate] = useState<string>('');
+    const [loadEndDate, setLoadEndDate] = useState<string>('');
+    
     // UI State
     const [selectedDetailsRow, setSelectedDetailsRow] = useState<any | null>(null);
     const [isUnidentifiedModalOpen, setIsUnidentifiedModalOpen] = useState(false);
@@ -51,8 +55,14 @@ export const useAppLogic = () => {
         manualUpdateTimestamps,
         saveDeltaToCloud,
         applyCacheToData,
-        applyDeltasToData
+        applyDeltasToData,
+        handleDownloadSnapshot: originalDownloadSnapshot
     } = useDataSync(addNotification);
+
+    // Wrapper to pass current date state
+    const handleDownloadSnapshot = useCallback((serverMeta: any) => {
+        return originalDownloadSnapshot(serverMeta, loadStartDate, loadEndDate);
+    }, [originalDownloadSnapshot, loadStartDate, loadEndDate]);
 
     // --- NORMALIZE HELPER ---
     const normalize = useCallback((rows: any[]): AggregatedDataRow[] => {
@@ -124,85 +134,6 @@ export const useAppLogic = () => {
         });
         return result;
     }, []);
-
-    // --- LOCAL ROBUST SNAPSHOT DOWNLOADER ---
-    const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
-        // ... (Same implementation as before, abbreviated for brevity, logic unchanged) ...
-        // Full logic is preserved from the original file you provided.
-        // It handles fetching list, queueing chunks, normalizing, applying cache/deltas.
-        
-        // RE-INSERTING THE LOGIC TO ENSURE IT'S NOT LOST:
-        try {
-            setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
-            const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
-            if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
-            let fileList = await listRes.json();
-            if (!Array.isArray(fileList)) fileList = [];
-            fileList.sort((a: any, b: any) => {
-                const nameA = a.name || ''; const nameB = b.name || '';
-                return parseInt(nameA.match(/\d+/)?.[0] || '0', 10) - parseInt(nameB.match(/\d+/)?.[0] || '0', 10);
-            });
-            const total = fileList.length; let loadedCount = 0;
-            let accumulatedRows: AggregatedDataRow[] = []; let loadedMeta: any = serverMeta || null;
-            lastSavedChunksRef.current.clear();
-            const CONCURRENCY = 6;
-            const queue = fileList.map((file: any, index: number) => ({ file, index }));
-            
-            const fetchWithRetry = async (url: string, retries = 3, delay = 1000) => {
-                for (let i = 0; i < retries; i++) {
-                    try { const res = await fetch(url); if (!res.ok) throw new Error(`Status ${res.status}`); return res; } catch (err) { if (i === retries - 1) throw err; await new Promise(res => setTimeout(res, delay * (i + 1))); }
-                }
-                throw new Error("Retry failed");
-            };
-
-            const worker = async (workerId: number) => {
-                while (queue.length > 0) {
-                    const item = queue.shift();
-                    if (!item) break;
-                    try {
-                        const res = await fetchWithRetry(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
-                        const text = await res.text();
-                        if (text && text.trim().length > 0) {
-                            lastSavedChunksRef.current.set(item.index, text);
-                            const chunkData = JSON.parse(text);
-                            let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
-                            const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
-                            newRows.forEach(row => row._chunkIndex = chunkIndex);
-                            if (newRows.length > 0) { accumulatedRows.push(...normalize(newRows)); }
-                            if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
-                        }
-                    } catch (chunkError) { console.error(`Error chunk ${item.file.name}:`, chunkError); } finally { loadedCount++; setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) })); }
-                }
-            };
-            await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => worker(i + 1)));
-
-            if (loadedMeta || accumulatedRows.length > 0 || total > 0) {
-                setProcessingState(prev => ({ ...prev, message: 'Синхронизация дельт и кэша...' }));
-                let finalData = accumulatedRows;
-                try {
-                    const cacheRes = await fetch(`/api/get-full-cache?t=${Date.now()}`);
-                    if (cacheRes.ok) { const cacheData = await cacheRes.json(); finalData = applyCacheToData(finalData, cacheData); }
-                } catch (e) { console.error("Cache fetch failed", e); }
-                try {
-                    const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
-                    if (deltasRes.ok) { const deltas = await deltasRes.json(); if (Array.isArray(deltas) && deltas.length > 0) { finalData = applyDeltasToData(finalData, deltas); } }
-                } catch (e) { console.error("Delta fetch failed", e); }
-
-                enrichWithAbcCategories(finalData);
-                setAllData(finalData);
-                const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
-                const versionHash = serverMeta?.versionHash || 'unknown';
-                await saveAnalyticsState({ allData: finalData, unidentifiedRows: safeMeta.unidentifiedRows || [], okbRegionCounts: safeMeta.okbRegionCounts || {}, totalRowsProcessed: totalRowsProcessedRef.current, versionHash: versionHash, okbData: [], okbStatus: null });
-                localStorage.setItem('last_snapshot_version', versionHash);
-                setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                return true;
-            }
-            return false;
-        } catch (e) { setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' })); return false; }
-    }, [normalize, addNotification, applyCacheToData, applyDeltasToData]);
 
     const handleDataUpdate = useCallback((oldKey: string, newPoint: MapPoint, originalIndex?: number) => {
         let newData = [...allData]; let newUnidentified = [...unidentifiedRows];
@@ -374,6 +305,9 @@ export const useAppLogic = () => {
         handleDeleteClient: handleQueuedDelete,
         handleStartPolling,
         addNotification,
-        queueLength: actionQueue.length
+        queueLength: actionQueue.length,
+        // Expose new load date states
+        loadStartDate, setLoadStartDate,
+        loadEndDate, setLoadEndDate
     };
 };

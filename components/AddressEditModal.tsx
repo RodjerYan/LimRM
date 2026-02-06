@@ -353,7 +353,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                     
                     if (!isStillGeocoding && hasCoords) {
                         setStatus('success_geocoding');
-                        console.log('%c[Modal] Coordinates received & confirmed. Showing success state.', 'color: green; font-weight: bold');
+                        console.info('✅ [Modal] Polling complete. Coordinates found!');
                     }
                     
                     if (!isStillGeocoding && !hasCoords && pt.geocodingError) {
@@ -410,6 +410,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const oldKey = (data as MapPoint).key || normalizeAddress(currentAddress);
         const rm = getRmName(data);
 
+        console.info('🔄 [Modal] Manual Cloud Sync initiated for:', currentAddress);
+
         if (!rm) {
             setStatus('error_saving');
             setError('Не удалось определить имя РМ. Синхронизация невозможна.');
@@ -428,6 +430,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                 
                 // Case 1: Valid Coordinates Found
                 if (result && typeof result.lat === 'number' && typeof result.lon === 'number' && result.lat !== 0) {
+                    console.info('✅ [Modal] Sync found coordinates in Google Cloud:', result);
+                    
                     const currentDisplayedLat = manualCoords?.lat ?? (data as MapPoint).lat;
                     const currentDisplayedLon = manualCoords?.lon ?? (data as MapPoint).lon;
 
@@ -466,23 +470,24 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
                         };
 
                         // FIRST SAVE: Immediate
-                        console.log('[Sync] Triggering immediate savepoint...');
+                        console.info('💾 [Modal] Saving synced data...');
                         onDataUpdate(oldKey, updatedPoint, originalIndex, { skipHistory: true });
                         setStatus('idle');
 
                         // SECOND SAVE: Delayed (5 seconds)
                         setTimeout(() => {
-                            console.log('[Sync] Triggering delayed savepoint (5s)...');
+                            console.log('💾 [Modal] Backup save (5s)...');
                             onDataUpdate(oldKey, updatedPoint, originalIndex, { skipHistory: true });
                         }, 5000);
 
                     } else {
+                        console.info('ℹ️ [Modal] Data matches cloud. No update needed.');
                         setStatus('idle');
                     }
                 } 
                 // Case 2: Pending/Processing in Cloud -> Wait for them
                 else if (result && (result.coordStatus === 'pending' || (!result.lat && !result.isInvalid))) {
-                    console.log('[Sync] Coordinates pending in cloud. Starting poller...');
+                    console.info('⏳ [Modal] Coordinates pending in cloud. Starting active polling...');
                     
                     let distributor = findValueInRow(originalRow, ['дистрибьютор', 'distributor']);
                     const parsed = parseRussianAddress(currentAddress, distributor);
@@ -540,6 +545,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const oldAddress = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const oldKey = (data as MapPoint).key || normalizeAddress(oldAddress);
 
+        console.info('💾 [Modal] Saving user changes...');
+
         const isAddressChanged = editedAddress.trim() !== '' && editedAddress.trim().toLowerCase() !== oldAddress.trim().toLowerCase();
         const isCoordsChanged = manualCoords !== null;
         const isCommentChanged = comment.trim() !== ((data as MapPoint).comment || '').trim();
@@ -578,7 +585,7 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         
         if (needsGeocoding) {
             setStatus('geocoding');
-            console.log('[Modal] Starting geocoding polling. Waiting for coordinates...');
+            console.info('📡 [Modal] Starting geocoding polling for:', editedAddress);
             // Pass oldAddress explicitly so backend can find the record to update
             onStartPolling(rm, editedAddress, oldKey, baseNewPoint, originalIndex, oldAddress);
         } else {
@@ -593,6 +600,8 @@ const AddressEditModal: React.FC<AddressEditModalProps> = ({ isOpen, onClose, on
         const addressToDelete = (data as MapPoint).address || findAddressInRow(originalRow) || '';
         const rm = getRmName(data);
         
+        console.warn('🗑️ [Modal] Delete requested for:', addressToDelete);
+
         if (!rm) {
             setStatus('error_deleting'); 
             setError('Не удалось определить имя РМ. Удаление невозможно.'); 

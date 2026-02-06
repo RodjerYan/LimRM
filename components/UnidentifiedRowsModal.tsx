@@ -26,18 +26,28 @@ const extractDisplayData = (row: UnidentifiedRow) => {
     let clientName = findValueInRow(rawData, ['наименование', 'клиент', 'партнер', 'контрагент', 'name', 'client']);
     let address = findAddressInRow(rawData) || findValueInRow(rawData, ['город', 'регион', 'city', 'region']);
 
-    // 2. Если адрес пустой или "не найден", берем ВСЕ значения строки подряд
-    // Это гарантирует, что пользователь увидит текст из Excel, даже если колонки называются "F1", "Col1" и т.д.
-    if (!address || address.length < 3 || address === '0') {
-        const rawValues = Object.values(rawData)
+    // 2. Если адрес пустой, берем ВСЕ значения из rawArray (если есть) или rowData
+    // Это гарантирует, что пользователь увидит текст из Excel, даже если заголовки "поехали"
+    if (!address || address.length < 3 || address === '0' || address === 'undefined') {
+        let valuesToJoin: any[] = [];
+        
+        if (row.rawArray && Array.isArray(row.rawArray) && row.rawArray.length > 0) {
+            // Приоритет 1: Исходный массив из воркера (сырой Excel)
+            valuesToJoin = row.rawArray;
+        } else {
+            // Приоритет 2: Значения из объекта
+            valuesToJoin = Object.values(rawData);
+        }
+
+        const rawValues = valuesToJoin
             .map(v => String(v || '').trim())
-            .filter(v => v.length > 0 && v !== row.rm && !v.includes('row_')); // Исключаем ID и имя РМ чтобы не дублировать
+            .filter(v => v.length > 0 && v !== row.rm && !v.includes('row_')); 
         
         if (rawValues.length > 0) {
-            // Берем первые 3-4 значения как "Адрес/Данные"
-            address = rawValues.join(', '); 
+            // Берем первые 5 значений как "Адрес/Данные"
+            address = rawValues.slice(0, 5).join(' | '); 
         } else {
-            address = 'Строка пуста или содержит только служебные данные';
+            address = ' [ПУСТАЯ СТРОКА] ';
         }
     }
 
@@ -102,7 +112,7 @@ const UnidentifiedRowsModal: React.FC<UnidentifiedRowsModalProps> = ({ isOpen, o
                         <div>
                             <h4 className="font-bold text-white text-sm">Требуется ручная привязка</h4>
                             <p className="text-gray-400 text-sm mt-1 leading-relaxed">
-                                Ниже показано <strong>сырое содержимое</strong> строк, которые система не смогла распознать автоматически.
+                                Ниже показано <strong>сырое содержимое</strong> строк (Raw Data), которые система не смогла распознать автоматически.
                                 Нажмите на строку, чтобы открыть форму и вручную ввести корректный адрес для поиска на карте.
                             </p>
                         </div>

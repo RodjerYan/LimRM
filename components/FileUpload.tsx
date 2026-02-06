@@ -9,9 +9,24 @@ interface FileUploadProps {
     onForceUpdate?: () => void;
     okbStatus: OkbStatus | null;
     disabled: boolean;
+    
+    // New Props for Date Filtering
+    loadStartDate?: string;
+    loadEndDate?: string;
+    onLoadStartDateChange?: (date: string) => void;
+    onLoadEndDateChange?: (date: string) => void;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ processingState, onForceUpdate, okbStatus, disabled }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ 
+    processingState, 
+    onForceUpdate, 
+    okbStatus, 
+    disabled,
+    loadStartDate,
+    loadEndDate,
+    onLoadStartDateChange,
+    onLoadEndDateChange
+}) => {
     
     // Derived state from global props
     const { isProcessing, progress, message, fileName, backgroundMessage, startTime } = processingState;
@@ -65,6 +80,29 @@ const FileUpload: React.FC<FileUploadProps> = ({ processingState, onForceUpdate,
                         </div>
                     ) : (
                         <div className="z-10 flex flex-col gap-4 justify-center h-full">
+                            
+                            {/* Date Filter Inputs */}
+                            <div className="flex gap-2">
+                                <div className="w-1/2">
+                                    <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">С даты</label>
+                                    <input 
+                                        type="date" 
+                                        value={loadStartDate || ''} 
+                                        onChange={(e) => onLoadStartDateChange?.(e.target.value)}
+                                        className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-emerald-500 outline-none"
+                                    />
+                                </div>
+                                <div className="w-1/2">
+                                    <label className="block text-[10px] uppercase text-gray-500 font-bold mb-1">По дату</label>
+                                    <input 
+                                        type="date" 
+                                        value={loadEndDate || ''} 
+                                        onChange={(e) => onLoadEndDateChange?.(e.target.value)}
+                                        className="w-full bg-gray-800/50 border border-gray-600 rounded-lg px-2 py-1.5 text-xs text-white focus:ring-1 focus:ring-emerald-500 outline-none"
+                                    />
+                                </div>
+                            </div>
+
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-emerald-500/10 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-500/20 shrink-0">
                                     <DataIcon small/>

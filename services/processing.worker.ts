@@ -37,6 +37,10 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
+// Filter State
+let state_filterStartDate: number | null = null;
+let state_filterEndDate: number | null = null;
+
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
 
@@ -131,6 +135,44 @@ const parseDateKey = (val: any): string | null => {
     return null;
 };
 
+// Helper to parse raw date value into timestamp for comparison
+const parseRawDateToTimestamp = (val: any): number | null => {
+    if (!val) return null;
+    
+    // Excel Serial Number
+    if (typeof val === 'number') {
+        // Excel base date: Dec 30, 1899
+        if (val > 20000 && val < 60000) { 
+             const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
+             return dateObj.getTime();
+        }
+        return null;
+    }
+
+    const str = String(val).trim();
+    
+    // ISO-like YYYY-MM-DD
+    let match = str.match(/^(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})/);
+    if (match) {
+        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3])).getTime();
+    }
+
+    // Russian DD.MM.YYYY
+    match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
+    if (match) {
+        return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1])).getTime();
+    }
+    
+    // Fallback: Monthly YYYY-MM
+    match = str.match(/^(\d{4})[\.\-/](\d{2})/);
+    if (match) {
+        // Default to first day of month
+        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1).getTime();
+    }
+
+    return null;
+};
+
 const getCanonicalRegion = (row: any): string => {
     const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
@@ -173,12 +215,14 @@ function performIncrementalAbc() {
     });
 }
 
-function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified }: { 
+function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified, startDate, endDate }: { 
     okbData: OkbDataRow[], 
     cacheData: CoordsCache, 
     totalRowsProcessed?: number,
     restoredData?: AggregatedDataRow[],
-    restoredUnidentified?: UnidentifiedRow[]
+    restoredUnidentified?: UnidentifiedRow[],
+    startDate?: string,
+    endDate?: string
 }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
@@ -192,6 +236,10 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
+    
+    // Init Date Filters
+    state_filterStartDate = startDate ? new Date(startDate).getTime() : null;
+    state_filterEndDate = endDate ? new Date(endDate).getTime() : null;
     
     if (okbData) {
         okbData.forEach(row => {
@@ -247,9 +295,13 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
         } 
     });
     
-    const statusMsg = totalRowsProcessed 
+    let statusMsg = totalRowsProcessed 
         ? `Восстановление сессии: ${totalRowsProcessed} строк...` 
         : 'Связь установлена. Готов к обработке...';
+        
+    if (state_filterStartDate || state_filterEndDate) {
+        statusMsg += ` (Фильтр: ${startDate || '...'} - ${endDate || '...'})`;
+    }
         
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
@@ -258,9 +310,12 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     const { rawData, isFirstChunk } = payload;
     
     let jsonData: any[] = [];
+    let headerOffset = 0;
+
     if (isFirstChunk || state_headers.length === 0) {
         const hRow = rawData.findIndex(row => row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
         const actualHRow = hRow === -1 ? 0 : hRow;
+        headerOffset = actualHRow + 1;
         state_headers = rawData[actualHRow].map(h => String(h || '').trim());
         jsonData = rawData.slice(actualHRow + 1).map(row => {
             const obj: any = {};
@@ -296,6 +351,18 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
         state_processedRowsCount++;
+        
+        // --- DATE FILTERING ---
+        if (state_filterStartDate || state_filterEndDate) {
+            const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
+            if (dateRaw) {
+                const rowTime = parseRawDateToTimestamp(dateRaw);
+                if (rowTime !== null) {
+                    if (state_filterStartDate && rowTime < state_filterStartDate) continue;
+                    if (state_filterEndDate && rowTime > state_filterEndDate) continue;
+                }
+            }
+        }
         
         const rawAddr = findAddressInRow(row);
         
@@ -353,21 +420,23 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
-            // FIX: DO NOT DROP ROWS even if identification fails.
-            // We register them in unidentifiedRows for manual fixing,
-            // BUT we also allow them to proceed to aggregation with default "Unknown" values
-            // so that the total volume (FACT) remains accurate.
-            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount });
+            // FIX: CAPTURE RAW DATA
+            // Determine the source raw array index correctly
+            const rawRowIndex = isFirstChunk ? (i + headerOffset) : i;
+            const rawArray = rawData[rawRowIndex] || [];
+
+            state_unidentifiedRows.push({ 
+                rm, 
+                rowData: row, 
+                originalIndex: state_processedRowsCount,
+                rawArray: rawArray // Store the original raw values
+            });
             // continue; // <-- REMOVED THIS LINE to prevent data loss
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
         
-        // 7. Extra check: Dropped rows with 0 weight if they were not verified or geocoded.
-        // Relaxed: if we found a city or region, we keep it as potential.
-        // if (totalWeight === 0 && !cacheEntry && !isCityFound) continue;
-
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
 
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
@@ -445,6 +514,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 state_aggregatedData[groupKey].clients.set(uniqueClientKey, pt);
             }
         }
+    }
+    
+    // Explicit Log every 10k rows
+    if (state_processedRowsCount % 10000 === 0) {
+        console.log(`⚙️ [Worker] Processed ${state_processedRowsCount} rows...`);
     }
     
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {

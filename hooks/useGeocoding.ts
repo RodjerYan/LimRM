@@ -45,6 +45,8 @@ export const useGeocoding = (
 
             setIsProcessingQueue(true);
             const action = actionQueue[0];
+            
+            console.info(`[Queue] Processing action: ${action.type}`, action.payload);
 
             try {
                 if (action.type === 'UPDATE_ADDRESS') {
@@ -55,7 +57,7 @@ export const useGeocoding = (
                         body: JSON.stringify({ rmName, oldAddress, newAddress, comment, lat, lon, skipHistory }),
                     });
                     if (!res.ok) throw new Error('Failed to update address');
-                    console.log(`[Queue] Successfully updated: ${newAddress}`);
+                    console.log(`✅ [Queue] Successfully updated: ${newAddress}`);
                 } else if (action.type === 'DELETE_ADDRESS') {
                     const { rmName, address } = action.payload;
                     const res = await fetch('/api/delete-address', {
@@ -65,14 +67,14 @@ export const useGeocoding = (
                     });
                     
                     if (!res.ok) throw new Error('Failed to delete address');
-                    console.log(`[Queue] Successfully deleted: ${address}`);
+                    console.log(`✅ [Queue] Successfully deleted: ${address}`);
                     
                     onDeleteClientLocalRef.current(rmName, address);
                 }
                 
                 setActionQueue(prev => prev.slice(1));
             } catch (error) {
-                console.error(`[Queue] Error processing action ${action.type}:`, error);
+                console.error(`❌ [Queue] Error processing action ${action.type}:`, error);
                 
                 if (action.retryCount < 3) {
                     setActionQueue(prev => {
@@ -130,7 +132,7 @@ export const useGeocoding = (
             for (const [rm, items] of Object.entries(itemsByRm)) {
                 try {
                     for (const item of items) {
-                        console.log(`[Geocoding] Polling for ${item.address} (Attempt ${item.attempts + 1}/${MAX_GEOCODING_ATTEMPTS})`);
+                        console.info(`📡 [Geocoding] Polling for ${item.address} (Attempt ${item.attempts + 1}/${MAX_GEOCODING_ATTEMPTS})`);
                         
                         const res = await fetch(`/api/get-cached-address?rmName=${encodeURIComponent(rm)}&address=${encodeURIComponent(item.address)}&t=${now}`);
                         if (!res.ok) continue;
@@ -140,7 +142,7 @@ export const useGeocoding = (
                         // Success Condition: Must have valid numbers AND not be in pending state (if status available)
                         // Backend now guarantees clearing coords if address changed, so data.lat will be undefined while pending.
                         if (data && typeof data.lat === 'number' && typeof data.lon === 'number' && data.lat !== 0) {
-                            console.log(`[Geocoding] Success for ${item.address}:`, data);
+                            console.log(`✅ [Geocoding] Success for ${item.address}:`, data);
                             
                             const newPoint: MapPoint = {
                                 ...item.basePoint,
@@ -158,7 +160,7 @@ export const useGeocoding = (
                             addNotification(`Координаты получены: ${item.address}`, 'success');
                         } 
                         else if (data && (data.isInvalid || data.coordStatus === 'invalid')) {
-                             console.warn(`[Geocoding] Address marked invalid: ${item.address}`);
+                             console.warn(`⚠️ [Geocoding] Address marked invalid: ${item.address}`);
                              const failedPoint: MapPoint = {
                                 ...item.basePoint,
                                 isGeocoding: false,
@@ -172,7 +174,7 @@ export const useGeocoding = (
                         }
                     }
                 } catch (e) {
-                    console.error(`Error polling for RM ${rm}:`, e);
+                    console.error(`❌ Error polling for RM ${rm}:`, e);
                 }
             }
 
@@ -219,7 +221,7 @@ export const useGeocoding = (
             id: Date.now().toString(),
             payload: { 
                 rmName, 
-                oldAddress: oldAddr, // CORRECT: Pass the OLD address so backend finds the row
+                oldAddress: oldAddr, // CORRECT: Pass the OLD address so backend finds the record
                 newAddress: address, // CORRECT: Pass the NEW address to update to
                 comment: basePoint.comment 
             },

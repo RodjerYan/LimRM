@@ -87,6 +87,7 @@ export interface UnidentifiedRow {
     rm: string;
     rowData: any;
     originalIndex: number;
+    rawArray?: any[]; // NEW: Stores the raw Excel row array to guarantee data visibility
 }
 
 export interface FilterOptions {
@@ -194,6 +195,10 @@ export type WorkerInputInit = {
         totalRowsProcessed?: number; // Added to support resuming
         restoredData?: AggregatedDataRow[]; // New: Allow restoring state from local data
         restoredUnidentified?: UnidentifiedRow[]; // New
+        
+        // Date Filtering
+        startDate?: string;
+        endDate?: string;
     };
 };
 

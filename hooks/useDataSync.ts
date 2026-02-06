@@ -36,10 +36,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     // --- DELTA MANAGEMENT ---
     const saveDeltaToCloud = async (delta: DeltaItem) => {
         setIsCloudSaving(true);
-        console.groupCollapsed('☁️ Saving Delta');
-        console.log('Type:', delta.type);
-        console.log('Key:', delta.key);
-        console.log('Payload:', delta.payload);
+        console.info(`☁️ [Cloud] Saving Delta (${delta.type}):`, delta.key);
         
         try {
             await fetch('/api/get-full-cache?action=save-delta', {
@@ -47,12 +44,11 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(delta)
             });
-            console.log("✅ Delta saved successfully");
+            console.log("✅ [Cloud] Delta saved successfully");
         } catch (e) {
-            console.error("❌ Failed to save delta:", e);
+            console.error("❌ [Cloud] Failed to save delta:", e);
             addNotification('Ошибка сохранения изменений в облако', 'warning');
         } finally {
-            console.groupEnd();
             setIsCloudSaving(false);
         }
     };
@@ -60,7 +56,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     // --- REFACTORED APPLY DELTAS (FINAL VERSION) ---
     const applyDeltasToData = useCallback((rows: AggregatedDataRow[], deltas: DeltaItem[]) => {
         if (!deltas || deltas.length === 0) return rows;
-        console.log(`Applying ${deltas.length} deltas (Savepoints) with payload merging...`);
+        console.info(`🔄 [Sync] Applying ${deltas.length} deltas/savepoints...`);
 
         // 1. Build Index of MERGED Changes (Last Writer Wins PER-PROPERTY)
         const changesByKey = new Map<string, DeltaItem>();
@@ -133,8 +129,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     const payload = relevantDelta.payload;
                     
                     // INTELLIGENT MERGE LOGIC:
-                    // If the address has changed in the payload, but NO coordinates are provided in the payload,
-                    // we must assume the old coordinates are invalid and CLEAR them.
                     const isAddressChanged = payload.address && (normalizeAddress(payload.address) !== normalizeAddress(client.address));
                     const hasNewCoords = payload.lat !== undefined && payload.lon !== undefined;
 
@@ -147,8 +141,6 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                     };
 
                     // CRITICAL FIX: Explicitly clear coords if address moved but no new coords came with the delta.
-                    // This fixes the "Ghost Coordinates" issue where old coords persisted after address change
-                    // because JSON.stringify dropped 'undefined' values from the delta payload.
                     if (isAddressChanged && !hasNewCoords) {
                         mergedClient.lat = undefined;
                         mergedClient.lon = undefined;
@@ -230,7 +222,7 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
     // --- FULL SAVE / SQUASH ---
     const saveSnapshotToCloud = async (currentData: AggregatedDataRow[], currentUnidentified: UnidentifiedRow[]) => {
         setIsCloudSaving(true);
-        console.group('🧹 Snapshot Squash (Optimization)');
+        console.info('🧹 [Squash] Starting Snapshot Optimization...');
         
         try {
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
@@ -365,26 +357,25 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             console.error("❌ Save Snapshot Error:", e);
             addNotification('Ошибка сохранения снимка', 'error');
         } finally {
-            console.groupEnd();
             setIsCloudSaving(false);
         }
     };
 
-    const handleDownloadSnapshot = useCallback(async (serverMeta: any) => {
-        console.groupCollapsed('📦 Snapshot Download Process');
-        console.time('Snapshot Total Load Time');
+    const handleDownloadSnapshot = useCallback(async (serverMeta: any, startDate?: string, endDate?: string) => {
+        console.info('📦 [Sync] Starting Snapshot Download...', { startDate, endDate });
+        console.time('Snapshot Load');
         
         try {
             setProcessingState(prev => ({ ...prev, isProcessing: true, message: 'Синхронизация JSON...', progress: 0 }));
             
-            console.log('1. Requesting snapshot list...');
+            console.log('1. [Sync] Requesting snapshot list...');
             const listRes = await fetch(`/api/get-full-cache?action=get-snapshot-list&t=${Date.now()}`);
             if (!listRes.ok) throw new Error('Failed to fetch snapshot list');
             
             let fileList = await listRes.json();
             if (!Array.isArray(fileList)) fileList = [];
 
-            console.log(`2. Received ${fileList.length} files to download.`);
+            console.info(`2. [Sync] Received ${fileList.length} files to download.`);
 
             fileList.sort((a: any, b: any) => {
                 const nameA = a.name || '';
@@ -401,80 +392,109 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
             
             lastSavedChunksRef.current.clear();
 
-            const CONCURRENCY = 6;
-            const queue = fileList.map((file: any, index: number) => ({ file, index }));
+            // --- WORKER SETUP ---
+            const worker = new Worker(new URL('../services/processing.worker.ts', import.meta.url), { type: 'module' });
             
-            const fetchWithRetry = async (url: string, retries = 3, delay = 1000) => {
-                for (let i = 0; i < retries; i++) {
-                    try {
-                        const res = await fetch(url);
-                        if (!res.ok) throw new Error(`Status ${res.status}`);
-                        return res;
-                    } catch (err) {
-                        console.warn(`[Retry ${i+1}/${retries}] Failed to fetch ${url}`);
-                        if (i === retries - 1) throw err;
-                        await new Promise(res => setTimeout(res, delay * (i + 1)));
+            // Promise to handle worker lifecycle
+            await new Promise<void>((resolve, reject) => {
+                worker.onmessage = (e) => {
+                    const msg = e.data as WorkerMessage;
+                    
+                    if (msg.type === 'progress') {
+                        setProcessingState(prev => ({ 
+                            ...prev, 
+                            progress: msg.payload.percentage,
+                            message: msg.payload.message,
+                            totalRowsProcessed: msg.payload.totalProcessed
+                        }));
+                    } else if (msg.type === 'result_init') {
+                        setOkbRegionCounts(msg.payload.okbRegionCounts);
+                    } else if (msg.type === 'result_chunk_aggregated') {
+                        // Incremental update (optional)
+                    } else if (msg.type === 'result_finished') {
+                        accumulatedRows = msg.payload.aggregatedData;
+                        setUnidentifiedRows(msg.payload.unidentifiedRows);
+                        setOkbRegionCounts(msg.payload.okbRegionCounts);
+                        totalRowsProcessedRef.current = msg.payload.totalRowsProcessed;
+                        resolve();
+                    } else if (msg.type === 'error') {
+                        reject(new Error(msg.payload));
                     }
-                }
-                throw new Error("Retry failed");
-            };
+                };
 
-            const worker = async (workerId: number) => {
-                while (queue.length > 0) {
-                    const item = queue.shift();
-                    if (!item) break;
-                    
-                    const label = `Worker ${workerId} -> File ${item.file.name}`;
-                    console.time(label);
-                    
-                    try {
-                        const res = await fetchWithRetry(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
-                        const text = await res.text();
+                // Initialize worker state with date filters
+                worker.postMessage({
+                    type: 'INIT_STREAM',
+                    payload: {
+                        okbData: [], // OKB data not strictly needed for just loading snapshot
+                        cacheData: {},
+                        startDate,
+                        endDate
+                    }
+                });
+
+                // Start downloading and feeding worker
+                const CONCURRENCY = 6;
+                const queue = fileList.map((file: any, index: number) => ({ file, index }));
+                
+                const downloadWorker = async () => {
+                    while (queue.length > 0) {
+                        const item = queue.shift();
+                        if (!item) break;
                         
-                        if (text && text.trim().length > 0) {
-                            lastSavedChunksRef.current.set(item.index, text);
-                            const chunkData = JSON.parse(text);
-                            let newRows: AggregatedDataRow[] = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                        try {
+                            const res = await fetch(`/api/get-full-cache?action=get-file-content&fileId=${item.file.id}`);
+                            const text = await res.text();
                             
-                            const chunkIndex = parseInt(item.file.name.match(/\d+/)?.[0] || String(item.index), 10);
-                            newRows.forEach(row => row._chunkIndex = chunkIndex);
+                            if (text && text.trim().length > 0) {
+                                lastSavedChunksRef.current.set(item.index, text);
+                                const chunkData = JSON.parse(text);
+                                let newRows = Array.isArray(chunkData.rows) ? chunkData.rows : (Array.isArray(chunkData.aggregatedData) ? chunkData.aggregatedData : []);
+                                
+                                // Feed to worker
+                                worker.postMessage({
+                                    type: 'PROCESS_CHUNK',
+                                    payload: {
+                                        rawData: newRows, // Assuming snapshot is already reasonably structured, but worker handles it
+                                        isFirstChunk: item.index === 0
+                                    }
+                                });
 
-                            if (newRows.length > 0) {
-                                accumulatedRows.push(...normalize(newRows));
+                                if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
                             }
-                            if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
+                        } catch (chunkError) {
+                            console.error(`❌ [Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
+                        } finally {
+                            loadedCount++;
+                            // Progress update happens via worker callback mostly, but we can track download here
                         }
-                    } catch (chunkError) {
-                        console.error(`❌ [Snapshot] Error processing chunk ${item.file.name}:`, chunkError);
-                    } finally {
-                        console.timeEnd(label);
-                        loadedCount++;
-                        setProcessingState(prev => ({ ...prev, progress: Math.round((loadedCount/total)*100) }));
                     }
-                }
-            };
+                };
 
-            console.log(`3. Starting ${CONCURRENCY} download workers...`);
-            await Promise.all(Array.from({ length: CONCURRENCY }, (_, i) => worker(i + 1)));
+                Promise.all(Array.from({ length: CONCURRENCY }, downloadWorker))
+                    .then(() => worker.postMessage({ type: 'FINALIZE_STREAM' }))
+                    .catch(reject);
+            });
+            
+            worker.terminate();
 
             if (loadedMeta || accumulatedRows.length > 0 || total > 0) {
-                console.log(`4. Download complete. Total accumulated rows: ${accumulatedRows.length}`);
+                console.info(`4. [Sync] Processing complete. Total rows in range: ${accumulatedRows.length}`);
                 setProcessingState(prev => ({ ...prev, message: 'Синхронизация дельт и кэша...' }));
                 
                 let finalData = accumulatedRows;
 
                 // 2. Apply Deltas (Savepoints)
                 try {
-                    console.log('5. Fetching savepoint deltas...');
+                    console.log('5. [Sync] Fetching savepoint deltas...');
                     const deltasRes = await fetch(`/api/get-full-cache?action=get-deltas&t=${Date.now()}`);
                     if (deltasRes.ok) {
                         const deltas = await deltasRes.json();
                         if (Array.isArray(deltas) && deltas.length > 0) {
-                            console.log(`   Applying ${deltas.length} deltas...`);
-                            // --- USE NEW MERGING LOGIC HERE ---
+                            console.info(`   [Sync] Applying ${deltas.length} deltas...`);
                             finalData = applyDeltasToData(finalData, deltas);
                         } else {
-                            console.log('   No deltas found.');
+                            console.log('   [Sync] No deltas found.');
                         }
                     }
                 } catch (e) {
@@ -485,15 +505,13 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 setAllData(finalData);
                 
                 const safeMeta = loadedMeta || {};
-                setUnidentifiedRows(safeMeta.unidentifiedRows || []);
-                setOkbRegionCounts(safeMeta.okbRegionCounts || {});
-                totalRowsProcessedRef.current = safeMeta.totalRowsProcessed || finalData.length;
+                // Note: Unidentified rows are set from worker result above
                 
                 const versionHash = serverMeta?.versionHash || 'unknown';
 
                 await saveAnalyticsState({
                     allData: finalData,
-                    unidentifiedRows: safeMeta.unidentifiedRows || [],
+                    unidentifiedRows: safeMeta.unidentifiedRows || [], // We might want worker's unidentified?
                     okbRegionCounts: safeMeta.okbRegionCounts || {},
                     totalRowsProcessed: totalRowsProcessedRef.current,
                     versionHash: versionHash,
@@ -502,15 +520,14 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                 
                 localStorage.setItem('last_snapshot_version', versionHash);
                 setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Готово', progress: 100 }));
-                console.timeEnd('Snapshot Total Load Time');
-                console.groupEnd();
+                console.timeEnd('Snapshot Load');
+                console.info('✅ [Sync] Process completed successfully.');
                 return true;
             }
             return false;
         } catch (e) { 
             console.error("❌ Snapshot critical error:", e); 
             setProcessingState(prev => ({ ...prev, isProcessing: false, message: 'Ошибка сети' }));
-            console.groupEnd();
             return false;
         }
     }, [addNotification, applyDeltasToData]);
