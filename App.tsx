@@ -53,7 +53,10 @@ const App: React.FC = () => {
         handleDataUpdate,
         handleDeleteClient,
         handleStartPolling,
-        queueLength // Get queue info
+        queueLength, // Get queue info
+        // Load Date States
+        loadStartDate, setLoadStartDate,
+        loadEndDate, setLoadEndDate
     } = useAppLogic();
 
     return (
@@ -93,7 +96,12 @@ const App: React.FC = () => {
                             startDate={filterStartDate} 
                             endDate={filterEndDate}     
                             onStartDateChange={setFilterStartDate} 
-                            onEndDateChange={setFilterEndDate}     
+                            onEndDateChange={setFilterEndDate}
+                            // Pass Load Date Filters
+                            loadStartDate={loadStartDate}
+                            loadEndDate={loadEndDate}
+                            onLoadStartDateChange={setLoadStartDate}
+                            onLoadEndDateChange={setLoadEndDate}
                         />
                     )}
 
