@@ -8,10 +8,10 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
-// FIX: Define the type for Vite worker imports to resolve TS2307
+// FIX: Define the type for Vite worker imports to resolve TS2307 and avoid identifier conflicts
 declare module '*?worker' {
-  const workerFactory: {
-    new (): Worker;
-  };
-  export default workerFactory;
+  class WorkerFactory extends Worker {
+    constructor();
+  }
+  export default WorkerFactory;
 }

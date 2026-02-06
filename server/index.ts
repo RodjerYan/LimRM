@@ -106,7 +106,7 @@ const __dirname = path.dirname(__filename);
 // So we go up one level to find dist
 const staticPath = path.join(__dirname, '..', 'dist');
 
-app.use(express.static(staticPath));
+app.use(express.static(staticPath) as any);
 
 // Catch-all handler for React Router (SPA)
 app.get('*', (req: any, res: any) => {
