@@ -7,11 +7,11 @@
 @tailwind utilities;
 
 :root {
-  /* Dark Mode (Default) */
-  --primary-dark: 17 24 39; /* #111827 */
-  --card-bg: 31 41 55;      /* #1F2937 */
-  --text-main: 229 231 235; /* #e5e7eb (gray-200) */
-  --text-muted: 156 163 175; /* #9ca3af (gray-400) */
+  /* Corporate Light Mode (Presentation Style) */
+  --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) - Main App Background */
+  --card-bg: 255 255 255;      /* #ffffff - Card Background */
+  --text-main: 17 24 39;       /* #111827 (gray-900) - Main Text */
+  --text-muted: 107 114 128;   /* #6b7280 (gray-500) - Muted Text */
 }
 
 /* 
@@ -24,28 +24,20 @@ html {
   font-size: 12px;
 }
 
-/* GLOBAL SCROLLBAR STYLING (Dark & Sleek) */
+/* GLOBAL SCROLLBAR STYLING (Light & Sleek) */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #111827; /* primary-dark */
+  background: #f3f4f6; /* gray-100 */
 }
 ::-webkit-scrollbar-thumb {
-  background: #374151; /* gray-700 */
+  background: #d1d5db; /* gray-300 */
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563; /* gray-600 */
-}
-
-.light-mode {
-  /* Light Mode */
-  --primary-dark: 243 244 246; /* #f3f4f6 (gray-100) */
-  --card-bg: 255 255 255;      /* #ffffff */
-  --text-main: 17 24 39;       /* #111827 (gray-900) */
-  --text-muted: 75 85 99;      /* #4b5563 (gray-600) */
+  background: #9ca3af; /* gray-400 */
 }
 
 @layer base {
@@ -74,7 +66,7 @@ html {
     background-image: linear-gradient(
       to right,
       rgba(255, 255, 255, 0) 0%,
-      rgba(255, 255, 255, 0.1) 50%,
+      rgba(255, 255, 255, 0.4) 50%,
       rgba(255, 255, 255, 0) 100%
     );
     background-size: 1000px 100%;

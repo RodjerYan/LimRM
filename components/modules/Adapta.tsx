@@ -58,8 +58,8 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return Math.max(0, Math.round(baseScore - (penalty / props.activeClientsCount) * 100));
     }, [props.activeClientsCount, props.unidentifiedCount]);
 
-    const healthColor = healthScore > 80 ? 'text-emerald-400' : healthScore > 50 ? 'text-amber-400' : 'text-red-400';
-    const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
+    const healthColor = healthScore > 80 ? 'text-emerald-600' : healthScore > 50 ? 'text-amber-600' : 'text-red-600';
+    const healthBorder = healthScore > 80 ? 'border-emerald-200' : healthScore > 50 ? 'border-amber-200' : 'border-red-200';
 
     // Helper to get client fact for the selected period
     // REACTIVE FILTERING: This runs whenever props.startDate/endDate changes.
@@ -86,16 +86,10 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             return sum;
         }
         
-        // Fallback for Snapshots (No Dates):
-        // If a filter is active, strictly speaking, a snapshot has "no date".
-        // However, to prevent "disappearing data" for legacy files, we return the full fact.
-        // NOTE: This means legacy snapshots WON'T change numbers when filtering dates, 
-        // which is expected behavior for data without a time dimension.
         return client.fact || 0;
     };
 
     // 1. FIX: Establish a Fixed Universe of Clients (Base Clients) based on CURRENT filter
-    // This ensures that channel stats and other metrics only count clients active in the selected period
     const baseClientKeys = useMemo(() => {
         const set = new Set<string>();
         if (props.uploadedData) {
@@ -205,7 +199,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         if (props.processingState.isProcessing) {
             return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
         }
-        // If ready, show the count of UNIQUE ACTIVE clients in the current filtered view
         return baseClientKeys.size.toLocaleString('ru-RU');
     }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, baseClientKeys]);
 
@@ -215,68 +208,69 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }, [props.activeClientsCount, props.okbStatus?.rowCount]);
 
     const getChannelStyle = (index: number) => {
+        // Updated colors for light theme compatibility
         if (index === 0) return { 
-            text: 'text-indigo-400', 
+            text: 'text-indigo-600', 
             bar: 'bg-indigo-500', 
-            badge: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+            badge: 'bg-indigo-50 text-indigo-600 border-indigo-200'
         };
         if (index === 1) return { 
-            text: 'text-emerald-400', 
+            text: 'text-emerald-600', 
             bar: 'bg-emerald-500',
-            badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+            badge: 'bg-emerald-50 text-emerald-600 border-emerald-200'
         };
         if (index === 2) return { 
-            text: 'text-amber-400', 
+            text: 'text-amber-600', 
             bar: 'bg-amber-500',
-            badge: 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+            badge: 'bg-amber-50 text-amber-600 border-amber-200'
         };
         return { 
-            text: 'text-gray-400', 
-            bar: 'bg-gray-600',
-            badge: 'bg-gray-700/30 text-gray-400 border-gray-700/50'
+            text: 'text-gray-600', 
+            bar: 'bg-gray-400',
+            badge: 'bg-gray-100 text-gray-600 border-gray-200'
         };
     };
 
     return (
         <div className="space-y-6 animate-fade-in">
-            <div className="flex justify-between items-end border-b border-gray-800 pb-4">
+            <div className="flex justify-between items-end border-b border-gray-200 pb-4">
                 <div>
-                    <h2 className="text-2xl font-bold text-white">ADAPTA <span className="text-gray-500 font-normal text-lg">/ Live Streaming Engine</span></h2>
-                    <p className="text-gray-400 text-sm mt-1">Интеллектуальная синхронизация с облаком. Данные обновляются инкрементально в фоновом режиме.</p>
+                    <h2 className="text-2xl font-bold text-gray-900">ADAPTA <span className="text-gray-400 font-normal text-lg">/ Live Streaming Engine</span></h2>
+                    <p className="text-gray-500 text-sm mt-1">Интеллектуальная синхронизация с облаком. Данные обновляются инкрементально в фоновом режиме.</p>
                 </div>
                 <div className="flex space-x-2">
-                    <button onClick={() => setActiveTab('ingest')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'ingest' ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}>Cloud Sync</button>
-                    <button onClick={() => setActiveTab('hygiene')} disabled={props.activeClientsCount === 0} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'hygiene' ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white disabled:opacity-50'}`}>Качество (DQ)</button>
+                    <button onClick={() => setActiveTab('ingest')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'ingest' ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:text-black'}`}>Cloud Sync</button>
+                    <button onClick={() => setActiveTab('hygiene')} disabled={props.activeClientsCount === 0} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'hygiene' ? 'bg-black text-white' : 'bg-white text-gray-500 border border-gray-200 hover:text-black disabled:opacity-50'}`}>Качество (DQ)</button>
                 </div>
             </div>
 
             {activeTab === 'ingest' ? (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="space-y-6">
-                        <div className="bg-gray-900/80 p-5 rounded-2xl border border-white/10 shadow-xl relative overflow-hidden">
+                        <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-md relative overflow-hidden">
                             <div className="absolute top-0 right-0 p-3">
                                 {props.processingState.isProcessing ? (
-                                    <div className="flex items-center gap-2 px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded-md border border-indigo-500/30 animate-pulse">
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-md border border-indigo-100 animate-pulse">
                                         <LoaderIcon className="w-3 h-3" />
                                         <span className="text-[9px] font-bold uppercase">Streaming</span>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center gap-2 px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded-md border border-emerald-500/20">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-emerald-50 text-emerald-600 rounded-md border border-emerald-100">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-sm"></div>
                                         <span className="text-[9px] font-bold uppercase">Online</span>
                                     </div>
                                 )}
                             </div>
-                            <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                            <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4 flex items-center gap-2">
                                 <DataIcon small /> Облачный Движок
                             </h3>
                             <div className="space-y-4">
                                 <div className="flex items-center gap-4">
-                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${props.dbStatus === 'ready' ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'bg-gray-800 text-gray-500'}`}>
+                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${props.dbStatus === 'ready' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-gray-100 text-gray-400'}`}>
                                         {props.dbStatus === 'ready' ? <SuccessIcon /> : <InfoIcon />}
                                     </div>
                                     <div>
-                                        <div className="text-white font-bold text-lg leading-none">
+                                        <div className="text-gray-900 font-bold text-lg leading-none">
                                             {props.dbStatus === 'ready' ? 'Live Index: OK' : 'No Index Found'}
                                         </div>
                                         <div className="text-xs text-gray-500 mt-1">
@@ -286,14 +280,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                 </div>
                                 {props.processingState.isProcessing && (
                                     <div className="pt-2">
-                                        <div className="flex justify-between text-[10px] text-gray-400 mb-1 font-bold uppercase">
+                                        <div className="flex justify-between text-[10px] text-gray-500 mb-1 font-bold uppercase">
                                             <span>Прогресс индексации</span>
-                                            <span className="text-indigo-400">{Math.round(props.processingState.progress)}%</span>
+                                            <span className="text-indigo-600">{Math.round(props.processingState.progress)}%</span>
                                         </div>
-                                        <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
-                                            <div className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all duration-500" style={{ width: `${props.processingState.progress}%` }}></div>
+                                        <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden">
+                                            <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${props.processingState.progress}%` }}></div>
                                         </div>
-                                        <p className="text-[10px] text-gray-500 mt-2 italic leading-tight">{props.processingState.message}</p>
+                                        <p className="text-[10px] text-gray-400 mt-2 italic leading-tight">{props.processingState.message}</p>
                                     </div>
                                 )}
                             </div>
@@ -314,69 +308,69 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                     </div>
 
                     <div className="lg:col-span-2 space-y-6">
-                        <div className={`bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border ${healthBorder} shadow-xl relative`}>
-                            {props.processingState.isProcessing && <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500/10"><div className="h-full bg-indigo-500/40 animate-shimmer" style={{width: '30%'}}></div></div>}
-                            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                        <div className={`bg-white p-6 rounded-2xl border ${healthBorder} shadow-lg relative`}>
+                            {props.processingState.isProcessing && <div className="absolute top-0 left-0 w-full h-1 bg-indigo-50"><div className="h-full bg-indigo-200 animate-shimmer" style={{width: '30%'}}></div></div>}
+                            <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
                                 Качество загруженных данных
                                 <span className={`text-2xl font-mono ${healthColor} ml-auto`}>{healthScore}%</span>
                             </h3>
                             
-                            <div className="w-full bg-gray-800 rounded-full h-2 mb-6 overflow-hidden">
-                                <div className={`h-full transition-all duration-1000 ease-out ${healthScore > 80 ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : healthScore > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${healthScore}%` }}></div>
+                            <div className="w-full bg-gray-100 rounded-full h-2 mb-6 overflow-hidden">
+                                <div className={`h-full transition-all duration-1000 ease-out ${healthScore > 80 ? 'bg-emerald-500' : healthScore > 50 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${healthScore}%` }}></div>
                             </div>
 
                             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/60 transition-colors">
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 hover:border-gray-300 transition-colors">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">ОБРАБОТАНО ЗАПИСЕЙ</div>
-                                    <div className="text-xl font-bold text-gray-200 font-mono">{rowsToDisplay}</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-gray-500 mt-2 italic">
+                                    <div className="text-xl font-bold text-gray-900 font-mono">{rowsToDisplay}</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-gray-400 mt-2 italic">
                                         {props.processingState.isProcessing ? 'Чтение снимка...' : (props.startDate || props.endDate ? 'Отфильтровано' : 'Всего в системе')}
                                     </div>
                                 </div>
-                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Уникальных ТТ</div>
-                                    <div className="text-xl font-bold text-white font-mono">{props.activeClientsCount.toLocaleString()}</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-emerald-400 mt-2 uppercase font-bold">● Гео-объектов</div>
+                                    <div className="text-xl font-bold text-gray-900 font-mono">{props.activeClientsCount.toLocaleString()}</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-emerald-600 mt-2 uppercase font-bold">● Гео-объектов</div>
                                 </div>
                                 
                                 {/* UNIDENTIFIED CARD - NOW CLICKABLE */}
                                 <div 
-                                    className={`bg-gray-800/40 p-4 rounded-xl border border-gray-700/50 transition-all ${props.onUnidentifiedClick ? 'cursor-pointer hover:bg-gray-800 hover:border-gray-600 group' : ''}`}
+                                    className={`bg-gray-50 p-4 rounded-xl border border-gray-200 transition-all ${props.onUnidentifiedClick ? 'cursor-pointer hover:bg-white hover:shadow-md hover:border-gray-300 group' : ''}`}
                                     onClick={props.onUnidentifiedClick}
                                 >
                                     <div className="flex justify-between items-start">
                                         <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Неопознанные</div>
-                                        {props.onUnidentifiedClick && <div className="opacity-0 group-hover:opacity-100 transition-opacity text-indigo-400"><SearchIcon small/></div>}
+                                        {props.onUnidentifiedClick && <div className="opacity-0 group-hover:opacity-100 transition-opacity text-indigo-500"><SearchIcon small/></div>}
                                     </div>
-                                    <div className={`text-xl font-bold font-mono ${props.unidentifiedCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                    <div className={`text-xl font-bold font-mono ${props.unidentifiedCount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
                                         {props.unidentifiedCount.toLocaleString()}
                                     </div>
                                     <div className="flex items-center gap-1 text-[9px] mt-2 uppercase font-bold">
                                         {props.unidentifiedCount > 0 ? (
-                                            <span className="text-amber-400">⚠️ Ошибка разбора</span>
+                                            <span className="text-amber-600">⚠️ Ошибка разбора</span>
                                         ) : (
-                                            <span className="text-emerald-400">✔ Все ОК</span>
+                                            <span className="text-emerald-600">✔ Все ОК</span>
                                         )}
                                     </div>
                                 </div>
 
-                                <div className="bg-gray-800/40 p-4 rounded-xl border border-gray-700/50">
+                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Охват ОКБ</div>
-                                    <div className="text-xl font-bold text-white font-mono">{coverageOkb}%</div>
-                                    <div className="flex items-center gap-1 text-[9px] text-indigo-400 mt-2 uppercase font-bold">Доля рынка</div>
+                                    <div className="text-xl font-bold text-gray-900 font-mono">{coverageOkb}%</div>
+                                    <div className="flex items-center gap-1 text-[9px] text-indigo-600 mt-2 uppercase font-bold">Доля рынка</div>
                                 </div>
                             </div>
                         </div>
 
                         {/* Minimalist Channel Structure Grid */}
-                        <div className="bg-gray-900/50 backdrop-blur-sm p-6 rounded-2xl border border-white/5 shadow-xl">
+                        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md">
                             <div className="flex items-center justify-between mb-6">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                                    <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
                                         <ChannelIcon small />
                                     </div>
                                     <div>
-                                        <h3 className="text-sm font-bold text-white tracking-wide uppercase">Структура Каналов</h3>
+                                        <h3 className="text-sm font-bold text-gray-800 tracking-wide uppercase">Структура Каналов</h3>
                                         <p className="text-[10px] text-gray-500">Физические адреса (Уник. ТТ)</p>
                                     </div>
                                 </div>
@@ -388,7 +382,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         return (
                                             <div 
                                                 key={idx} 
-                                                className="group relative p-3.5 rounded-lg bg-gray-800/20 border border-white/5 hover:border-white/10 transition-all cursor-pointer"
+                                                className="group relative p-3.5 rounded-lg bg-gray-50 border border-gray-100 hover:border-gray-300 hover:bg-white transition-all cursor-pointer shadow-sm hover:shadow-md"
                                                 onClick={() => { setSelectedChannel(stat.name); setChannelSearchTerm(''); }}
                                             >
                                                 <div className="flex justify-between items-start mb-3">
@@ -397,18 +391,18 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                                             {stat.name.charAt(0).toUpperCase()}
                                                         </div>
                                                         <div className="flex flex-col">
-                                                            <span className="text-sm font-medium text-gray-200 group-hover:text-white transition-colors">{stat.name}</span>
-                                                            <span className="text-[10px] text-gray-600 font-mono mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
+                                                            <span className="text-sm font-medium text-gray-700 group-hover:text-black transition-colors">{stat.name}</span>
+                                                            <span className="text-[10px] text-gray-400 font-mono mt-0.5">{stat.volumeTons.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} т.</span>
                                                         </div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="text-base font-bold text-white font-mono tracking-tight">{stat.count.toLocaleString()}</div>
+                                                        <div className="text-base font-bold text-gray-900 font-mono tracking-tight">{stat.count.toLocaleString()}</div>
                                                         <div className={`text-[10px] font-bold ${style.text}`}>{stat.percentage.toFixed(1)}%</div>
                                                     </div>
                                                 </div>
                                                 
                                                 {/* Ultra-slim progress bar */}
-                                                <div className="w-full bg-gray-700/30 h-[2px] rounded-full overflow-hidden">
+                                                <div className="w-full bg-gray-200 h-[2px] rounded-full overflow-hidden">
                                                     <div className={`h-full ${style.bar} transition-all duration-1000 ease-out`} style={{ width: `${stat.percentage}%` }}></div>
                                                 </div>
                                             </div>
@@ -416,14 +410,14 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                     })}
                                 </div>
                             ) : (
-                                <div className="h-32 flex flex-col items-center justify-center text-gray-600 border border-dashed border-gray-800 rounded-lg bg-black/10">
+                                <div className="h-32 flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-200 rounded-lg bg-gray-50">
                                     <p className="text-xs font-mono">Нет данных</p>
                                 </div>
                             )}
                         </div>
 
-                        <div className="p-5 bg-indigo-900/10 border border-indigo-500/10 rounded-xl text-sm text-indigo-200">
-                            <strong className="block mb-1 text-indigo-300 flex items-center gap-2"><InfoIcon small /> Технология Online Preview:</strong>
+                        <div className="p-5 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-indigo-800">
+                            <strong className="block mb-1 text-indigo-700 flex items-center gap-2"><InfoIcon small /> Технология Online Preview:</strong>
                             Вы можете использовать аналитику, пока данные синхронизируются в фоне. Система обновляет расчеты в реальном времени при получении новых блоков строк.
                         </div>
                     </div>
@@ -431,27 +425,27 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-1">
-                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 shadow-xl">
-                            <h3 className="text-lg font-bold text-white mb-4">Статистический Анализ (Z-Score)</h3>
-                            <p className="text-sm text-gray-400 mb-4">Автоматическое выявление аномалий в продажах. Инструмент DQ (Data Quality).</p>
-                            <div className="flex items-center gap-2 text-amber-400 text-sm bg-amber-900/20 p-3 rounded-lg border border-amber-500/20"><AlertIcon small /><span>Найдено аномалий: <strong>{outliers.length}</strong></span></div>
+                        <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-lg">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4">Статистический Анализ (Z-Score)</h3>
+                            <p className="text-sm text-gray-500 mb-4">Автоматическое выявление аномалий в продажах. Инструмент DQ (Data Quality).</p>
+                            <div className="flex items-center gap-2 text-amber-700 text-sm bg-amber-50 p-3 rounded-lg border border-amber-100"><AlertIcon small /><span>Найдено аномалий: <strong>{outliers.length}</strong></span></div>
                         </div>
                     </div>
                     <div className="lg:col-span-2">
-                        <div className="bg-gray-900/50 p-6 rounded-2xl border border-gray-700 h-full overflow-hidden flex flex-col shadow-xl">
-                            <h3 className="text-lg font-bold text-white mb-4">Детализация Аномалий</h3>
+                        <div className="bg-white p-6 rounded-2xl border border-gray-200 h-full overflow-hidden flex flex-col shadow-lg">
+                            <h3 className="text-lg font-bold text-gray-800 mb-4">Детализация Аномалий</h3>
                             <div className="flex-grow overflow-y-auto custom-scrollbar">
                                 {outliers.length > 0 ? (
                                     <table className="w-full text-left text-sm">
-                                        <thead className="text-gray-500 border-b border-gray-700 sticky top-0 bg-gray-900/90 backdrop-blur"><tr><th className="pb-2 pl-2">Клиент/Группа</th><th className="pb-2">Факт</th><th className="pb-2">Z-Score</th><th className="pb-2">Диагноз</th></tr></thead>
-                                        <tbody className="text-gray-300 divide-y divide-gray-800">
+                                        <thead className="text-gray-500 border-b border-gray-200 sticky top-0 bg-white/90 backdrop-blur"><tr><th className="pb-2 pl-2">Клиент/Группа</th><th className="pb-2">Факт</th><th className="pb-2">Z-Score</th><th className="pb-2">Диагноз</th></tr></thead>
+                                        <tbody className="text-gray-600 divide-y divide-gray-100">
                                             {outliers.map((item: OutlierItem, idx: number) => (
-                                                <tr key={idx} onClick={() => setSelectedOutlier(item)} className="hover:bg-indigo-500/10 cursor-pointer transition-colors" title="Нажмите для разбора"><td className="py-3 pl-2 font-medium text-white flex items-center gap-2">{item.row.clientName}<span className="text-xs text-gray-500">↗</span></td><td className="py-3 font-mono">{new Intl.NumberFormat('ru-RU').format(item.row.fact)}</td><td className={`py-3 font-mono font-bold ${Math.abs(item.zScore) > 3 ? 'text-red-400' : 'text-amber-400'}`}>{item.zScore.toFixed(2)}</td><td className="py-3 text-xs text-gray-400">{item.reason}</td></tr>
+                                                <tr key={idx} onClick={() => setSelectedOutlier(item)} className="hover:bg-gray-50 cursor-pointer transition-colors" title="Нажмите для разбора"><td className="py-3 pl-2 font-medium text-gray-900 flex items-center gap-2">{item.row.clientName}<span className="text-xs text-gray-400">↗</span></td><td className="py-3 font-mono">{new Intl.NumberFormat('ru-RU').format(item.row.fact)}</td><td className={`py-3 font-mono font-bold ${Math.abs(item.zScore) > 3 ? 'text-red-600' : 'text-amber-600'}`}>{item.zScore.toFixed(2)}</td><td className="py-3 text-xs text-gray-500">{item.reason}</td></tr>
                                             ))}
                                         </tbody>
                                     </table>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center h-40 text-gray-500"><CheckIcon /><p className="mt-2">Статистических аномалий не обнаружено.</p></div>
+                                    <div className="flex flex-col items-center justify-center h-40 text-gray-400"><CheckIcon /><p className="mt-2">Статистических аномалий не обнаружено.</p></div>
                                 )}
                             </div>
                         </div>
@@ -460,25 +454,25 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
             )}
             
             {selectedChannel && (
-                <Modal isOpen={!!selectedChannel} onClose={() => setSelectedChannel(null)} title={<div className="flex flex-col"><span className="text-xl font-bold text-white">Канал: {selectedChannel}</span><span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация уник. адресов по РМ и городам</span></div>} maxWidth="max-w-5xl">
+                <Modal isOpen={!!selectedChannel} onClose={() => setSelectedChannel(null)} title={<div className="flex flex-col"><span className="text-xl font-bold text-gray-900">Канал: {selectedChannel}</span><span className="text-xs text-gray-500 uppercase font-bold tracking-widest mt-1">Детализация уник. адресов по РМ и городам</span></div>} maxWidth="max-w-5xl">
                     <div className="space-y-4">
                         <div className="relative mb-6">
                             <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400"><SearchIcon small /></div>
-                            <input type="text" placeholder="Поиск по адресу, названию ТТ или менеджеру..." value={channelSearchTerm} onChange={(e) => setChannelSearchTerm(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
+                            <input type="text" placeholder="Поиск по адресу, названию ТТ или менеджеру..." value={channelSearchTerm} onChange={(e) => setChannelSearchTerm(e.target.value)} className="w-full bg-white border border-gray-300 rounded-xl py-2.5 pl-10 pr-4 text-sm text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                         </div>
                         <div className="max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
                             {groupedChannelData && Object.keys(groupedChannelData).length > 0 ? (
                                 <div className="space-y-8">
                                     {Object.entries(groupedChannelData).sort((a,b) => a[0].localeCompare(b[0])).map(([rm, cities]) => (
                                         <div key={rm} className="space-y-4">
-                                            <div className="sticky top-0 bg-card-bg/95 backdrop-blur z-10 py-2 border-b border-gray-800 flex justify-between items-center"><h4 className="text-sm font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2"><div className="p-1 bg-indigo-500/10 rounded-md"><UsersIcon small /></div> {rm}</h4><span className="text-[10px] bg-indigo-500/10 text-indigo-300 px-2 py-0.5 rounded border border-indigo-500/20">{Object.values(cities).flat().length} ТТ</span></div>
+                                            <div className="sticky top-0 bg-white/95 backdrop-blur z-10 py-2 border-b border-gray-200 flex justify-between items-center"><h4 className="text-sm font-bold text-indigo-600 uppercase tracking-widest flex items-center gap-2"><div className="p-1 bg-indigo-50 rounded-md border border-indigo-100"><UsersIcon small /></div> {rm}</h4><span className="text-[10px] bg-gray-50 text-gray-500 px-2 py-0.5 rounded border border-gray-200 font-bold">{Object.values(cities).flat().length} ТТ</span></div>
                                             <div className="pl-4 space-y-6">
                                                 {Object.entries(cities).sort((a,b) => a[0].localeCompare(b[0])).map(([city, clients]) => (
                                                     <div key={city} className="space-y-2">
-                                                        <h5 className="text-xs font-bold text-gray-300 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>{city}</h5>
+                                                        <h5 className="text-xs font-bold text-gray-700 flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>{city}</h5>
                                                         <div className="grid grid-cols-1 gap-2">
                                                             {clients.map((client, cIdx) => (
-                                                                <div key={cIdx} className="bg-gray-800/30 p-3 rounded-lg border border-white/5 hover:bg-gray-800/50 transition-all flex justify-between items-start gap-4 group"><div className="min-w-0"><div className="text-xs font-bold text-white truncate" title={client.name}>{client.name}</div><div className="text-[10px] text-gray-500 mt-1 truncate cursor-pointer hover:text-indigo-400 flex items-center gap-1 transition-colors" onClick={() => props.onStartEdit?.(client)}><span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>{client.address}</div></div><div className="flex flex-col items-end shrink-0"><div className="text-[11px] font-mono font-bold text-emerald-400">{(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-500 font-normal">кг</span></div><div className="text-[9px] text-gray-600 mt-0.5 uppercase font-bold tracking-tighter">{client.brand || 'Уникальная ТТ'}</div></div></div>
+                                                                <div key={cIdx} className="bg-gray-50 p-3 rounded-lg border border-gray-200 hover:border-indigo-200 hover:bg-white hover:shadow-sm transition-all flex justify-between items-start gap-4 group"><div className="min-w-0"><div className="text-xs font-bold text-gray-900 truncate" title={client.name}>{client.name}</div><div className="text-[10px] text-gray-500 mt-1 truncate cursor-pointer hover:text-indigo-600 flex items-center gap-1 transition-colors" onClick={() => props.onStartEdit?.(client)}><span className="opacity-0 group-hover:opacity-100 transition-opacity">📍</span>{client.address}</div></div><div className="flex flex-col items-end shrink-0"><div className="text-[11px] font-mono font-bold text-emerald-600">{(client.totalFact || 0).toLocaleString('ru-RU')} <span className="text-[9px] text-gray-400 font-normal">кг</span></div><div className="text-[9px] text-gray-400 mt-0.5 uppercase font-bold tracking-tighter">{client.brand || 'Уникальная ТТ'}</div></div></div>
                                                             ))}
                                                         </div>
                                                     </div>
@@ -487,7 +481,7 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                                         </div>
                                     ))}
                                 </div>
-                            ) : <div className="py-20 text-center text-gray-600 flex flex-col items-center gap-2"><SearchIcon /><p className="text-sm">Адреса не найдены по вашему запросу</p></div>}
+                            ) : <div className="py-20 text-center text-gray-400 flex flex-col items-center gap-2"><SearchIcon /><p className="text-sm">Адреса не найдены по вашему запросу</p></div>}
                         </div>
                     </div>
                 </Modal>

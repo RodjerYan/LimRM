@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from './icons';
+import { DataIcon, AnalyticsIcon, ProphetIcon, LabIcon, BrainIcon, TargetIcon } from '../icons';
 
 interface NavigationProps {
     activeTab: string;
@@ -18,16 +18,16 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
     ];
 
     return (
-        <nav className="hidden lg:flex flex-col w-64 bg-gray-900/90 backdrop-blur-xl border-r border-gray-800 h-screen fixed left-0 top-0 z-50">
-            <div className="p-6 flex items-center gap-3 border-b border-gray-800 shrink-0">
-                <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold">
-                    G
+        <nav className="hidden lg:flex flex-col w-64 bg-white border-r border-gray-200 h-screen fixed left-0 top-0 z-50 shadow-sm">
+            <div className="p-6 flex items-center gap-3 border-b border-gray-100 shrink-0">
+                <div className="w-8 h-8 bg-yellow-400 rounded-lg flex items-center justify-center text-black font-bold shadow-sm">
+                    L
                 </div>
                 <div>
-                    <h1 className="font-bold text-white tracking-tight">
-                        GPS-Enterprise
+                    <h1 className="font-bold text-gray-900 tracking-tight">
+                        LimRM Group
                     </h1>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Коммерческая аналитика LimKorm</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">Analytics Core</p>
                 </div>
             </div>
             
@@ -38,11 +38,11 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                         onClick={() => onTabChange(item.id)}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
                             activeTab === item.id 
-                                ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 shadow-lg shadow-indigo-900/20' 
-                                : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                                ? 'bg-yellow-50 text-yellow-700 border border-yellow-200 shadow-sm' 
+                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                         }`}
                     >
-                        <span className={`${activeTab === item.id ? 'text-indigo-400' : 'text-gray-500'}`}>
+                        <span className={`${activeTab === item.id ? 'text-yellow-600' : 'text-gray-400'}`}>
                             {item.icon}
                         </span>
                         {item.label}
@@ -50,13 +50,13 @@ const Navigation: React.FC<NavigationProps> = ({ activeTab, onTabChange }) => {
                 ))}
             </div>
 
-            <div className="p-4 border-t border-gray-800 shrink-0">
-                <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-500 border border-gray-700">
+            <div className="p-4 border-t border-gray-100 shrink-0">
+                <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 border border-gray-200">
                     <div className="flex items-center gap-2 mb-1">
                         <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <span className="text-gray-300">Система активна</span>
+                        <span className="text-gray-700 font-medium">Система активна</span>
                     </div>
-                    <div className="text-[10px]">Версия 2.5.0 (by RodjerYan)</div>
+                    <div className="text-[10px] text-gray-400">Версия 2.5.0 (White Ed.)</div>
                 </div>
             </div>
         </nav>
