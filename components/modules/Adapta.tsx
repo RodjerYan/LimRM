@@ -62,9 +62,16 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Helper to get client fact for the selected period
-    // FIX: Correct date comparison logic
+    // STRICT MODE: If filters are active, only sum confirmed monthly data.
     const getClientFact = (client: MapPoint) => {
-        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
+        const hasFilter = !!(props.startDate || props.endDate);
+
+        // If no monthly breakdown exists...
+        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
+            // STRICT FIX: If filtering by date, and we don't have dates, return 0.
+            // This prevents "timeless" historical data from polluting specific period views.
+            return hasFilter ? 0 : (client.fact || 0);
+        }
         
         let sum = 0;
         
