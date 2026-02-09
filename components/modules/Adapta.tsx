@@ -119,12 +119,13 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
-                // If App.tsx filters clients, uploadedData contains only active ones.
-                // So checking baseClientKeys might be redundant if we want visual consistency, but safe.
                 if (!baseClientKeys.has(client.key)) return;
 
                 const effectiveFact = getClientFact(client);
                 
+                // STRICT FIX: Only count clients with volume > 0 in the selected period
+                if (effectiveFact <= 0.001) return;
+
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
                 
@@ -155,7 +156,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
                 if (!baseClientKeys.has(c.key)) return;
 
                 const effectiveFact = getClientFact(c);
-                if ((props.startDate || props.endDate) && effectiveFact <= 0) return;
+                
+                // STRICT FIX: Only include clients with volume > 0 in the selected period
+                if (effectiveFact <= 0.001) return;
 
                 if ((c.type || 'Не определен') === selectedChannel) {
                     const search = channelSearchTerm.toLowerCase();
@@ -183,11 +186,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     }, [selectedChannel, props.uploadedData, channelSearchTerm, props.startDate, props.endDate, baseClientKeys]);
 
     const rowsToDisplay = useMemo(() => {
-        // If processing, show progress (total loaded rows).
         if (props.processingState.isProcessing) {
             return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
         }
-        // If ready, show the count of ACTIVE clients in the current filtered view
         const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
         return currentDataCount.toLocaleString('ru-RU');
     }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, props.uploadedData]);
@@ -197,7 +198,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         return Math.min(100, Math.round((props.activeClientsCount / props.okbStatus.rowCount) * 100));
     }, [props.activeClientsCount, props.okbStatus?.rowCount]);
 
-    // Helper for visual styling of channels - MINIMALIST VERSION
     const getChannelStyle = (index: number) => {
         if (index === 0) return { 
             text: 'text-indigo-400', 
