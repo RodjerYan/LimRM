@@ -247,7 +247,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
-function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: PostMessageFn) {
+function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn) {
     const rows = payload.chunkData;
     if (!Array.isArray(rows)) {
         console.error("restoreChunk: Invalid data format", rows);
@@ -258,17 +258,23 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
     if (rows.length > 0 && state_processedRowsCount === 0) {
         const sample = rows[0];
         console.log('[Worker] First Chunk Sample Row:', JSON.stringify(sample).substring(0, 300));
-        console.log('[Worker] Has clients?', Array.isArray(sample.clients), 'Length:', sample.clients?.length);
+        console.log('[Worker] Has clients?', Array.isArray((sample as any).clients), 'Length:', (sample as any).clients?.length);
     }
 
-    rows.forEach(aggRow => {
-        const clientMap = new Map<string, MapPoint>();
-        let newRowFact = 0;
+    rows.forEach(item => {
+        // Determine if it's an Aggregated Group or a Flat Client
+        let clientsToProcess: any[] = [];
+        
+        if (item.clients && Array.isArray(item.clients)) {
+            // It's an Aggregated Row
+            clientsToProcess = item.clients;
+        } else {
+            // It's a Flat Client Row
+            // Treat the whole row as the client data
+            clientsToProcess = [item];
+        }
 
-        // Ensure clients is iterable
-        const clientsList = Array.isArray(aggRow.clients) ? aggRow.clients : [];
-
-        clientsList.forEach(client => {
+        clientsToProcess.forEach(client => {
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
             // --- APPLY DATE FILTER ---
@@ -285,9 +291,7 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
                             let inRange = true;
                             if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
                             if (state_filterEndDate) {
-                                // Inclusive end date logic (to end of month)
                                 const endDateObj = new Date(state_filterEndDate);
-                                // Simple compare for now
                                 if (ts > state_filterEndDate) inRange = false;
                             }
                             
@@ -295,52 +299,71 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
                         }
                     });
                 } else {
-                    // Safety: If filter is ON but no dates, keep it if it has fact?
-                    // Or treat as "undated" -> exclude? 
-                    // Let's include if date filtering is NOT strictly excluding undated (usually safer to include)
-                    // BUT for precise analytics, we exclude.
-                    // CURRENT: Exclude if breakdown missing but filter active.
+                    // Include if filtering but no dates? Default to exclude for precision, but include if we want to show 'undated'
+                    // For now, exclude to match strict filter logic
                     clientFact = 0; 
                 }
             }
 
-            // Check inclusion criteria
+            // Inclusion criteria
             const isFilterActive = !!(state_filterStartDate || state_filterEndDate);
             const shouldInclude = !isFilterActive || clientFact > 0;
 
             if (shouldInclude) {
-                // Ensure key exists
-                const safeKey = client.key || `${client.address || 'unknown'}_${Math.random()}`;
+                // Ensure Client Key exists
+                const safeKey = client.key || `${client.address || 'unknown'}_${Math.random().toString(36).substr(2, 9)}`;
                 
                 const filteredClient = { ...client, key: safeKey, fact: clientFact };
-                clientMap.set(safeKey, filteredClient);
-                newRowFact += clientFact;
+                
+                // Reconstruct Group Key (Region-RM-Brand-Packaging)
+                // Use fallback 'unknown' if fields are missing in flattened data
+                const reg = filteredClient.region || 'Не определен';
+                const rm = filteredClient.rm || 'Не указан';
+                const brand = filteredClient.brand || 'Без бренда';
+                const packaging = filteredClient.packaging || 'Не указана';
+                
+                const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
 
+                // Ensure Group Exists in State
+                if (!state_aggregatedData[groupKey]) {
+                    state_aggregatedData[groupKey] = {
+                        __rowId: generateRowId(),
+                        key: groupKey,
+                        clientName: `${reg}: ${brand}`,
+                        brand, 
+                        packaging, 
+                        rm, 
+                        region: reg, 
+                        city: filteredClient.city || 'Не определен',
+                        fact: 0,
+                        potential: 0, 
+                        growthPotential: 0, 
+                        growthPercentage: 0,
+                        clients: new Map()
+                    };
+                }
+
+                // Add to Group
+                const group = state_aggregatedData[groupKey];
+                
+                // If client already exists in this group (duplicate in chunk?), merge fact
+                if (group.clients.has(safeKey)) {
+                    const existing = group.clients.get(safeKey)!;
+                    existing.fact = (existing.fact || 0) + clientFact;
+                } else {
+                    group.clients.set(safeKey, filteredClient);
+                }
+                
+                // Update Group Totals
+                group.fact += clientFact;
+                group.potential = group.fact * 1.15; // Simple heuristic update
+
+                // Update Global Unique Clients Map
                 if (!state_uniquePlottableClients.has(safeKey)) {
                     state_uniquePlottableClients.set(safeKey, filteredClient);
                 }
             }
         });
-
-        // Add row if it has active clients or if the row itself is significant (legacy support)
-        if (clientMap.size > 0) {
-            const safeRowKey = aggRow.key || generateRowId();
-            
-            if (!state_aggregatedData[safeRowKey]) {
-                const { clients, ...rest } = aggRow;
-                state_aggregatedData[safeRowKey] = {
-                    ...rest,
-                    key: safeRowKey,
-                    fact: newRowFact, 
-                    potential: newRowFact * 1.15, 
-                    clients: clientMap
-                };
-            } else {
-                const existing = state_aggregatedData[safeRowKey];
-                existing.fact += newRowFact;
-                clientMap.forEach((v, k) => existing.clients.set(k, v));
-            }
-        }
     });
 
     state_processedRowsCount += rows.length;
