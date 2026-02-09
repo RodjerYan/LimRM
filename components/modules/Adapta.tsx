@@ -61,35 +61,46 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthColor = healthScore > 80 ? 'text-emerald-400' : healthScore > 50 ? 'text-amber-400' : 'text-red-400';
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
-    // 1. FIX: Establish a Fixed Universe of Clients (Base Clients)
+    // Helper to get client fact for the selected period
+    // FIX: Correct date comparison logic
+    const getClientFact = (client: MapPoint) => {
+        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
+        
+        let sum = 0;
+        
+        // Normalize filter inputs to YYYY-MM for comparison with keys
+        const filterStart = props.startDate ? props.startDate.substring(0, 7) : null;
+        const filterEnd = props.endDate ? props.endDate.substring(0, 7) : null;
+
+        Object.entries(client.monthlyFact).forEach(([date, val]) => {
+            if (date === 'unknown') return; 
+            
+            // Compare YYYY-MM strings
+            if (filterStart && date < filterStart) return;
+            if (filterEnd && date > filterEnd) return;
+            
+            sum += val;
+        });
+        return sum;
+    };
+
+    // 1. FIX: Establish a Fixed Universe of Clients (Base Clients) based on CURRENT filter
+    // This ensures that channel stats and other metrics only count clients active in the selected period
     const baseClientKeys = useMemo(() => {
         const set = new Set<string>();
         if (props.uploadedData) {
             props.uploadedData.forEach(row => {
                 row.clients.forEach(c => {
-                    // Include client if it has ANY data in monthlyFact OR a total fact > 0
-                    if ((c.monthlyFact && Object.keys(c.monthlyFact).length > 0) || (c.fact || 0) > 0) {
+                    const fact = getClientFact(c);
+                    // Include client if it has sales > 0 in the selected period
+                    if (fact > 0.001) {
                         set.add(c.key);
                     }
                 });
             });
         }
         return set;
-    }, [props.uploadedData]);
-
-    // Helper to get client fact for the selected period
-    const getClientFact = (client: MapPoint) => {
-        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) return client.fact || 0;
-        
-        let sum = 0;
-        Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return; 
-            if (props.startDate && date < props.startDate) return;
-            if (props.endDate && date > props.endDate) return;
-            sum += val;
-        });
-        return sum;
-    };
+    }, [props.uploadedData, props.startDate, props.endDate]);
 
     const outliers = useMemo<OutlierItem[]>(() => {
         if (!props.uploadedData || props.uploadedData.length === 0) return [];
@@ -119,13 +130,11 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         
         props.uploadedData.forEach(row => {
             row.clients.forEach(client => {
+                // Use the pre-filtered base keys to ensure consistency
                 if (!baseClientKeys.has(client.key)) return;
 
                 const effectiveFact = getClientFact(client);
                 
-                // STRICT FIX: Only count clients with volume > 0 in the selected period
-                if (effectiveFact <= 0.001) return;
-
                 const type = client.type || 'Не определен';
                 if (!acc[type]) acc[type] = { uniqueKeys: new Set(), volume: 0 };
                 
@@ -157,9 +166,6 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
 
                 const effectiveFact = getClientFact(c);
                 
-                // STRICT FIX: Only include clients with volume > 0 in the selected period
-                if (effectiveFact <= 0.001) return;
-
                 if ((c.type || 'Не определен') === selectedChannel) {
                     const search = channelSearchTerm.toLowerCase();
                     // Safer check for includes
@@ -189,9 +195,9 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
         if (props.processingState.isProcessing) {
             return (props.processingState.totalRowsProcessed || 0).toLocaleString('ru-RU');
         }
-        const currentDataCount = props.uploadedData?.reduce((acc, row) => acc + row.clients.length, 0) || 0;
-        return currentDataCount.toLocaleString('ru-RU');
-    }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, props.uploadedData]);
+        // If ready, show the count of UNIQUE ACTIVE clients in the current filtered view
+        return baseClientKeys.size.toLocaleString('ru-RU');
+    }, [props.processingState.isProcessing, props.processingState.totalRowsProcessed, baseClientKeys]);
 
     const coverageOkb = useMemo(() => {
         if (!props.okbStatus?.rowCount || props.okbStatus.rowCount === 0) return 0;

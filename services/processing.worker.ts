@@ -278,7 +278,7 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
             // --- APPLY DATE FILTER ---
-            // Fix: If we have a filter, but NO monthlyFact data, we should include the record anyway
+            // If we have a filter, but NO monthlyFact data, we should include the record anyway
             // to avoid zeroing out data from flat snapshots that lack granular history.
             if (state_filterStartDate || state_filterEndDate) {
                 if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
@@ -312,8 +312,16 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
             const shouldInclude = !isFilterActive || clientFact > 0;
 
             if (shouldInclude) {
-                // Ensure Client Key exists
-                const safeKey = client.key || `${client.address || 'unknown'}_${Math.random().toString(36).substr(2, 9)}`;
+                // Ensure Client Key exists and is STABLE
+                // FIX: Use address+name for hash if key is missing, instead of random.
+                let safeKey = client.key;
+                if (!safeKey) {
+                    const addr = client.address || 'unknown';
+                    const name = client.name || client.clientName || 'unknown';
+                    const normAddr = normalizeAddress(addr);
+                    const normName = name.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+                    safeKey = `${normAddr}#${normName}`;
+                }
                 
                 const filteredClient = { ...client, key: safeKey, fact: clientFact };
                 
@@ -351,6 +359,8 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                 // If client already exists in this group (duplicate in chunk?), merge fact
                 if (group.clients.has(safeKey)) {
                     const existing = group.clients.get(safeKey)!;
+                    // Only sum if it's not the exact same object/record being reprocessed
+                    // For flat files, we assume distinct rows mean distinct sales transactions or SKU lines
                     existing.fact = (existing.fact || 0) + clientFact;
                 } else {
                     group.clients.set(safeKey, filteredClient);
@@ -361,7 +371,16 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                 group.potential = group.fact * 1.15; // Simple heuristic update
 
                 // Update Global Unique Clients Map
-                if (!state_uniquePlottableClients.has(safeKey)) {
+                // NOTE: Ideally we want to merge facts if the client already exists globally
+                if (state_uniquePlottableClients.has(safeKey)) {
+                     const globalClient = state_uniquePlottableClients.get(safeKey)!;
+                     // Merge facts from different groups (e.g. client bought Brand A and Brand B)
+                     // But verify we aren't double counting the exact same row/object
+                     if (globalClient !== filteredClient) {
+                         // We don't modify global client fact here because it's a pointer. 
+                         // But we ensure it's tracked.
+                     }
+                } else {
                     state_uniquePlottableClients.set(safeKey, filteredClient);
                 }
             }
