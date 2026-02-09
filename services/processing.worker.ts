@@ -237,9 +237,11 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    // Init Date Filters
+    // Init Date Filters with logging
     state_filterStartDate = startDate ? new Date(startDate).getTime() : null;
     state_filterEndDate = endDate ? new Date(endDate).getTime() : null;
+    
+    console.log(`[Worker] Init Stream. Date Filter: ${startDate} (${state_filterStartDate}) - ${endDate} (${state_filterEndDate})`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -313,6 +315,8 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
         return;
     }
 
+    let debugLogOnce = false;
+
     rows.forEach(aggRow => {
         // Hydrate clients map
         const clientMap = new Map<string, MapPoint>();
@@ -323,29 +327,54 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
                 let clientFact = client.fact || 0;
                 
                 // --- APPLY DATE FILTER ---
-                if ((state_filterStartDate || state_filterEndDate) && client.monthlyFact) {
-                    clientFact = 0;
-                    let hasDataInRange = false;
-                    
-                    Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
-                        // dateStr is YYYY-MM
-                        const parts = dateStr.split('-');
-                        if (parts.length >= 2) {
-                            const ts = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1).getTime();
-                            
-                            let inRange = true;
-                            if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
-                            if (state_filterEndDate && ts > state_filterEndDate) inRange = false;
-                            
-                            if (inRange) {
-                                clientFact += (val as number);
-                                hasDataInRange = true;
-                            }
+                if (state_filterStartDate || state_filterEndDate) {
+                    // Only filter if monthlyFact exists
+                    if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
+                        clientFact = 0;
+                        let hasDataInRange = false;
+                        
+                        // DEBUG: Log sample dates to understand mismatch
+                        if (!debugLogOnce) {
+                            console.log('[Worker] Sample monthlyFact keys:', Object.keys(client.monthlyFact));
+                            debugLogOnce = true;
                         }
-                    });
+
+                        Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
+                            // dateStr is YYYY-MM
+                            const parts = dateStr.split(/[-.]/); // Handle '-' or '.'
+                            if (parts.length >= 2) {
+                                const year = parseInt(parts[0]);
+                                const month = parseInt(parts[1]) - 1; // 0-based month
+                                
+                                const ts = new Date(year, month, 1).getTime();
+                                
+                                let inRange = true;
+                                if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
+                                // Loose comparison for end date (include entire end month)
+                                if (state_filterEndDate) {
+                                    const endDateObj = new Date(state_filterEndDate);
+                                    // If timestamp is strictly after end filter
+                                    if (ts > state_filterEndDate) inRange = false;
+                                }
+                                
+                                if (inRange) {
+                                    clientFact += (val as number);
+                                    hasDataInRange = true;
+                                }
+                            }
+                        });
+                    } 
+                    // Fallback: If no monthlyFact, assume data falls within range OR exclude?
+                    // Safe approach: If user filters, and we have NO date breakdown, we usually exclude to be safe, 
+                    // OR include if we assume the whole dataset belongs to the period.
+                    // CURRENT LOGIC: Exclude if breakdown missing but filter active.
+                    else {
+                        clientFact = 0; // Exclude legacy/undated records when filtered
+                    }
                 }
 
-                const shouldInclude = clientFact > 0 || (!state_filterStartDate && !state_filterEndDate);
+                // If filtering is OFF, include everything. If ON, only include if fact > 0
+                const shouldInclude = (!state_filterStartDate && !state_filterEndDate) || clientFact > 0;
 
                 if (shouldInclude) {
                     const filteredClient = { ...client, fact: clientFact };
