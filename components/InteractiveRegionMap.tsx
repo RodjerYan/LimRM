@@ -105,22 +105,22 @@ const fixChukotkaGeoJSON = (feature: any) => {
 const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     if (mode === 'abc') {
         return (
-            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500 flex items-center gap-2">
                     ABC Анализ (Вклад)
                 </h4>
                 <div className="space-y-1.5">
                     <div className="flex items-center">
                         <span className="w-3 h-3 mr-2 rounded-full bg-amber-500 shadow-[0_0_5px_rgba(245,158,11,0.6)]"></span>
-                        <span className="text-xs font-bold text-amber-400">A (80% Выручки)</span>
+                        <span className="text-xs font-bold text-gray-800">A (80% Выручки)</span>
                     </div>
                     <div className="flex items-center">
                         <span className="w-3 h-3 mr-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
-                        <span className="text-xs font-medium text-emerald-400">B (15% Выручки)</span>
+                        <span className="text-xs font-medium text-gray-600">B (15% Выручки)</span>
                     </div>
                     <div className="flex items-center">
-                        <span className="w-3 h-3 mr-2 rounded-full bg-gray-500"></span>
-                        <span className="text-xs text-gray-400">C (5% Выручки)</span>
+                        <span className="w-3 h-3 mr-2 rounded-full bg-gray-400"></span>
+                        <span className="text-xs text-gray-500">C (5% Выручки)</span>
                     </div>
                 </div>
             </div>
@@ -129,8 +129,8 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     if (mode === 'pets') {
         const tooltip = "Условный индекс (0-100), рассчитанный на основе урбанизации, кол-ва домохозяйств и косвенных данных (объемы продаж, кол-во вет.клиник).";
         return (
-            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500 flex items-center gap-2">
                     Плотность питомцев
                 </h4>
                 <div className="space-y-1">
@@ -143,7 +143,7 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
                         <span className="text-xs">Средняя (50-80)</span>
                     </div>
                     <div className="flex items-center" title={tooltip}>
-                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#6b7280', opacity: 0.3}}></span>
+                        <span className="w-4 h-4 mr-2 rounded-sm" style={{backgroundColor: '#9ca3af', opacity: 0.3}}></span>
                         <span className="text-xs">Низкая (&lt;50)</span>
                     </div>
                 </div>
@@ -153,8 +153,8 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     if (mode === 'competitors') {
         const tooltip = "Условный индекс (0-100), учитывающий плотность зоо-ритейла, присутствие федеральных сетей и активность крупных игроков.";
         return (
-            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500 flex items-center gap-2">
                     Конкуренция
                 </h4>
                 <div className="space-y-1">
@@ -177,8 +177,8 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
     if (mode === 'age') {
         const tooltip = "Средний медианный возраст владельца животного в регионе по данным Росстата и демографической статистики СНГ.";
         return (
-            <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted flex items-center gap-2">
+            <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+                <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500 flex items-center gap-2">
                     Возраст владельцев
                 </h4>
                 <div className="space-y-1">
@@ -199,18 +199,18 @@ const MapLegend: React.FC<{ mode: OverlayMode }> = React.memo(({ mode }) => {
         );
     }
     return (
-        <div className="p-3 bg-card-bg/90 backdrop-blur-md rounded-lg border border-gray-700 text-text-main max-w-[200px] shadow-xl">
-            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-text-muted">Легенда</h4>
+        <div className="p-3 bg-white/95 backdrop-blur-md rounded-lg border border-gray-200 text-gray-900 max-w-[200px] shadow-lg">
+            <h4 className="font-bold text-xs mb-2 uppercase tracking-wider text-gray-500">Легенда</h4>
             <div className="flex items-center mb-1.5">
-                <span className="inline-block w-4 h-2 mr-2 border border-gray-500 bg-transparent"></span>
+                <span className="inline-block w-4 h-2 mr-2 border border-gray-400 bg-transparent"></span>
                 <span className="text-xs font-medium">Граница региона</span>
             </div>
             <div className="flex items-center mb-1.5">
-                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.6)]"></span>
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-emerald-500 shadow-sm"></span>
                 <span className="text-xs font-medium">Активные ТТ</span>
             </div>
             <div className="flex items-center mb-1.5">
-                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.6)]"></span>
+                <span className="inline-block w-3 h-3 rounded-full mr-2 bg-blue-500 shadow-sm"></span>
                 <span className="text-xs font-medium">Потенциал (ОКБ)</span>
             </div>
         </div>
@@ -222,7 +222,7 @@ const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => vo
     return (
         <button
             onClick={() => onEdit(client)}
-            className="group mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/40 active:scale-[0.98]"
+            className="group mt-3 w-full bg-black hover:bg-gray-800 text-white font-bold py-2 px-3 rounded-lg text-xs transition-all flex items-center justify-center gap-2 shadow-md active:scale-[0.98]"
         >
             <svg className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
             Редактировать адрес
@@ -230,7 +230,7 @@ const PopupButton: React.FC<{ client: MapPoint; onEdit: (client: MapPoint) => vo
     );
 };
 
-const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'dark', onEditClient }) => {
+const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selectedRegions, potentialClients, activeClients, flyToClientKey, theme = 'light', onEditClient }) => {
     const mapContainer = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<L.Map | null>(null);
     const geoJsonLayer = useRef<L.GeoJSON | null>(null);
@@ -241,7 +241,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const activeClientMarkersRef = useRef<Map<string, L.Layer>>(new Map());
     const legendContainerRef = useRef<HTMLDivElement | null>(null);
     
-    // Store deduplicated clients for popup reference
     const activeClientsDataRef = useRef<MapPoint[]>(activeClients);
     const onEditClientRef = useRef(onEditClient);
 
@@ -330,22 +329,37 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const regionName = feature.properties?.name;
         const marketData = getMarketData(regionName);
         const isSelected = selectedRegions.includes(regionName);
-        const baseBorder = { weight: isSelected ? 2 : 1, opacity: 1, color: isSelected ? '#818cf8' : (localTheme === 'dark' ? '#6b7280' : '#9ca3af'), fillColor: 'transparent', fillOpacity: 0, className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon', pane: 'regionsPane' };
-        if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#818cf8' : '#111827', fillOpacity: isSelected ? 0.3 : 0.2, interactive: true }; }
+        // Style for LIGHT theme by default
+        const baseBorder = { 
+            weight: isSelected ? 2 : 1, 
+            opacity: 1, 
+            color: isSelected ? '#4f46e5' : '#9ca3af', // indigo-600 or gray-400
+            fillColor: 'transparent', 
+            fillOpacity: 0, 
+            className: isSelected ? 'selected-region-layer region-polygon' : 'region-polygon', 
+            pane: 'regionsPane' 
+        };
+
+        if (localTheme === 'dark') {
+             // Dark mode overrides
+             baseBorder.color = isSelected ? '#818cf8' : '#6b7280';
+        }
+
+        if (overlayMode === 'sales' || overlayMode === 'abc') { return { ...baseBorder, fillColor: isSelected ? '#4f46e5' : '#f3f4f6', fillOpacity: isSelected ? 0.3 : 0.1, interactive: true }; }
         if (overlayMode === 'pets') {
-            const density = marketData.petDensityIndex; let fillColor = '#6b7280'; let fillOpacity = 0.3;
+            const density = marketData.petDensityIndex; let fillColor = '#9ca3af'; let fillOpacity = 0.3;
             if (density > 80) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (density > 50) { fillColor = '#f59e0b'; fillOpacity = 0.5; }
-            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
+            return { ...baseBorder, color: isSelected ? '#000' : '#6b7280', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
         } 
         if (overlayMode === 'competitors') {
             const comp = marketData.competitorDensityIndex; let fillColor = '#3b82f6'; let fillOpacity = 0.3;
             if (comp > 80) { fillColor = '#ef4444'; fillOpacity = 0.6; } else if (comp > 50) { fillColor = '#f97316'; fillOpacity = 0.5; }
-            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
+            return { ...baseBorder, color: isSelected ? '#000' : '#6b7280', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
         }
         if (overlayMode === 'age') {
-            const age = marketData.avgOwnerAge; let fillColor = '#6b7280'; let fillOpacity = 0.3;
+            const age = marketData.avgOwnerAge; let fillColor = '#9ca3af'; let fillOpacity = 0.3;
             if (age < 35) { fillColor = '#10b981'; fillOpacity = 0.6; } else if (age < 45) { fillColor = '#f59e0b'; fillOpacity = 0.5; } else { fillColor = '#8b5cf6'; fillOpacity = 0.5; }
-            return { ...baseBorder, color: isSelected ? '#ffffff' : '#4b5563', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
+            return { ...baseBorder, color: isSelected ? '#000' : '#6b7280', fillColor: fillColor, fillOpacity: isSelected ? Math.min(fillOpacity + 0.2, 0.9) : fillOpacity, interactive: true };
         }
         return baseBorder;
     };
@@ -383,15 +397,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const map = L.map(mapContainer.current, { center: [55, 60], zoom: 3, minZoom: 2, scrollWheelZoom: true, preferCanvas: true, worldCopyJump: true, zoomControl: false, attributionControl: false });
             mapInstance.current = map;
             
-            // Pane setup for z-index layering
             map.createPane('regionsPane');
             map.getPane('regionsPane')!.style.zIndex = '400';
-            
-            // General markers pane (e.g. potential clients)
             map.createPane('markersPane');
             map.getPane('markersPane')!.style.zIndex = '600'; 
-
-            // IMPORTANT: Dedicated pane for active markers to ensure they are always on top
             map.createPane('activeMarkersPane');
             map.getPane('activeMarkersPane')!.style.zIndex = '650';
 
@@ -406,44 +415,22 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             legend.addTo(map);
             map.on('click', resetHighlight);
 
-            // --- REFACTORED POPUP LOGIC ---
-            
             map.on('popupopen', (e) => {
                 const popup = e.popup as any;
-
                 const renderButton = () => {
                     const popupNode = popup.getElement();
                     if (!popupNode) return;
-
-                    // Try to find the placeholder
                     const placeholder = popupNode.querySelector('[data-popup-edit]');
                     if (!placeholder) return;
-
                     const rawKey = placeholder.getAttribute('data-key');
                     if (!rawKey) return;
-
                     const key = decodeURIComponent(rawKey);
-                    
-                    const client = activeClientsDataRef.current.find(
-                        c => String(c.key) === String(key)
-                    );
-
+                    const client = activeClientsDataRef.current.find(c => String(c.key) === String(key));
                     if (!client) return;
-
-                    if (popup.__reactRoot) {
-                        popup.__reactRoot.unmount();
-                    }
-                    
+                    if (popup.__reactRoot) { popup.__reactRoot.unmount(); }
                     popup.__reactRoot = ReactDOM.createRoot(placeholder);
-                    
-                    popup.__reactRoot.render(
-                        <PopupButton client={client} onEdit={(c) => {
-                            setIsFullscreen(false);
-                            onEditClientRef.current(c);
-                        }} />
-                    );
+                    popup.__reactRoot.render(<PopupButton client={client} onEdit={(c) => { setIsFullscreen(false); onEditClientRef.current(c); }} />);
                 };
-
                 renderButton();
                 popup.once('contentupdate', renderButton);
                 requestAnimationFrame(renderButton);
@@ -451,10 +438,7 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
 
             map.on('popupclose', (e) => {
                 const popup = e.popup as any;
-                if (popup.__reactRoot) {
-                    popup.__reactRoot.unmount();
-                    popup.__reactRoot = null;
-                }
+                if (popup.__reactRoot) { popup.__reactRoot.unmount(); popup.__reactRoot = null; }
             });
         }
         return () => { if (mapInstance.current) { mapInstance.current.remove(); mapInstance.current = null; tileLayerRef.current = null; } };
@@ -479,8 +463,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     const createGroupPopupContent = (clients: MapPoint[]) => {
         const totalFact = clients.reduce((sum, c) => sum + (c.fact || 0), 0);
         const firstClient = clients[0];
-        
-        // Sort by volume descending for better visibility
         const sortedClients = [...clients].sort((a, b) => (b.fact || 0) - (a.fact || 0));
 
         const getBrandColor = (brand: string) => {
@@ -496,62 +478,57 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             const brandColor = getBrandColor(c.brand || '');
             
             return `
-            <div class="flex items-start justify-between py-2 border-b border-gray-700/50 last:border-0 hover:bg-white/5 transition-colors px-1 rounded-md">
+            <div class="flex items-start justify-between py-2 border-b border-gray-200 last:border-0 hover:bg-gray-50 transition-colors px-1 rounded-md">
                 <div class="flex items-center gap-3 overflow-hidden">
-                    <div class="w-8 h-8 rounded-lg ${brandColor} bg-opacity-20 text-white flex items-center justify-center font-bold text-xs border border-white/10 flex-shrink-0">
+                    <div class="w-8 h-8 rounded-lg ${brandColor} bg-opacity-20 text-gray-700 flex items-center justify-center font-bold text-xs border border-gray-200 flex-shrink-0">
                         ${(c.brand || '?').charAt(0).toUpperCase()}
                     </div>
                     <div class="min-w-0">
-                        <div class="font-bold text-gray-200 text-xs truncate" title="${c.brand} ${c.packaging || ''}">${c.brand} <span class="font-normal text-gray-500">${c.packaging || ''}</span></div>
-                        <div class="text-[10px] text-gray-400 truncate">${c.type || 'Канал не указан'}</div>
+                        <div class="font-bold text-gray-900 text-xs truncate" title="${c.brand} ${c.packaging || ''}">${c.brand} <span class="font-normal text-gray-500">${c.packaging || ''}</span></div>
+                        <div class="text-[10px] text-gray-500 truncate">${c.type || 'Канал не указан'}</div>
                     </div>
                 </div>
                 <div class="text-right pl-2 flex-shrink-0">
-                    <div class="font-mono font-bold text-emerald-400 text-xs whitespace-nowrap">${new Intl.NumberFormat('ru-RU').format(c.fact || 0)}</div>
-                    <div class="w-12 h-1 bg-gray-700 rounded-full mt-1 ml-auto overflow-hidden">
+                    <div class="font-mono font-bold text-emerald-600 text-xs whitespace-nowrap">${new Intl.NumberFormat('ru-RU').format(c.fact || 0)}</div>
+                    <div class="w-12 h-1 bg-gray-200 rounded-full mt-1 ml-auto overflow-hidden">
                         <div class="h-full ${brandColor} transition-all" style="width: ${pct}%"></div>
                     </div>
                 </div>
             </div>
         `}).join('');
 
-        const addressParts = firstClient.address.split(',').map(p => p.trim());
-        const shortAddress = addressParts.length > 2 
-            ? `${addressParts[0]}, ...${addressParts[addressParts.length-1]}` 
-            : firstClient.address;
-
         return `
         <div class="popup-inner-content" style="min-width: 280px; padding: 0;">
             <!-- Header -->
-            <div style="background: linear-gradient(to right, rgba(17, 24, 39, 0.95), rgba(31, 41, 55, 0.9)); padding: 12px; border-bottom: 1px solid rgba(75, 85, 99, 0.5); border-radius: 8px 8px 0 0;">
+            <div style="background: white; padding: 12px; border-bottom: 1px solid #e5e7eb; border-radius: 8px 8px 0 0;">
                 <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
-                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #9ca3af; font-weight: 700;">
+                    <div style="font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; font-weight: 700;">
                         ${firstClient.city || 'Город не определен'}
                     </div>
-                    <span style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; text-transform: uppercase;">
+                    <span style="background: #ecfdf5; color: #059669; font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0; font-weight: 700; text-transform: uppercase;">
                         Активен
                     </span>
                 </div>
-                <div style="font-weight: 700; color: #f3f4f6; font-size: 13px; line-height: 1.4; word-break: break-word;">
+                <div style="font-weight: 700; color: #111827; font-size: 13px; line-height: 1.4; word-break: break-word;">
                     ${firstClient.address}
                 </div>
                 <div style="margin-top: 6px; display: flex; gap: 8px;">
-                     <div style="font-size: 10px; color: #d1d5db; background: rgba(55, 65, 81, 0.5); padding: 2px 6px; rounded: 4px;">
-                        Клиентов: <strong style="color: white;">${clients.length}</strong>
+                     <div style="font-size: 10px; color: #4b5563; background: #f3f4f6; padding: 2px 6px; rounded: 4px;">
+                        Клиентов: <strong style="color: #111827;">${clients.length}</strong>
                     </div>
                 </div>
             </div>
             
             <!-- Body -->
-            <div class="custom-scrollbar" style="max-height: 180px; overflow-y: auto; padding: 8px 12px; background: rgba(17, 24, 39, 0.8);">
+            <div class="custom-scrollbar" style="max-height: 180px; overflow-y: auto; padding: 8px 12px; background: white;">
                 ${listHtml}
             </div>
             
             <!-- Footer -->
-            <div style="background: rgba(17, 24, 39, 0.95); padding: 10px 12px; border-top: 1px solid rgba(75, 85, 99, 0.5); border-radius: 0 0 8px 8px;">
+            <div style="background: #f9fafb; padding: 10px 12px; border-top: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <span style="font-size: 10px; color: #9ca3af; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Всего продажи</span>
-                    <span style="font-size: 16px; color: #10b981; font-weight: 800; font-family: monospace; text-shadow: 0 0 10px rgba(16, 185, 129, 0.3);">
+                    <span style="font-size: 10px; color: #6b7280; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Всего продажи</span>
+                    <span style="font-size: 16px; color: #059669; font-weight: 800; font-family: monospace;">
                         ${new Intl.NumberFormat('ru-RU').format(totalFact)} <span style="font-size: 12px; font-weight: 600;">кг</span>
                     </span>
                 </div>
@@ -565,9 +542,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         const map = mapInstance.current;
         if (!map || !layerControl.current) return;
         
-        // Renderers: One for standard (blue), one for active (green/abc)
         const standardRenderer = L.canvas({ pane: 'markersPane' });
-        const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); // Higher z-index
+        const activeRenderer = L.canvas({ pane: 'activeMarkersPane' }); 
 
         if (potentialClientMarkersLayer.current) { map.removeLayer(potentialClientMarkersLayer.current); layerControl.current.removeLayer(potentialClientMarkersLayer.current); }
         potentialClientMarkersLayer.current = L.layerGroup();
@@ -576,10 +552,8 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     
         const pointsForBounds: L.LatLngExpression[] = [];
 
-        // Only show potential clients if NOT in ABC mode (to reduce clutter)
         if (overlayMode !== 'abc') {
             potentialClients.forEach(tt => {
-                // OPTIMIZATION: Try direct property access first
                 let lat = tt.lat;
                 let lon = tt.lon;
 
@@ -603,17 +577,12 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             });
         }
 
-        // --- MARKER GROUPING LOGIC START ---
-        // Group clients by normalized address
         const groupedClientsMap = new Map<string, MapPoint[]>();
         
         activeClients.forEach(client => {
-            // Group STRICTLY by address string first
             const normAddr = normalizeAddress(client.address);
-            
             let groupKey = normAddr;
             if (!groupKey) {
-                // FAST PATH: Direct access
                 const lat = client.lat;
                 const lon = client.lon;
                 if (lat && lon) {
@@ -622,7 +591,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                     return; 
                 }
             }
-            
             if (!groupedClientsMap.has(groupKey)) {
                 groupedClientsMap.set(groupKey, []);
             }
@@ -632,20 +600,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
         activeClientsDataRef.current = activeClients;
 
         groupedClientsMap.forEach((groupClients) => {
-            // Sort to find the "Anchor"
             const sortedGroup = [...groupClients].sort((a, b) => {
                 const timeA = a.lastUpdated || 0;
                 const timeB = b.lastUpdated || 0;
                 if (timeA !== timeB) return timeB - timeA;
-
-                const isConfirmedA = a.coordStatus === 'confirmed';
-                const isConfirmedB = b.coordStatus === 'confirmed';
-                if (isConfirmedA !== isConfirmedB) return isConfirmedA ? -1 : 1;
-
-                const hasCoordsA = a.lat && a.lon && a.lat !== 0;
-                const hasCoordsB = b.lat && b.lon && b.lat !== 0;
-                if (hasCoordsA !== hasCoordsB) return hasCoordsA ? -1 : 1;
-
                 return 0;
             });
 
@@ -655,11 +613,9 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 return;
             }
             
-            // FAST PATH: Access pre-parsed numbers from the object directly
             let lat = representative.lat;
             let lon = representative.lon;
 
-            // Only parse if missing (fallback for legacy data)
             if (lat === undefined || lon === undefined) {
                  lat = parseCoord(getCoordinate(representative, ['lat', 'latitude']));
                  lon = parseCoord(getCoordinate(representative, ['lon', 'lng']));
@@ -683,7 +639,6 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 }
 
                 if (overlayMode === 'abc') {
-                    // Optimized Loop
                     let bestCategory = 'C';
                     for (const curr of groupClients) {
                         if (curr.abcCategory === 'A') { bestCategory = 'A'; break; }
@@ -712,16 +667,15 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
                 activeClientMarkersRef.current.set(popupRep.key, marker);
             }
         });
-        // --- MARKER GROUPING LOGIC END ---
 
         if (overlayMode !== 'abc') potentialClientMarkersLayer.current.addTo(map);
         activeClientMarkersLayer.current.addTo(map);
         
-        if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-400 font-bold">●</span> Потенциал (ОКБ)');
-        layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-400 font-bold">●</span> Активные ТТ');
+        if (overlayMode !== 'abc') layerControl.current.addOverlay(potentialClientMarkersLayer.current, '<span class="text-blue-500 font-bold">●</span> Потенциал (ОКБ)');
+        layerControl.current.addOverlay(activeClientMarkersLayer.current, '<span class="text-emerald-500 font-bold">●</span> Активные ТТ');
 
         if (pointsForBounds.length > 0 && !flyToClientKey) { map.fitBounds(L.latLngBounds(pointsForBounds).pad(0.1)); }
-    }, [potentialClients, activeClients, overlayMode]); // Dependency array kept for Memoization
+    }, [potentialClients, activeClients, overlayMode]);
 
     useEffect(() => {
         if (geoJsonData && mapInstance.current && geoJsonLayer.current === null) {
@@ -758,18 +712,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
     }, [flyToClientKey]);
 
     return (
-        <div className={`relative w-full rounded-2xl overflow-hidden border border-white/10 shadow-2xl transition-all duration-500 ${isFullscreen ? 'fixed inset-0 z-[100] h-screen' : 'h-[600px] group'}`}>
-            <div ref={mapContainer} className="h-full w-full bg-[#111827]" />
+        <div className={`relative w-full rounded-2xl overflow-hidden border border-gray-200 shadow-md transition-all duration-500 ${isFullscreen ? 'fixed inset-0 z-[100] h-screen' : 'h-[600px] group'}`}>
+            <div ref={mapContainer} className="h-full w-full bg-gray-50" />
             
             <div className="absolute top-4 left-14 z-[400] w-72">
                 <div className="relative group/search">
-                    <input type="text" placeholder="Поиск региона..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-gray-900/90 backdrop-blur-md text-white px-4 py-2.5 rounded-xl border border-white/10 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 outline-none shadow-lg transition-all pl-10 text-sm" />
+                    <input type="text" placeholder="Поиск региона..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-white/95 backdrop-blur-md text-gray-900 px-4 py-2.5 rounded-xl border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none shadow-lg transition-all pl-10 text-sm" />
                     <div className="absolute left-3 top-2.5 text-gray-400"><SearchIcon small /></div>
                     {searchResults.length > 0 && (
-                        <div className="absolute top-full left-0 w-full mt-2 bg-gray-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto">
+                        <div className="absolute top-full left-0 w-full mt-2 bg-white/95 backdrop-blur-xl border border-gray-200 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto">
                             {searchResults.map((res, idx) => (
-                                <div key={idx} onClick={() => handleLocationSelect(res)} className="px-4 py-2.5 hover:bg-indigo-600/30 cursor-pointer text-sm text-gray-200 border-b border-white/5 last:border-0 transition-colors flex items-center justify-between">
-                                    <span>{res.name}</span><span className="text-[10px] uppercase text-gray-500 font-bold bg-gray-800 px-1.5 py-0.5 rounded border border-gray-700">Регион</span>
+                                <div key={idx} onClick={() => handleLocationSelect(res)} className="px-4 py-2.5 hover:bg-gray-100 cursor-pointer text-sm text-gray-700 border-b border-gray-100 last:border-0 transition-colors flex items-center justify-between">
+                                    <span>{res.name}</span><span className="text-[10px] uppercase text-gray-500 font-bold bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">Регион</span>
                                 </div>
                             ))}
                         </div>
@@ -778,18 +732,18 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             </div>
 
             <div className="absolute top-4 right-4 z-[400] flex flex-col gap-2">
-                <button onClick={() => setLocalTheme(t => t === 'dark' ? 'light' : 'dark')} className="p-2.5 bg-gray-900/90 backdrop-blur-md rounded-xl border border-white/10 text-white hover:bg-gray-800 transition-all shadow-lg active:scale-95" title="Сменить тему">
+                <button onClick={() => setLocalTheme(t => t === 'dark' ? 'light' : 'dark')} className="p-2.5 bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-100 transition-all shadow-lg active:scale-95" title="Сменить тему">
                     {localTheme === 'dark' ? <SunIcon small /> : <MoonIcon small />}
                 </button>
-                <button onClick={() => setIsFullscreen(!isFullscreen)} className="p-2.5 bg-gray-900/90 backdrop-blur-md rounded-xl border border-white/10 text-white hover:bg-gray-800 transition-all shadow-lg active:scale-95" title={isFullscreen ? "Свернуть" : "На весь экран"}>
+                <button onClick={() => setIsFullscreen(!isFullscreen)} className="p-2.5 bg-white/95 backdrop-blur-md rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-100 transition-all shadow-lg active:scale-95" title={isFullscreen ? "Свернуть" : "На весь экран"}>
                     {isFullscreen ? <MinimizeIcon small /> : <MaximizeIcon small />}
                 </button>
             </div>
 
             <div className="absolute bottom-8 left-24 z-[400] flex gap-2">
-                <div className="bg-gray-900/90 backdrop-blur-md p-1 rounded-xl border border-white/10 shadow-xl flex">
+                <div className="bg-white/95 backdrop-blur-md p-1 rounded-xl border border-gray-200 shadow-xl flex">
                     {(['sales', 'pets', 'competitors', 'age', 'abc'] as OverlayMode[]).map(mode => (
-                        <button key={mode} onClick={() => setOverlayMode(mode)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${overlayMode === mode ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}>
+                        <button key={mode} onClick={() => setOverlayMode(mode)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${overlayMode === mode ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'}`}>
                             {mode === 'sales' ? 'Продажи' : mode === 'pets' ? 'Питомцы' : mode === 'competitors' ? 'Конкуренты' : mode === 'age' ? 'Возраст' : 'ABC'}
                         </button>
                     ))}
@@ -797,10 +751,10 @@ const InteractiveRegionMap: React.FC<InteractiveRegionMapProps> = ({ data, selec
             </div>
 
             {isLoadingGeo && (
-                <div className="absolute inset-0 z-[500] flex items-center justify-center bg-gray-900/80 backdrop-blur-sm">
+                <div className="absolute inset-0 z-[500] flex items-center justify-center bg-white/80 backdrop-blur-sm">
                     <div className="flex flex-col items-center gap-3">
                         <LoaderIcon className="w-8 h-8 text-indigo-500" />
-                        <span className="text-white font-bold text-sm">Загрузка геометрии...</span>
+                        <span className="text-gray-900 font-bold text-sm">Загрузка геометрии...</span>
                     </div>
                 </div>
             )}

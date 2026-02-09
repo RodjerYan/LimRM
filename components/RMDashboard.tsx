@@ -46,8 +46,8 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         datasets: [{
             label: 'Объем (кг)',
             data: [fact, plan],
-            backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(99, 102, 241, 0.7)'],
-            borderColor: ['#10b981', '#6366f1'],
+            backgroundColor: ['rgba(16, 185, 129, 0.7)', 'rgba(79, 70, 229, 0.7)'], // Emerald / Indigo
+            borderColor: ['#10b981', '#4f46e5'],
             borderWidth: 1,
             borderRadius: 6,
             barPercentage: 0.6,
@@ -59,18 +59,20 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         maintainAspectRatio: false,
         plugins: {
             legend: { display: false },
-            title: { display: true, text: 'Динамика Роста', color: '#9ca3af', font: { size: 14 } },
+            title: { display: true, text: 'Динамика Роста', color: '#374151', font: { size: 14 } },
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.9)',
-                titleColor: '#fff',
-                bodyColor: '#cbd5e1',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                titleColor: '#111827',
+                bodyColor: '#374151',
+                borderColor: '#e5e7eb',
+                borderWidth: 1,
                 padding: 10,
                 callbacks: { label: (ctx: any) => `${ctx.dataset.label}: ${new Intl.NumberFormat('ru-RU').format(ctx.raw)}` }
             }
         },
         scales: {
-            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', font: { size: 10 }, callback: (v: any) => new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(v) } },
-            x: { grid: { display: false }, ticks: { color: '#e5e7eb', font: { size: 12 } } }
+            y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#6b7280', font: { size: 10 }, callback: (v: any) => new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(v) } },
+            x: { grid: { display: false }, ticks: { color: '#374151', font: { size: 12 } } }
         }
     };
 
@@ -78,9 +80,9 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         labels: ['Текущая База (Факт)', 'Цель Роста (Gap)'],
         datasets: [{
             data: [fact, gap],
-            backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(251, 191, 36, 0.8)'],
-            borderColor: ['#064e3b', '#78350f'],
-            borderWidth: 0,
+            backgroundColor: ['rgba(16, 185, 129, 0.8)', 'rgba(251, 191, 36, 0.8)'], // Emerald / Amber
+            borderColor: ['#ffffff', '#ffffff'],
+            borderWidth: 2,
             hoverOffset: 4
         }],
     };
@@ -90,10 +92,14 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
         maintainAspectRatio: false,
         cutout: '70%',
         plugins: {
-            legend: { display: true, position: 'bottom' as const, labels: { color: '#d1d5db', font: { size: 11 }, padding: 20, usePointStyle: true } },
-            title: { display: true, text: 'Структура Плана', color: '#9ca3af', font: { size: 14 } },
+            legend: { display: true, position: 'bottom' as const, labels: { color: '#374151', font: { size: 11 }, padding: 20, usePointStyle: true } },
+            title: { display: true, text: 'Структура Плана', color: '#374151', font: { size: 14 } },
             tooltip: {
-                backgroundColor: 'rgba(17, 24, 39, 0.9)',
+                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                titleColor: '#111827',
+                bodyColor: '#374151',
+                borderColor: '#e5e7eb',
+                borderWidth: 1,
                 callbacks: {
                     label: function(context: any) {
                         const val = context.raw;
@@ -108,14 +114,14 @@ const PackagingCharts: React.FC<{ fact: number; plan: number; growthPct: number 
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[300px] flex flex-col justify-center shadow-inner">
+            <div className="bg-white p-5 rounded-2xl border border-gray-200 h-[300px] flex flex-col justify-center shadow-sm">
                 <div className="flex-grow w-full"><Bar data={barData} options={barOptions} /></div>
             </div>
-            <div className="bg-gray-800/40 p-5 rounded-2xl border border-gray-700 h-[300px] flex flex-col items-center justify-center relative shadow-inner">
+            <div className="bg-white p-5 rounded-2xl border border-gray-200 h-[300px] flex flex-col items-center justify-center relative shadow-sm">
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none pb-8">
                     <div className="text-center">
-                        <div className="text-4xl font-bold text-white tracking-tight">{percentage.toFixed(0)}%</div>
-                        <div className="text-xs text-gray-400 font-medium uppercase tracking-wider mt-1">база</div>
+                        <div className="text-4xl font-bold text-gray-900 tracking-tight">{percentage.toFixed(0)}%</div>
+                        <div className="text-xs text-gray-500 font-medium uppercase tracking-wider mt-1">база</div>
                     </div>
                 </div>
                 <div className="w-full h-full flex items-center justify-center"><Doughnut data={doughnutData} options={doughnutOptions} /></div>
@@ -130,9 +136,9 @@ const PackagingAnalysisModal: React.FC<{ isOpen: boolean; onClose: () => void; t
         <Modal isOpen={isOpen} onClose={onClose} title={title} maxWidth="max-w-4xl" zIndex="z-[1100]">
             <div className="space-y-6">
                 {chartData && <PackagingCharts fact={chartData.fact} plan={chartData.plan} growthPct={chartData.growthPct} />}
-                <div className="bg-gray-900/50 p-6 rounded-xl border border-indigo-500/20 min-h-[150px]">
-                    <h3 className="text-sm font-bold text-indigo-300 uppercase tracking-wider mb-4 flex items-center gap-2"><BrainIcon small /> Экспертное заключение</h3>
-                    {isLoading && !content ? <div className="flex flex-col items-center justify-center h-32 text-cyan-400 gap-3 animate-pulse"><LoaderIcon /><span className="text-sm font-medium">Джемини моделирует сценарии...</span></div> : <div className="prose prose-invert prose-sm max-w-none text-gray-300 leading-relaxed"><div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} /></div>}
+                <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-md min-h-[150px]">
+                    <h3 className="text-sm font-bold text-indigo-600 uppercase tracking-wider mb-4 flex items-center gap-2"><BrainIcon small /> Экспертное заключение</h3>
+                    {isLoading && !content ? <div className="flex flex-col items-center justify-center h-32 text-indigo-500 gap-3 animate-pulse"><LoaderIcon /><span className="text-sm font-medium">Джемини моделирует сценарии...</span></div> : <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed"><div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} /></div>}
                 </div>
             </div>
         </Modal>
@@ -178,33 +184,33 @@ const BrandPackagingModal: React.FC<{ isOpen: boolean; onClose: () => void; bran
     return (
         <Modal isOpen={isOpen} onClose={onClose} title={`Детализация ${regionName}: ${brandMetric.name}`} maxWidth="max-w-7xl">
             <div className="space-y-4">
-                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700 flex justify-between items-center text-sm shadow-sm backdrop-blur-sm">
+                <div className="bg-white p-4 rounded-xl border border-gray-200 flex justify-between items-center text-sm shadow-sm">
                     <div className="flex gap-8 items-center">
-                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Фасовок</span><span className="text-white font-bold text-lg">{aggregatedRows.length}</span></div>
-                        <div className="h-8 w-px bg-gray-700"></div>
-                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий Факт</span><span className="text-emerald-400 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
-                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий План</span><span className="text-white font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
+                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Фасовок</span><span className="text-gray-900 font-bold text-lg">{aggregatedRows.length}</span></div>
+                        <div className="h-8 w-px bg-gray-200"></div>
+                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий Факт</span><span className="text-emerald-600 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalFact)}</span></div>
+                        <div className="flex flex-col"><span className="text-[10px] uppercase text-gray-500 font-bold tracking-wider">Общий План</span><span className="text-gray-900 font-mono font-bold text-lg">{new Intl.NumberFormat('ru-RU').format(totalPlan)}</span></div>
                     </div>
-                    <button onClick={handleExportXLSX} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-4 rounded-lg transition-all border border-emerald-500/50 shadow-lg hover:shadow-emerald-500/20"><ExportIcon />Выгрузить в XLSX</button>
+                    <button onClick={handleExportXLSX} className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2 px-4 rounded-lg transition-all shadow-md hover:shadow-lg"><ExportIcon />Выгрузить в XLSX</button>
                 </div>
-                <div className="overflow-hidden rounded-xl border border-gray-700 bg-gray-900/40 shadow-inner">
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
                     <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
                         <table className="min-w-full text-sm text-left table-fixed">
-                            <thead className="bg-gray-800/90 text-gray-400 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 backdrop-blur-md shadow-sm">
-                                <tr><th className="px-6 py-4 w-24 text-gray-300">Фасовка</th><th className="px-6 py-4 w-auto">SKU (Ассортимент)</th><th className="px-6 py-4 w-32 text-gray-300">Канал</th><th className="px-6 py-4 w-32 text-right">Инд. Рост</th><th className="px-6 py-4 w-32 text-right">Факт</th><th className="px-6 py-4 w-32 text-right">План 2026</th><th className="px-6 py-4 w-24 text-center">Анализ</th></tr>
+                            <thead className="bg-gray-50 text-gray-500 font-semibold text-xs uppercase tracking-wider sticky top-0 z-20 shadow-sm">
+                                <tr><th className="px-6 py-4 w-24 text-gray-600">Фасовка</th><th className="px-6 py-4 w-auto">SKU (Ассортимент)</th><th className="px-6 py-4 w-32 text-gray-600">Канал</th><th className="px-6 py-4 w-32 text-right">Инд. Рост</th><th className="px-6 py-4 w-32 text-right">Факт</th><th className="px-6 py-4 w-32 text-right">План 2026</th><th className="px-6 py-4 w-24 text-center">Анализ</th></tr>
                             </thead>
-                            <tbody className="divide-y divide-gray-800 text-gray-300">
+                            <tbody className="divide-y divide-gray-100 text-gray-700">
                                 {aggregatedRows.map((row) => {
                                     const growthPct = row.growthPct;
                                     return (
-                                        <tr key={row.key} className="hover:bg-gray-800/60 transition-colors group align-top">
-                                            <td className="px-6 py-4 font-bold text-white whitespace-nowrap bg-gray-900/30">{row.packaging}</td>
-                                            <td className="px-6 py-4"><div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">{row.skuList.length > 0 ? (<ul className="text-xs text-gray-400 space-y-1.5">{row.skuList.map((sku, idx) => (<li key={idx} className="leading-relaxed flex items-start gap-2"><span className="w-1.5 h-1.5 rounded-full bg-gray-600 mt-1.5 flex-shrink-0 group-hover:bg-indigo-500 transition-colors"></span><span className="group-hover:text-gray-200 transition-colors">{sku}</span></li>))}</ul>) : (<span className="text-xs text-gray-600 italic">Не указано</span>)}</div></td>
-                                            <td className="px-6 py-4 text-xs text-indigo-300 font-medium whitespace-normal">{row.channelList.length > 0 ? row.channelList.join(', ') : <span className="text-gray-600">—</span>}</td>
-                                            <td className="px-6 py-4 text-right font-mono whitespace-nowrap">{row.planMetric ? (<button onClick={() => onExplain(row.planMetric!)} className={`font-bold py-1 px-2 rounded hover:bg-gray-700 transition-colors ${growthPct > 0 ? 'text-emerald-400' : 'text-amber-400'}`} title="Нажмите для обоснования процента роста">{growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%</button>) : (<span className="text-gray-500">—</span>)}</td>
-                                            <td className="px-6 py-4 text-right font-mono text-gray-300 whitespace-nowrap">{new Intl.NumberFormat('ru-RU').format(row.fact)}</td>
-                                            <td className="px-6 py-4 text-right font-mono text-white font-bold whitespace-nowrap bg-gray-800/10">{new Intl.NumberFormat('ru-RU').format(row.plan)}</td>
-                                            <td className="px-6 py-4 text-center"><button onClick={() => onAnalyze(row)} className="p-2 bg-indigo-500/10 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-lg transition-all border border-indigo-500/20 hover:border-indigo-500 shadow-sm hover:shadow-indigo-500/40 active:scale-95" title="Получить анализ от Джемини для этой фасовки"><BrainIcon small /></button></td>
+                                        <tr key={row.key} className="hover:bg-gray-50 transition-colors group align-top">
+                                            <td className="px-6 py-4 font-bold text-gray-900 whitespace-nowrap bg-gray-50">{row.packaging}</td>
+                                            <td className="px-6 py-4"><div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">{row.skuList.length > 0 ? (<ul className="text-xs text-gray-500 space-y-1.5">{row.skuList.map((sku, idx) => (<li key={idx} className="leading-relaxed flex items-start gap-2"><span className="w-1.5 h-1.5 rounded-full bg-gray-400 mt-1.5 flex-shrink-0 group-hover:bg-indigo-500 transition-colors"></span><span className="group-hover:text-gray-900 transition-colors">{sku}</span></li>))}</ul>) : (<span className="text-xs text-gray-400 italic">Не указано</span>)}</div></td>
+                                            <td className="px-6 py-4 text-xs text-indigo-600 font-medium whitespace-normal">{row.channelList.length > 0 ? row.channelList.join(', ') : <span className="text-gray-400">—</span>}</td>
+                                            <td className="px-6 py-4 text-right font-mono whitespace-nowrap">{row.planMetric ? (<button onClick={() => onExplain(row.planMetric!)} className={`font-bold py-1 px-2 rounded hover:bg-gray-100 transition-colors ${growthPct > 0 ? 'text-emerald-600' : 'text-amber-600'}`} title="Нажмите для обоснования процента роста">{growthPct > 0 ? '+' : ''}{growthPct.toFixed(1)}%</button>) : (<span className="text-gray-400">—</span>)}</td>
+                                            <td className="px-6 py-4 text-right font-mono text-gray-600 whitespace-nowrap">{new Intl.NumberFormat('ru-RU').format(row.fact)}</td>
+                                            <td className="px-6 py-4 text-right font-mono text-gray-900 font-bold whitespace-nowrap bg-gray-50">{new Intl.NumberFormat('ru-RU').format(row.plan)}</td>
+                                            <td className="px-6 py-4 text-center"><button onClick={() => onAnalyze(row)} className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg transition-all border border-indigo-200 hover:border-indigo-300 shadow-sm active:scale-95" title="Получить анализ от Джемини для этой фасовки"><BrainIcon small /></button></td>
                                         </tr>
                                     );
                                 })}
@@ -347,23 +353,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
         setAbcClients(targetClients);
         setAbcModalTitle(
             <div className="flex flex-col">
-                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-400' : category === 'B' ? 'text-emerald-400' : 'text-gray-400'}`}>Клиенты Категории {category}</span>
-                <span className="text-sm text-gray-400 mt-1">Менеджер: {rmName}</span>
+                <span className={`text-xl font-bold ${category === 'A' ? 'text-amber-600' : category === 'B' ? 'text-emerald-600' : 'text-gray-600'}`}>Клиенты Категории {category}</span>
+                <span className="text-sm text-gray-500 mt-1">Менеджер: {rmName}</span>
             </div>
         );
         setIsAbcModalOpen(true);
     };
 
-    // --- GLOBAL EXPORT FUNCTION FOR UNCOVERED POTENTIAL ---
     const handleGlobalExportUncovered = () => {
         if (!okbData || okbData.length === 0) {
             alert("Нет данных ОКБ для экспорта");
             return;
         }
-        
         const allActiveClients = data.flatMap(d => d.clients);
         const activeAddressSet = new Set(allActiveClients.map(c => normalizeAddress(c.address)));
-        
         const uncoveredClients = okbData.filter(row => {
             const addr = findAddressInRow(row);
             if (!addr) return false;
@@ -375,32 +378,21 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             'Адрес': findAddressInRow(row) || '',
             'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
         }));
-
         const ws = XLSX.utils.json_to_sheet(uncoveredClients);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Global_Uncovered");
         XLSX.writeFile(wb, `Global_Uncovered_Potential_${new Date().toISOString().split('T')[0]}.xlsx`);
     };
 
-    // --- PER-RM EXPORT FUNCTION ---
     const handleExportUncovered = (rmMetrics: RMMetrics) => {
         const activeClients = data.filter(d => d.rm === rmMetrics.rmName).flatMap(d => d.clients);
         const activeAddressSet = new Set(activeClients.map(c => normalizeAddress(c.address)));
-        
-        // Find regions managed by this RM to filter the OKB data
         const rmRegions = new Set(rmMetrics.regions.map(r => r.name.toLowerCase().replace(/(г\.|город|область|край|республика)/g, '').trim()));
-        
         const uncoveredClients = okbData.filter(row => {
             const rowRegion = findValueInRow(row, ['субъект', 'регион', 'область'])?.toLowerCase() || '';
             const rowCity = findValueInRow(row, ['город', 'населенный пункт'])?.toLowerCase() || '';
-            
-            // Loose matching: check if region OR city matches any of the RM's regions
-            const matchesRegion = Array.from(rmRegions).some(rmReg => 
-                rowRegion.includes(rmReg) || rowCity.includes(rmReg)
-            );
-            
+            const matchesRegion = Array.from(rmRegions).some(rmReg => rowRegion.includes(rmReg) || rowCity.includes(rmReg));
             if (!matchesRegion) return false;
-            
             const addr = findAddressInRow(row);
             if (!addr) return false;
             return !activeAddressSet.has(normalizeAddress(addr));
@@ -412,7 +404,6 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
             'Тип/Канал': findValueInRow(row, ['тип', 'канал']) || 'Не указан',
             'Менеджер': rmMetrics.rmName
         }));
-
         const ws = XLSX.utils.json_to_sheet(uncoveredClients);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "Uncovered_Potential");
@@ -421,47 +412,55 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     const renderContent = () => (
         <div className="space-y-6">
-            <div className="bg-gray-900/80 backdrop-blur-md p-6 rounded-2xl border border-gray-700 shadow-xl flex flex-col md:flex-row justify-between items-center gap-6">
-                <div><h3 className="text-xl font-bold text-white mb-1">Управление Целями</h3><p className="text-sm text-gray-400">Настройка базового сценария роста для всей компании. Влияет на расчет индивидуальных планов.</p></div>
+            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-md flex flex-col md:flex-row justify-between items-center gap-6">
+                <div><h3 className="text-xl font-bold text-gray-900 mb-1">Управление Целями</h3><p className="text-sm text-gray-500">Настройка базового сценария роста для всей компании. Влияет на расчет индивидуальных планов.</p></div>
                 
                 <div className="flex items-center gap-4">
-                    {/* GLOBAL EXPORT BUTTON */}
                     <button 
                         onClick={handleGlobalExportUncovered}
                         disabled={!okbData || okbData.length === 0}
-                        className="flex items-center gap-2 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-bold rounded-xl border border-blue-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full"
+                        className="flex items-center gap-2 px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-bold rounded-xl border border-indigo-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-full shadow-sm"
                         title="Скачать полный список непокрытых точек по всей компании"
                     >
                         <ExportIcon small /> Выгрузить весь потенциал (ОКБ)
                     </button>
 
-                    <div className="bg-gray-800/60 p-4 rounded-xl border border-gray-600 flex items-center gap-6 w-full md:w-auto"><div className="flex-grow"><label className="block text-xs font-bold text-gray-400 uppercase mb-2">Базовый рост (ставка)</label><input type="range" min="0" max="50" step="1" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" /><div className="flex justify-between text-[10px] text-gray-500 mt-1"><span>0%</span><span>25%</span><span>50%</span></div></div><div className="text-center w-24"><div className="text-3xl font-mono font-bold text-indigo-400">+{baseRate}%</div><div className="text-[10px] text-gray-400 uppercase font-bold">Цель {nextYear}</div></div></div>
+                    <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex items-center gap-6 w-full md:w-auto shadow-inner">
+                        <div className="flex-grow">
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Базовый рост (ставка)</label>
+                            <input type="range" min="0" max="50" step="1" value={baseRate} onChange={(e) => setBaseRate(Number(e.target.value))} className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-amber-400" />
+                            <div className="flex justify-between text-[10px] text-gray-400 mt-1"><span>0%</span><span>25%</span><span>50%</span></div>
+                        </div>
+                        <div className="text-center w-24">
+                            <div className="text-3xl font-mono font-bold text-amber-500">+{baseRate}%</div>
+                            <div className="text-[10px] text-gray-400 uppercase font-bold">Цель {nextYear}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div className="grid grid-cols-1 gap-6">
                 {metricsData.map((rm, idx) => (
-                    <div key={rm.rmName} className="bg-gray-900/50 rounded-2xl border border-gray-700 overflow-hidden shadow-lg transition-all hover:border-gray-600">
-                        <div className="p-6 cursor-pointer hover:bg-gray-800/30 transition-colors" onClick={() => setExpandedRM(expandedRM === rm.rmName ? null : rm.rmName)}>
+                    <div key={rm.rmName} className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-md transition-all hover:border-indigo-200">
+                        <div className="p-6 cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setExpandedRM(expandedRM === rm.rmName ? null : rm.rmName)}>
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white ${idx < 3 ? 'bg-gradient-to-br from-amber-500 to-orange-600 shadow-lg shadow-orange-500/20' : 'bg-gray-800 border border-gray-600'}`}>{idx + 1}</div><div><h3 className="text-lg font-bold text-white">{rm.rmName}</h3><div className="flex items-center gap-3 text-xs text-gray-400 mt-1"><span>{rm.totalClients} активных клиентов</span><span className="w-1 h-1 rounded-full bg-gray-600"></span><span>{rm.totalOkbCount.toLocaleString()} потенциал (ОКБ)</span></div></div></div>
+                                <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white shadow-sm ${idx < 3 ? 'bg-amber-400 text-black' : 'bg-gray-200 text-gray-600'}`}>{idx + 1}</div><div><h3 className="text-lg font-bold text-gray-900">{rm.rmName}</h3><div className="flex items-center gap-3 text-xs text-gray-500 mt-1"><span>{rm.totalClients} активных клиентов</span><span className="w-1 h-1 rounded-full bg-gray-300"></span><span>{rm.totalOkbCount.toLocaleString()} потенциал (ОКБ)</span></div></div></div>
                                 <div className="flex items-center gap-8 text-right">
-                                    <div><div className="text-[10px] uppercase text-gray-500 font-bold mb-1">Факт {currentYear}</div><div className="text-xl font-mono font-bold text-white">{new Intl.NumberFormat('ru-RU').format(rm.totalFact)}</div></div>
-                                    <div><div className="text-[10px] uppercase text-gray-500 font-bold mb-1">План {nextYear}</div><div className="text-xl font-mono font-bold text-indigo-300">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan))}</div></div>
-                                    <div><div className="text-[10px] uppercase text-gray-500 font-bold mb-1">Прирост</div><div className={`text-xl font-mono font-bold ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-400' : 'text-amber-400'}`}>+{rm.recommendedGrowthPct.toFixed(1)}%</div></div>
-                                    <div className="hidden md:block w-px h-10 bg-gray-700 mx-2"></div>
-                                    <button onClick={(e) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); }} className="p-2.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 transition-colors border border-indigo-500/20 group"><BrainIcon small /></button>
-                                    <div className={`transform transition-transform duration-300 ${expandedRM === rm.rmName ? 'rotate-180' : ''}`}><ArrowLeftIcon className="w-5 h-5 text-gray-500 -rotate-90" /></div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Факт {currentYear}</div><div className="text-xl font-mono font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(rm.totalFact)}</div></div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">План {nextYear}</div><div className="text-xl font-mono font-bold text-indigo-600">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.nextYearPlan))}</div></div>
+                                    <div><div className="text-[10px] uppercase text-gray-400 font-bold mb-1">Прирост</div><div className={`text-xl font-mono font-bold ${rm.recommendedGrowthPct > baseRate ? 'text-emerald-500' : 'text-amber-500'}`}>+{rm.recommendedGrowthPct.toFixed(1)}%</div></div>
+                                    <div className="hidden md:block w-px h-10 bg-gray-200 mx-2"></div>
+                                    <button onClick={(e) => { e.stopPropagation(); setSelectedRMForAnalysis(rm); setIsAnalysisModalOpen(true); }} className="p-2.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-600 transition-colors border border-indigo-100 group"><BrainIcon small /></button>
+                                    <div className={`transform transition-transform duration-300 ${expandedRM === rm.rmName ? 'rotate-180' : ''}`}><ArrowLeftIcon className="w-5 h-5 text-gray-400 -rotate-90" /></div>
                                 </div>
                             </div>
-                            <div className="mt-4 w-full bg-gray-800 rounded-full h-1.5 overflow-hidden"><div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${Math.min(100, (rm.totalFact / metricsData[0].totalFact) * 100)}%` }}></div></div>
+                            <div className="mt-4 w-full bg-gray-100 rounded-full h-1.5 overflow-hidden"><div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${Math.min(100, (rm.totalFact / metricsData[0].totalFact) * 100)}%` }}></div></div>
                         </div>
                         {expandedRM === rm.rmName && (
-                            <div className="border-t border-gray-700 bg-black/20 p-6 animate-fade-in-down">
-                                {/* PER-RM Export Button */}
+                            <div className="border-t border-gray-200 bg-gray-50/50 p-6 animate-fade-in-down">
                                 <div className="flex justify-end mb-4">
                                     <button 
                                         onClick={() => handleExportUncovered(rm)}
-                                        className="flex items-center gap-2 px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-bold rounded-lg border border-blue-500/30 transition-colors"
+                                        className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-100 text-indigo-600 text-xs font-bold rounded-lg border border-indigo-100 transition-colors shadow-sm"
                                         title="Скачать список всех непокрытых точек по регионам этого менеджера"
                                     >
                                         <ExportIcon small /> Скачать отчет: Непокрытый Потенциал (ОКБ)
@@ -469,50 +468,50 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                                    <div className="bg-gray-800/40 p-5 rounded-xl border border-gray-700">
-                                        <h4 className="text-sm font-bold text-gray-300 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
+                                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                                        <h4 className="text-sm font-bold text-gray-700 uppercase mb-4 flex items-center gap-2"><TargetIcon small /> Эффективность Клиентской Базы</h4>
                                         <div className="space-y-4">
-                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'A')} title="Показать список клиентов категории A">
-                                                <span className="text-xs text-amber-400 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
-                                                <span className="text-xs text-white">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span>
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'A')} title="Показать список клиентов категории A">
+                                                <span className="text-xs text-amber-500 font-bold underline decoration-dotted underline-offset-2">Категория A (80% объема)</span>
+                                                <span className="text-xs text-gray-700">{rm.countA} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factA)} кг</span>
                                             </div>
-                                            <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
+                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-amber-400" style={{ width: `${(rm.factA / rm.totalFact) * 100}%` }}></div></div>
                                             
-                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'B')} title="Показать список клиентов категории B">
-                                                <span className="text-xs text-emerald-400 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
-                                                <span className="text-xs text-white">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span>
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'B')} title="Показать список клиентов категории B">
+                                                <span className="text-xs text-emerald-500 font-bold underline decoration-dotted underline-offset-2">Категория B (15% объема)</span>
+                                                <span className="text-xs text-gray-700">{rm.countB} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factB)} кг</span>
                                             </div>
-                                            <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
+                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-emerald-400" style={{ width: `${(rm.factB / rm.totalFact) * 100}%` }}></div></div>
                                             
-                                            <div className="flex justify-between items-center cursor-pointer hover:bg-white/5 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'C')} title="Показать список клиентов категории C">
+                                            <div className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-1 rounded transition-colors" onClick={() => handleShowAbcClients(rm.rmName, 'C')} title="Показать список клиентов категории C">
                                                 <span className="text-xs text-gray-400 font-bold underline decoration-dotted underline-offset-2">Категория C (5% объема)</span>
-                                                <span className="text-xs text-white">{rm.countC} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factC)} кг</span>
+                                                <span className="text-xs text-gray-700">{rm.countC} клиентов / {new Intl.NumberFormat('ru-RU').format(rm.factC)} кг</span>
                                             </div>
-                                            <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden"><div className="h-full bg-gray-400" style={{ width: `${(rm.factC / rm.totalFact) * 100}%` }}></div></div>
+                                            <div className="w-full bg-gray-100 h-2 rounded-full overflow-hidden"><div className="h-full bg-gray-400" style={{ width: `${(rm.factC / rm.totalFact) * 100}%` }}></div></div>
                                         </div>
                                     </div>
-                                    <div className="bg-gray-800/40 p-5 rounded-xl border border-gray-700">
-                                        <h4 className="text-sm font-bold text-gray-300 uppercase mb-4 flex items-center gap-2"><CalculatorIcon small /> KPI и Качество Продаж</h4>
+                                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                                        <h4 className="text-sm font-bold text-gray-700 uppercase mb-4 flex items-center gap-2"><CalculatorIcon small /> KPI и Качество Продаж</h4>
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div className="p-3 bg-gray-900/50 rounded-lg"><div className="text-xs text-gray-500 mb-1">Доля рынка (Покрытие)</div><div className="text-lg font-bold text-white">{(rm.marketShare * 100).toFixed(1)}%</div><div className="text-[10px] text-gray-600 mt-1">от всей базы ОКБ</div></div>
-                                            <div className="p-3 bg-gray-900/50 rounded-lg"><div className="text-xs text-gray-500 mb-1">Средний чек (Объем)</div><div className="text-lg font-bold text-white">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.avgFactPerClient))} кг</div><div className="text-[10px] text-gray-600 mt-1">на 1 активную ТТ</div></div>
-                                            <div className="p-3 bg-gray-900/50 rounded-lg"><div className="text-xs text-gray-500 mb-1">Ширина полки (SKU)</div><div className="text-lg font-bold text-white">{rm.avgSkuPerClient?.toFixed(1)}</div><div className="text-[10px] text-gray-600 mt-1">ср. позиций в точке</div></div>
-                                            <div className="p-3 bg-gray-900/50 rounded-lg"><div className="text-xs text-gray-500 mb-1">Качество (Velocity)</div><div className="text-lg font-bold text-white">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.avgSalesPerSku || 0))} кг</div><div className="text-[10px] text-gray-600 mt-1">продаж на 1 SKU</div></div>
+                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100"><div className="text-xs text-gray-500 mb-1">Доля рынка (Покрытие)</div><div className="text-lg font-bold text-gray-900">{(rm.marketShare * 100).toFixed(1)}%</div><div className="text-[10px] text-gray-400 mt-1">от всей базы ОКБ</div></div>
+                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100"><div className="text-xs text-gray-500 mb-1">Средний чек (Объем)</div><div className="text-lg font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.avgFactPerClient))} кг</div><div className="text-[10px] text-gray-400 mt-1">на 1 активную ТТ</div></div>
+                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100"><div className="text-xs text-gray-500 mb-1">Ширина полки (SKU)</div><div className="text-lg font-bold text-gray-900">{rm.avgSkuPerClient?.toFixed(1)}</div><div className="text-[10px] text-gray-400 mt-1">ср. позиций в точке</div></div>
+                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100"><div className="text-xs text-gray-500 mb-1">Качество (Velocity)</div><div className="text-lg font-bold text-gray-900">{new Intl.NumberFormat('ru-RU').format(Math.round(rm.avgSalesPerSku || 0))} кг</div><div className="text-[10px] text-gray-400 mt-1">продаж на 1 SKU</div></div>
                                         </div>
                                     </div>
                                 </div>
-                                <h4 className="text-sm font-bold text-gray-300 uppercase mb-4">Детализация по Регионам</h4>
-                                <div className="overflow-x-auto"><table className="w-full text-left text-sm text-gray-400">
-                                    <thead className="text-xs text-gray-500 bg-gray-800/50 uppercase"><tr><th className="px-4 py-3 rounded-l-lg">Регион</th><th className="px-4 py-3">Факт {currentYear}</th><th className="px-4 py-3">План {nextYear}</th><th className="px-4 py-3">Рост</th><th className="px-4 py-3 text-center rounded-r-lg">Действия</th></tr></thead>
-                                    <tbody className="divide-y divide-gray-800">
+                                <h4 className="text-sm font-bold text-gray-600 uppercase mb-4">Детализация по Регионам</h4>
+                                <div className="overflow-x-auto"><table className="w-full text-left text-sm text-gray-600">
+                                    <thead className="text-xs text-gray-500 bg-gray-100 uppercase"><tr><th className="px-4 py-3 rounded-l-lg">Регион</th><th className="px-4 py-3">Факт {currentYear}</th><th className="px-4 py-3">План {nextYear}</th><th className="px-4 py-3">Рост</th><th className="px-4 py-3 text-center rounded-r-lg">Действия</th></tr></thead>
+                                    <tbody className="divide-y divide-gray-200">
                                         {rm.regions.map((reg) => (
-                                            <tr key={reg.name} className="hover:bg-white/5 transition-colors group">
-                                                <td className="px-4 py-3 font-medium text-white">{reg.name}</td>
-                                                <td className="px-4 py-3 font-mono">{new Intl.NumberFormat('ru-RU').format(reg.fact)}</td>
-                                                <td className="px-4 py-3 font-mono text-white">{new Intl.NumberFormat('ru-RU').format(Math.round(reg.plan))}</td>
-                                                <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${reg.growthPct > baseRate ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>+{reg.growthPct.toFixed(1)}%</span></td>
+                                            <tr key={reg.name} className="hover:bg-white transition-colors group">
+                                                <td className="px-4 py-3 font-medium text-gray-900">{reg.name}</td>
+                                                <td className="px-4 py-3 font-mono text-gray-600">{new Intl.NumberFormat('ru-RU').format(reg.fact)}</td>
+                                                <td className="px-4 py-3 font-mono text-gray-900 font-bold">{new Intl.NumberFormat('ru-RU').format(Math.round(reg.plan))}</td>
+                                                <td className="px-4 py-3"><span className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${reg.growthPct > baseRate ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>+{reg.growthPct.toFixed(1)}%</span></td>
                                                 <td className="px-4 py-3 text-center flex justify-center gap-2">
-                                                    <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-700 rounded text-indigo-400 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
+                                                    <button onClick={() => { setExplanationData(reg); }} className="p-1.5 hover:bg-gray-200 rounded text-indigo-500 transition-colors" title="Почему такой план?"><CalculatorIcon small /></button>
                                                     <button onClick={() => { 
                                                         const normRm = normalizeRmNameForMatching(rm.rmName);
                                                         const activeClients = data.filter(d => 
@@ -528,13 +527,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
                                                         const targetRegionClean = cleanRegionName(reg.name);
                                                         
-                                                        // 1. Create a Set of Active Coordinates for precise matching
                                                         const activeCoordSet = new Set<string>();
                                                         const activeAddressSet = new Set<string>();
                                                         
                                                         activeClients.forEach(c => {
                                                             if (c.lat && c.lon) {
-                                                                // Round to 4 decimal places (~11m precision) to handle micro-differences
                                                                 activeCoordSet.add(`${c.lat.toFixed(4)},${c.lon.toFixed(4)}`);
                                                             }
                                                             if (c.address) {
@@ -553,15 +550,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
                                                                    (rowCityClean && rowCityClean.includes(targetRegionClean));
                                                         });
                                                         
-                                                        // 2. Filter Potential Clients: Exclude if Coords match OR Address matches
                                                         const potentialClients: PotentialClient[] = regionOkb.filter(row => {
-                                                            // Check Coordinates First (Primary Key)
                                                             if (row.lat && row.lon) {
                                                                 const key = `${row.lat.toFixed(4)},${row.lon.toFixed(4)}`;
-                                                                if (activeCoordSet.has(key)) return false; // Already covered
+                                                                if (activeCoordSet.has(key)) return false; 
                                                             }
-
-                                                            // Fallback to Address Matching
                                                             const addr = findAddressInRow(row);
                                                             if (!addr) return false;
                                                             return !activeAddressSet.has(normalizeAddress(addr));
@@ -575,20 +568,20 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
                                                         setSelectedRegionDetails({ rmName: rm.rmName, regionName: reg.name, activeClients, potentialClients });
                                                         setIsRegionModalOpen(true); 
-                                                    }} className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Список клиентов (Активные/Потенциал)"><SearchIcon small /></button>
+                                                    }} className="p-1.5 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-900 transition-colors" title="Список клиентов (Активные/Потенциал)"><SearchIcon small /></button>
                                                     <div className="relative group/brands">
-                                                        <button className="p-1.5 hover:bg-gray-700 rounded text-gray-400 hover:text-white transition-colors" title="Бренды"><ChartBarIcon small /></button>
-                                                        <div className="absolute right-0 top-full mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 hidden group-hover/brands:block p-2"><div className="text-[10px] uppercase text-gray-500 font-bold mb-2 px-2">Бренды в регионе</div>
+                                                        <button className="p-1.5 hover:bg-gray-200 rounded text-gray-500 hover:text-gray-900 transition-colors" title="Бренды"><ChartBarIcon small /></button>
+                                                        <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-xl shadow-xl z-50 hidden group-hover/brands:block p-2"><div className="text-[10px] uppercase text-gray-400 font-bold mb-2 px-2">Бренды в регионе</div>
                                                             {reg.brands && reg.brands.length > 0 ? (
                                                                 <ul className="space-y-1">
                                                                     {reg.brands.map(b => (
-                                                                        <li key={b.name} className="flex justify-between items-center text-xs px-2 py-1 hover:bg-gray-700 rounded cursor-pointer" onClick={() => { setSelectedBrandForDetails(b); setSelectedBrandRegion(reg.name); setIsBrandModalOpen(true); }}>
-                                                                            <span className="text-gray-300">{b.name}</span>
-                                                                            <span className="text-emerald-400 font-mono">{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(b.fact)}</span>
+                                                                        <li key={b.name} className="flex justify-between items-center text-xs px-2 py-1 hover:bg-gray-100 rounded cursor-pointer" onClick={() => { setSelectedBrandForDetails(b); setSelectedBrandRegion(reg.name); setIsBrandModalOpen(true); }}>
+                                                                            <span className="text-gray-700">{b.name}</span>
+                                                                            <span className="text-emerald-600 font-mono">{new Intl.NumberFormat('ru-RU', { notation: "compact" }).format(b.fact)}</span>
                                                                         </li>
                                                                     ))}
                                                                 </ul>
-                                                            ) : <div className="text-xs text-gray-500 px-2">Нет данных</div>}
+                                                            ) : <div className="text-xs text-gray-400 px-2">Нет данных</div>}
                                                         </div>
                                                     </div>
                                                 </td>
@@ -606,11 +599,11 @@ export const RMDashboard: React.FC<RMDashboardProps> = ({ isOpen, onClose, data,
 
     if (mode === 'page') {
         return (
-            <div className="min-h-screen bg-primary-dark">
-                <div className="sticky top-0 z-30 bg-gray-900/95 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
+            <div className="min-h-screen bg-gray-50 text-gray-900">
+                <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm">
                     <div className="flex items-center gap-4">
-                        <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"><ArrowLeftIcon /></button>
-                        <div><h1 className="text-xl font-bold text-white">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование 2026</p></div>
+                        <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-900 transition-colors"><ArrowLeftIcon /></button>
+                        <div><h1 className="text-xl font-bold text-gray-900">Дашборд План/Факт</h1><p className="text-xs text-gray-500">Стратегическое планирование 2026</p></div>
                     </div>
                 </div>
                 <div className="p-8 max-w-[1600px] mx-auto">{renderContent()}</div>

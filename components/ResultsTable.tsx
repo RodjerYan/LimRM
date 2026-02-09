@@ -111,7 +111,7 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
         const isSorted = sortConfig?.key === sortKey;
         const icon = isSorted ? (sortConfig?.direction === 'ascending' ? <SortUpIcon /> : <SortDownIcon />) : <SortIcon />;
         return (
-            <th scope="col" className="px-4 py-3 cursor-pointer select-none" onClick={() => requestSort(sortKey)} title={title}>
+            <th scope="col" className="px-4 py-3 cursor-pointer select-none text-gray-500 hover:text-gray-800" onClick={() => requestSort(sortKey)} title={title}>
                 <div className="flex items-center gap-1.5">{children}<span className="w-4 h-4">{icon}</span></div>
             </th>
         );
@@ -121,24 +121,24 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
 
     if (disabled && data.length === 0) {
         return (
-             <div className="bg-card-bg/70 backdrop-blur-sm p-6 rounded-2xl shadow-lg border border-indigo-500/10 opacity-50">
-                <h2 className="text-xl font-bold mb-4 text-white">Результаты Анализа</h2>
+             <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-200 opacity-50">
+                <h2 className="text-xl font-bold mb-4 text-gray-900">Результаты Анализа</h2>
                 <div className="text-center py-10 text-gray-400"><p>Загрузите и обработайте файл, чтобы увидеть данные.</p></div>
             </div>
         );
     }
 
     return (
-        <div className={`bg-card-bg/70 backdrop-blur-sm rounded-2xl shadow-lg border border-indigo-500/10 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-700">
-                <h2 className="text-xl font-bold text-white whitespace-nowrap">Результаты Анализа</h2>
+        <div className={`bg-white rounded-2xl shadow-lg border border-gray-200 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+            <div className="p-4 flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-200">
+                <h2 className="text-xl font-bold text-gray-900 whitespace-nowrap">Результаты Анализа</h2>
                 <div className="w-full md:w-auto flex items-center gap-3">
                     <button
                         onClick={onUnidentifiedClick}
                         className={`font-bold py-2 px-4 rounded-lg transition duration-200 flex items-center gap-2 flex-shrink-0 ${
                             unidentifiedRowsCount > 0 
-                                ? 'bg-danger/80 hover:bg-danger text-white animate-pulse' 
-                                : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30'
+                                ? 'bg-red-500/80 hover:bg-red-600 text-white animate-pulse' 
+                                : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-200'
                         }`}
                         title="Нажмите, чтобы просмотреть список адресов"
                     >
@@ -152,19 +152,19 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
 
                     <div className="relative w-full md:w-64">
                         <input type="text" placeholder="Поиск по таблице..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                            className="w-full p-2 pl-10 bg-gray-900/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-white placeholder-gray-500 transition" />
-                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none"><SearchIcon /></div>
+                            className="w-full p-2 pl-10 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 text-gray-900 placeholder-gray-400 transition" />
+                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-400"><SearchIcon /></div>
                     </div>
-                    <button onClick={handleCopyToClipboard} title="Скопировать в буфер обмена (TSV)" className="p-2 bg-gray-900/50 border border-gray-600 rounded-lg text-gray-300 hover:bg-indigo-500/20 hover:text-white transition">
+                    <button onClick={handleCopyToClipboard} title="Скопировать в буфер обмена (TSV)" className="p-2 bg-gray-50 border border-gray-200 rounded-lg text-gray-500 hover:bg-indigo-50 hover:text-indigo-600 transition">
                          {copied ? <CheckIcon /> : <CopyIcon />}
                     </button>
                 </div>
             </div>
             <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-gray-300">
-                    <thead className="text-xs text-gray-400 uppercase bg-gray-900/70 sticky top-0 backdrop-blur-sm">
+                <table className="w-full text-left text-sm text-gray-600">
+                    <thead className="text-xs text-gray-500 uppercase bg-gray-50 sticky top-0 border-b border-gray-200">
                         <tr>
-                            <th scope="col" className="px-4 py-3">Группа/Клиент</th>
+                            <th scope="col" className="px-4 py-3 font-semibold">Группа/Клиент</th>
                             <SortableHeader sortKey="rm">РМ</SortableHeader>
                             <SortableHeader sortKey="region">Регион</SortableHeader>
                             <SortableHeader sortKey="brand">Бренд</SortableHeader>
@@ -175,28 +175,28 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
                             <SortableHeader sortKey="costScore" title="Стоимость обслуживания (Cost-to-Serve). Чем выше балл, тем дороже логистика и менеджмент.">Cost Score</SortableHeader>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody className="divide-y divide-gray-100">
                          {paginatedData.map((row: any) => (
-                            <tr key={row.key} className="border-b border-gray-700 hover:bg-indigo-500/10 cursor-pointer" onClick={() => onRowClick(row)}>
-                                <th scope="row" className="px-4 py-3 font-medium text-white whitespace-nowrap">
+                            <tr key={row.key} className="hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => onRowClick(row)}>
+                                <th scope="row" className="px-4 py-3 font-bold text-gray-900 whitespace-nowrap">
                                     {row.clientName || `${row.region || '?'}: ${row.brand || '?'}`}
                                 </th>
                                 <td className="px-4 py-3">{row.rm}</td>
                                 <td className="px-4 py-3">{row.region}</td>
-                                <td className="px-4 py-3 text-accent cursor-pointer hover:text-white hover:underline transition-colors font-medium" onClick={(e) => { if (onPlanClick) { e.stopPropagation(); onPlanClick(row); } }} title="Нажмите, чтобы увидеть расчет плана">{row.brand}</td>
+                                <td className="px-4 py-3 text-indigo-600 cursor-pointer hover:text-indigo-800 hover:underline transition-colors font-medium" onClick={(e) => { if (onPlanClick) { e.stopPropagation(); onPlanClick(row); } }} title="Нажмите, чтобы увидеть расчет плана">{row.brand}</td>
                                 <td className="px-4 py-3">{row.packaging}</td>
-                                <td className="px-4 py-3 text-success font-semibold">{formatNumber(row.fact)}</td>
-                                <td className="px-4 py-3 text-accent font-semibold">{formatNumber(row.potential)}</td>
-                                <td className="px-4 py-3 text-warning font-bold">{formatNumber(row.growthPotential)}</td>
+                                <td className="px-4 py-3 text-emerald-600 font-semibold">{formatNumber(row.fact)}</td>
+                                <td className="px-4 py-3 text-indigo-600 font-semibold">{formatNumber(row.potential)}</td>
+                                <td className="px-4 py-3 text-amber-500 font-bold">{formatNumber(row.growthPotential)}</td>
                                 <td className="px-4 py-3">
                                     <div className="flex items-center gap-2">
-                                        <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                                        <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                                             <div 
-                                                className={`h-full ${row.costScore > 8 ? 'bg-red-500' : row.costScore > 5 ? 'bg-yellow-500' : 'bg-emerald-500'}`} 
+                                                className={`h-full ${row.costScore > 8 ? 'bg-red-500' : row.costScore > 5 ? 'bg-amber-400' : 'bg-emerald-500'}`} 
                                                 style={{ width: `${Math.min(100, row.costScore * 10)}%` }}
                                             ></div>
                                         </div>
-                                        <span className="text-xs text-gray-400">{row.costScore.toFixed(1)}</span>
+                                        <span className="text-xs text-gray-500">{row.costScore.toFixed(1)}</span>
                                     </div>
                                 </td>
                             </tr>
@@ -207,13 +207,13 @@ const ResultsTable: React.FC<ResultsTableProps> = ({ data, onRowClick, onPlanCli
             </div>
             
             {totalPages > 1 && (
-                 <div className="p-4 flex flex-col md:flex-row justify-between items-center text-sm text-gray-400 border-t border-gray-700">
+                 <div className="p-4 flex flex-col md:flex-row justify-between items-center text-sm text-gray-500 border-t border-gray-200">
                      <div className="mb-2 md:mb-0">Показано {paginatedData.length} из {filteredData.length} записей</div>
                      <div className="flex items-center gap-2">
-                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1 border border-gray-600 rounded-md disabled:opacity-50">Назад</button>
+                        <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 hover:bg-gray-50">Назад</button>
                         <span>Стр. {currentPage} из {totalPages}</span>
-                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1 border border-gray-600 rounded-md disabled:opacity-50">Вперед</button>
-                        <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="p-1.5 bg-gray-900/50 border border-gray-600 rounded-md focus:ring-accent focus:border-accent">
+                        <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 hover:bg-gray-50">Вперед</button>
+                        <select value={rowsPerPage} onChange={(e) => { setRowsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="p-1.5 bg-gray-50 border border-gray-300 rounded-md focus:ring-indigo-500">
                             <option value={15}>15 / стр</option><option value={30}>30 / стр</option><option value={50}>50 / стр</option>
                         </select>
                     </div>
