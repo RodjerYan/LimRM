@@ -37,10 +37,6 @@ let state_processedRowsCount = 0;
 let state_lastEmitCount = 0;
 let state_lastCheckpointCount = 0;
 
-// Filter State
-let state_filterStartDate: number | null = null;
-let state_filterEndDate: number | null = null;
-
 const CHECKPOINT_THRESHOLD = 50000; 
 const UI_UPDATE_THRESHOLD = 20000;
 
@@ -106,31 +102,6 @@ const parseDateKey = (val: any): string | null => {
     return null;
 };
 
-const parseRawDateToTimestamp = (val: any): number | null => {
-    if (!val) return null;
-    if (typeof val === 'number') {
-        if (val > 20000 && val < 60000) { 
-             const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
-             return dateObj.getTime();
-        }
-        return null;
-    }
-    const str = String(val).trim();
-    let match = str.match(/^(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})/);
-    if (match) {
-        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3])).getTime();
-    }
-    match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
-    if (match) {
-        return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1])).getTime();
-    }
-    match = str.match(/^(\d{4})[\.\-/](\d{2})/);
-    if (match) {
-        return new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1).getTime();
-    }
-    return null;
-};
-
 const getCanonicalRegion = (row: any): string => {
     const subjectValue = findValueInRow(row, ['субъект', 'регион', 'область']);
     if (subjectValue && subjectValue.trim()) {
@@ -171,14 +142,12 @@ function performIncrementalAbc() {
     });
 }
 
-function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified, startDate, endDate }: { 
+function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, restoredUnidentified }: { 
     okbData: OkbDataRow[], 
     cacheData: CoordsCache, 
     totalRowsProcessed?: number,
     restoredData?: AggregatedDataRow[],
-    restoredUnidentified?: UnidentifiedRow[],
-    startDate?: string,
-    endDate?: string
+    restoredUnidentified?: UnidentifiedRow[]
 }, postMessage: PostMessageFn) {
     state_aggregatedData = {};
     state_uniquePlottableClients = new Map();
@@ -191,11 +160,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    // SAFE PARSING: Handle empty strings as NULL
-    state_filterStartDate = (startDate && startDate.trim()) ? new Date(startDate).getTime() : null;
-    state_filterEndDate = (endDate && endDate.trim()) ? new Date(endDate).getTime() : null;
-    
-    console.log(`[Worker] Init Stream. Filter: ${state_filterStartDate} - ${state_filterEndDate}`);
+    console.log(`[Worker] Init Stream. Full Load.`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -243,7 +208,6 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     });
     
     let statusMsg = totalRowsProcessed ? `Восстановление сессии: ${totalRowsProcessed} строк...` : 'Связь установлена. Готов к обработке...';
-    if (state_filterStartDate || state_filterEndDate) statusMsg += ` (Фильтр: ${startDate || '...'} - ${endDate || '...'})`;
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
@@ -264,110 +228,68 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
         }
 
         clientsToProcess.forEach(client => {
+            // Restore Raw Data. Do NOT filter by date here.
+            // The UI will filter based on monthlyFact.
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
-            // --- DATE FILTER & TAGGING ---
-            // If the client data lacks granularity (snapshot), but we have a Load Date filter active,
-            // we should assume the user wants to attribute this snapshot data to the selected start date.
-            // This prevents the data from being invisible when Strict Filtering is applied in the UI.
+            let safeKey = client.key;
+            if (!safeKey) {
+                const addr = client.address || 'unknown';
+                const name = client.name || client.clientName || 'unknown';
+                const normAddr = normalizeAddress(addr);
+                const normName = name.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
+                safeKey = `${normAddr}#${normName}`;
+            }
             
-            if (state_filterStartDate || state_filterEndDate) {
-                if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
-                    // It has dates, so calculate fact normally based on range
-                    clientFact = 0;
-                    Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
-                        const parts = dateStr.split(/[-.]/); 
-                        if (parts.length >= 2) {
-                            const year = parseInt(parts[0]);
-                            const month = parseInt(parts[1]) - 1; 
-                            const ts = new Date(year, month, 1).getTime();
-                            
-                            let inRange = true;
-                            if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
-                            if (state_filterEndDate) {
-                                const endDateObj = new Date(state_filterEndDate);
-                                if (ts > state_filterEndDate) inRange = false;
-                            }
-                            if (inRange) clientFact += (val as number);
-                        }
-                    });
-                } else if (state_filterStartDate) {
-                    // NO DATES + FILTER ACTIVE -> Apply Fallback Tag
-                    // If no internal date exists, assign the fact to the filter start date
-                    // so the UI filter can "see" it.
-                    const d = new Date(state_filterStartDate);
-                    const m = String(d.getMonth() + 1).padStart(2, '0');
-                    const fallbackKey = `${d.getFullYear()}-${m}`;
-                    
-                    if (!client.monthlyFact) client.monthlyFact = {};
-                    client.monthlyFact[fallbackKey] = (client.fact || 0);
-                    
-                    // We don't filter here, we let the UI filter based on the new monthlyFact
-                    clientFact = client.fact || 0; 
-                }
+            const filteredClient = { ...client, key: safeKey, fact: clientFact };
+            
+            const reg = filteredClient.region || 'Не определен';
+            const rm = filteredClient.rm || 'Не указан';
+            const brand = filteredClient.brand || 'Без бренда';
+            const packaging = filteredClient.packaging || 'Не указана';
+            
+            const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
+
+            if (!state_aggregatedData[groupKey]) {
+                state_aggregatedData[groupKey] = {
+                    __rowId: generateRowId(),
+                    key: groupKey,
+                    clientName: `${reg}: ${brand}`,
+                    brand, 
+                    packaging, 
+                    rm, 
+                    region: reg, 
+                    city: filteredClient.city || 'Не определен',
+                    fact: 0,
+                    potential: 0, 
+                    growthPotential: 0, 
+                    growthPercentage: 0, 
+                    clients: new Map()
+                };
             }
 
-            // Always include, let UI filter
-            if (true) {
-                let safeKey = client.key;
-                if (!safeKey) {
-                    const addr = client.address || 'unknown';
-                    const name = client.name || client.clientName || 'unknown';
-                    const normAddr = normalizeAddress(addr);
-                    const normName = name.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
-                    safeKey = `${normAddr}#${normName}`;
+            const group = state_aggregatedData[groupKey];
+            
+            if (group.clients.has(safeKey)) {
+                const existing = group.clients.get(safeKey)!;
+                // Merge Facts
+                existing.fact = (existing.fact || 0) + clientFact;
+                // Merge Monthly Facts
+                if (filteredClient.monthlyFact) {
+                    if (!existing.monthlyFact) existing.monthlyFact = {};
+                    Object.entries(filteredClient.monthlyFact).forEach(([k, v]) => {
+                        existing.monthlyFact![k] = (existing.monthlyFact![k] || 0) + (v as number);
+                    });
                 }
-                
-                // Use the potentially updated monthlyFact
-                const filteredClient = { ...client, key: safeKey, fact: clientFact };
-                
-                const reg = filteredClient.region || 'Не определен';
-                const rm = filteredClient.rm || 'Не указан';
-                const brand = filteredClient.brand || 'Без бренда';
-                const packaging = filteredClient.packaging || 'Не указана';
-                
-                const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
+            } else {
+                group.clients.set(safeKey, filteredClient);
+            }
+            
+            group.fact += clientFact;
+            group.potential = group.fact * 1.15; 
 
-                if (!state_aggregatedData[groupKey]) {
-                    state_aggregatedData[groupKey] = {
-                        __rowId: generateRowId(),
-                        key: groupKey,
-                        clientName: `${reg}: ${brand}`,
-                        brand, 
-                        packaging, 
-                        rm, 
-                        region: reg, 
-                        city: filteredClient.city || 'Не определен',
-                        fact: 0,
-                        potential: 0, 
-                        growthPotential: 0, 
-                        growthPercentage: 0, 
-                        clients: new Map()
-                    };
-                }
-
-                const group = state_aggregatedData[groupKey];
-                
-                if (group.clients.has(safeKey)) {
-                    const existing = group.clients.get(safeKey)!;
-                    existing.fact = (existing.fact || 0) + clientFact;
-                    // Merge monthly facts if needed
-                    if (filteredClient.monthlyFact) {
-                        if (!existing.monthlyFact) existing.monthlyFact = {};
-                        Object.entries(filteredClient.monthlyFact).forEach(([k, v]) => {
-                            existing.monthlyFact![k] = (existing.monthlyFact![k] || 0) + (v as number);
-                        });
-                    }
-                } else {
-                    group.clients.set(safeKey, filteredClient);
-                }
-                
-                group.fact += clientFact;
-                group.potential = group.fact * 1.15; 
-
-                if (!state_uniquePlottableClients.has(safeKey)) {
-                    state_uniquePlottableClients.set(safeKey, filteredClient);
-                }
+            if (!state_uniquePlottableClients.has(safeKey)) {
+                state_uniquePlottableClients.set(safeKey, filteredClient);
             }
         });
     });
@@ -432,24 +354,9 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         let dateKey = parseDateKey(dateRaw);
-        let rowTime = parseRawDateToTimestamp(dateRaw);
-
-        // --- FILTER CHECK ---
-        // If we have a filter, and the row HAS a date, we check it.
-        // If the row HAS NO date, we fall through and will tag it later.
-        if ((state_filterStartDate || state_filterEndDate) && rowTime !== null) {
-            if (state_filterStartDate && rowTime < state_filterStartDate) continue;
-            if (state_filterEndDate && rowTime > state_filterEndDate) continue;
-        }
         
-        // --- DATE TAGGING FALLBACK ---
-        // If row has no internal date, but we have a load filter, assume it belongs to the start of the filter.
-        if (!dateKey && state_filterStartDate) {
-            const d = new Date(state_filterStartDate);
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            dateKey = `${d.getFullYear()}-${m}`;
-        }
-        
+        // --- NO DATE FILTERING IN WORKER ---
+        // We accept all rows. Date filtering happens in the UI.
         const finalDateKey = dateKey || 'unknown';
         
         const rawAddr = findAddressInRow(row);

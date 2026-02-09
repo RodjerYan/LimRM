@@ -62,33 +62,36 @@ const Adapta: React.FC<AdaptaProps> = (props) => {
     const healthBorder = healthScore > 80 ? 'border-emerald-500/30' : healthScore > 50 ? 'border-amber-500/30' : 'border-red-500/30';
 
     // Helper to get client fact for the selected period
-    // STRICT MODE: If filters are active, only sum confirmed monthly data.
+    // REACTIVE FILTERING: This runs whenever props.startDate/endDate changes.
     const getClientFact = (client: MapPoint) => {
         const hasFilter = !!(props.startDate || props.endDate);
 
-        // If no monthly breakdown exists...
-        if (!client.monthlyFact || Object.keys(client.monthlyFact).length === 0) {
-            // STRICT FIX: If filtering by date, and we don't have dates, return 0.
-            // This prevents "timeless" historical data from polluting specific period views.
-            return hasFilter ? 0 : (client.fact || 0);
+        // If client has detailed monthly data, we MUST use it to respect the filter
+        if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
+            let sum = 0;
+            
+            // Normalize filter inputs to YYYY-MM for comparison with keys
+            const filterStart = props.startDate ? props.startDate.substring(0, 7) : null;
+            const filterEnd = props.endDate ? props.endDate.substring(0, 7) : null;
+
+            Object.entries(client.monthlyFact).forEach(([date, val]) => {
+                if (date === 'unknown') return; 
+                
+                // Compare YYYY-MM strings
+                if (filterStart && date < filterStart) return;
+                if (filterEnd && date > filterEnd) return;
+                
+                sum += val;
+            });
+            return sum;
         }
         
-        let sum = 0;
-        
-        // Normalize filter inputs to YYYY-MM for comparison with keys
-        const filterStart = props.startDate ? props.startDate.substring(0, 7) : null;
-        const filterEnd = props.endDate ? props.endDate.substring(0, 7) : null;
-
-        Object.entries(client.monthlyFact).forEach(([date, val]) => {
-            if (date === 'unknown') return; 
-            
-            // Compare YYYY-MM strings
-            if (filterStart && date < filterStart) return;
-            if (filterEnd && date > filterEnd) return;
-            
-            sum += val;
-        });
-        return sum;
+        // Fallback for Snapshots (No Dates):
+        // If a filter is active, strictly speaking, a snapshot has "no date".
+        // However, to prevent "disappearing data" for legacy files, we return the full fact.
+        // NOTE: This means legacy snapshots WON'T change numbers when filtering dates, 
+        // which is expected behavior for data without a time dimension.
+        return client.fact || 0;
     };
 
     // 1. FIX: Establish a Fixed Universe of Clients (Base Clients) based on CURRENT filter
