@@ -278,6 +278,8 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
             let clientFact = typeof client.fact === 'number' ? client.fact : 0;
             
             // --- APPLY DATE FILTER ---
+            // Fix: If we have a filter, but NO monthlyFact data, we should include the record anyway
+            // to avoid zeroing out data from flat snapshots that lack granular history.
             if (state_filterStartDate || state_filterEndDate) {
                 if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
                     clientFact = 0;
@@ -299,9 +301,9 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                         }
                     });
                 } else {
-                    // Include if filtering but no dates? Default to exclude for precision, but include if we want to show 'undated'
-                    // For now, exclude to match strict filter logic
-                    clientFact = 0; 
+                    // FALLBACK: If no monthly breakdown exists, assume the 'fact' is valid for the current view.
+                    // This allows flat snapshots to be visible even with active date filters.
+                    clientFact = typeof client.fact === 'number' ? client.fact : 0;
                 }
             }
 
@@ -338,7 +340,7 @@ function restoreChunk(payload: { chunkData: any[] }, postMessage: PostMessageFn)
                         fact: 0,
                         potential: 0, 
                         growthPotential: 0, 
-                        growthPercentage: 0,
+                        growthPercentage: 0, 
                         clients: new Map()
                     };
                 }
