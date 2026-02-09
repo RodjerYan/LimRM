@@ -1,6 +1,6 @@
 
 // --- GLOBAL ERROR HANDLERS (Must be first) ---
-process.on('uncaughtException', (err: any) => {
+(process as any).on('uncaughtException', (err: any) => {
     console.error('\n\n================================================================');
     console.error('🚨 [DIAGNOSTIC ERROR REPORT] UNCAUGHT EXCEPTION');
     console.error('================================================================');
@@ -8,10 +8,10 @@ process.on('uncaughtException', (err: any) => {
     console.error('Message:', err.message);
     console.error('Stack:', err.stack);
     console.error('================================================================\n');
-    process.exit(1);
+    (process as any).exit(1);
 });
 
-process.on('unhandledRejection', (reason: any, promise) => {
+(process as any).on('unhandledRejection', (reason: any, promise: any) => {
     console.error('\n\n================================================================');
     console.error('🚨 [DIAGNOSTIC ERROR REPORT] UNHANDLED PROMISE REJECTION');
     console.error('================================================================');
@@ -52,7 +52,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 console.log(`[Server] Starting up in ${process.env.NODE_ENV || 'development'} mode...`);
-console.log(`[Server] Node Version: ${process.version}`);
+console.log(`[Server] Node Version: ${(process as any).version}`);
 
 // Middleware
 app.use(cors());

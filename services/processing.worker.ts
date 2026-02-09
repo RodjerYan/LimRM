@@ -306,7 +306,6 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
-// --- NEW: Restore from Snapshot Chunk (Pre-aggregated data) ---
 function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: PostMessageFn) {
     const rows = payload.chunkData;
     if (!Array.isArray(rows)) {
@@ -344,12 +343,8 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
                             }
                         }
                     });
-                    
-                    // If no data in range for this client, and filtering is active, it contributes 0
                 }
 
-                // If filtering is on and clientFact is 0, we generally skip adding it to active set?
-                // Or keep it as 0? Let's keep if > 0 or if NO filters applied.
                 const shouldInclude = clientFact > 0 || (!state_filterStartDate && !state_filterEndDate);
 
                 if (shouldInclude) {
@@ -404,12 +399,24 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk } = payload;
     
+    // CRITICAL FIX: Guard against empty chunks
+    if (!rawData || rawData.length === 0) {
+        return;
+    }
+    
     let jsonData: any[] = [];
     let headerOffset = 0;
 
     if (isFirstChunk || state_headers.length === 0) {
-        const hRow = rawData.findIndex(row => row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
+        const hRow = rawData.findIndex(row => Array.isArray(row) && row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
         const actualHRow = hRow === -1 ? 0 : hRow;
+        
+        // CRITICAL FIX: Guard against missing header row
+        if (!rawData[actualHRow]) {
+            console.warn("Skipping chunk: Header row not found or chunk is malformed.");
+            return;
+        }
+
         headerOffset = actualHRow + 1;
         state_headers = rawData[actualHRow].map(h => String(h || '').trim());
         jsonData = rawData.slice(actualHRow + 1).map(row => {
@@ -461,32 +468,23 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         
         const rawAddr = findAddressInRow(row);
         
-        // --- DATA QUALITY GATE (RELAXED) ---
-        // 1. Must have an address field
+        // --- DATA QUALITY GATE ---
         if (!rawAddr) continue;
-        
-        // 2. Address must be substantial (more than 4 chars)
         const cleanAddr = String(rawAddr).trim();
         if (cleanAddr.length < 4) continue;
-        
-        // 3. Address must not be a common placeholder or garbage
-        if (/^[-.,\s0-9]+$/.test(cleanAddr)) continue; // e.g. "0", "-", "...", "123"
+        if (/^[-.,\s0-9]+$/.test(cleanAddr)) continue;
         const lowerAddr = cleanAddr.toLowerCase();
         if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
 
-        // 4. Client name check (Relaxed: fallback to address if missing)
         let clientName = String(row[state_clientNameHeader || ''] || '').trim();
         if (!clientName || clientName.length < 2) {
              clientName = cleanAddr || 'Без названия';
         }
 
-        // 5. Filter out Summary/Total rows
         const lowerName = clientName.toLowerCase();
         if (lowerName.includes('итого') || lowerName.includes('всего') || lowerName.includes('total') || lowerName.includes('grand total')) {
             continue;
         }
-
-        // --------------------------------
 
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
@@ -495,7 +493,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
-        // CORE LOGIC: Skip row if it has been marked as deleted in the cache.
         if (cacheEntry && cacheEntry.isDeleted) {
             continue;
         }
@@ -515,8 +512,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const isRegionFound = reg !== 'Регион не определен';
 
         if (!isCityFound && !isRegionFound && !cacheEntry) {
-            // FIX: CAPTURE RAW DATA
-            // Determine the source raw array index correctly
             const rawRowIndex = isFirstChunk ? (i + headerOffset) : i;
             const rawArray = rawData[rawRowIndex] || [];
 
@@ -524,9 +519,8 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 rm, 
                 rowData: row, 
                 originalIndex: state_processedRowsCount,
-                rawArray: rawArray // Store the original raw values
+                rawArray: rawArray 
             });
-            // continue; // <-- REMOVED THIS LINE to prevent data loss
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
@@ -585,7 +579,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                     lat: effectiveLat,
                     lon: effectiveLon,
                     status: 'match',
-                    name: clientName, // Use verified clientName
+                    name: clientName, 
                     address: rawAddr, 
                     city: parsed.city, 
                     region: reg, 
@@ -618,9 +612,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
     
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
-        
         performIncrementalAbc();
-
         const checkpointData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -628,7 +620,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
-
         postMessage({
             type: 'CHECKPOINT',
             payload: {
@@ -638,14 +629,11 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 totalRowsProcessed: state_processedRowsCount
             }
         });
-        
         state_lastEmitCount = state_processedRowsCount;
     }
     else if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
-        
         performIncrementalAbc();
-
         const partialData = Object.values(state_aggregatedData).map(item => ({
             ...item,
             potential: item.fact * 1.15,
@@ -653,7 +641,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             growthPercentage: 15,
             clients: Array.from(item.clients.values())
         }));
-        
         postMessage({ 
             type: 'result_chunk_aggregated', 
             payload: {

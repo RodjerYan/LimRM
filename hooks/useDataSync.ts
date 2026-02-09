@@ -298,21 +298,24 @@ export const useDataSync = (addNotification: (msg: string, type: 'success' | 'er
                                 // DETECT IF THIS IS A SNAPSHOT (OBJECTS) OR RAW FILE (ARRAYS)
                                 const isSnapshotObject = newRows.length > 0 && !Array.isArray(newRows[0]);
 
-                                if (isSnapshotObject) {
-                                    // Use new restore method for pre-aggregated data
-                                    worker.postMessage({
-                                        type: 'RESTORE_CHUNK',
-                                        payload: { chunkData: newRows }
-                                    });
+                                if (newRows.length > 0) {
+                                    console.log(`Processing chunk ${item.file.name}: ${newRows.length} rows (${isSnapshotObject ? 'Snapshot' : 'Raw'})`);
+                                    if (isSnapshotObject) {
+                                        worker.postMessage({
+                                            type: 'RESTORE_CHUNK',
+                                            payload: { chunkData: newRows }
+                                        });
+                                    } else {
+                                        worker.postMessage({
+                                            type: 'PROCESS_CHUNK',
+                                            payload: {
+                                                rawData: newRows,
+                                                isFirstChunk: item.index === 0
+                                            }
+                                        });
+                                    }
                                 } else {
-                                    // Use legacy process method for raw arrays
-                                    worker.postMessage({
-                                        type: 'PROCESS_CHUNK',
-                                        payload: {
-                                            rawData: newRows,
-                                            isFirstChunk: item.index === 0
-                                        }
-                                    });
+                                    console.warn(`Empty chunk skipped: ${item.file.name}`);
                                 }
 
                                 if (chunkData.meta && !loadedMeta) loadedMeta = chunkData.meta;
