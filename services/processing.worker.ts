@@ -71,50 +71,25 @@ const findManagerValue = (row: any, strictKeys: string[], looseKeys: string[]): 
 // --- NEW: Channel Auto-Detection Logic ---
 const detectChannelByName = (name: string): string => {
     const n = name.toLowerCase();
-    
-    // 1. Internet / Marketplace
-    if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс')) {
-        return 'Интернет-канал';
-    }
-    
-    // 2. Breeder / Kennel
-    if (n.includes('питомник') || n.includes('заводчик') || n.includes('клуб ') || n.includes('п-к') || n.includes('приют') || n.includes('кинолог')) {
-        return 'Бридер канал';
-    }
-
-    // 3. Vet
-    if (n.includes('вет') || n.includes('клиника') || n.includes('госпиталь') || n.includes('врач') || n.includes('аптека')) {
-        return 'Ветеринарный канал';
-    }
-
-    // 4. FMCG / Chains (Major ones)
-    if (n.includes('ашан') || n.includes('лента') || n.includes('магнит') || n.includes('пятерочка') || n.includes('перекресток') || n.includes('окей') || n.includes('метро') || n.includes('гипермаркет') || n.includes('супермаркет')) {
-        return 'FMCG';
-    }
-
-    // 5. Zoo Retail (Default for IP and standard names)
-    if (n.includes('ип ') || n.includes('зоо') || n.includes('магазин') || n.includes('лавка') || n.includes('корм')) {
-        return 'Зоо розница';
-    }
-
+    if (n.includes('wildberries') || n.includes('вайлдберриз') || n.includes('ozon') || n.includes('озон') || n.includes('яндекс') || n.includes('интернет') || n.includes('e-com') || n.includes('маркетплейс')) return 'Интернет-канал';
+    if (n.includes('питомник') || n.includes('заводчик') || n.includes('клуб ') || n.includes('п-к') || n.includes('приют') || n.includes('кинолог')) return 'Бридер канал';
+    if (n.includes('вет') || n.includes('клиника') || n.includes('госпиталь') || n.includes('врач') || n.includes('аптека')) return 'Ветеринарный канал';
+    if (n.includes('ашан') || n.includes('лента') || n.includes('магнит') || n.includes('пятерочка') || n.includes('перекресток') || n.includes('окей') || n.includes('метро') || n.includes('гипермаркет') || n.includes('супермаркет')) return 'FMCG';
+    if (n.includes('ип ') || n.includes('зоо') || n.includes('магазин') || n.includes('лавка') || n.includes('корм')) return 'Зоо розница';
     return 'Не определен';
 };
 
 const parseCleanFloat = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
-    
     const strVal = String(val);
     const cleaned = strVal.replace(/[\s\u00A0]/g, '').replace(',', '.');
-    
     const floatVal = parseFloat(cleaned);
     return isNaN(floatVal) ? 0 : floatVal;
 };
 
-// Helper to parse date into YYYY-MM format
 const parseDateKey = (val: any): string | null => {
     if (!val) return null;
-    
     if (typeof val === 'number') {
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
@@ -123,53 +98,36 @@ const parseDateKey = (val: any): string | null => {
         }
         return null;
     }
-
     const str = String(val).trim();
-    
     let match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) return `${match[1]}-${match[2]}`;
-
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) return `${match[3]}-${match[2].padStart(2, '0')}`;
-    
     return null;
 };
 
-// Helper to parse raw date value into timestamp for comparison
 const parseRawDateToTimestamp = (val: any): number | null => {
     if (!val) return null;
-    
-    // Excel Serial Number
     if (typeof val === 'number') {
-        // Excel base date: Dec 30, 1899
         if (val > 20000 && val < 60000) { 
              const dateObj = new Date(Math.round((val - 25569) * 86400 * 1000));
              return dateObj.getTime();
         }
         return null;
     }
-
     const str = String(val).trim();
-    
-    // ISO-like YYYY-MM-DD
     let match = str.match(/^(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})/);
     if (match) {
         return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3])).getTime();
     }
-
-    // Russian DD.MM.YYYY
     match = str.match(/^(\d{1,2})[\.\-/](\d{1,2})[\.\-/](\d{4})/);
     if (match) {
         return new Date(parseInt(match[3]), parseInt(match[2]) - 1, parseInt(match[1])).getTime();
     }
-    
-    // Fallback: Monthly YYYY-MM
     match = str.match(/^(\d{4})[\.\-/](\d{2})/);
     if (match) {
-        // Default to first day of month
         return new Date(parseInt(match[1]), parseInt(match[2]) - 1, 1).getTime();
     }
-
     return null;
 };
 
@@ -202,10 +160,8 @@ const createOkbCoordIndex = (okbData: OkbDataRow[]): OkbCoordIndex => {
 function performIncrementalAbc() {
     const allClients = Array.from(state_uniquePlottableClients.values());
     allClients.sort((a, b) => (b.fact || 0) - (a.fact || 0));
-    
     const totalVolume = allClients.reduce((sum, c) => sum + (c.fact || 0), 0);
     let runningSum = 0;
-
     allClients.forEach(client => {
         runningSum += (client.fact || 0);
         const pct = totalVolume > 0 ? (runningSum / totalVolume) * 100 : 100;
@@ -228,20 +184,18 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
     state_uniquePlottableClients = new Map();
     state_unidentifiedRows = [];
     state_headers = [];
-    
     state_processedRowsCount = totalRowsProcessed || 0;
     state_lastEmitCount = state_processedRowsCount;
     state_lastCheckpointCount = state_processedRowsCount;
-    
     state_okbCoordIndex = createOkbCoordIndex(okbData);
     state_okbByRegion = {};
     state_okbRegionCounts = {};
     
-    // Init Date Filters with logging
-    state_filterStartDate = startDate ? new Date(startDate).getTime() : null;
-    state_filterEndDate = endDate ? new Date(endDate).getTime() : null;
+    // SAFE PARSING: Handle empty strings as NULL
+    state_filterStartDate = (startDate && startDate.trim()) ? new Date(startDate).getTime() : null;
+    state_filterEndDate = (endDate && endDate.trim()) ? new Date(endDate).getTime() : null;
     
-    console.log(`[Worker] Init Stream. Date Filter: ${startDate} (${state_filterStartDate}) - ${endDate} (${state_filterEndDate})`);
+    console.log(`[Worker] Init Stream. Filter: ${state_filterStartDate} - ${state_filterEndDate}`);
     
     if (okbData) {
         okbData.forEach(row => {
@@ -269,10 +223,7 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
         restoredData.forEach(row => {
             const { clients, ...rest } = row;
             if (!state_aggregatedData[row.key]) {
-                state_aggregatedData[row.key] = {
-                    ...rest,
-                    clients: new Map()
-                };
+                state_aggregatedData[row.key] = { ...rest, clients: new Map() };
             }
             if (Array.isArray(clients)) {
                 clients.forEach(client => {
@@ -283,125 +234,109 @@ function initStream({ okbData, cacheData, totalRowsProcessed, restoredData, rest
                 });
             }
         });
-        
-        if (restoredUnidentified) {
-            state_unidentifiedRows = [...restoredUnidentified];
-        }
+        if (restoredUnidentified) state_unidentifiedRows = [...restoredUnidentified];
     }
 
     postMessage({ 
         type: 'result_init', 
-        payload: { 
-            okbRegionCounts: state_okbRegionCounts,
-            totalUnidentified: state_unidentifiedRows.length 
-        } 
+        payload: { okbRegionCounts: state_okbRegionCounts, totalUnidentified: state_unidentifiedRows.length } 
     });
     
-    let statusMsg = totalRowsProcessed 
-        ? `Восстановление сессии: ${totalRowsProcessed} строк...` 
-        : 'Связь установлена. Готов к обработке...';
-        
-    if (state_filterStartDate || state_filterEndDate) {
-        statusMsg += ` (Фильтр: ${startDate || '...'} - ${endDate || '...'})`;
-    }
-        
+    let statusMsg = totalRowsProcessed ? `Восстановление сессии: ${totalRowsProcessed} строк...` : 'Связь установлена. Готов к обработке...';
+    if (state_filterStartDate || state_filterEndDate) statusMsg += ` (Фильтр: ${startDate || '...'} - ${endDate || '...'})`;
     postMessage({ type: 'progress', payload: { percentage: 5, message: statusMsg, totalProcessed: state_processedRowsCount } });
 }
 
 function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: PostMessageFn) {
     const rows = payload.chunkData;
     if (!Array.isArray(rows)) {
-        console.error("restoreChunk received invalid data:", rows);
+        console.error("restoreChunk: Invalid data format", rows);
         return;
     }
 
-    let debugLogOnce = false;
+    // --- DEBUGGING FIRST ROW ---
+    if (rows.length > 0 && state_processedRowsCount === 0) {
+        const sample = rows[0];
+        console.log('[Worker] First Chunk Sample Row:', JSON.stringify(sample).substring(0, 300));
+        console.log('[Worker] Has clients?', Array.isArray(sample.clients), 'Length:', sample.clients?.length);
+    }
 
     rows.forEach(aggRow => {
-        // Hydrate clients map
         const clientMap = new Map<string, MapPoint>();
         let newRowFact = 0;
 
-        if (aggRow.clients && Array.isArray(aggRow.clients)) {
-            aggRow.clients.forEach(client => {
-                let clientFact = client.fact || 0;
-                
-                // --- APPLY DATE FILTER ---
-                if (state_filterStartDate || state_filterEndDate) {
-                    // Only filter if monthlyFact exists
-                    if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
-                        clientFact = 0;
-                        let hasDataInRange = false;
-                        
-                        // DEBUG: Log sample dates to understand mismatch
-                        if (!debugLogOnce) {
-                            console.log('[Worker] Sample monthlyFact keys:', Object.keys(client.monthlyFact));
-                            debugLogOnce = true;
-                        }
+        // Ensure clients is iterable
+        const clientsList = Array.isArray(aggRow.clients) ? aggRow.clients : [];
 
-                        Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
-                            // dateStr is YYYY-MM
-                            const parts = dateStr.split(/[-.]/); // Handle '-' or '.'
-                            if (parts.length >= 2) {
-                                const year = parseInt(parts[0]);
-                                const month = parseInt(parts[1]) - 1; // 0-based month
-                                
-                                const ts = new Date(year, month, 1).getTime();
-                                
-                                let inRange = true;
-                                if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
-                                // Loose comparison for end date (include entire end month)
-                                if (state_filterEndDate) {
-                                    const endDateObj = new Date(state_filterEndDate);
-                                    // If timestamp is strictly after end filter
-                                    if (ts > state_filterEndDate) inRange = false;
-                                }
-                                
-                                if (inRange) {
-                                    clientFact += (val as number);
-                                    hasDataInRange = true;
-                                }
+        clientsList.forEach(client => {
+            let clientFact = typeof client.fact === 'number' ? client.fact : 0;
+            
+            // --- APPLY DATE FILTER ---
+            if (state_filterStartDate || state_filterEndDate) {
+                if (client.monthlyFact && Object.keys(client.monthlyFact).length > 0) {
+                    clientFact = 0;
+                    Object.entries(client.monthlyFact).forEach(([dateStr, val]) => {
+                        const parts = dateStr.split(/[-.]/); 
+                        if (parts.length >= 2) {
+                            const year = parseInt(parts[0]);
+                            const month = parseInt(parts[1]) - 1; 
+                            const ts = new Date(year, month, 1).getTime();
+                            
+                            let inRange = true;
+                            if (state_filterStartDate && ts < state_filterStartDate) inRange = false;
+                            if (state_filterEndDate) {
+                                // Inclusive end date logic (to end of month)
+                                const endDateObj = new Date(state_filterEndDate);
+                                // Simple compare for now
+                                if (ts > state_filterEndDate) inRange = false;
                             }
-                        });
-                    } 
-                    // Fallback: If no monthlyFact, assume data falls within range OR exclude?
-                    // Safe approach: If user filters, and we have NO date breakdown, we usually exclude to be safe, 
-                    // OR include if we assume the whole dataset belongs to the period.
-                    // CURRENT LOGIC: Exclude if breakdown missing but filter active.
-                    else {
-                        clientFact = 0; // Exclude legacy/undated records when filtered
-                    }
+                            
+                            if (inRange) clientFact += (val as number);
+                        }
+                    });
+                } else {
+                    // Safety: If filter is ON but no dates, keep it if it has fact?
+                    // Or treat as "undated" -> exclude? 
+                    // Let's include if date filtering is NOT strictly excluding undated (usually safer to include)
+                    // BUT for precise analytics, we exclude.
+                    // CURRENT: Exclude if breakdown missing but filter active.
+                    clientFact = 0; 
                 }
+            }
 
-                // If filtering is OFF, include everything. If ON, only include if fact > 0
-                const shouldInclude = (!state_filterStartDate && !state_filterEndDate) || clientFact > 0;
+            // Check inclusion criteria
+            const isFilterActive = !!(state_filterStartDate || state_filterEndDate);
+            const shouldInclude = !isFilterActive || clientFact > 0;
 
-                if (shouldInclude) {
-                    const filteredClient = { ...client, fact: clientFact };
-                    clientMap.set(client.key, filteredClient);
-                    newRowFact += clientFact;
+            if (shouldInclude) {
+                // Ensure key exists
+                const safeKey = client.key || `${client.address || 'unknown'}_${Math.random()}`;
+                
+                const filteredClient = { ...client, key: safeKey, fact: clientFact };
+                clientMap.set(safeKey, filteredClient);
+                newRowFact += clientFact;
 
-                    // Update Global Client Map
-                    if (!state_uniquePlottableClients.has(client.key)) {
-                        state_uniquePlottableClients.set(client.key, filteredClient);
-                    }
+                if (!state_uniquePlottableClients.has(safeKey)) {
+                    state_uniquePlottableClients.set(safeKey, filteredClient);
                 }
-            });
-        }
+            }
+        });
 
-        // Only add row if it has active clients after filtering
+        // Add row if it has active clients or if the row itself is significant (legacy support)
         if (clientMap.size > 0) {
-            if (!state_aggregatedData[aggRow.key]) {
+            const safeRowKey = aggRow.key || generateRowId();
+            
+            if (!state_aggregatedData[safeRowKey]) {
                 const { clients, ...rest } = aggRow;
-                state_aggregatedData[aggRow.key] = {
+                state_aggregatedData[safeRowKey] = {
                     ...rest,
-                    fact: newRowFact, // Updated Fact
-                    potential: newRowFact * 1.15, // Recalc Potential based on new Fact
+                    key: safeRowKey,
+                    fact: newRowFact, 
+                    potential: newRowFact * 1.15, 
                     clients: clientMap
                 };
             } else {
-                // Merge (Rare case for snapshot, but good for safety)
-                const existing = state_aggregatedData[aggRow.key];
+                const existing = state_aggregatedData[safeRowKey];
                 existing.fact += newRowFact;
                 clientMap.forEach((v, k) => existing.clients.set(k, v));
             }
@@ -410,28 +345,19 @@ function restoreChunk(payload: { chunkData: AggregatedDataRow[] }, postMessage: 
 
     state_processedRowsCount += rows.length;
     
-    // Debounced Progress Update
     if (state_processedRowsCount - state_lastEmitCount > UI_UPDATE_THRESHOLD) {
         state_lastEmitCount = state_processedRowsCount;
         const currentProgress = Math.min(98, 10 + (state_processedRowsCount / 200000) * 85); 
         postMessage({ 
             type: 'progress', 
-            payload: { 
-                percentage: currentProgress, 
-                message: `Синхронизация снимка: ${state_processedRowsCount.toLocaleString()}...`, 
-                totalProcessed: state_processedRowsCount 
-            } 
+            payload: { percentage: currentProgress, message: `Синхронизация снимка: ${state_processedRowsCount.toLocaleString()}...`, totalProcessed: state_processedRowsCount } 
         });
     }
 }
 
 function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileName?: string }, postMessage: PostMessageFn) {
     const { rawData, isFirstChunk } = payload;
-    
-    // CRITICAL FIX: Guard against empty chunks
-    if (!rawData || rawData.length === 0) {
-        return;
-    }
+    if (!rawData || rawData.length === 0) return;
     
     let jsonData: any[] = [];
     let headerOffset = 0;
@@ -440,7 +366,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const hRow = rawData.findIndex(row => Array.isArray(row) && row.some(cell => String(cell || '').toLowerCase().includes('адрес')));
         const actualHRow = hRow === -1 ? 0 : hRow;
         
-        // CRITICAL FIX: Guard against missing header row
         if (!rawData[actualHRow]) {
             console.warn("Skipping chunk: Header row not found or chunk is malformed.");
             return;
@@ -455,14 +380,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         });
         
         const normHeaders = state_headers.map(h => ({ original: h, norm: normalizeHeaderKey(h) }));
-        
-        const clientHeader = normHeaders.find(h => 
-            h.norm.includes('названиеклиента') || 
-            h.norm.includes('наименованиеклиента') || 
-            h.norm.includes('клиент') || 
-            h.norm.includes('контрагент') ||
-            h.norm.includes('партнер')
-        );
+        const clientHeader = normHeaders.find(h => h.norm.includes('названиеклиента') || h.norm.includes('наименованиеклиента') || h.norm.includes('клиент') || h.norm.includes('контрагент') || h.norm.includes('партнер'));
         
         if (clientHeader) {
             state_clientNameHeader = clientHeader.original;
@@ -483,7 +401,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const row = jsonData[i];
         state_processedRowsCount++;
         
-        // --- DATE FILTERING ---
         if (state_filterStartDate || state_filterEndDate) {
             const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
             if (dateRaw) {
@@ -496,8 +413,6 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }
         
         const rawAddr = findAddressInRow(row);
-        
-        // --- DATA QUALITY GATE ---
         if (!rawAddr) continue;
         const cleanAddr = String(rawAddr).trim();
         if (cleanAddr.length < 4) continue;
@@ -506,14 +421,10 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (['нет', 'не указан', 'неизвестно', 'unknown', 'none', 'пусто'].includes(lowerAddr)) continue;
 
         let clientName = String(row[state_clientNameHeader || ''] || '').trim();
-        if (!clientName || clientName.length < 2) {
-             clientName = cleanAddr || 'Без названия';
-        }
+        if (!clientName || clientName.length < 2) clientName = cleanAddr || 'Без названия';
 
         const lowerName = clientName.toLowerCase();
-        if (lowerName.includes('итого') || lowerName.includes('всего') || lowerName.includes('total') || lowerName.includes('grand total')) {
-            continue;
-        }
+        if (lowerName.includes('итого') || lowerName.includes('всего') || lowerName.includes('total') || lowerName.includes('grand total')) continue;
 
         let rm = findManagerValue(row, ['рм', 'региональный менеджер'], []);
         if (!rm) rm = 'Unknown_RM';
@@ -522,18 +433,13 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         const normAddr = normalizeAddress(parsed.finalAddress || rawAddr);
         const cacheEntry = state_cacheAddressMap.get(normAddr);
 
-        if (cacheEntry && cacheEntry.isDeleted) {
-            continue;
-        }
+        if (cacheEntry && cacheEntry.isDeleted) continue;
 
         let channel = findValueInRow(row, ['канал продаж', 'тип тт', 'сегмент']);
-        if (!channel || channel.length < 2) {
-            channel = detectChannelByName(clientName);
-        }
+        if (!channel || channel.length < 2) channel = detectChannelByName(clientName);
 
         const rawBrand = findValueInRow(row, ['торговая марка', 'бренд']) || 'Без бренда';
         const brands = rawBrand.split(/[,;|\r\n]+/).map(b => b.trim()).filter(b => b.length > 0);
-        
         const packaging = findValueInRow(row, ['фасовка', 'упаковка', 'вид упаковки']) || 'Не указана';
         
         const isCityFound = parsed.city !== 'Город не определен';
@@ -543,31 +449,19 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         if (!isCityFound && !isRegionFound && !cacheEntry) {
             const rawRowIndex = isFirstChunk ? (i + headerOffset) : i;
             const rawArray = rawData[rawRowIndex] || [];
-
-            state_unidentifiedRows.push({ 
-                rm, 
-                rowData: row, 
-                originalIndex: state_processedRowsCount,
-                rawArray: rawArray 
-            });
+            state_unidentifiedRows.push({ rm, rowData: row, originalIndex: state_processedRowsCount, rawArray: rawArray });
         }
 
         const weightRaw = findValueInRow(row, ['вес', 'количество', 'факт', 'объем', 'продажи', 'отгрузки', 'кг', 'тонн']);
         const totalWeight = parseCleanFloat(weightRaw);
-        
         const weightPerBrand = brands.length > 0 ? totalWeight / brands.length : 0;
-
         const dateRaw = findValueInRow(row, ['дата', 'период', 'месяц', 'date', 'period', 'day']);
         const dateKey = parseDateKey(dateRaw) || 'unknown';
-
         const normName = clientName.toLowerCase().replace(/[^a-zа-я0-9]/g, '');
-        const uniqueClientKey = (normName.length > 2 && normName !== 'тт') 
-            ? `${normAddr}#${normName}` 
-            : normAddr;
+        const uniqueClientKey = (normName.length > 2 && normName !== 'тт') ? `${normAddr}#${normName}` : normAddr;
 
         for (const brand of brands) {
             const groupKey = `${reg}-${rm}-${brand}-${packaging}`.toLowerCase();
-            
             if (!state_aggregatedData[groupKey]) {
                 state_aggregatedData[groupKey] = {
                     __rowId: generateRowId(),
@@ -588,18 +482,15 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
             }
 
             state_aggregatedData[groupKey].fact += weightPerBrand;
-            
             if (!state_aggregatedData[groupKey].monthlyFact) state_aggregatedData[groupKey].monthlyFact = {};
             state_aggregatedData[groupKey].monthlyFact[dateKey] = (state_aggregatedData[groupKey].monthlyFact[dateKey] || 0) + weightPerBrand;
 
             if (!state_uniquePlottableClients.has(uniqueClientKey)) {
                 const okb = state_okbCoordIndex.get(normAddr);
-                
                 const latRaw = findValueInRow(row, ['широта', 'lat', 'latitude', 'широта (lat)', 'geo_lat', 'y']);
                 const lonRaw = findValueInRow(row, ['долгота', 'lon', 'lng', 'longitude', 'долгота (lon)', 'geo_lon', 'x']);
                 const rowLat = latRaw ? parseCleanFloat(latRaw) : undefined;
                 const rowLon = lonRaw ? parseCleanFloat(lonRaw) : undefined;
-                
                 const effectiveLat = (rowLat && rowLat !== 0) ? rowLat : (cacheEntry?.lat || okb?.lat);
                 const effectiveLon = (rowLon && rowLon !== 0) ? rowLon : (cacheEntry?.lon || okb?.lon);
 
@@ -628,16 +519,12 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
                 pt.fact = (pt.fact || 0) + weightPerBrand;
                 if (!pt.monthlyFact) pt.monthlyFact = {};
                 pt.monthlyFact[dateKey] = (pt.monthlyFact[dateKey] || 0) + weightPerBrand;
-                
                 state_aggregatedData[groupKey].clients.set(uniqueClientKey, pt);
             }
         }
     }
     
-    // Explicit Log every 10k rows
-    if (state_processedRowsCount % 10000 === 0) {
-        console.log(`⚙️ [Worker] Processed ${state_processedRowsCount} rows...`);
-    }
+    if (state_processedRowsCount % 10000 === 0) console.log(`⚙️ [Worker] Processed ${state_processedRowsCount} rows...`);
     
     if (state_processedRowsCount - state_lastCheckpointCount >= CHECKPOINT_THRESHOLD) {
         state_lastCheckpointCount = state_processedRowsCount;
@@ -672,10 +559,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
         }));
         postMessage({ 
             type: 'result_chunk_aggregated', 
-            payload: {
-                data: partialData,
-                totalProcessed: state_processedRowsCount
-            }
+            payload: { data: partialData, totalProcessed: state_processedRowsCount }
         });
     }
 
@@ -685,7 +569,7 @@ function processChunk(payload: { rawData: any[][], isFirstChunk: boolean, fileNa
 
 async function finalizeStream(postMessage: PostMessageFn) {
     performIncrementalAbc();
-
+    
     const finalData = Object.values(state_aggregatedData).map(item => ({
         ...item,
         potential: item.fact * 1.15,
@@ -693,6 +577,8 @@ async function finalizeStream(postMessage: PostMessageFn) {
         growthPercentage: 15,
         clients: Array.from(item.clients.values())
     }));
+
+    console.log(`[Worker] Finalize. Aggregated Groups: ${finalData.length}, Total Clients: ${state_uniquePlottableClients.size}`);
 
     postMessage({ 
         type: 'result_finished', 
